@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Udemy Subtitle Bridge",
+  "description": "Export EN subtitles from Udemy to SRT, import ES SRT, and overlay translated subtitles locally.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://www.udemy.com/*"
+  ],
+  "action": {
+    "default_title": "Udemy Subtitle Bridge",
+    "default_popup": "src/popup.html"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.udemy.com/course/*/learn/*"
+      ],
+      "js": [
+        "src/content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/page-network-bridge.js"
+      ],
+      "matches": [
+        "https://www.udemy.com/*"
+      ]
+    }
+  ]
+}

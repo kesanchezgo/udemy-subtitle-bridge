@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Udemy Subtitle Bridge</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="panel">
+    <h1>Udemy Subtitle Bridge</h1>
+
+    <section class="card">
+      <div class="row"><span>Course</span><strong id="courseSlug">-</strong></div>
+      <div class="row"><span>Lecture</span><strong id="lectureId">-</strong></div>
+      <div class="row"><span>EN captions</span><strong id="hasEnglish">-</strong></div>
+      <div class="row"><span>Native ES</span><strong id="hasSpanish">-</strong></div>
+      <div class="row"><span>Imported ES cues</span><strong id="importedCount">0</strong></div>
+      <div class="row"><span>Auto source</span><strong id="prefetchMode">-</strong></div>
+      <div class="row"><span>Auto EN cues</span><strong id="prefetchedCount">0</strong></div>
+      <div class="row"><span>Auto EN download</span><strong id="autoDownloaded">-</strong></div>
+      <p id="statusReason" class="hint"></p>
+    </section>
+
+    <section class="card actions">
+      <button id="refreshBtn" type="button">Refresh status</button>
+      <button id="exportBtn" type="button">Export EN as SRT</button>
+      <button id="importBtn" type="button">Import ES SRT</button>
+      <button id="clearBtn" type="button" class="warn">Clear imported ES (this lecture)</button>
+      <input id="fileInput" type="file" accept=".srt,text/plain" hidden>
+    </section>
+
+    <section class="card">
+      <label for="pasteSrt">Paste ES SRT (no file upload)</label>
+      <textarea id="pasteSrt" rows="7" placeholder="Paste translated ES SRT here..."></textarea>
+      <button id="pasteImportBtn" type="button">Apply Pasted ES SRT</button>
+      <p class="hint">The pasted subtitle is saved per lecture, so you do not need to upload repeatedly.</p>
+    </section>
+
+    <section class="card">
+      <label class="switchRow">
+        <input id="overlayEnabled" type="checkbox">
+        <span>Enable ES overlay (replace native captions visually)</span>
+      </label>
+
+      <label>
+        Offset (ms)
+        <input id="offsetMs" type="number" min="-15000" max="15000" step="100" value="0">
+      </label>
+      <p class="hint">Positive offset shows ES subtitles earlier. Negative offset delays them.</p>
+
+      <label>
+        Font size (px)
+        <input id="fontSizePx" type="range" min="16" max="64" value="32">
+      </label>
+
+      <label>
+        Background opacity
+        <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.86">
+      </label>
+    </section>
+
+    <p id="flash" class="flash"></p>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

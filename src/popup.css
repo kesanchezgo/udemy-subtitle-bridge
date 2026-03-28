@@ -1,0 +1,120 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+  background: #11161d;
+  color: #e8eef8;
+}
+
+.panel {
+  width: 360px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.card {
+  background: #192231;
+  border: 1px solid #27344a;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 3px 0;
+  font-size: 12px;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: #9fb2cc;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.actions button {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+button {
+  border: 1px solid #33517a;
+  background: #1f3856;
+  color: #e8eef8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #29466a;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.warn {
+  background: #4b2430;
+  border-color: #6d3444;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+input[type="number"],
+input[type="range"] {
+  width: 100%;
+  margin-top: 6px;
+  box-sizing: border-box;
+}
+
+textarea {
+  width: 100%;
+  margin-top: 6px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid #33517a;
+  background: #0f1724;
+  color: #e8eef8;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.flash {
+  min-height: 18px;
+  margin: 0;
+  font-size: 11px;
+  color: #a7ffd8;
+}
+
+.flash.error {
+  color: #ffb6c1;
+}
