@@ -1,4 +1,4 @@
-# 🎓 UDEMY SUBTITLE - Chrome Extension Instalación
+# 🎓 Udemy Subtitle Bridge - Chrome Extension Instalación
 
 ## ✅ Estado Actual
 La extensión ha sido **completamente probada y funciona correctamente**:
@@ -21,7 +21,7 @@ La extensión ha sido **completamente probada y funciona correctamente**:
 
 ### Paso 3: Cargar Extensión Sin Empaquetar
 1. Haz clic en el botón **"Cargar extensión sin empaquetar"**
-2. Navega a la carpeta del proyecto: `D:\Proyectos\OTROS\UDEMY-SUBTITLE`
+2. Navega a la carpeta del proyecto: `D:\Proyectos\OTROS\udemy-subtitle-bridge`
 3. Selecciona la carpeta y haz clic en **"Seleccionar carpeta"**
 
 ### Paso 4: Verificar Instalación
@@ -38,7 +38,7 @@ La extensión ha sido **completamente probada y funciona correctamente**:
 ## 📁 Estructura de Archivos
 
 ```
-UDEMY-SUBTITLE/
+udemy-subtitle-bridge/
 ├── manifest.json          ← Configuración MV3 de Chrome
 ├── src/
 │   ├── content-script.js  ← Se inyecta en Udemy, observa DOM

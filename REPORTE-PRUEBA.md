@@ -1,4 +1,4 @@
-# 🔍 REPORTE DE PRUEBA - Extensión Udemy Subtitle
+# 🔍 REPORTE DE PRUEBA - Udemy Subtitle Bridge
 
 ## Fecha: May 3, 2026
 **Estado**: ⚠️ PAYWALL ACTIVO - Sesión expirada
@@ -82,7 +82,7 @@ Cookies expiradas → Udemy rechaza sesión → Paywall activo
 2. Ve a `chrome://extensions/`
 3. Activa "Modo de desarrollador" (esquina superior derecha)
 4. Click "Cargar extensión sin empaquetar"
-5. Selecciona: `D:\Proyectos\OTROS\UDEMY-SUBTITLE`
+5. Selecciona: `D:\Proyectos\OTROS\udemy-subtitle-bridge`
 6. Navega a un curso de Udemy donde **YA ESTÉS LOGUEADO**
 7. El panel debería aparecer debajo del reproductor
 
@@ -103,7 +103,7 @@ Si quieres probar automáticamente:
 ## 📁 Archivos Principales (Listos para Usar)
 
 ```
-UDEMY-SUBTITLE/
+udemy-subtitle-bridge/
 ├── manifest.json ........................ Configuración MV3 ✅
 ├── src/
 │   ├── content-script.js .............. Simplificado, no-bloqueante ✅
