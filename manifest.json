@@ -9,7 +9,9 @@
     "downloads"
   ],
   "host_permissions": [
-    "https://www.udemy.com/*"
+    "https://www.udemy.com/*",
+    "http://127.0.0.1:8010/*",
+    "http://localhost:8010/*"
   ],
   "action": {
     "default_title": "Udemy Subtitle Bridge",
@@ -26,7 +28,7 @@
       "js": [
         "src/content-script.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [

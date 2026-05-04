@@ -19,11 +19,13 @@
       <div class="row"><span>Auto source</span><strong id="prefetchMode">-</strong></div>
       <div class="row"><span>Auto EN cues</span><strong id="prefetchedCount">0</strong></div>
       <div class="row"><span>Auto EN download</span><strong id="autoDownloaded">-</strong></div>
+      <div class="row"><span>Auto ES translation</span><strong id="autoTranslated">-</strong></div>
       <p id="statusReason" class="hint"></p>
     </section>
 
     <section class="card actions">
       <button id="refreshBtn" type="button">Refresh status</button>
+      <button id="retryAutoTranslateBtn" type="button">Retry Auto EN -> ES Translation</button>
       <button id="exportBtn" type="button">Export EN as SRT</button>
       <button id="importBtn" type="button">Import ES SRT</button>
       <button id="clearBtn" type="button" class="warn">Clear imported ES (this lecture)</button>
@@ -35,6 +37,28 @@
       <textarea id="pasteSrt" rows="7" placeholder="Paste translated ES SRT here..."></textarea>
       <button id="pasteImportBtn" type="button">Apply Pasted ES SRT</button>
       <p class="hint">The pasted subtitle is saved per lecture, so you do not need to upload repeatedly.</p>
+    </section>
+
+    <section class="card">
+      <h2 class="sectionTitle">Study Agent</h2>
+      <label>
+        Explain level
+        <select id="studyLevel">
+          <option value="beginner">Beginner (simple)</option>
+          <option value="intermediate" selected>Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </label>
+      <label>
+        Output language
+        <select id="studyLanguage">
+          <option value="es" selected>Spanish</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+      <button id="studyGenerateBtn" type="button">Generate Study Guide + Mini Quiz</button>
+      <p id="studyStatus" class="hint">Uses the current lecture transcript.</p>
+      <pre id="studyOutput" class="studyOutput">No study guide generated yet.</pre>
     </section>
 
     <section class="card">
