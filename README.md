@@ -9,7 +9,9 @@ Chrome extension (Manifest V3) to:
 5. import translated ES SRT,
 6. render ES subtitles as a local overlay synced with the video,
 7. paste translated ES SRT directly in popup (no file upload required),
-8. disable Export/Import when native ES captions exist (as requested).
+8. disable Export/Import when native ES captions exist (as requested),
+9. generate a study guide (simple explanation, examples, mini quiz) from lecture transcript using a local AI API,
+10. auto-translate EN SRT to ES and load ES overlay automatically when native ES does not exist.
 
 ## Load Extension
 
@@ -33,6 +35,10 @@ Chrome extension (Manifest V3) to:
 9. Or paste the translated ES SRT into **Paste ES SRT** and click **Apply Pasted ES SRT**.
 10. Imported ES overlay is auto-enabled and rendered over the video.
 11. Optionally tune offset/font/opacity.
+12. In **Study Agent**, choose level/language and click **Generate Study Guide + Mini Quiz**.
+13. If native ES is missing and EN SRT is available, the extension auto-translates EN -> ES through local API and applies ES overlay automatically.
+14. If local API was temporarily unavailable, click **Retry Auto EN -> ES Translation** in popup.
+15. You can manage subtitle automation directly in-course with the floating **Subtitles AI** panel (top-right), including overlay toggle and retry button.
 
 ## Notes
 
@@ -50,6 +56,9 @@ Chrome extension (Manifest V3) to:
 - Network bridge injection is CSP-safe (external extension file, not inline script), so Udemy inline-script restrictions do not block it.
 - Storyboard/thumbnail VTT files (e.g. thumb-sprites.jpg#xywh=...) are automatically rejected and never cached/exported as subtitles.
 - After importing ES SRT, overlay is enabled automatically so translated subtitles appear immediately.
+- Study Agent uses local API endpoints at `http://127.0.0.1:8010` (fallback `http://localhost:8010`) with sequence: bootstrap -> conversation/new -> message.
+- Automatic EN -> ES subtitle translation also uses the same local API sequence: bootstrap -> conversation/new -> message.
+- Auto-translation enforces block-by-block SRT translation and validates output block counts before importing.
 
 ## Current Scope
 

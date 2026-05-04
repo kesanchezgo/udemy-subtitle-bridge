@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# VS Code
+.vscode/
+
+# Local browser profiles / Playwright
+chromium-test-profile/
+chrome-test-profile/
+chrome-real-profile/
+.chromium-test/
+.chromium-udemy-test/
+temp_profile/
+
+# Test artifacts
+udemy-test-page.html
+udemy-test-screenshot.png
+debug-page-content.html
+test-final-dom.html
+test-output.log
+test-run.log
+
+# Local secrets
+token.txt
+
+# Misc
+*.tmp

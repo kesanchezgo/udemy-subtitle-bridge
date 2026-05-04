@@ -28,16 +28,44 @@
     overlayEl: null,
     learningPanelEl: null,
     learningPanelBusy: false,
-    learningPanelError: ""
+    learningPanelError: "",
+    lastEnVtt: null // Para guardar los subtítulos atrapados via red
   };
 
   // CRITICAL PATH: Execute immediately without any awaits
   try {
+    injectNetworkBridge(); // <--- INYECTAR EL INTERCEPTOR DE RED AQUÍ!
     runtimeState.lectureKey = getLectureKey();
     ensureLearningPanel(); // Inject panel DOM immediately
     setupMessageHandlerNonBlocking(); // Setup message listener
   } catch (e) {
     console.error("[USG] Critical init failed:", e);
+  }
+
+  // ============================================================================
+  // NET BRIDGE INJECTOR
+  // ============================================================================
+  function injectNetworkBridge() {
+    try {
+      const script = document.createElement("script");
+      script.src = chrome.runtime.getURL("src/page-network-bridge.js");
+      script.onload = () => script.remove();
+      (document.head || document.documentElement).appendChild(script);
+
+      document.addEventListener("USG_NET_CAPTURE", (e) => {
+         if (!e.detail || !e.detail.url) return;
+         const url = e.detail.url.toLowerCase();
+         if (url.includes(".vtt") && (url.includes("en") || url.includes("english"))) {
+            console.log("[USG] 📥 EN VTT Capturado desde red!", url);
+            runtimeState.lastEnVtt = e.detail.body;
+            const statusEn = document.querySelector("#usg-status-auto-en");
+            if (statusEn) statusEn.textContent = "Capturado (VTT)";
+         }
+      });
+      console.log("[USG] ✅ Interceptor de red inyectado");
+    } catch(err) {
+      console.error("[USG] Error inyectando interceptor:", err);
+    }
   }
 
   // DEFERRED: Schedule all other setup to run AFTER page is loaded
@@ -57,16 +85,17 @@
   }
 
   function ensureLearningPanel() {
-    if (document.querySelector("#usg-learning-panel")) {
-      return;
-    }
-
-    console.log("[USG] 🔍 Iniciando búsqueda de video...");
+    console.log("[USG] 🔍 Iniciando búsqueda continua de video...");
 
     let attempts = 0;
-    const maxAttempts = 300; // 5 minutos máximo
 
-    const pollInterval = setInterval(() => {
+    // Ejecución continua: Si navegamos a otro video o si Udemy destruye el panel al cambiar de clase, se volverá a crear.
+    setInterval(() => {
+      // 0. Si ya existe en el DOM, no hacer nada.
+      if (document.querySelector("#usg-learning-panel")) {
+        return;
+      }
+      
       attempts++;
 
       // 1. Buscar video element
@@ -98,8 +127,8 @@
       }
 
       // 4. Video encontrado y listo!
-      clearInterval(pollInterval);
-      console.log(`[USG] ✅ Video encontrado y cargado en intento ${attempts}`);
+      // EN LUGAR DE clearInterval(pollInterval), solo inyectamos.
+      console.log(`[USG] ✅ Video encontrado y cargado`);
       console.log(`[USG] ✅ Duración: ${Math.round(video.duration)}s`);
 
       // 5. Darle play automático
@@ -368,35 +397,54 @@
         statusMsg.textContent = "⏳ Extrayendo subtítulos desde el video...";
         console.log("[USG] Botón 'Retry translation' clickeado");
         try {
-          const video = document.querySelector("video");
-          if (!video) throw new Error("No hay video para extraer");
+          let srtText = "";
 
-          let enTracks = [];
-          if (video.textTracks) {
-             for (let i = 0; i < video.textTracks.length; i++) {
-                const t = video.textTracks[i];
-                if ((t.language && t.language.includes("en")) || t.label.includes("English") || t.mode === 'showing' || t.mode === 'hidden') {
-                   if (!t.cues) t.mode = "hidden";
-                   if (t.cues && t.cues.length > 0) {
-                      enTracks = t.cues;
-                      break;
+          if (runtimeState.lastEnVtt) {
+             console.log("[USG] Usando archivo VTT interceptado desde la red...");
+             // VTT a simple formato texto para el LLM (eliminar cabecera)
+             srtText = runtimeState.lastEnVtt.replace("WEBVTT\n\n", "").trim();
+             // Dividir en bloques
+             let blocks = srtText.split(/\n\n/);
+             let converted = "";
+             for(let k=0; k<blocks.length; k++){
+                let cur = blocks[k].split("\n");
+                if (cur.length >= 2 && cur[0].includes("-->")) {
+                   converted += `${k+1}\n${cur[0]}\n${cur.slice(1).join(" ")}\n\n`;
+                } else if (cur.length >= 3 && cur[1].includes("-->")) {
+                   converted += `${k+1}\n${cur[1]}\n${cur.slice(2).join(" ")}\n\n`;
+                }
+             }
+             srtText = converted;
+          } else {
+             // Fallback local: Cues si existen (casi nunca accesibles directo por Udemy DRM)
+             const video = document.querySelector("video");
+             if (!video) throw new Error("No hay video para extraer");
+
+             let enTracks = [];
+             if (video.textTracks) {
+                for (let i = 0; i < video.textTracks.length; i++) {
+                   const t = video.textTracks[i];
+                   if ((t.language && t.language.includes("en")) || t.label.includes("English") || t.mode === 'showing' || t.mode === 'hidden') {
+                      if (!t.cues) t.mode = "hidden";
+                      if (t.cues && t.cues.length > 0) {
+                         enTracks = t.cues;
+                         break;
+                      }
                    }
                 }
              }
-          }
-          
-          if (!enTracks || enTracks.length === 0) {
-             throw new Error("No se encontraron captions en la pista del video");
+             
+             if (!enTracks || enTracks.length === 0) {
+                throw new Error("No se encontraron captions en red, ni texto en el video. Por favor activa los subtitulos en Inglés en el reproductor de Udemy una vez para atraparlos.");
+             }
+
+             for(let j=0; j<enTracks.length; j++) {
+               const cue = enTracks[j];
+               srtText += `${j+1}\n${formatTime(cue.startTime)} --> ${formatTime(cue.endTime)}\n${cue.text}\n\n`;
+             }
           }
 
-          statusMsg.textContent = `⏳ Traducción en progreso (${enTracks.length} cues)...`;
-          
-          // Crear SRT en formato texto a partir de los cues para enviarlos a background.js
-          let srtText = "";
-          for(let j=0; j<enTracks.length; j++) {
-            const cue = enTracks[j];
-            srtText += `${j+1}\n${formatTime(cue.startTime)} --> ${formatTime(cue.endTime)}\n${cue.text}\n\n`;
-          }
+          statusMsg.textContent = `⏳ Traducción en progreso... enviando a LLM`;
 
           // Enviar al LLM mediante background script
           chrome.runtime.sendMessage({
@@ -414,23 +462,34 @@
              statusMsg.textContent = `✅ Traducción exitosa! Inyectando al video...`;
              
              // Inyectar la pista de subtitulos al video
+             const currentVideo = document.querySelector("video");
+             if(!currentVideo) throw new Error("Video no encontrado al inyectar");
+
              // Limpiar anteriores
-             for(let i=0; i<video.textTracks.length; i++) {
-                if(video.textTracks[i].label === "Spanish (AI)") {
-                   video.textTracks[i].mode = "disabled";
+             for(let i=0; i<currentVideo.textTracks.length; i++) {
+                if(currentVideo.textTracks[i].label === "Spanish (AI)") {
+                   currentVideo.textTracks[i].mode = "disabled";
                 }
              }
 
-             const newTrack = video.addTextTrack("subtitles", "Spanish (AI)", "es");
+             const newTrack = currentVideo.addTextTrack("subtitles", "Spanish (AI)", "es");
              newTrack.mode = "showing";
 
-             // Simple SRT parser mock
-             const blocks = response.srt.split("\\n\\n");
+             // Inyectador de subtítulos (parser simplificado)
+             const blocks = (response.srt || "").split(/\n\n|\r\n\r\n/);
              for(const block of blocks) {
-                const lines = block.split("\\n");
+                const lines = block.split(/\n|\r\n/);
                 if(lines.length >= 3) {
                    const time = lines[1];
-                   newTrack.addCue(new VTTCue(0, 10, lines.slice(2).join(" "))); // placeholder
+                   
+                   // Convertir 00:00:00,000 --> 00:00:00,000 a segundos
+                   const times = time.split(" --> ");
+                   if(times.length === 2) {
+                     const start = parseTimeStringToSeconds(times[0]);
+                     const end = parseTimeStringToSeconds(times[1]);
+                     const text = lines.slice(2).join(" ");
+                     newTrack.addCue(new VTTCue(start, end, text));
+                   }
                 }
              }
           });
@@ -445,6 +504,15 @@
        const date = new Date(null);
        date.setSeconds(seconds);
        return date.toISOString().substr(11, 8) + ",000";
+    }
+
+    // Helper to parse SRT time string "00:00:00,000" to seconds
+    function parseTimeStringToSeconds(timeStr) {
+       const p = timeStr.trim().replace(',', '.').split(':');
+       if(p.length === 3) {
+           return (+p[0]) * 3600 + (+p[1]) * 60 + (+p[2]);
+       }
+       return 0;
     }
 
     if (exportBtn) {
