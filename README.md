@@ -1,6 +1,6 @@
 # Udemy Subtitle Bridge
 
-Chrome extension (Manifest V3) to:
+Planned scope (not fully implemented yet):
 
 1. detect EN/ES caption state on Udemy lecture pages,
 2. auto-capture EN subtitles on lecture load (when native ES is missing),
@@ -13,6 +13,25 @@ Chrome extension (Manifest V3) to:
 9. generate a study guide (simple explanation, examples, mini quiz) from lecture transcript using a local AI API,
 10. auto-translate EN SRT to ES and load ES overlay automatically when native ES does not exist.
 
+## Current status (May 2026)
+
+- In-page learning panel injected under the Udemy video container (no popup required).
+- Network capture bridge can intercept VTT/GraphQL responses when subtitles are loaded.
+- Manual "Retry translation" attempts to build EN SRT from captured VTT and send it to the local AI API.
+- Background script includes SRT parsing + translation flow (single AI call per request).
+
+## Missing / Incomplete
+
+- Automatic EN subtitle capture on lecture load and caching.
+- Automatic EN SRT download per lecture.
+- Export EN as SRT (panel and popup actions).
+- Import ES SRT / paste-to-apply flow.
+- ES overlay rendering and settings (offset, font size, opacity).
+- Popup UI actions wired to content script.
+- Study guide generation UI and transcript extraction.
+- Auto EN -> ES translation on lecture load.
+- Storage cleanup, lecture cache limits, and retry logic.
+
 ## Load Extension
 
 1. Open Chrome and go to `chrome://extensions`.
@@ -20,9 +39,17 @@ Chrome extension (Manifest V3) to:
 3. Click **Load unpacked**.
 4. Select this folder:
 
-   `d:\Proyectos\OTROS\UDEMY-SUBTITLE`
+   `d:\Proyectos\OTROS\udemy-subtitle-bridge`
 
-## Usage Flow
+## Current Manual Flow (What Works Now)
+
+1. Open a Udemy lecture page.
+2. Wait for the in-page panel to appear under the video container.
+3. Turn on English subtitles once in the Udemy player (to trigger VTT fetch).
+4. Click **Retry translation** in the panel.
+5. Ensure the local AI API is running at `http://127.0.0.1:8010` with `/sessions/*` endpoints.
+
+## Planned Usage Flow
 
 1. Open a Udemy lecture page.
 2. Open the extension popup.
