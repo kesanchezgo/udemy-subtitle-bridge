@@ -15,6 +15,13 @@ type OverlayConfig = {
 	shadowStrength: number;
 };
 
+type CapturedCue = {
+	index: number;
+	startTime: number;
+	endTime: number;
+	text: string;
+};
+
 const SUBTITLE_SELECTORS = [
 	'.ud-transcript-cue',
 	'[data-purpose="transcript-cue-active"]',
@@ -41,10 +48,263 @@ let observer: MutationObserver | null = null;
 let currentSubtitle = '';
 let currentConfig: OverlayConfig = { ...DEFAULT_CONFIG };
 
+let capturedEnVtt: string | null = null;
+let capturedCues: CapturedCue[] = [];
+let collectedLines: Array<{ text: string; ts: number }> = [];
+
 function getLectureKey() {
 	const match = window.location.pathname.match(/lecture\/(\d+)/);
 	return match ? match[1] : null;
 }
+
+function getCourseSlug() {
+	const match = window.location.pathname.match(/\/course\/([^/]+)/);
+	return match ? match[1] : null;
+}
+
+function getLectureTitle() {
+	const selectors = [
+		'[data-purpose="lesson-title"]',
+		'[data-purpose="video-title"]',
+		'.ud-heading-xl',
+		'h1[class*="title"]',
+		'.lecture-title'
+	];
+
+	for (const selector of selectors) {
+		const el = document.querySelector(selector);
+		if (el) {
+			const text = (el as HTMLElement).innerText || el.textContent || '';
+			const trimmed = text.trim();
+			if (trimmed) {
+				return trimmed;
+			}
+		}
+	}
+
+	return null;
+}
+
+// ── Network Bridge: inject page-network-bridge.js to capture VTT from fetch/XHR ──
+
+function injectNetworkBridge() {
+	const chromeApi = (globalThis as typeof globalThis & { chrome?: { runtime?: { getURL?: (path: string) => string } } }).chrome;
+	if (!chromeApi?.runtime?.getURL) {
+		return;
+	}
+
+	try {
+		const script = document.createElement('script');
+		script.src = chromeApi.runtime.getURL('src/page-network-bridge.js');
+		script.onload = () => script.remove();
+		(document.head || document.documentElement).appendChild(script);
+
+		document.addEventListener('USG_NET_CAPTURE', ((event: CustomEvent) => {
+			const detail = event.detail;
+			if (!detail || !detail.url) {
+				return;
+			}
+
+			const url = String(detail.url).toLowerCase();
+			if (url.includes('.vtt') && (url.includes('en') || url.includes('english'))) {
+				capturedEnVtt = String(detail.body || '');
+				parseVttIntoCues(capturedEnVtt);
+			}
+		}) as EventListener);
+	} catch (_error) {
+		// Keep silent if injection fails.
+	}
+}
+
+// ── VTT Parsing ──
+
+function parseVttIntoCues(vttText: string) {
+	const cleaned = vttText.replace('WEBVTT\n\n', '').replace('WEBVTT\r\n\r\n', '').trim();
+	const blocks = cleaned.split(/\n\n|\r\n\r\n/);
+	const parsed: CapturedCue[] = [];
+	let index = 1;
+
+	for (const block of blocks) {
+		const lines = block.split(/\n|\r\n/);
+		let timeLineIndex = 0;
+
+		if (lines.length >= 2 && lines[0].includes('-->')) {
+			timeLineIndex = 0;
+		} else if (lines.length >= 3 && lines[1].includes('-->')) {
+			timeLineIndex = 1;
+		} else {
+			continue;
+		}
+
+		const timeParts = lines[timeLineIndex].split('-->');
+		if (timeParts.length !== 2) {
+			continue;
+		}
+
+		const startTime = parseVttTime(timeParts[0].trim());
+		const endTime = parseVttTime(timeParts[1].trim());
+		const text = lines.slice(timeLineIndex + 1).join(' ').trim();
+
+		if (text && Number.isFinite(startTime) && Number.isFinite(endTime)) {
+			parsed.push({ index, startTime, endTime, text });
+			index++;
+		}
+	}
+
+	if (parsed.length > 0) {
+		capturedCues = parsed;
+	}
+}
+
+function parseVttTime(timeStr: string): number {
+	const cleaned = timeStr.replace(',', '.').trim();
+	const parts = cleaned.split(':');
+	if (parts.length === 3) {
+		return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+	}
+	if (parts.length === 2) {
+		return Number(parts[0]) * 60 + Number(parts[1]);
+	}
+	return 0;
+}
+
+// ── Extract cues from <video> textTracks ──
+
+function extractCuesFromVideo(): CapturedCue[] {
+	const video = document.querySelector('video');
+	if (!video || !video.textTracks) {
+		return [];
+	}
+
+	for (let i = 0; i < video.textTracks.length; i++) {
+		const track = video.textTracks[i];
+		const lang = (track.language || '').toLowerCase();
+		const isEnglish = lang.includes('en') || (track.label || '').toLowerCase().includes('english');
+
+		if (isEnglish || track.mode === 'showing' || track.mode === 'hidden') {
+			if (!track.cues) {
+				track.mode = 'hidden';
+			}
+
+			if (track.cues && track.cues.length > 0) {
+				const extracted: CapturedCue[] = [];
+				for (let j = 0; j < track.cues.length; j++) {
+					const cue = track.cues[j] as VTTCue;
+					extracted.push({
+						index: j + 1,
+						startTime: cue.startTime,
+						endTime: cue.endTime,
+						text: cue.text
+					});
+				}
+				return extracted;
+			}
+		}
+	}
+
+	return [];
+}
+
+// ── SRT formatting ──
+
+function formatTime(seconds: number): string {
+	const h = Math.floor(seconds / 3600);
+	const m = Math.floor((seconds % 3600) / 60);
+	const s = Math.floor(seconds % 60);
+	const ms = Math.round((seconds % 1) * 1000);
+	return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+}
+
+function cuesToSrt(cues: CapturedCue[]): string {
+	return cues
+		.map((cue, i) => `${i + 1}\n${formatTime(cue.startTime)} --> ${formatTime(cue.endTime)}\n${cue.text}`)
+		.join('\n\n');
+}
+
+// ── Collect all available transcript text ──
+
+function collectTranscriptText(maxChars: number): { text: string; source: string; cueCount: number; truncated: boolean } {
+	// Priority 1: VTT captured from network
+	if (capturedCues.length > 0) {
+		let text = capturedCues.map((c) => c.text).join(' ');
+		const truncated = text.length > maxChars;
+		if (truncated) {
+			text = text.slice(0, maxChars);
+		}
+		return { text, source: 'network-vtt', cueCount: capturedCues.length, truncated };
+	}
+
+	// Priority 2: Video textTracks
+	const videoCues = extractCuesFromVideo();
+	if (videoCues.length > 0) {
+		let text = videoCues.map((c) => c.text).join(' ');
+		const truncated = text.length > maxChars;
+		if (truncated) {
+			text = text.slice(0, maxChars);
+		}
+		return { text, source: 'video-text-tracks', cueCount: videoCues.length, truncated };
+	}
+
+	// Priority 3: DOM-collected lines
+	if (collectedLines.length > 0) {
+		let text = collectedLines.map((l) => l.text).join(' ');
+		const truncated = text.length > maxChars;
+		if (truncated) {
+			text = text.slice(0, maxChars);
+		}
+		return { text, source: 'dom-observer', cueCount: collectedLines.length, truncated };
+	}
+
+	// Priority 4: Current visible transcript panel
+	const transcriptPanel = document.querySelector('[data-purpose="transcript-panel"]');
+	if (transcriptPanel) {
+		const cueElements = transcriptPanel.querySelectorAll('[data-purpose="transcript-cue"]');
+		if (cueElements.length > 0) {
+			const texts: string[] = [];
+			cueElements.forEach((el) => {
+				const t = (el as HTMLElement).innerText || el.textContent || '';
+				if (t.trim()) {
+					texts.push(t.trim());
+				}
+			});
+			if (texts.length > 0) {
+				let text = texts.join(' ');
+				const truncated = text.length > maxChars;
+				if (truncated) {
+					text = text.slice(0, maxChars);
+				}
+				return { text, source: 'transcript-panel', cueCount: texts.length, truncated };
+			}
+		}
+	}
+
+	return { text: '', source: 'none', cueCount: 0, truncated: false };
+}
+
+// ── Export EN as SRT ──
+
+function exportEnSrt(): { srt: string; cueCount: number; source: string; fileName: string } {
+	// Priority 1: Network VTT
+	if (capturedCues.length > 0) {
+		const srt = cuesToSrt(capturedCues);
+		const slug = getCourseSlug() || 'udemy';
+		const key = getLectureKey() || 'lecture';
+		return { srt, cueCount: capturedCues.length, source: 'network-vtt', fileName: `${slug}_${key}_en.srt` };
+	}
+
+	// Priority 2: Video textTracks
+	const videoCues = extractCuesFromVideo();
+	if (videoCues.length > 0) {
+		const srt = cuesToSrt(videoCues);
+		const slug = getCourseSlug() || 'udemy';
+		const key = getLectureKey() || 'lecture';
+		return { srt, cueCount: videoCues.length, source: 'video-text-tracks', fileName: `${slug}_${key}_en.srt` };
+	}
+
+	return { srt: '', cueCount: 0, source: 'none', fileName: '' };
+}
+
+// ── Overlay rendering (unchanged) ──
 
 function findVideoContainer() {
 	const selectors = [
@@ -220,6 +480,12 @@ async function emitSubtitleLine(text: string) {
 
 	currentSubtitle = trimmed;
 	updateOverlayText(trimmed);
+
+	collectedLines.push({ text: trimmed, ts: Date.now() });
+	if (collectedLines.length > 5000) {
+		collectedLines = collectedLines.slice(-4000);
+	}
+
 	await sendToSidebar({
 		type: 'SUBTITLE_LINE_RECEIVED',
 		payload: {
@@ -268,7 +534,172 @@ function startObserver() {
 	});
 }
 
+// ── Chrome message handler for popup.js communication ──
+
+function setupChromeMessageHandler() {
+	const chromeApi = (globalThis as typeof globalThis & { chrome?: { runtime?: { onMessage?: { addListener: (fn: (message: Record<string, unknown>, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void) => void } } } }).chrome;
+	if (!chromeApi?.runtime?.onMessage) {
+		return;
+	}
+
+	chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+		const type = message && (message as { type?: string }).type;
+		if (!type) {
+			return false;
+		}
+
+		const msg = message as Record<string, unknown>;
+
+		if (type === 'USG_GET_STATUS') {
+			const videoCues = capturedCues.length > 0 ? capturedCues : extractCuesFromVideo();
+			sendResponse({
+				ok: true,
+				status: {
+					lectureKey: getLectureKey(),
+					courseSlug: getCourseSlug(),
+					lectureId: getLectureKey(),
+					lectureTitle: getLectureTitle(),
+					hasEnglish: videoCues.length > 0 || capturedEnVtt !== null,
+					hasNativeSpanish: false,
+					importedCount: 0,
+					prefetchMode: capturedEnVtt ? 'network-vtt' : (videoCues.length > 0 ? 'text-tracks' : 'dom-observer'),
+					prefetchedCueCount: videoCues.length,
+					autoDownloaded: capturedEnVtt !== null,
+					autoTranslated: false,
+					overlayEnabled: currentConfig.visible && currentConfig.enabled,
+					canActions: true,
+					settings: {
+						offsetMs: currentConfig.offsetMs,
+						fontSizePx: currentConfig.fontSize,
+						opacity: currentConfig.opacity,
+						overlayPosition: currentConfig.position,
+						overlayTextColor: currentConfig.tone
+					},
+					reason: capturedEnVtt
+						? `VTT capturado de red (${capturedCues.length} cues)`
+						: videoCues.length > 0
+							? `${videoCues.length} cues de textTracks`
+							: collectedLines.length > 0
+								? `${collectedLines.length} líneas capturadas del DOM`
+								: 'Esperando subtítulos...'
+				}
+			});
+			return false;
+		}
+
+		if (type === 'USG_EXPORT_EN_SRT') {
+			const result = exportEnSrt();
+			if (!result.srt) {
+				sendResponse({ ok: false, error: 'No hay subtítulos EN disponibles para exportar. Activa los subtítulos en inglés en el reproductor de Udemy.' });
+			} else {
+				sendResponse({ ok: true, srt: result.srt, cueCount: result.cueCount, extractionMode: result.source, fileName: result.fileName });
+			}
+			return false;
+		}
+
+		if (type === 'USG_GET_STUDY_TRANSCRIPT') {
+			const maxChars = typeof msg.maxChars === 'number' ? msg.maxChars : 22000;
+			const result = collectTranscriptText(maxChars);
+			if (!result.text) {
+				sendResponse({ ok: false, error: 'No hay transcripción disponible. Reproduce el video con subtítulos en inglés activados.' });
+			} else {
+				sendResponse({
+					ok: true,
+					transcriptText: result.text,
+					source: result.source,
+					cueCount: result.cueCount,
+					transcriptTruncated: result.truncated,
+					lectureKey: getLectureKey(),
+					courseSlug: getCourseSlug(),
+					lectureTitle: getLectureTitle()
+				});
+			}
+			return false;
+		}
+
+		if (type === 'USG_IMPORT_ES_SRT') {
+			sendResponse({ ok: true, importedCount: 0, alreadyLoaded: false });
+			return false;
+		}
+
+		if (type === 'USG_CLEAR_IMPORTED_FOR_LECTURE') {
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (type === 'USG_SET_OVERLAY_ENABLED') {
+			const enabled = Boolean(msg.enabled);
+			currentConfig = { ...currentConfig, visible: enabled, enabled };
+			applyOverlayStyle();
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (type === 'USG_SET_OVERLAY_SETTINGS') {
+			currentConfig = {
+				...currentConfig,
+				offsetMs: typeof msg.offsetMs === 'number' ? msg.offsetMs : currentConfig.offsetMs,
+				fontSize: typeof msg.fontSizePx === 'number' ? msg.fontSizePx : currentConfig.fontSize,
+				opacity: typeof msg.opacity === 'number' ? msg.opacity : currentConfig.opacity,
+				position: (typeof msg.overlayPosition === 'string' ? msg.overlayPosition : currentConfig.position) as OverlayPosition,
+				tone: (typeof msg.overlayTextColor === 'string' ? msg.overlayTextColor : currentConfig.tone) as OverlayTone
+			};
+			applyOverlayStyle();
+			sendResponse({ ok: true, status: { settings: currentConfig } });
+			return false;
+		}
+
+		if (type === 'USG_RETRY_AUTO_TRANSLATE') {
+			const enSrt = exportEnSrt();
+			if (!enSrt.srt) {
+				sendResponse({ ok: false, error: 'No hay subtítulos EN disponibles para traducir.' });
+				return false;
+			}
+
+			const chromeRuntime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void } } }).chrome;
+			if (chromeRuntime?.runtime?.sendMessage) {
+				chromeRuntime.runtime.sendMessage({
+					type: 'USG_TRANSLATE_EN_SRT_AUTO',
+					srtText: enSrt.srt,
+					lectureKey: getLectureKey(),
+					courseSlug: getCourseSlug(),
+					lectureId: getLectureKey()
+				}, (response) => {
+					sendResponse(response || { ok: false, error: 'No response from background.' });
+				});
+				return true;
+			}
+
+			sendResponse({ ok: false, error: 'Chrome runtime not available.' });
+			return false;
+		}
+
+		return false;
+	});
+}
+
+// ── URL change watcher ──
+
+function watchUrlChanges() {
+	let lastUrl = window.location.href;
+
+	setInterval(() => {
+		const currentUrl = window.location.href;
+		if (currentUrl !== lastUrl) {
+			lastUrl = currentUrl;
+			capturedEnVtt = null;
+			capturedCues = [];
+			collectedLines = [];
+			currentSubtitle = '';
+		}
+	}, 1000);
+}
+
+// ── Bootstrap ──
+
 function bootstrap() {
+	injectNetworkBridge();
+
 	const container = findVideoContainer();
 	if (container) {
 		createOverlay(container);
@@ -276,6 +707,18 @@ function bootstrap() {
 
 	startObserver();
 	scanForSubtitleChanges();
+	setupChromeMessageHandler();
+	watchUrlChanges();
+
+	// Try to extract cues from video after a delay
+	setTimeout(() => {
+		if (capturedCues.length === 0) {
+			const videoCues = extractCuesFromVideo();
+			if (videoCues.length > 0) {
+				capturedCues = videoCues;
+			}
+		}
+	}, 3000);
 
 	onMessageFromSidebar((message) => {
 		if (message.type === 'PING') {
@@ -338,6 +781,30 @@ function bootstrap() {
 			if (payload?.text) {
 				updateOverlayText(payload.text);
 			}
+		}
+
+		if (message.type === 'GET_TRANSCRIPT') {
+			const maxChars = typeof (message.payload as { maxChars?: number })?.maxChars === 'number'
+				? (message.payload as { maxChars: number }).maxChars
+				: 22000;
+			const result = collectTranscriptText(maxChars);
+			void sendToSidebar({
+				type: 'TRANSCRIPT_RESULT',
+				payload: {
+					...result,
+					lectureKey: getLectureKey(),
+					courseSlug: getCourseSlug(),
+					lectureTitle: getLectureTitle()
+				}
+			}).catch(() => undefined);
+		}
+
+		if (message.type === 'GET_EN_SRT') {
+			const result = exportEnSrt();
+			void sendToSidebar({
+				type: 'EN_SRT_RESULT',
+				payload: result
+			}).catch(() => undefined);
 		}
 	});
 }
