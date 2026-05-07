@@ -41,10 +41,19 @@
     offsetMs: document.getElementById("offsetMs"),
     fontSizePx: document.getElementById("fontSizePx"),
     opacity: document.getElementById("opacity"),
-    overlayPosition: document.getElementById("overlayPosition"),
-    overlayTextColor: document.getElementById("overlayTextColor"),
+    shadowStrength: document.getElementById("shadowStrength"),
     overlayResetBtn: document.getElementById("overlayResetBtn"),
     overlayStatus: document.getElementById("overlayStatus"),
+    fontSizeVal: document.getElementById("fontSizeVal"),
+    opacityVal: document.getElementById("opacityVal"),
+    shadowVal: document.getElementById("shadowVal"),
+    offsetVal: document.getElementById("offsetVal"),
+    offsetResetBtn: document.getElementById("offsetResetBtn"),
+    autoTranslateToggle: document.getElementById("autoTranslateToggle"),
+    posButtons: Array.from(document.querySelectorAll(".usb-pos-btn")),
+    colorButtons: Array.from(document.querySelectorAll(".usb-color-btn")),
+    presetButtons: Array.from(document.querySelectorAll(".usb-preset-grid button[data-preset]")),
+    overlayPreviewSub: document.getElementById("overlayPreviewSub"),
     pipelineCueCount: document.getElementById("pipelineCueCount"),
     pipelineLatency: document.getElementById("pipelineLatency"),
     pipelineApiState: document.getElementById("pipelineApiState"),
@@ -72,12 +81,20 @@
   });
 
   async function boot() {
-    activeTabId = await getActiveTabId();
+    try {
+      activeTabId = await getActiveTabId();
+    } catch (_) {
+      activeTabId = null;
+    }
     wireEvents();
     setupTabs();
     renderDevOutput();
-    await refreshStatus();
-    await syncPasteDraftWithStatus();
+    try {
+      await refreshStatus();
+    } catch (_) {}
+    try {
+      await syncPasteDraftWithStatus();
+    } catch (_) {}
   }
 
   function wireEvents() {
@@ -215,17 +232,7 @@
       }
     });
 
-    if (els.overlayPosition) {
-      els.overlayPosition.addEventListener("change", () => {
-        pushOverlaySettings(false);
-      });
-    }
 
-    if (els.overlayTextColor) {
-      els.overlayTextColor.addEventListener("change", () => {
-        pushOverlaySettings(false);
-      });
-    }
 
     if (els.overlayResetBtn) {
       els.overlayResetBtn.addEventListener("click", async () => {
@@ -236,13 +243,13 @@
           els.fontSizePx.value = "32";
         }
         if (els.opacity) {
-          els.opacity.value = "0.86";
+          els.opacity.value = "85";
         }
-        if (els.overlayPosition) {
-          els.overlayPosition.value = "bottom";
+        for (const b of els.posButtons) {
+          b.classList.toggle("is-active", b.getAttribute("data-pos") === "bottom");
         }
-        if (els.overlayTextColor) {
-          els.overlayTextColor.value = "white";
+        for (const b of els.colorButtons) {
+          b.classList.toggle("is-active", b.getAttribute("data-color") === "white");
         }
         await pushOverlaySettings(true);
       });
@@ -291,6 +298,9 @@
     });
 
     els.offsetMs.addEventListener("input", () => {
+      var v = Number(els.offsetMs.value);
+      if (els.offsetVal) els.offsetVal.textContent = (v >= 0 ? "+" : "") + v + "ms";
+      if (els.offsetResetBtn) els.offsetResetBtn.style.display = v === 0 ? "none" : "";
       pushOverlaySettings(false);
     });
     els.offsetMs.addEventListener("change", () => {
@@ -298,6 +308,7 @@
     });
 
     els.fontSizePx.addEventListener("input", () => {
+      if (els.fontSizeVal) els.fontSizeVal.textContent = els.fontSizePx.value + "px";
       pushOverlaySettings(false);
     });
     els.fontSizePx.addEventListener("change", () => {
@@ -305,11 +316,49 @@
     });
 
     els.opacity.addEventListener("input", () => {
+      if (els.opacityVal) els.opacityVal.textContent = els.opacity.value + "%";
       pushOverlaySettings(false);
     });
     els.opacity.addEventListener("change", () => {
       pushOverlaySettings(true);
     });
+
+    if (els.shadowStrength) {
+      els.shadowStrength.addEventListener("input", () => {
+        if (els.shadowVal) els.shadowVal.textContent = els.shadowStrength.value + "%";
+      });
+    }
+
+    if (els.offsetResetBtn) {
+      els.offsetResetBtn.addEventListener("click", () => {
+        els.offsetMs.value = 0;
+        if (els.offsetVal) els.offsetVal.textContent = "+0ms";
+        els.offsetResetBtn.style.display = "none";
+        pushOverlaySettings(true);
+      });
+    }
+
+    for (const btn of els.posButtons) {
+      btn.addEventListener("click", () => {
+        for (const b of els.posButtons) b.classList.remove("is-active");
+        btn.classList.add("is-active");
+        pushOverlaySettings(true);
+      });
+    }
+
+    for (const btn of els.colorButtons) {
+      btn.addEventListener("click", () => {
+        for (const b of els.colorButtons) b.classList.remove("is-active");
+        btn.classList.add("is-active");
+        pushOverlaySettings(true);
+      });
+    }
+
+    for (const btn of els.presetButtons) {
+      btn.addEventListener("click", () => {
+        applyPreset(btn.getAttribute("data-preset"));
+      });
+    }
 
     if (els.gearBtn) {
       els.gearBtn.addEventListener("click", () => {
@@ -434,19 +483,55 @@
     els.devOutput.textContent = JSON.stringify(payload, null, 2);
   }
 
+  function getActivePosition() {
+    const active = document.querySelector(".usb-pos-btn.is-active");
+    return active ? active.getAttribute("data-pos") : "bottom";
+  }
+
+  function getActiveColor() {
+    const active = document.querySelector(".usb-color-btn.is-active");
+    return active ? active.getAttribute("data-color") : "white";
+  }
+
+  function applyPreset(name) {
+    const presets = {
+      cine: { fontSize: 28, opacity: 90, shadow: 80, position: "bottom", color: "white" },
+      minimal: { fontSize: 18, opacity: 60, shadow: 30, position: "bottom", color: "white" },
+      hc: { fontSize: 32, opacity: 100, shadow: 100, position: "bottom", color: "yellow" },
+      default: { fontSize: 24, opacity: 85, shadow: 60, position: "bottom", color: "white" },
+    };
+    const p = presets[name];
+    if (!p) return;
+
+    els.fontSizePx.value = p.fontSize;
+    els.opacity.value = p.opacity;
+    if (els.shadowStrength) els.shadowStrength.value = p.shadow;
+    els.offsetMs.value = 0;
+
+    if (els.fontSizeVal) els.fontSizeVal.textContent = p.fontSize + "px";
+    if (els.opacityVal) els.opacityVal.textContent = p.opacity + "%";
+    if (els.shadowVal) els.shadowVal.textContent = p.shadow + "%";
+    if (els.offsetVal) els.offsetVal.textContent = "+0ms";
+
+    for (const b of els.posButtons) {
+      b.classList.toggle("is-active", b.getAttribute("data-pos") === p.position);
+    }
+    for (const b of els.colorButtons) {
+      b.classList.toggle("is-active", b.getAttribute("data-color") === p.color);
+    }
+
+    pushOverlaySettings(true);
+  }
+
   async function pushOverlaySettings(refreshAfter = false) {
     try {
       const response = await sendToContent({
         type: "USG_SET_OVERLAY_SETTINGS",
         offsetMs: Number(els.offsetMs.value),
         fontSizePx: Number(els.fontSizePx.value),
-        opacity: Number(els.opacity.value),
-        overlayPosition: String(
-          (els.overlayPosition && els.overlayPosition.value) || "bottom",
-        ),
-        overlayTextColor: String(
-          (els.overlayTextColor && els.overlayTextColor.value) || "white",
-        ),
+        opacity: Number(els.opacity.value) / 100,
+        overlayPosition: getActivePosition(),
+        overlayTextColor: getActiveColor(),
       });
       if (!response.ok) {
         throw new Error(response.error || "Failed to update overlay settings.");
@@ -526,24 +611,19 @@
         : 0;
       els.offsetMs.value = String(safeOffset);
       els.fontSizePx.value = String(status.settings.fontSizePx || 32);
-      els.opacity.value = String(status.settings.opacity || 0.86);
-      if (els.overlayPosition) {
-        els.overlayPosition.value = String(
-          status.settings.overlayPosition || "bottom",
-        );
+      var rawOpacity = status.settings.opacity || 0.85;
+      els.opacity.value = String(Math.round(rawOpacity <= 1 ? rawOpacity * 100 : rawOpacity));
+      var pos = String(status.settings.overlayPosition || "bottom");
+      for (const b of els.posButtons) {
+        b.classList.toggle("is-active", b.getAttribute("data-pos") === pos);
       }
-      if (els.overlayTextColor) {
-        els.overlayTextColor.value = String(
-          status.settings.overlayTextColor || "white",
-        );
+      var col = String(status.settings.overlayTextColor || "white");
+      for (const b of els.colorButtons) {
+        b.classList.toggle("is-active", b.getAttribute("data-color") === col);
       }
     }
 
-    if (els.overlayStatus) {
-      els.overlayStatus.textContent = status.overlayEnabled
-        ? `Overlay live · ${status.settings && status.settings.overlayPosition ? status.settings.overlayPosition : "bottom"} · ${status.settings && status.settings.overlayTextColor ? status.settings.overlayTextColor : "white"}`
-        : "Overlay disabled.";
-    }
+
 
     renderDevOutput();
   }
