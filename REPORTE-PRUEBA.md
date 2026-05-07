@@ -82,7 +82,7 @@ Cookies expiradas → Udemy rechaza sesión → Paywall activo
 2. Ve a `chrome://extensions/`
 3. Activa "Modo de desarrollador" (esquina superior derecha)
 4. Click "Cargar extensión sin empaquetar"
-5. Selecciona: `D:\Proyectos\OTROS\udemy-subtitle-bridge`
+5. Selecciona: `D:\Proyectos\OTROS\udemy-subtitle-bridge\dist`
 6. Navega a un curso de Udemy donde **YA ESTÉS LOGUEADO**
 7. El panel debería aparecer debajo del reproductor
 

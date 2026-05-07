@@ -21,8 +21,30 @@ La extensión ha sido **completamente probada y funciona correctamente**:
 
 ### Paso 3: Cargar Extensión Sin Empaquetar
 1. Haz clic en el botón **"Cargar extensión sin empaquetar"**
-2. Navega a la carpeta del proyecto: `D:\Proyectos\OTROS\udemy-subtitle-bridge`
-3. Selecciona la carpeta y haz clic en **"Seleccionar carpeta"**
+2. Navega a la carpeta generada por build: `D:\Proyectos\OTROS\udemy-subtitle-bridge\dist`
+3. Selecciona **esa carpeta** y haz clic en **"Seleccionar carpeta"**
+
+> Importante: no cargues la raíz del repositorio. Chrome debe abrir el `manifest.json` generado dentro de `dist/`, donde los scripts ya salen como JavaScript válido.
+
+### Error común (MIME con .ts)
+
+Si ves este error:
+
+`Invalid script mime type ... src/content_script.ts ...`
+
+significa que cargaste el `manifest.json` de la raíz del repo. Vuelve a cargar la extensión desde `dist/`.
+
+En MV3, Chrome solo acepta scripts JavaScript finales (`.js`) para `content_scripts` y `service_worker`.
+
+### QA automatizada sin Udemy/Cloudflare
+
+Si tu entorno de pruebas no puede pasar Cloudflare o no permite instalar extensiones, ejecuta:
+
+```powershell
+npm run qa:local
+```
+
+Este flujo valida la UI React (`index.html`) desde `dist/` con Playwright, incluyendo tabs `Captions`, `Overlay` y `Dev`.
 
 ### Paso 4: Verificar Instalación
 1. Deberías ver la extensión aparecer en chrome://extensions/
@@ -40,6 +62,7 @@ La extensión ha sido **completamente probada y funciona correctamente**:
 ```
 udemy-subtitle-bridge/
 ├── manifest.json          ← Configuración MV3 de Chrome
+├── dist/                  ← Carpeta que debes cargar en chrome://extensions/
 ├── src/
 │   ├── content-script.js  ← Se inyecta en Udemy, observa DOM
 │   └── background.js      ← Service worker, maneja API calls

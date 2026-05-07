@@ -1,0 +1,2127 @@
+@import './tailwind.css';
+@import './theme.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: linear-gradient(180deg, #121214 0%, #0a0a0c 100%);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+textarea,
+input {
+  outline: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.usb-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(18, 18, 20, 0.98) 0%, rgba(10, 10, 12, 1) 100%);
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.usb-header {
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  background: rgba(18, 18, 20, 0.88);
+}
+
+.usb-brand,
+.usb-header-actions,
+.usb-port-badge,
+.usb-tab,
+.usb-goal-card,
+.usb-small-btn,
+.usb-generate-btn,
+.usb-refine-btn,
+.usb-select-btn,
+.usb-switch {
+  transition: all 180ms ease;
+}
+
+.usb-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usb-logo-icon,
+.usb-gear-icon,
+.usb-tab-icon svg,
+.usb-btn-icon,
+.usb-label-icon,
+.usb-control-icon,
+.usb-stat-icon,
+.usb-history-icon,
+.usb-card-info,
+.usb-step-icon,
+.usb-step-bullet-icon,
+.usb-dev-state-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.usb-logo-icon {
+  color: white;
+}
+
+.usb-brand-copy {
+  display: flex;
+  flex-direction: column;
+}
+
+.usb-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.usb-subtitle {
+  margin-top: 1px;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.44);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.usb-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usb-port-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 9999px;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.12);
+  font-size: 10px;
+  color: var(--emerald-400);
+}
+
+.usb-port-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--emerald-500);
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+  animation: usbPulse 2s infinite;
+}
+
+.usb-gear-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+}
+
+.usb-gear-btn:hover,
+.usb-gear-btn.is-active {
+  color: white;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.usb-gear-btn.is-active {
+  color: var(--amber-400);
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.24);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+}
+
+.usb-gear-icon.is-spinning {
+  animation: usbSpinSlow 8s linear infinite;
+}
+
+.usb-tabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(18, 18, 20, 0.96);
+}
+
+.usb-tab-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+}
+
+.usb-tab {
+  position: relative;
+  flex: 1;
+  z-index: 1;
+  min-height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: none;
+}
+
+.usb-tab:hover {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.usb-tab.is-active {
+  color: white;
+  background: transparent;
+}
+
+.usb-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.usb-tab-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.usb-tab.is-active .usb-tab-icon svg {
+  color: var(--violet-400);
+}
+
+.usb-tab-ping {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--violet-solid);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.55);
+  margin-left: 4px;
+  animation: usbPulse 2s infinite;
+}
+
+.usb-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.usb-footer {
+  padding: 8px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: #161718;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usb-footer-port {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.16);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.usb-footer-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+}
+
+.usb-footer-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(16, 185, 129, 0.84);
+}
+
+.usb-footer-sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.9);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
+}
+
+.usb-footer-sep {
+  color: rgba(255, 255, 255, 0.1);
+}
+
+.usb-footer-version {
+  color: rgba(139, 92, 246, 0.45);
+}
+
+.usb-study,
+.usb-pipeline,
+.usb-overlay,
+.usb-dev {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.usb-study-hero-card,
+.usb-pipeline-card,
+.usb-history-card,
+.usb-overlay-toggle-card,
+.usb-control-card,
+.usb-dev-card,
+.usb-result-card,
+.usb-relevance-card,
+.usb-anki-strip {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(180deg, rgba(24, 24, 27, 0.9), rgba(18, 18, 20, 0.94));
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+}
+
+.usb-study-hero-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(124, 58, 237, 0.03));
+  border-color: rgba(139, 92, 246, 0.15);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.usb-hero-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(124, 58, 237, 0.16);
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  box-shadow: 0 0 18px rgba(139, 92, 246, 0.16);
+}
+
+.usb-hero-icon {
+  color: var(--violet-400);
+  width: 13px;
+  height: 13px;
+}
+
+.usb-hero-title,
+.usb-section-heading {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.usb-hero-desc,
+.usb-subtext,
+.usb-step-copy.is-muted,
+.usb-history-es,
+.usb-dev-preview,
+.usb-relevance-text,
+.usb-goal-small {
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.usb-goal-grid,
+.usb-selector-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.usb-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.usb-goal-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Dev histogram */
+.usb-dev-histogram-card {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.usb-dev-histogram-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.usb-dev-histogram-meta {
+  font-size: 11px;
+  color: rgba(255,255,255,0.56);
+}
+.usb-dev-histogram {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  height: 40px;
+  padding: 6px 4px 4px 4px;
+}
+.usb-dev-histogram-bar {
+  width: 6px;
+  background: linear-gradient(180deg, rgba(124,58,237,0.9), rgba(99,102,241,0.6));
+  border-radius: 999px;
+  align-self: flex-end;
+}
+
+.usb-dev-histogram-bar.is-done {
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.95), rgba(16, 185, 129, 0.55));
+}
+
+.usb-dev-histogram-bar.is-streaming {
+  background: linear-gradient(180deg, rgba(167, 139, 250, 0.95), rgba(124, 58, 237, 0.56));
+}
+
+.usb-dev-histogram-bar.is-error,
+.usb-dev-histogram-bar.is-aborted {
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.95), rgba(245, 158, 11, 0.55));
+}
+
+.usb-dev-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.usb-dev-summary-card {
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+  display: grid;
+  gap: 4px;
+}
+
+.usb-dev-summary-card.is-done {
+  border-color: rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.usb-dev-summary-card.is-streaming {
+  border-color: rgba(124, 58, 237, 0.2);
+  background: rgba(124, 58, 237, 0.06);
+}
+
+.usb-dev-summary-card.is-error {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.usb-dev-summary-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.usb-dev-summary-value {
+  font-size: 16px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.usb-dev-empty {
+  border-style: dashed;
+}
+.usb-dev-card-foot {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.44);
+}
+
+.usb-dev-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.usb-dev-tab {
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.44);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.usb-dev-tab.is-active {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.075);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.usb-dev-card-head-btn {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.usb-dev-card.is-expanded {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.usb-dev-expanded {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 8px;
+}
+
+.usb-dev-expanded-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.usb-dev-token-stream {
+  max-height: 110px;
+  overflow-y: auto;
+  border-radius: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.24);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.usb-dev-token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 10px;
+  color: rgba(196, 181, 253, 0.85);
+}
+
+/* Captions stat in header */
+.usb-captions-stat {
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  font-size: 11px;
+  color: rgba(255,255,255,0.72);
+}
+
+.usb-goal-card {
+  position: relative;
+  padding: 12px;
+  border-radius: 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usb-goal-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.11);
+}
+
+.usb-goal-card.is-active {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 0 18px rgba(139, 92, 246, 0.18);
+}
+
+.usb-accent-violet.is-active {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.22), rgba(124, 58, 237, 0.04));
+  border-color: rgba(139, 92, 246, 0.28);
+}
+
+.usb-accent-amber.is-active {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.04));
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.usb-accent-emerald.is-active {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0.04));
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.usb-accent-sky.is-active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.18), rgba(14, 165, 233, 0.04));
+  border-color: rgba(14, 165, 233, 0.28);
+}
+
+.usb-goal-emoji {
+  font-size: 15px;
+}
+
+.usb-goal-title {
+  font-size: 11px;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.usb-goal-card.is-active .usb-goal-title {
+  color: white;
+}
+
+.usb-goal-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 11px;
+  height: 11px;
+  color: var(--emerald-400);
+}
+
+.usb-custom-objective,
+.usb-input,
+.usb-answer-box,
+.usb-code-block {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.usb-custom-objective,
+.usb-answer-box {
+  min-height: 44px;
+  padding: 10px 11px;
+  resize: none;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Caption-specific textarea sizing when used in Captions tab */
+.usb-pipeline .usb-custom-objective,
+.usb-pipeline .usb-custom-objective:focus {
+  min-height: 96px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.usb-custom-objective:focus,
+.usb-input:focus,
+.usb-answer-box:focus {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.usb-refine-btn,
+.usb-generate-btn,
+.usb-small-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 10px;
+  padding: 0 12px;
+  min-height: 28px;
+  font-size: 11px;
+}
+
+.usb-refine-btn,
+.usb-small-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.usb-refine-btn:hover,
+.usb-small-btn:hover {
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.usb-generate-btn,
+.usb-primary-btn {
+  background: rgba(124, 58, 237, 0.86);
+  color: white;
+  min-height: 40px;
+  border-radius: 12px;
+}
+
+.usb-generate-btn:hover,
+.usb-primary-btn:hover {
+  background: rgba(124, 58, 237, 1);
+}
+
+.usb-btn-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.usb-refined-box {
+  display: flex;
+  gap: 8px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: rgba(124, 58, 237, 0.08);
+  border: 1px solid rgba(124, 58, 237, 0.14);
+  font-size: 11px;
+  color: rgba(196, 181, 253, 0.85);
+}
+
+.usb-refined-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--violet-400);
+  margin-top: 1px;
+}
+
+.usb-course-inputs {
+  display: grid;
+  gap: 8px;
+}
+
+.usb-course-inputs label,
+.usb-control-head,
+.usb-section-title,
+.usb-history-head,
+.usb-dev-card-head,
+.usb-section-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.usb-input {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.usb-generating-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 360px;
+  padding: 24px 0;
+}
+
+.usb-spinner {
+  width: 48px;
+  height: 48px;
+  border-radius: 9999px;
+  border: 2px solid rgba(139, 92, 246, 0.18);
+  border-top-color: rgba(167, 139, 250, 0.95);
+  animation: usbSpin 1s linear infinite;
+}
+
+.usb-generating-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.usb-generating-list {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.usb-generating-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.26);
+}
+
+.usb-generating-step.is-active {
+  color: var(--violet-300);
+}
+
+.usb-generating-step.is-done {
+  color: rgba(52, 211, 153, 0.76);
+}
+
+.usb-step-icon.is-spinning {
+  animation: usbSpin 1s linear infinite;
+}
+
+.usb-btn-icon.is-spinning {
+  animation: usbSpin 1s linear infinite;
+}
+
+.usb-study-result {
+  display: grid;
+  gap: 10px;
+}
+
+.usb-progress-stepper {
+  gap: 0;
+}
+
+.usb-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usb-step-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.usb-step-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.26);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.usb-step-dot.is-done {
+  color: var(--emerald-400);
+  border-color: rgba(16, 185, 129, 0.34);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.usb-step-dot.is-active {
+  color: var(--violet-300);
+  border-color: rgba(124, 58, 237, 0.36);
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.usb-step-dot-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.usb-step-line {
+  height: 1px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.usb-step-line.is-done {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.42), rgba(167, 139, 250, 0.42));
+}
+
+.usb-relevance-card {
+  position: relative;
+  padding: 16px;
+  background: linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(18, 18, 20, 0.92));
+}
+
+.usb-card-info {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: rgba(255, 255, 255, 0.18);
+}
+
+.usb-relevance-score {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--violet-400);
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  line-height: 0.92;
+}
+
+.usb-relevance-score span {
+  font-size: 14px;
+  color: rgba(167, 139, 250, 0.72);
+  margin-bottom: 2px;
+}
+
+.usb-relevance-text {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 11px;
+}
+
+.usb-confidence-card {
+  gap: 8px;
+}
+
+.usb-confidence-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.usb-confidence-hint-icon {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 1px;
+}
+
+.usb-confidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.usb-confidence-card-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.usb-confidence-card-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.usb-confidence-card-btn.is-active {
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.18), 0 0 16px rgba(139, 92, 246, 0.12);
+}
+
+.usb-confidence-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.usb-confidence-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.usb-confidence-desc {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.32);
+}
+
+.usb-confidence-confused.is-active {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18);
+}
+
+.usb-confidence-partial.is-active {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.25);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+.usb-confidence-clear.is-active {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.25);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18);
+}
+
+.usb-confidence-mastered.is-active {
+  background: rgba(124, 58, 237, 0.1);
+  border-color: rgba(124, 58, 237, 0.25);
+  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.18);
+}
+
+.usb-confidence-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  padding-top: 1px;
+}
+
+.usb-confidence-status-icon {
+  width: 10px;
+  height: 10px;
+  color: rgba(167, 139, 250, 0.9);
+}
+
+.usb-quiz-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.usb-bloom-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  background: rgba(16, 185, 129, 0.12);
+  color: rgba(110, 231, 183, 0.96);
+}
+
+.usb-difficulty-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.usb-difficulty-badge.usb-confidence-confused {
+  background: rgba(239, 68, 68, 0.1);
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.usb-difficulty-badge.usb-confidence-partial {
+  background: rgba(245, 158, 11, 0.1);
+  color: rgba(251, 191, 36, 0.95);
+}
+
+.usb-difficulty-badge.usb-confidence-clear {
+  background: rgba(16, 185, 129, 0.1);
+  color: rgba(52, 211, 153, 0.95);
+}
+
+.usb-difficulty-badge.usb-confidence-mastered {
+  background: rgba(124, 58, 237, 0.1);
+  color: rgba(167, 139, 250, 0.95);
+}
+
+.usb-eval-result {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.usb-eval-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.45;
+}
+
+.usb-eval-rating {
+  font-size: 10px;
+  color: rgba(167, 139, 250, 0.9);
+}
+
+.usb-solution-box {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.usb-solution-title {
+  margin-bottom: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.usb-solution-box p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(196, 181, 253, 0.72);
+}
+
+.usb-result-card {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.usb-quiz-card .usb-answer-box {
+  min-height: 72px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.usb-quiz-card .usb-small-btn {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 9px;
+  gap: 5px;
+}
+
+.usb-quiz-card .usb-btn-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.usb-code-card .usb-small-btn {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 10px;
+}
+
+.usb-code-card .usb-btn-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.usb-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.usb-check-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.usb-check-mark {
+  width: 10px;
+  height: 10px;
+  color: var(--violet-400);
+}
+
+.usb-quiz-card .usb-question {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.usb-code-block {
+  margin: 0;
+  padding: 12px;
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow: auto;
+  color: rgba(196, 181, 253, 0.7);
+  background: rgba(10, 10, 12, 0.96);
+}
+
+.usb-code-answer {
+  min-height: 88px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.usb-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.usb-muted-btn {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.usb-anki-strip {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.usb-anki-toprow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.usb-anki-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.44);
+  font-size: 9px;
+}
+
+.usb-anki-chip-alt {
+  color: rgba(167, 139, 250, 0.88);
+}
+
+.usb-anki-stage {
+  perspective: 1200px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 112px;
+
+.usb-anki-card {
+  position: relative;
+  min-height: 124px;
+  transform-style: preserve-3d;
+  transition: transform 0.4s ease;
+}
+
+  padding: 14px;
+  transform: rotateY(180deg);
+}
+
+.usb-anki-front,
+.usb-anki-back {
+  position: absolute;
+  inset: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(24, 24, 27, 0.95), rgba(18, 18, 20, 0.95));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.usb-anki-back {
+  border-color: rgba(16, 185, 129, 0.18);
+  transform: rotateY(180deg);
+}
+
+.usb-anki-label {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.usb-anki-label-alt {
+  color: rgba(52, 211, 153, 0.78);
+}
+
+.usb-anki-front p,
+.usb-anki-back p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.usb-anki-hint {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.usb-anki-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+
+.usb-anki-dots span {
+  display: block;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.usb-anki-dots .is-active {
+  width: 24px;
+  height: 6px;
+  background: var(--violet-400);
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.72);
+}
+
+.usb-anki-dots span:not(.is-active) {
+  width: 6px;
+  height: 6px;
+}
+
+.usb-anki-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.usb-pipeline-head,
+.usb-dev-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.usb-pipeline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.usb-pipeline-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.usb-pipeline-card {
+  position: relative;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.usb-captions-live-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.usb-captions-live-row.is-pulsing {
+  border-color: rgba(139, 92, 246, 0.22);
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.06);
+}
+
+.usb-captions-live-left,
+.usb-captions-live-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usb-captions-live-text,
+.usb-captions-live-right span {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.usb-captions-live-right span {
+  padding: 2px 7px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.usb-pipeline-kicker {
+  gap: 8px;
+}
+
+.usb-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+}
+
+.usb-live-dot.is-live {
+  background: var(--violet-solid);
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.42);
+  animation: usbPulse 1.8s infinite;
+}
+
+.usb-pipeline-line {
+  position: absolute;
+  left: 24px;
+  top: 18px;
+  bottom: 18px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(14, 165, 233, 0.22), rgba(139, 92, 246, 0.2), rgba(16, 185, 129, 0.18));
+}
+
+.usb-pipeline-step {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 0 9px 10px;
+  margin-left: 10px;
+}
+
+.usb-pipeline-step.is-live .usb-step-bullet,
+.usb-pipeline-step.is-capturing .usb-step-bullet {
+  border-color: rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.08);
+  animation: usbStepGlow 1.5s ease-in-out infinite;
+}
+
+.usb-step-bullet {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(18, 18, 20, 0.94);
+  z-index: 1;
+}
+
+.usb-pipeline-step.is-live .usb-step-bullet {
+  border-color: rgba(14, 165, 233, 0.4);
+  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.2);
+}
+
+.usb-pipeline-step.is-streaming .usb-step-bullet {
+  border-color: rgba(124, 58, 237, 0.4);
+}
+
+.usb-pipeline-step.is-done .usb-step-bullet {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.usb-step-bullet-icon {
+  width: 9px;
+  height: 9px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.usb-step-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.26);
+}
+
+.usb-step-label.is-live,
+.usb-step-label.is-streaming {
+  color: var(--violet-300);
+}
+
+.usb-step-label.is-done {
+  color: rgba(16, 185, 129, 0.84);
+}
+
+.usb-step-copy {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.usb-step-copy.is-capturing {
+  min-height: 18px;
+}
+
+.usb-step-skeleton {
+  display: block;
+  width: 60%;
+  height: 14px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.18) 50%, rgba(255, 255, 255, 0.08) 100%);
+  background-size: 220% 100%;
+  animation: usbShimmer 1.5s ease-in-out infinite;
+}
+
+.usb-step-copy.is-done {
+  color: rgba(196, 181, 253, 0.8);
+}
+
+.usb-es-stream {
+  position: relative;
+  color: rgba(196, 181, 253, 0.82);
+}
+
+.usb-es-cursor {
+  display: inline-block;
+  width: 3px;
+  height: 15px;
+  margin-left: 4px;
+  border-radius: 2px;
+  background: var(--violet-400);
+  vertical-align: -2px;
+  animation: usbBlink 0.5s ease-in-out infinite;
+}
+
+.usb-latency-chip {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 9999px;
+  font-size: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.usb-latency-chip.is-streaming {
+  color: rgba(196, 181, 253, 0.88);
+  border-color: rgba(139, 92, 246, 0.18);
+}
+
+.usb-latency-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--violet-solid);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.45);
+  animation: usbPulse 1.8s infinite;
+}
+
+.usb-history-card {
+  padding: 12px;
+  background: rgba(13, 14, 15, 0.96);
+  border-color: rgba(255, 255, 255, 0.07);
+}
+
+.usb-history-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.usb-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.usb-history-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.usb-history-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.usb-history-en {
+  margin: 0;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.usb-history-row:hover .usb-history-en,
+.usb-history-row:hover .usb-history-es {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.usb-history-es {
+  margin: 4px 0 0;
+}
+
+.usb-history-badge {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 9999px;
+  font-size: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.usb-history-badge.is-emerald {
+  border-color: rgba(16, 185, 129, 0.16);
+  color: rgba(16, 185, 129, 0.84);
+}
+
+.usb-history-badge.is-amber {
+  border-color: rgba(245, 158, 11, 0.16);
+  color: rgba(245, 158, 11, 0.84);
+}
+
+.usb-history-badge.is-violet {
+  border-color: rgba(124, 58, 237, 0.16);
+  color: rgba(167, 139, 250, 0.92);
+}
+
+@keyframes usbShimmer {
+  0% {
+    background-position: 200% 0;
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    background-position: -200% 0;
+    opacity: 0.35;
+  }
+}
+
+@keyframes usbBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes usbStepGlow {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.06);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 8px rgba(14, 165, 233, 0);
+  }
+}
+
+.usb-overlay-toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+}
+
+.usb-overlay-preview {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.94), rgba(10, 10, 12, 1));
+}
+
+.usb-overlay-preview-label {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.28);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.usb-overlay-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(16, 185, 129, 0.12), transparent 26%),
+    radial-gradient(circle at 78% 18%, rgba(139, 92, 246, 0.12), transparent 22%),
+    linear-gradient(135deg, rgba(2, 6, 23, 0.2), rgba(15, 23, 42, 0.3));
+}
+
+.usb-overlay-preview-code {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 16px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 7px;
+  line-height: 1.4;
+  color: rgba(52, 211, 153, 0.2);
+  z-index: 1;
+  opacity: 0.95;
+}
+
+.usb-overlay-preview-code-row {
+  max-width: 92%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usb-overlay-preview-code-muted {
+  color: rgba(255, 255, 255, 0.16);
+}
+
+.usb-switch {
+  width: 46px;
+  height: 26px;
+  padding: 3px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.usb-switch span {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: white;
+  transform: translateX(0);
+  transition: transform 180ms ease;
+}
+
+.usb-switch.is-on {
+  background: rgba(124, 58, 237, 0.82);
+  border-color: rgba(139, 92, 246, 0.28);
+}
+
+.usb-switch.is-on span {
+  transform: translateX(20px);
+}
+
+.usb-overlay-controls.is-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.usb-control-card {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(24, 24, 27, 0.95), rgba(18, 18, 20, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+}
+
+.usb-control-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.usb-control-head .usb-control-icon {
+  width: 9px;
+  height: 9px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.usb-selector-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.usb-select-btn {
+  min-height: 34px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  text-transform: capitalize;
+}
+
+.usb-tone-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.08);
+}
+
+.usb-tone-white .usb-tone-dot { background: #ffffff; }
+.usb-tone-yellow .usb-tone-dot { background: #fde047; }
+.usb-tone-cyan .usb-tone-dot { background: #67e8f9; }
+
+.usb-select-btn:hover,
+.usb-select-btn.is-active {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.26);
+  color: rgba(196, 181, 253, 0.94);
+}
+
+.usb-tone-white.is-active { color: white; }
+.usb-tone-yellow.is-active { color: #fde047; }
+.usb-tone-cyan.is-active { color: #67e8f9; }
+
+.usb-reset-btn {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 9px;
+  padding-inline: 8px;
+  padding-block: 6px;
+}
+
+.usb-reset-btn:hover {
+  color: var(--amber-400);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.usb-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usb-slider-row input[type='range'] {
+  flex: 1;
+  accent-color: var(--violet-400);
+}
+
+.usb-slider-value {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.42);
+  font-variant-numeric: tabular-nums;
+}
+
+.usb-reset-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.usb-dev-head {
+  align-items: flex-end;
+}
+
+.usb-dev-list {
+  display: grid;
+  gap: 8px;
+}
+
+.usb-dev-card {
+  padding: 12px;
+}
+
+.usb-dev-card.is-done {
+  border-color: rgba(16, 185, 129, 0.12);
+}
+
+.usb-dev-card.is-streaming {
+  border-color: rgba(124, 58, 237, 0.14);
+}
+
+.usb-dev-card.is-aborted {
+  border-color: rgba(245, 158, 11, 0.14);
+}
+
+.usb-dev-card-head {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.usb-dev-state,
+.usb-dev-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.usb-dev-state {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.usb-dev-state.is-done { color: rgba(16, 185, 129, 0.9); }
+.usb-dev-state.is-streaming { color: rgba(196, 181, 253, 0.9); }
+.usb-dev-state.is-aborted { color: rgba(245, 158, 11, 0.9); }
+
+.usb-dev-context {
+  padding: 4px 8px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.usb-dev-context.is-sky {
+  border-color: rgba(14, 165, 233, 0.16);
+  color: rgba(125, 211, 252, 0.9);
+}
+
+.usb-dev-context.is-violet {
+  border-color: rgba(124, 58, 237, 0.16);
+  color: rgba(196, 181, 253, 0.9);
+}
+
+.usb-dev-context.is-emerald {
+  border-color: rgba(16, 185, 129, 0.16);
+  color: rgba(52, 211, 153, 0.9);
+}
+
+.usb-dev-context.is-amber {
+  border-color: rgba(245, 158, 11, 0.16);
+  color: rgba(245, 158, 11, 0.9);
+}
+
+.usb-dev-context.is-red {
+  border-color: rgba(248, 113, 113, 0.16);
+  color: rgba(248, 113, 113, 0.9);
+}
+
+.usb-dev-preview {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.usb-section-kicker {
+  color: rgba(255, 255, 255, 0.26);
+}
+
+.usb-section-heading {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+@keyframes usbPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.46);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes usbSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes usbSpinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.usb-captions-status-card {
+  padding: 12px;
+}
+
+.usb-captions-status-list {
+  display: grid;
+  gap: 2px;
+}
+
+.usb-captions-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 25px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.usb-captions-status-row:last-child {
+  border-bottom: 0;
+}
+
+.usb-captions-status-row span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.usb-captions-status-row .is-ok {
+  color: rgba(16, 185, 129, 0.88);
+}
+
+.usb-captions-status-row .is-pending {
+  color: rgba(251, 191, 36, 0.9);
+}
+
+.usb-captions-status-row .is-danger {
+  color: rgba(248, 113, 113, 0.9);
+}
+
+.usb-captions-auto-card {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.usb-captions-auto-card.is-on {
+  border-color: rgba(139, 92, 246, 0.22);
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.usb-captions-srt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.usb-captions-apply-btn {
+  width: 100%;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.24);
+  background: rgba(124, 58, 237, 0.86);
+  color: #fff;
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 160ms ease, opacity 160ms ease;
+}
+
+.usb-captions-apply-btn:hover {
+  background: rgba(124, 58, 237, 1);
+}
+
+.usb-captions-apply-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.usb-captions-success {
+  width: 100%;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  background: rgba(16, 185, 129, 0.16);
+  color: rgba(110, 231, 183, 0.95);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Small spacing + clearer visual separation for caption status rows */
+.usb-captions-status-list {
+  display: grid;
+  gap: 6px;
+  padding: 6px 2px;
+}
+.usb-captions-status-row {
+  min-height: 30px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.usb-srt-format-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

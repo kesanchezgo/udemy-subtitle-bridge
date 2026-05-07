@@ -37,9 +37,11 @@ Planned scope (not fully implemented yet):
 1. Open Chrome and go to `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
-4. Select this folder:
+4. Select the built folder, not the repo root:
 
-   `d:\Proyectos\OTROS\udemy-subtitle-bridge`
+   `d:\Proyectos\OTROS\udemy-subtitle-bridge\dist`
+
+If you load the root folder, Chrome will try to open the source manifest and fail on TypeScript scripts. The extension must be loaded from `dist/`.
 
 ## Current Manual Flow (What Works Now)
 

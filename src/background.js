@@ -1,13 +1,27 @@
 "use strict";
 
-const AI_API_BASES = [
-  "http://127.0.0.1:8010",
-  "http://localhost:8010"
-];
+const SIDE_PANEL_PATH = "index.html";
 
-const AI_SINGLE_CALL_MODE = true;
+try {
+  importScripts(chrome.runtime.getURL("src/gemini-config.local.js"));
+} catch (_error) {
+  // Optional during development.
+}
 
-let preferredApiBase = "";
+chrome.runtime.onInstalled.addListener(() => {
+  void configureSidePanelBehavior();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void configureSidePanelBehavior();
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  void openSidePanelForTab(tab);
+});
+
+const GEMINI_DEFAULT_MODEL = "gemini-2.0-flash";
+let preferredGeminiKeyIndex = 0;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const type = message && message.type;
@@ -72,6 +86,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+async function configureSidePanelBehavior() {
+  if (!chrome.sidePanel || typeof chrome.sidePanel.setPanelBehavior !== "function") {
+    return;
+  }
+
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  } catch (_error) {
+    // Fall back to the explicit action handler below.
+  }
+}
+
+async function openSidePanelForTab(tab) {
+  if (!chrome.sidePanel || !tab || typeof tab.id !== "number") {
+    return;
+  }
+
+  try {
+    await chrome.sidePanel.setOptions({
+      tabId: tab.id,
+      path: SIDE_PANEL_PATH,
+      enabled: true
+    });
+    await chrome.sidePanel.open({ tabId: tab.id });
+  } catch (error) {
+    console.warn("[USG] Could not open side panel:", toErrorMessage(error));
+  }
+}
 
 function sanitizeFileName(fileName) {
   const base = fileName.replace(/[\\/:*?"<>|]/g, "-").trim();
@@ -569,81 +612,102 @@ function buildRepairTranslationPrompt(sourceChunkSrt, previousReply, options) {
 }
 
 async function requestAiReply(prompt) {
-  const bootstrap = await postToAiApi("/sessions/bootstrap", {});
-  const sessionId = bootstrap && bootstrap.session_id ? String(bootstrap.session_id) : "";
-  if (!sessionId) {
-    throw new Error("AI API did not return session_id.");
-  }
-
-  const encodedSessionId = encodeURIComponent(sessionId);
-
   try {
-    await postToAiApi(`/sessions/${encodedSessionId}/conversation/new`, {});
-  } catch (_error) {
-    // Continue: some backend variants can still answer in /message directly.
-  }
-
-  let messageData = await postToAiApi(`/sessions/${encodedSessionId}/message`, {
-    text: prompt,
-    auto_recover: true
-  });
-
-  const firstReply = messageData ? (messageData.reply || messageData.text) : "";
-  if (!messageData || !messageData.ok || !String(firstReply || "").trim()) {
-    await postToAiApi(`/sessions/${encodedSessionId}/conversation/new`, {}).catch(() => {});
-    messageData = await postToAiApi(`/sessions/${encodedSessionId}/message`, {
-      text: prompt,
-      auto_recover: true
+    return await requestGeminiText(prompt, {
+      temperature: 0.2,
+      maxOutputTokens: 4096
     });
+  } catch (error) {
+    throw new Error(toErrorMessage(error));
   }
-
-  if (!messageData || !messageData.ok) {
-    const errorText = messageData && messageData.error
-      ? String(messageData.error)
-      : "AI API message call failed.";
-    throw new Error(errorText);
-  }
-
-  const reply = String(messageData.reply || messageData.text || "").trim();
-  if (!reply) {
-    throw new Error("AI API returned empty reply.");
-  }
-  return reply;
 }
 
-async function postToAiApi(path, body) {
-  const bases = preferredApiBase
-    ? [preferredApiBase].concat(AI_API_BASES.filter((base) => base !== preferredApiBase))
-    : AI_API_BASES.slice();
+async function requestGeminiText(prompt, options) {
+  const keys = getGeminiApiKeys();
+  if (!keys.length) {
+    throw new Error("No Gemini API keys configured.");
+  }
+
+  const model = getGeminiModel();
+  const startIndex = Math.min(preferredGeminiKeyIndex, Math.max(keys.length - 1, 0));
+  const orderedKeys = keys.slice(startIndex).concat(keys.slice(0, startIndex));
 
   let lastError = null;
-  for (const base of bases) {
+
+  for (let i = 0; i < orderedKeys.length; i += 1) {
+    const apiKey = orderedKeys[i];
     try {
-      const response = await fetch(`${base}${path}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey
         },
-        body: JSON.stringify(body || {})
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: String(prompt || "") }]
+            }
+          ],
+          generationConfig: {
+            temperature: Number(options && options.temperature) || 0.2,
+            maxOutputTokens: Number(options && options.maxOutputTokens) || 4096
+          }
+        })
       });
 
       const text = await response.text();
       const parsed = safeJsonParse(text);
       if (!response.ok) {
-        const detail = parsed && parsed.error
-          ? String(parsed.error)
-          : String(text || "HTTP request failed").slice(0, 260);
+        const detail = parsed && parsed.error && parsed.error.message
+          ? String(parsed.error.message)
+          : String(text || "Gemini request failed").slice(0, 260);
         throw new Error(`HTTP ${response.status}: ${detail}`);
       }
 
-      preferredApiBase = base;
-      return parsed && typeof parsed === "object" ? parsed : {};
+      const reply = extractGeminiText(parsed);
+      if (!reply) {
+        throw new Error("Gemini returned an empty reply.");
+      }
+
+      preferredGeminiKeyIndex = i;
+      return reply;
     } catch (error) {
-      lastError = new Error(`${base}${path}: ${toErrorMessage(error)}`);
+      lastError = new Error(toErrorMessage(error));
     }
   }
 
-  throw lastError || new Error("Could not connect to local AI API.");
+  throw lastError || new Error("Could not connect to Gemini API.");
+}
+
+function getGeminiApiKeys() {
+  const keys = Array.isArray(globalThis.USB_GEMINI_API_KEYS)
+    ? globalThis.USB_GEMINI_API_KEYS
+    : [];
+  return keys
+    .map((key) => String(key || "").trim())
+    .filter(Boolean);
+}
+
+function getGeminiModel() {
+  const model = String(globalThis.USB_GEMINI_MODEL || GEMINI_DEFAULT_MODEL).trim();
+  return model || GEMINI_DEFAULT_MODEL;
+}
+
+function extractGeminiText(payload) {
+  const parts = payload
+    && Array.isArray(payload.candidates)
+    && payload.candidates[0]
+    && payload.candidates[0].content
+    && Array.isArray(payload.candidates[0].content.parts)
+    ? payload.candidates[0].content.parts
+    : [];
+
+  return parts
+    .map((part) => String(part && part.text ? part.text : ""))
+    .join("")
+    .trim();
 }
 
 function safeJsonParse(text) {

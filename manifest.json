@@ -6,19 +6,24 @@
   "permissions": [
     "storage",
     "activeTab",
+    "sidePanel",
     "downloads"
   ],
   "host_permissions": [
     "https://www.udemy.com/*",
+    "https://generativelanguage.googleapis.com/*",
     "http://127.0.0.1:8010/*",
     "http://localhost:8010/*"
   ],
   "action": {
-    "default_title": "Udemy Subtitle Bridge",
-    "default_popup": "src/popup.html"
+    "default_title": "Udemy Subtitle Bridge"
+  },
+  "side_panel": {
+    "default_path": "index.html"
   },
   "background": {
-    "service_worker": "src/background.js"
+    "service_worker": "src/background.ts",
+    "type": "module"
   },
   "content_scripts": [
     {
@@ -26,7 +31,7 @@
         "https://www.udemy.com/course/*/learn/*"
       ],
       "js": [
-        "src/content-script.js"
+        "src/content_script.ts"
       ],
       "run_at": "document_end"
     }

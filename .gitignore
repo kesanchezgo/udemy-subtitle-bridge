@@ -26,9 +26,16 @@ debug-page-content.html
 test-final-dom.html
 test-output.log
 test-run.log
+qa-*.png
+debug-*.png
+playwright-report/
+test-results/
 
 # Local secrets
 token.txt
+src/gemini-config.local.js
 
 # Misc
 *.tmp
+dist/
+.playwright-mcp/
