@@ -8,6 +8,8 @@
 
 const STORAGE_KEY = 'usg_gemini_api_keys';
 const STORAGE_MODEL_KEY = 'usg_gemini_model';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.0-flash';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 type GeminiGlobal = typeof globalThis & {
   USB_GEMINI_API_KEYS?: string[];
@@ -109,4 +111,43 @@ export function getConfiguredKeyCount(): number {
   return Array.isArray(g.USB_GEMINI_API_KEYS)
     ? g.USB_GEMINI_API_KEYS.filter(Boolean).length
     : 0;
+}
+
+/**
+ * Validate a Gemini API key by making a minimal test request.
+ * Returns { valid: true } if the key is active, or { valid: false, error: string } if not.
+ */
+export async function validateGeminiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+  if (!apiKey || !apiKey.trim()) {
+    return { valid: false, error: 'La key está vacía.' };
+  }
+
+  try {
+    const response = await fetch(
+      `${GEMINI_API_URL}/${encodeURIComponent(GEMINI_DEFAULT_MODEL)}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'Responde solo "ok".' }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 4 }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      if (response.status === 400 || response.status === 403) {
+        return { valid: false, error: `Key inválida o sin permisos (HTTP ${response.status}).` };
+      }
+      if (response.status === 429) {
+        return { valid: false, error: 'Key activa pero con rate limit excedido. Intenta más tarde.' };
+      }
+      return { valid: false, error: `Error HTTP ${response.status}: ${text.slice(0, 120)}` };
+    }
+
+    return { valid: true };
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }

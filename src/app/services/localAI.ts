@@ -160,6 +160,126 @@ async function getDebugStore() {
   return mod.debugStore as unknown as LocalAiDebugStore;
 }
 
+async function streamGemini(
+  messages: AIMessage[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string, accumulated: string) => void,
+  signal?: AbortSignal,
+  debugContext = 'unknown'
+): Promise<{ success: boolean; content: string; error?: string }> {
+  const apiKeys = getGeminiApiKeys();
+  if (!apiKeys.length) {
+    return { success: false, content: '', error: 'No Gemini API keys configured.' };
+  }
+
+  const model = getGeminiModel();
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const userMessages = messages.filter((m) => m.role !== 'system');
+
+  const body: Record<string, unknown> = {
+    contents: userMessages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+    generationConfig: { temperature, maxOutputTokens: maxTokens }
+  };
+
+  if (systemMessage) {
+    body.systemInstruction = { parts: [{ text: systemMessage.content }] };
+  }
+
+  const reqId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const debugStore = await getDebugStore();
+  debugStore.startRequest(reqId, `${debugContext}-gemini`);
+
+  let lastError: Error | null = null;
+
+  for (const apiKey of apiKeys) {
+    try {
+      const response = await fetch(
+        `${GEMINI_API_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify(body),
+          signal
+        }
+      );
+
+      if (!response.ok || !response.body) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`Gemini HTTP ${response.status}: ${text.slice(0, 260)}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line.startsWith('data: ')) continue;
+
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') {
+            await reader.cancel().catch(() => undefined);
+            debugStore.endRequest(reqId, true);
+            return { success: true, content: accumulated };
+          }
+
+          try {
+            const parsed = JSON.parse(payload);
+            const token = parsed?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+            if (!token) continue;
+
+            accumulated += token;
+            debugStore.addToken(reqId, token, accumulated);
+            onToken(token, accumulated);
+          } catch (_parseErr) {
+            // skip malformed chunk
+          }
+        }
+      }
+
+      debugStore.endRequest(reqId, true);
+      return { success: true, content: accumulated };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        debugStore.endRequest(reqId, false, true);
+        return { success: false, content: '', error: 'Aborted' };
+      }
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  debugStore.endRequest(reqId, false);
+  return { success: false, content: '', error: lastError?.message || 'All Gemini keys failed.' };
+}
+
+async function streamWithFallback(
+  messages: AIMessage[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string, accumulated: string) => void,
+  signal?: AbortSignal,
+  debugContext = 'unknown'
+): Promise<{ success: boolean; content: string; error?: string }> {
+  const localResult = await streamLocalAI(messages, maxTokens, temperature, onToken, signal, debugContext);
+  if (localResult.success && localResult.content.trim()) {
+    return localResult;
+  }
+  if (signal?.aborted) {
+    return localResult;
+  }
+  return streamGemini(messages, maxTokens, temperature, onToken, signal, debugContext);
+}
+
 async function streamLocalAI(
   messages: AIMessage[],
   maxTokens: number,
@@ -376,7 +496,7 @@ export async function translateLineStream(
   onToken: (token: string, accumulated: string) => void,
   signal?: AbortSignal
 ): Promise<{ success: boolean; content: string }> {
-  const result = await streamLocalAI(buildTranslateMessages(en), 120, 0.1, onToken, signal, 'translate');
+  const result = await streamWithFallback(buildTranslateMessages(en), 120, 0.1, onToken, signal, 'traducir');
   return { success: result.success, content: result.content };
 }
 
@@ -397,7 +517,7 @@ export async function evaluateActiveAnswerStream(
   onToken: (token: string, accumulated: string) => void,
   signal?: AbortSignal
 ): Promise<{ success: boolean; content: string; rating: AIRating }> {
-  const result = await streamLocalAI(buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel), 380, 0.3, onToken, signal, 'eval-question');
+  const result = await streamWithFallback(buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel), 380, 0.3, onToken, signal, 'eval-question');
   return { success: result.success, content: result.content, rating: parseRating(result.content) };
 }
 
@@ -417,7 +537,7 @@ export async function evaluateCodeSolutionStream(
   onToken: (token: string, accumulated: string) => void,
   signal?: AbortSignal
 ): Promise<{ success: boolean; content: string; rating: AIRating }> {
-  const result = await streamLocalAI(buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode), 500, 0.2, onToken, signal, 'eval-code');
+  const result = await streamWithFallback(buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode), 500, 0.2, onToken, signal, 'eval-code');
   return { success: result.success, content: result.content, rating: parseRating(result.content) };
 }
 
