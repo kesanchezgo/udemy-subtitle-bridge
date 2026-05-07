@@ -3,6 +3,24 @@ const LOCAL_AI_MODEL = 'local-model';
 const GEMINI_MODEL = 'gemini-2.0-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+/**
+ * Ping local AI at 8010 to check if it's online.
+ */
+export async function checkLocalAIHealth(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch(`${LOCAL_AI_URL}/v1/models`, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export type AIRating = 'correct' | 'partial' | 'wrong' | 'unknown';
 
 export interface AIResponse {

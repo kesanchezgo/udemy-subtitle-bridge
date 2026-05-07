@@ -15,6 +15,7 @@ import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
 import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount, validateGeminiKey } from "../../gemini-config";
+import { checkLocalAIHealth } from "../services/localAI";
 
 type ExtensionSidebarProps = {
   isOpen?: boolean;
@@ -90,11 +91,17 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   const [contentScriptConnected, setContentScriptConnected] = useState(false);
   const [syncPulse, setSyncPulse] = useState(false);
   const [currentEnLine, setCurrentEnLine] = useState<string | null>(null);
+  const [localAIOnline, setLocalAIOnline] = useState<boolean | null>(null);
 
   useEffect(() => {
     initGeminiKeys().then(() => {
       setGeminiKeyCount(getConfiguredKeyCount());
     });
+    checkLocalAIHealth().then(setLocalAIOnline);
+    const healthInterval = setInterval(() => {
+      checkLocalAIHealth().then(setLocalAIOnline);
+    }, 10000);
+    return () => clearInterval(healthInterval);
   }, []);
 
   useEffect(() => {
@@ -227,16 +234,19 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               <h1 className="text-white text-xs leading-tight tracking-wide" style={{ fontWeight: 600 }}>
                 Subtitle Bridge
               </h1>
-              <p className="text-white/40 text-[9px] leading-none mt-1 font-medium tracking-wider uppercase">EN → ES · AI Local</p>
+              <p className="text-white/40 text-[9px] leading-none mt-1 font-medium tracking-wider uppercase">EN → ES · {localAIOnline ? 'AI Local' : geminiKeyCount > 0 ? 'Gemini' : 'Sin conexión'}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
+            <div className={`flex items-center gap-1.5 ${localAIOnline ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'} border rounded-full px-2.5 py-1`}>
               <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/>
+                {localAIOnline ? (
+                  <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/></>
+                ) : (
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500 shadow-[0_0_5px_#ef4444]"/>
+                )}
               </span>
-              <span className="text-emerald-400 text-[10px] font-medium tracking-wide">8010</span>
+              <span className={`text-[10px] font-medium tracking-wide ${localAIOnline ? 'text-emerald-400' : 'text-red-400'}`}>{localAIOnline ? '8010' : 'Gemini'}</span>
             </div>
             <button
               onClick={handleGearClick}
@@ -581,7 +591,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
       </div>
 
       <div className="px-3.5 py-2 border-t border-white/6 bg-[#161718] shrink-0 flex items-center justify-between">
-        <span className="text-white/16 text-[9px] font-mono">127.0.0.1:8010</span>
+        <span className={`text-[9px] font-mono ${localAIOnline ? 'text-emerald-400/30' : 'text-red-400/30'}`}>{localAIOnline ? '127.0.0.1:8010' : 'Gemini API'}</span>
         <div className="flex items-center gap-1.5">
           <AnimatePresence>
             {syncPulse && (
