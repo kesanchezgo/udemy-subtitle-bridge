@@ -306,6 +306,11 @@ export function StudyAgentTab() {
   const [ankiFlipped, setAnkiFlipped] = useState(false);
   const [currentAnkiIndex, setCurrentAnkiIndex] = useState(0);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [codeAnswer, setCodeAnswer] = useState('');
+  const [codeReviewStreaming, setCodeReviewStreaming] = useState(false);
+  const [codeReviewAccumulated, setCodeReviewAccumulated] = useState('');
+  const [codeReviewRating, setCodeReviewRating] = useState<string | null>(null);
+  const codeReviewAbortRef = useRef<AbortController | null>(null);
 
   const [studyData, setStudyData] = useState<StudyPayload | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -382,6 +387,10 @@ export function StudyAgentTab() {
     setStudyData(null);
     setCurrentQuestionIndex(0);
     setCurrentAnkiIndex(0);
+    setCodeAnswer('');
+    setCodeReviewStreaming(false);
+    setCodeReviewAccumulated('');
+    setCodeReviewRating(null);
 
     try {
       const transcript = await fetchTranscriptFromContentScript();
@@ -705,17 +714,80 @@ export function StudyAgentTab() {
           <section className="usb-result-card usb-code-card">
             <StepHeader index={4} label="Aplícalo en código / situación real" status={showSolution ? 'done' : evalAccumulated ? 'active' : 'pending'} subtitle={activeApplication.setup} />
             <pre className="usb-code-block">{activeApplication.challenge}</pre>
-            <textarea className="usb-answer-box usb-code-answer" placeholder="Escribe tu solución o explicación aquí…" />
+            <textarea className="usb-answer-box usb-code-answer" placeholder="Escribe tu solución o explicación aquí…" value={codeAnswer} onChange={(e) => setCodeAnswer(e.target.value)} />
             <div className="usb-card-actions">
-              <button type="button" className="usb-small-btn">
-                <CheckIcon className="usb-btn-icon" />
-                Enviar para code review
+              <button
+                type="button"
+                className="usb-small-btn"
+                onClick={async () => {
+                  if (codeReviewStreaming) {
+                    codeReviewAbortRef.current?.abort();
+                    return;
+                  }
+
+                  setCodeReviewAccumulated('');
+                  setCodeReviewRating(null);
+                  setCodeReviewStreaming(true);
+                  const ctrl = new AbortController();
+                  codeReviewAbortRef.current = ctrl;
+
+                  try {
+                    const { evaluateCodeSolutionStream, evaluateCodeSolution } = await import('../services/localAI');
+                    const streamRes = await evaluateCodeSolutionStream(
+                      activeApplication.setup || 'Desafío de código',
+                      activeApplication.solution || '',
+                      codeAnswer || 'Sin respuesta',
+                      (_token, accumulated) => { setCodeReviewAccumulated(accumulated); },
+                      ctrl.signal
+                    );
+
+                    if (ctrl.signal.aborted) return;
+
+                    if (!streamRes.success || !streamRes.content.trim()) {
+                      const fallback = await evaluateCodeSolution(
+                        activeApplication.setup || 'Desafío de código',
+                        activeApplication.solution || '',
+                        codeAnswer || 'Sin respuesta'
+                      );
+                      setCodeReviewAccumulated(fallback.content || 'No disponible');
+                      setCodeReviewRating(fallback.rating);
+                    } else {
+                      setCodeReviewAccumulated(streamRes.content);
+                      setCodeReviewRating(streamRes.rating);
+                    }
+                  } catch (_err) {
+                    if (ctrl.signal.aborted) return;
+                    setCodeReviewAccumulated('Error al evaluar con IA');
+                  } finally {
+                    setCodeReviewStreaming(false);
+                    codeReviewAbortRef.current = null;
+                  }
+                }}
+              >
+                {codeReviewStreaming ? <LoaderIcon className="usb-btn-icon is-spinning" /> : <CheckIcon className="usb-btn-icon" />}
+                {codeReviewStreaming ? 'Cancel' : 'Enviar para code review'}
               </button>
               <button type="button" className={`usb-small-btn usb-muted-btn ${showSolution ? 'is-active' : ''}`} onClick={() => setShowSolution((current) => !current)}>
                 <FlipIcon className="usb-btn-icon" />
                 {showSolution ? 'Ocultar solución' : 'Ver solución'}
               </button>
             </div>
+            {codeReviewAccumulated ? (
+              <div className={`rounded-xl border p-3 ${codeReviewStreaming ? 'border-violet-500/20 bg-violet-500/5' : 'border-white/7 bg-black/20'}`}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="usb-section-title">Code Review IA</div>
+                  {codeReviewRating ? <div className={`rounded-full border px-2 py-0.5 text-[8px] uppercase tracking-[0.14em] ${codeReviewRating === 'correct' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : codeReviewRating === 'partial' ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>Rating: {codeReviewRating}</div> : null}
+                </div>
+                <div className="space-y-1.5">
+                  {codeReviewAccumulated.split('\n').filter(Boolean).map((line) => (
+                    <p key={line} className={`text-[11px] leading-relaxed ${getFeedbackLineClass(line)}`}>
+                      {line}
+                    </p>
+                  ))}
+                  {codeReviewStreaming ? <div className="inline-flex items-center gap-1 text-[10px] text-violet-300"><span className="h-3 w-[3px] rounded-full bg-violet-400 animate-pulse" />analizando…</div> : null}
+                </div>
+              </div>
+            ) : null}
             {showSolution ? (
               <div className="usb-solution-box">
                 <div className="usb-solution-title">Solución</div>

@@ -1,4 +1,5 @@
 import { translateLine } from './app/services/localAI';
+import { initGeminiKeys } from './gemini-config';
 
 const SIDE_PANEL_PATH = 'index.html';
 const GEMINI_DEFAULT_MODEL = 'gemini-2.0-flash';
@@ -17,20 +18,14 @@ type ExtensionMessage = {
 
 const chromeApi = (globalThis as typeof globalThis & { chrome?: any }).chrome;
 
-try {
-	chromeApi?.runtime?.getURL('src/gemini-config.local.js');
-} catch (_error) {
-	// Optional during development.
-}
-
-void configureSidePanelBehavior();
+void initGeminiKeys().then(() => configureSidePanelBehavior());
 
 chromeApi?.runtime?.onInstalled?.addListener(() => {
-	void configureSidePanelBehavior();
+	void initGeminiKeys().then(() => configureSidePanelBehavior());
 });
 
 chromeApi?.runtime?.onStartup?.addListener(() => {
-	void configureSidePanelBehavior();
+	void initGeminiKeys().then(() => configureSidePanelBehavior());
 });
 
 chromeApi?.action?.onClicked?.addListener((tab: { id?: number }) => {
