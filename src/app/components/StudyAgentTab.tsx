@@ -3,10 +3,10 @@ import { useRef } from 'react';
 import { motion } from 'motion/react';
 import { Eye } from 'lucide-react';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { contentBridge } from '../services/contentBridge';
 import {
   BrainIcon,
   CheckIcon,
-  CircleIcon,
   FileDownIcon,
   FlipIcon,
   InfoIcon,
@@ -23,6 +23,17 @@ import {
 type StudyStage = 'objective' | 'generating' | 'result';
 type GoalId = 'spring-senisenior' | 'java-cert' | 'personal-project' | 'fullstack' | 'custom';
 type ConfidenceLevel = 'confused' | 'partial' | 'clear' | 'mastered';
+
+type StudyPayload = {
+  relevance?: { score: number; reason: string };
+  keyConcepts?: string[];
+  quickWin?: string;
+  questions?: Array<{ q: string; bloomLevel?: string; hint?: string; answer?: string }>;
+  application?: { isCode?: boolean; setup?: string; challenge?: string; solution?: string };
+  interviewQ?: { q: string; idealAnswer?: string };
+  nextAction?: string;
+  ankiCards?: Array<{ front: string; back: string; tag?: string }>;
+};
 
 const GOALS = [
   {
@@ -94,13 +105,13 @@ const DIFFICULTY_LABEL: Record<ConfidenceLevel, string> = {
 
 const FLOW_STEPS = ['Autocalibrar', 'Conceptos', 'Verificar', 'Aplicar', 'Anki'] as const;
 
-const STUDY_QUESTION = {
+const FALLBACK_QUESTION = {
   q: '¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada.',
   hint: 'Piensa en la JVM como la máquina que ejecuta bytecode y en Spring Boot como lo que arranca dentro de ella.',
   answer: 'La JVM es el motor de ejecución de Java. Spring Boot arranca dentro de la JVM: crea el ApplicationContext en el heap, escanea beans y levanta Tomcat. Si el heap se llena de objetos sin liberar, aparece OutOfMemoryError y la app puede caer.'
 };
 
-const STUDY_APPLICATION = {
+const FALLBACK_APPLICATION = {
   setup: 'Encuentra los 2 bugs de tipo en este código de producción:',
   challenge: `@Service
 public class AuthService {
@@ -200,6 +211,81 @@ function StepHeader({
   );
 }
 
+function getChromeApi() {
+  return (globalThis as typeof globalThis & { chrome?: any }).chrome;
+}
+
+async function fetchTranscriptFromContentScript(): Promise<{ text: string; lectureTitle?: string; courseSlug?: string; lectureKey?: string } | null> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.tabs?.query || !chromeApi?.tabs?.sendMessage) {
+    // Sidebar context: use contentBridge
+    return new Promise((resolve) => {
+      const cleanup = contentBridge.onMessageFromContent((message) => {
+        if (message.type === 'TRANSCRIPT_RESULT') {
+          cleanup();
+          const payload = message.payload as { text?: string; lectureTitle?: string; courseSlug?: string; lectureKey?: string } | undefined;
+          if (payload?.text) {
+            resolve({ text: payload.text, lectureTitle: payload.lectureTitle, courseSlug: payload.courseSlug, lectureKey: payload.lectureKey });
+          } else {
+            resolve(null);
+          }
+        }
+      });
+
+      contentBridge.sendToContent({ type: 'GET_TRANSCRIPT', payload: { maxChars: 22000 } }).catch(() => {
+        cleanup();
+        resolve(null);
+      });
+
+      setTimeout(() => { cleanup(); resolve(null); }, 8000);
+    });
+  }
+
+  return new Promise((resolve) => {
+    chromeApi.tabs.query({ active: true, currentWindow: true }, (tabs: { id?: number }[]) => {
+      const tabId = tabs?.[0]?.id;
+      if (!tabId) {
+        resolve(null);
+        return;
+      }
+
+      chromeApi.tabs.sendMessage(tabId, { type: 'USG_GET_STUDY_TRANSCRIPT', maxChars: 22000 }, (response: { ok?: boolean; transcriptText?: string; lectureTitle?: string; courseSlug?: string; lectureKey?: string }) => {
+        if (chromeApi.runtime.lastError || !response?.ok || !response.transcriptText) {
+          resolve(null);
+          return;
+        }
+        resolve({ text: response.transcriptText, lectureTitle: response.lectureTitle, courseSlug: response.courseSlug, lectureKey: response.lectureKey });
+      });
+    });
+  });
+}
+
+async function requestLearningPanel(transcriptText: string, metadata: { courseSlug: string; lectureKey: string; lectureId: string }): Promise<StudyPayload | null> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.runtime?.sendMessage) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    chromeApi.runtime.sendMessage(
+      {
+        type: 'USG_GENERATE_LEARNING_PANEL',
+        transcriptText,
+        courseSlug: metadata.courseSlug,
+        lectureKey: metadata.lectureKey,
+        lectureId: metadata.lectureId
+      },
+      (response: { ok?: boolean; payload?: StudyPayload; error?: string }) => {
+        if (chromeApi.runtime.lastError || !response?.ok) {
+          resolve(null);
+          return;
+        }
+        resolve(response.payload || null);
+      }
+    );
+  });
+}
+
 export function StudyAgentTab() {
   const [goal, setGoal] = usePersistedState<GoalId>('usg.study.goal', GOALS[0].id);
   const [objective, setObjective] = usePersistedState('usg.study.objective', 'Entrevista Spring Boot semi-senior');
@@ -218,6 +304,34 @@ export function StudyAgentTab() {
   const [showHint, setShowHint] = useState(false);
   const [showQuestionAnswer, setShowQuestionAnswer] = useState(false);
   const [ankiFlipped, setAnkiFlipped] = useState(false);
+  const [currentAnkiIndex, setCurrentAnkiIndex] = useState(0);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+
+  const [studyData, setStudyData] = useState<StudyPayload | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+
+  const activeQuestion = useMemo(() => {
+    if (studyData?.questions?.length) {
+      return studyData.questions[currentQuestionIndex] || studyData.questions[0];
+    }
+    return FALLBACK_QUESTION;
+  }, [studyData, currentQuestionIndex]);
+
+  const activeApplication = useMemo(() => {
+    if (studyData?.application?.challenge) {
+      return studyData.application;
+    }
+    return FALLBACK_APPLICATION;
+  }, [studyData]);
+
+  const activeAnkiCards = useMemo(() => {
+    if (studyData?.ankiCards?.length) {
+      return studyData.ankiCards;
+    }
+    return [{ front: '¿Qué pasa en el heap de la JVM cuando Spring Boot arranca?', back: 'Spring crea el ApplicationContext en el heap, instancia beans singleton y levanta Tomcat. Si el heap se llena, aparece OutOfMemoryError.', tag: 'Spring Boot' }];
+  }, [studyData]);
+
+  const activeAnkiCard = activeAnkiCards[currentAnkiIndex] || activeAnkiCards[0];
 
   useEffect(() => {
     if (stage !== 'generating') {
@@ -228,13 +342,9 @@ export function StudyAgentTab() {
     setGenerationStep(0);
 
     const stepTimers = STEPS.map((_, index) => window.setTimeout(() => setGenerationStep(index), index * 420));
-    const timer = window.setTimeout(() => {
-      setStage('result');
-    }, STEPS.length * 420 + 180);
 
     return () => {
       stepTimers.forEach((stepTimer) => window.clearTimeout(stepTimer));
-      window.clearTimeout(timer);
     };
   }, [stage]);
 
@@ -255,7 +365,7 @@ export function StudyAgentTab() {
     return 5;
   }, [confidence, evalAccumulated, showSolution, ankiFlipped]);
 
-  const startGeneration = () => {
+  const startGeneration = async () => {
     setStage('generating');
     setGenerationStep(0);
     setRefined(false);
@@ -268,6 +378,41 @@ export function StudyAgentTab() {
     setShowHint(false);
     setShowQuestionAnswer(false);
     setAnkiFlipped(false);
+    setGenerationError(null);
+    setStudyData(null);
+    setCurrentQuestionIndex(0);
+    setCurrentAnkiIndex(0);
+
+    try {
+      const transcript = await fetchTranscriptFromContentScript();
+
+      if (transcript?.text) {
+        if (transcript.lectureTitle && transcript.lectureTitle !== lessonName) {
+          setLessonName(transcript.lectureTitle);
+        }
+        if (transcript.courseSlug && transcript.courseSlug !== courseName) {
+          setCourseName(transcript.courseSlug);
+        }
+
+        const panel = await requestLearningPanel(transcript.text, {
+          courseSlug: transcript.courseSlug || courseName,
+          lectureKey: transcript.lectureKey || '',
+          lectureId: transcript.lectureKey || ''
+        });
+
+        if (panel) {
+          setStudyData(panel);
+        } else {
+          setGenerationError('No se pudo generar el panel de aprendizaje. Se usarán preguntas de ejemplo.');
+        }
+      } else {
+        setGenerationError('No hay transcripción disponible. Reproduce el video con subtítulos en inglés activados. Se usarán preguntas de ejemplo.');
+      }
+    } catch (_error) {
+      setGenerationError('Error al obtener transcripción. Se usarán preguntas de ejemplo.');
+    }
+
+    setStage('result');
   };
 
   return (
@@ -348,7 +493,7 @@ export function StudyAgentTab() {
           <div className="flex flex-col items-center gap-3 text-center">
             <div className="usb-spinner" />
             <div className="usb-generating-title">Preparando tu sesión…</div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-white/34">IA local · calibrado a tu objetivo</div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-white/34">IA local + Gemini · calibrado a tu objetivo</div>
           </div>
           <div className="flex w-full flex-col gap-2.5">
             {STEPS.map((step, index) => (
@@ -386,10 +531,16 @@ export function StudyAgentTab() {
             })}
           </div>
 
+          {generationError ? (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-[10px] leading-relaxed text-amber-300/80">
+              <span className="mr-1">⚠️</span> {generationError}
+            </div>
+          ) : null}
+
           <section className="usb-relevance-card">
             <InfoIcon className="usb-card-info" />
-            <div className="usb-relevance-score">88<span>%</span></div>
-            <p className="usb-relevance-text">Cimientos críticos. Spring Boot vive dentro de la JVM — sin esto, el resto del curso es memorizar sin entender.</p>
+            <div className="usb-relevance-score">{studyData?.relevance?.score ?? 88}<span>%</span></div>
+            <p className="usb-relevance-text">{studyData?.relevance?.reason || 'Cimientos críticos. Spring Boot vive dentro de la JVM — sin esto, el resto del curso es memorizar sin entender.'}</p>
           </section>
 
           <section className="usb-result-card usb-confidence-card">
@@ -426,7 +577,7 @@ export function StudyAgentTab() {
                 <p className="mt-1 text-[10px] leading-relaxed text-white/30">Asegura la base antes de pasar a las preguntas.</p>
               </div>
             </div>
-            {['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.'].map((concept) => (
+            {(studyData?.keyConcepts || ['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.']).map((concept) => (
               <label key={concept} className="usb-check-item">
                 <span className="usb-check-box"><CheckIcon className="usb-check-mark" /></span>
                 <span>{concept}</span>
@@ -437,10 +588,24 @@ export function StudyAgentTab() {
           <section className="usb-result-card usb-quiz-card">
             <StepHeader index={3} label="Verifica tu comprensión" status={confidence ? (evalAccumulated ? 'done' : 'active') : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
             <div className="usb-quiz-badges">
-              <div className="usb-bloom-badge">Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : 'Aplicar'}</div>
+              <div className="usb-bloom-badge">Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
               {confidence ? <div className={`usb-difficulty-badge ${CONFIDENCE_STYLES[confidence]}`}>{DIFFICULTY_LABEL[confidence]}</div> : null}
             </div>
-            <p className="usb-question">{STUDY_QUESTION.q}</p>
+            {studyData?.questions && studyData.questions.length > 1 ? (
+              <div className="flex gap-1 mb-2">
+                {studyData.questions.map((_, qIdx) => (
+                  <button
+                    key={qIdx}
+                    type="button"
+                    className={`rounded-full border px-2 py-0.5 text-[8px] ${qIdx === currentQuestionIndex ? 'border-violet-500/40 bg-violet-500/12 text-violet-300' : 'border-white/10 bg-white/5 text-white/30'}`}
+                    onClick={() => setCurrentQuestionIndex(qIdx)}
+                  >
+                    P{qIdx + 1}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <p className="usb-question">{activeQuestion.q}</p>
             <div className="flex flex-wrap gap-2">
               <button type="button" className="usb-small-btn" onClick={() => setShowHint((current) => !current)}>
                 <InfoIcon className="usb-btn-icon" />
@@ -454,13 +619,13 @@ export function StudyAgentTab() {
             {showHint ? (
               <div className="rounded-xl border border-white/6 bg-white/3 px-3 py-2.5 text-[10px] leading-relaxed text-white/42">
                 <span className="mr-1 text-sky-300">💡</span>
-                {STUDY_QUESTION.hint}
+                {activeQuestion.hint || 'Piensa en los conceptos clave del video y cómo se relacionan entre sí.'}
               </div>
             ) : null}
             {showQuestionAnswer ? (
               <div className="rounded-xl border border-white/6 bg-black/20 px-3 py-2.5 text-[10px] leading-relaxed text-violet-300/75">
                 <span className="mr-1 text-emerald-300">🎯</span>
-                {STUDY_QUESTION.answer}
+                {activeQuestion.answer || 'Respuesta no disponible.'}
               </div>
             ) : null}
             <textarea className="usb-answer-box" placeholder="Escribe tu respuesta aquí…" value={studentAnswer} onChange={(e) => setStudentAnswer(e.target.value)} />
@@ -482,7 +647,8 @@ export function StudyAgentTab() {
 
                   try {
                     const { evaluateActiveAnswerStream, evaluateActiveAnswer } = await import('../services/localAI');
-                    const streamRes = await evaluateActiveAnswerStream(STUDY_QUESTION.q, STUDY_QUESTION.answer, studentAnswer || 'Sin respuesta', 'Aplicar', (_token, accumulated) => {
+                    const bloomLevel = confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar';
+                    const streamRes = await evaluateActiveAnswerStream(activeQuestion.q, activeQuestion.answer || '', studentAnswer || 'Sin respuesta', bloomLevel, (_token, accumulated) => {
                       setEvalAccumulated(accumulated);
                     }, ctrl.signal);
 
@@ -491,7 +657,7 @@ export function StudyAgentTab() {
                     }
 
                     if (!streamRes.success || !streamRes.content.trim()) {
-                      const fallback = await evaluateActiveAnswer(STUDY_QUESTION.q, STUDY_QUESTION.answer, studentAnswer || 'Sin respuesta', 'Aplicar');
+                      const fallback = await evaluateActiveAnswer(activeQuestion.q, activeQuestion.answer || '', studentAnswer || 'Sin respuesta', bloomLevel);
                       setEvalAccumulated(fallback.content || 'No disponible');
                       setEvalRating(fallback.rating);
                     } else {
@@ -537,8 +703,8 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card usb-code-card">
-            <StepHeader index={4} label="Aplícalo en código / situación real" status={showSolution ? 'done' : evalAccumulated ? 'active' : 'pending'} subtitle={STUDY_APPLICATION.setup} />
-            <pre className="usb-code-block">{STUDY_APPLICATION.challenge}</pre>
+            <StepHeader index={4} label="Aplícalo en código / situación real" status={showSolution ? 'done' : evalAccumulated ? 'active' : 'pending'} subtitle={activeApplication.setup} />
+            <pre className="usb-code-block">{activeApplication.challenge}</pre>
             <textarea className="usb-answer-box usb-code-answer" placeholder="Escribe tu solución o explicación aquí…" />
             <div className="usb-card-actions">
               <button type="button" className="usb-small-btn">
@@ -553,36 +719,57 @@ export function StudyAgentTab() {
             {showSolution ? (
               <div className="usb-solution-box">
                 <div className="usb-solution-title">Solución</div>
-                <p>{STUDY_APPLICATION.solution}</p>
+                <p>{activeApplication.solution}</p>
               </div>
             ) : null}
           </section>
 
           <section className="usb-anki-strip">
             <div className="usb-anki-toprow">
-              <span className="usb-anki-chip">1 de 4</span>
-              <span className="usb-anki-chip usb-anki-chip-alt">Spring Boot</span>
+              <span className="usb-anki-chip">{currentAnkiIndex + 1} de {activeAnkiCards.length}</span>
+              <span className="usb-anki-chip usb-anki-chip-alt">{activeAnkiCard.tag || 'Spring Boot'}</span>
             </div>
             <div className="usb-anki-stage" onClick={() => setAnkiFlipped((current) => !current)} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setAnkiFlipped((current) => !current); } }}>
               <div className={`usb-anki-card ${ankiFlipped ? 'is-flipped' : ''}`}>
                 <div className="usb-anki-front">
                   <span className="usb-anki-label">Flashcard</span>
-                  <p>¿Qué pasa en el heap de la JVM cuando Spring Boot arranca?</p>
+                  <p>{activeAnkiCard.front}</p>
                   <span className="usb-anki-hint"><FlipIcon className="usb-btn-icon" /> Toca para voltear</span>
                 </div>
                 <div className="usb-anki-back">
                   <span className="usb-anki-label usb-anki-label-alt">Respuesta</span>
-                  <p>Spring crea el ApplicationContext en el heap, instancia beans singleton y levanta Tomcat. Si el heap se llena, aparece OutOfMemoryError.</p>
+                  <p>{activeAnkiCard.back}</p>
                 </div>
               </div>
             </div>
             <div className="usb-anki-dots" aria-hidden="true">
-              <span className="is-active" />
-              <span />
-              <span />
+              {activeAnkiCards.map((_, dotIdx) => (
+                <span
+                  key={dotIdx}
+                  className={dotIdx === currentAnkiIndex ? 'is-active' : ''}
+                  onClick={() => { setCurrentAnkiIndex(dotIdx); setAnkiFlipped(false); }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setCurrentAnkiIndex(dotIdx); setAnkiFlipped(false); } }}
+                />
+              ))}
             </div>
             <div className="usb-anki-actions">
-              <button type="button" className="usb-small-btn">
+              <button
+                type="button"
+                className="usb-small-btn"
+                onClick={() => {
+                  const cards = activeAnkiCards;
+                  const text = cards.map((c, i) => `Card ${i + 1}\nQ: ${c.front}\nA: ${c.back}\nTag: ${c.tag || 'general'}\n`).join('\n');
+                  const blob = new Blob([text], { type: 'text/plain' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'anki-cards.txt';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
                 <FileDownIcon className="usb-btn-icon" />
                 Exportar .txt
               </button>
@@ -592,6 +779,11 @@ export function StudyAgentTab() {
               </button>
             </div>
           </section>
+
+          <button type="button" className="usb-small-btn usb-muted-btn mt-3" onClick={() => { setStage('objective'); setStudyData(null); setGenerationError(null); }}>
+            <RotateIcon className="usb-btn-icon" />
+            Nueva sesión
+          </button>
         </div>
       ) : null}
     </div>

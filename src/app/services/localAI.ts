@@ -1,5 +1,7 @@
 const LOCAL_AI_URL = 'http://127.0.0.1:8010';
 const LOCAL_AI_MODEL = 'local-model';
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export type AIRating = 'correct' | 'partial' | 'wrong' | 'unknown';
 
@@ -13,6 +15,76 @@ export interface AIResponse {
 export interface AIMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+}
+
+function getGeminiApiKeys(): string[] {
+  const g = globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] };
+  return Array.isArray(g.USB_GEMINI_API_KEYS) ? g.USB_GEMINI_API_KEYS.filter(Boolean) : [];
+}
+
+function getGeminiModel(): string {
+  const g = globalThis as typeof globalThis & { USB_GEMINI_MODEL?: string };
+  return String(g.USB_GEMINI_MODEL || GEMINI_MODEL).trim();
+}
+
+async function callGemini(messages: AIMessage[], maxTokens: number, temperature: number): Promise<string> {
+  const apiKeys = getGeminiApiKeys();
+  if (!apiKeys.length) {
+    throw new Error('No Gemini API keys configured.');
+  }
+
+  const model = getGeminiModel();
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const userMessages = messages.filter((m) => m.role !== 'system');
+
+  const body: Record<string, unknown> = {
+    contents: userMessages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+    generationConfig: { temperature, maxOutputTokens: maxTokens }
+  };
+
+  if (systemMessage) {
+    body.systemInstruction = { parts: [{ text: systemMessage.content }] };
+  }
+
+  let lastError: Error | null = null;
+
+  for (const apiKey of apiKeys) {
+    try {
+      const response = await fetch(
+        `${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify(body)
+        }
+      );
+
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Gemini HTTP ${response.status}: ${text.slice(0, 260)}`);
+      }
+
+      const parsed = JSON.parse(text);
+      const content = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!content) {
+        throw new Error('Gemini returned empty content.');
+      }
+
+      return String(content);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError || new Error('All Gemini API keys failed.');
+}
+
+async function callWithFallback(messages: AIMessage[], maxTokens: number, temperature: number): Promise<string> {
+  try {
+    return await callLocalAI(messages, maxTokens, temperature);
+  } catch (_localError) {
+    return await callGemini(messages, maxTokens, temperature);
+  }
 }
 
 type LocalAiDebugStore = {
@@ -292,7 +364,7 @@ function buildFeynmanMessages(topic: string, modelAnswer: string, studentAnswer:
 
 export async function translateLine(en: string): Promise<AIResponse> {
   try {
-    const content = await callLocalAI(buildTranslateMessages(en), 120, 0.1);
+    const content = await callWithFallback(buildTranslateMessages(en), 120, 0.1);
     return { success: true, content, rating: parseRating(content) };
   } catch (error) {
     return { success: false, content: '', rating: 'unknown', error: error instanceof Error ? error.message : String(error) };
@@ -310,7 +382,7 @@ export async function translateLineStream(
 
 export async function evaluateActiveAnswer(question: string, expectedAnswer: string, studentAnswer: string, bloomLevel: string): Promise<AIResponse> {
   try {
-    const content = await callLocalAI(buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel), 380, 0.3);
+    const content = await callWithFallback(buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel), 380, 0.3);
     return { success: true, content, rating: parseRating(content) };
   } catch (error) {
     return { success: false, content: '', rating: 'unknown', error: error instanceof Error ? error.message : String(error) };
@@ -331,7 +403,7 @@ export async function evaluateActiveAnswerStream(
 
 export async function evaluateCodeSolution(challengeTitle: string, expectedSolution: string, studentCode: string): Promise<AIResponse> {
   try {
-    const content = await callLocalAI(buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode), 500, 0.2);
+    const content = await callWithFallback(buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode), 500, 0.2);
     return { success: true, content, rating: parseRating(content) };
   } catch (error) {
     return { success: false, content: '', rating: 'unknown', error: error instanceof Error ? error.message : String(error) };
@@ -351,7 +423,7 @@ export async function evaluateCodeSolutionStream(
 
 export async function evaluateFeynman(topic: string, modelAnswer: string, studentAnswer: string): Promise<AIResponse> {
   try {
-    const content = await callLocalAI(buildFeynmanMessages(topic, modelAnswer, studentAnswer), 450, 0.3);
+    const content = await callWithFallback(buildFeynmanMessages(topic, modelAnswer, studentAnswer), 450, 0.3);
     return { success: true, content, rating: parseRating(content) };
   } catch (error) {
     return { success: false, content: '', rating: 'unknown', error: error instanceof Error ? error.message : String(error) };
