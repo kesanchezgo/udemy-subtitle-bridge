@@ -1,6 +1,8 @@
 import { translateLine } from './app/services/localAI';
 
 const SIDE_PANEL_PATH = 'index.html';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.0-flash';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 type ExtensionMessage = {
 	type?: string;
@@ -203,10 +205,138 @@ async function translateSrtToSpanish(sourceSrt: string) {
 	};
 }
 
+// ── Gemini API helpers for learning panel generation ──
+
+function getGeminiApiKeys(): string[] {
+	const g = globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] };
+	return Array.isArray(g.USB_GEMINI_API_KEYS) ? g.USB_GEMINI_API_KEYS.filter(Boolean) : [];
+}
+
+function getGeminiModel(): string {
+	const g = globalThis as typeof globalThis & { USB_GEMINI_MODEL?: string };
+	return String(g.USB_GEMINI_MODEL || GEMINI_DEFAULT_MODEL).trim();
+}
+
+async function requestGeminiText(prompt: string, temperature: number, maxOutputTokens: number): Promise<string> {
+	const apiKeys = getGeminiApiKeys();
+	const model = getGeminiModel();
+
+	if (!apiKeys.length) {
+		throw new Error('No Gemini API keys configured.');
+	}
+
+	let lastError: Error | null = null;
+
+	for (const apiKey of apiKeys) {
+		try {
+			const response = await fetch(
+				`${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+					body: JSON.stringify({
+						contents: [{ role: 'user', parts: [{ text: prompt }] }],
+						generationConfig: { temperature, maxOutputTokens }
+					})
+				}
+			);
+
+			const responseText = await response.text();
+			if (!response.ok) {
+				throw new Error(`Gemini HTTP ${response.status}: ${responseText.slice(0, 260)}`);
+			}
+
+			const parsed = JSON.parse(responseText);
+			const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+			if (!text) {
+				throw new Error('Gemini returned empty content.');
+			}
+
+			return String(text);
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+		}
+	}
+
+	throw lastError || new Error('All Gemini API keys failed.');
+}
+
+function safeJsonParse(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch (_error) {
+		const jsonMatch = text.match(/```json\s*([\s\S]*?)```/);
+		if (jsonMatch?.[1]) {
+			try {
+				return JSON.parse(jsonMatch[1].trim());
+			} catch (_innerError) {
+				// Return null below.
+			}
+		}
+		return null;
+	}
+}
+
+function buildStudyPrompt(transcriptText: string, metadata: { courseSlug: string; lectureId: string }) {
+	return [
+		'Eres un tutor especializado en Java y Spring Boot para desarrolladores que se preparan para entrevistas semi-senior.',
+		'',
+		`CURSO: ${metadata.courseSlug || 'Java In-Depth'}`,
+		`LECCIÓN: ${metadata.lectureId || 'Desconocida'}`,
+		'',
+		'TRANSCRIPCIÓN DEL VIDEO:',
+		transcriptText.slice(0, 18000),
+		'',
+		'Genera un JSON VÁLIDO (sin markdown, sin ```json) con esta estructura EXACTA:',
+		'{',
+		'  "relevance": { "score": 0-100, "reason": "explicación breve" },',
+		'  "keyConcepts": ["concepto 1", "concepto 2", "concepto 3"],',
+		'  "quickWin": "una acción rápida que el estudiante puede hacer ahora",',
+		'  "questions": [',
+		'    { "q": "pregunta", "bloomLevel": "Recordar|Comprender|Aplicar|Analizar", "hint": "pista", "answer": "respuesta ideal" }',
+		'  ],',
+		'  "application": {',
+		'    "isCode": true,',
+		'    "setup": "contexto del ejercicio",',
+		'    "challenge": "código con bug o ejercicio",',
+		'    "solution": "solución explicada"',
+		'  },',
+		'  "interviewQ": { "q": "pregunta de entrevista", "idealAnswer": "respuesta ideal" },',
+		'  "nextAction": "siguiente paso recomendado",',
+		'  "ankiCards": [',
+		'    { "front": "pregunta flashcard", "back": "respuesta flashcard", "tag": "tema" }',
+		'  ]',
+		'}',
+		'',
+		'REGLAS:',
+		'- Genera 2-4 preguntas de diferentes niveles de Bloom',
+		'- Genera 3-5 tarjetas Anki',
+		'- El challenge DEBE ser código Java/Spring Boot con bugs reales',
+		'- Todo en español excepto términos técnicos (JVM, heap, thread, etc.)',
+		'- Responde SOLO con el JSON, sin texto adicional'
+	].join('\n');
+}
+
 async function generateLearningPanelFromTranscript(transcriptText: string, metadata: { lectureKey: string; courseSlug: string; lectureId: string }) {
 	const cleaned = String(transcriptText || '').replace(/\r/g, '').trim();
 	if (cleaned.length < 120) {
 		throw new Error('Transcript is too short for learning panel generation.');
+	}
+
+	const apiKeys = getGeminiApiKeys();
+
+	if (apiKeys.length > 0) {
+		try {
+			const prompt = buildStudyPrompt(cleaned, metadata);
+			const reply = await requestGeminiText(prompt, 0.35, 2800);
+			const parsed = safeJsonParse(reply);
+
+			if (parsed && typeof parsed === 'object') {
+				return { payload: parsed, raw: cleaned };
+			}
+		} catch (error) {
+			console.warn('[USG] Gemini learning panel failed, using provisional:', toErrorMessage(error));
+		}
 	}
 
 	const summary = cleaned.split(/\s+/).slice(0, 24).join(' ');
