@@ -239,7 +239,7 @@
           </div>
 
           <button id="studyGenerateBtn" type="button" class="usb-generate-btn">
-            🪄 Generar sesión de estudio
+            🪄 Generar sesión de aprendizaje
           </button>
 
           <p
@@ -260,43 +260,53 @@
         <section class="usb-pane" data-tab-panel="captions">
           <section class="card usb-live-card">
             <div class="usb-live-head">
-              <div>
-                <div class="usb-section-kicker">Estado en vivo</div>
-                <h3 class="usb-live-title">Pipeline EN -> ES</h3>
+              <div class="usb-live-head-left">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="11" height="11" class="usb-icon-violet"><rect x="2" y="2" width="20" height="20" rx="2"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                <span class="usb-live-label">Estado en vivo</span>
               </div>
               <button id="refreshBtn" type="button" class="usb-ghost-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="8" height="8"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
                 Refresh
               </button>
             </div>
 
             <div class="usb-live-rows">
               <div class="usb-live-row">
-                <span>Subtitulos ES nativos</span
-                ><strong id="hasSpanish">No</strong>
+                <span>Subtítulos ES nativos</span>
+                <strong id="hasSpanish" class="usb-status-no">No disponible</strong>
               </div>
               <div class="usb-live-row">
-                <span>Subtitulos EN capturados</span
-                ><strong id="prefetchedCount">0</strong>
+                <span>Subtítulos EN capturados</span>
+                <strong id="prefetchedCount" class="usb-status-ok">0 líneas</strong>
               </div>
               <div class="usb-live-row">
-                <span>API local (8010)</span
-                ><strong id="pipelineApiState">Idle</strong>
+                <span>API local (8010)</span>
+                <strong id="pipelineApiState" class="usb-status-ok">Conectada</strong>
               </div>
               <div class="usb-live-row">
-                <span>Traduccion activa</span
-                ><strong id="autoTranslated">No</strong>
+                <span>Traducción activa</span>
+                <strong id="autoTranslated">Pausada</strong>
               </div>
               <div class="usb-live-row">
-                <span>Content script</span
-                ><strong id="pipelineSourceState">Waiting</strong>
+                <span>Content script</span>
+                <strong id="pipelineSourceState">Esperando…</strong>
               </div>
             </div>
-
-            <label class="usb-switchline" for="overlayEnabled">
-              <span>Auto EN -> ES (en preparacion)</span>
-              <span class="usb-switch-pending">beta</span>
-            </label>
           </section>
+
+          <div class="usb-auto-translate-row">
+            <div class="usb-auto-translate-left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="12" height="12" class="usb-icon-violet"><path d="M12 3l1.5 3.07L17 7.5l-2.5 2.43L15 14l-3-1.58L9 14l.5-4.07L7 7.5l3.5-1.43L12 3z"/><path d="M5 19h14"/></svg>
+              <div>
+                <p class="usb-auto-label">Auto EN → ES</p>
+                <p class="usb-auto-sublabel">Traducción automática con IA local</p>
+              </div>
+            </div>
+            <label class="usb-switch" for="autoTranslateToggle">
+              <input id="autoTranslateToggle" type="checkbox" />
+              <span class="usb-switch-track"></span>
+            </label>
+          </div>
 
           <section class="card usb-pipeline-card">
             <div class="usb-pipeline-head">
@@ -305,14 +315,8 @@
                 <h2 class="sectionTitle">Captura, IA y overlay</h2>
               </div>
               <div class="usb-pipeline-badges">
-                <span id="pipelineCueCount" class="usb-pipeline-badge"
-                  >0 cues</span
-                >
-                <span
-                  id="pipelineLatency"
-                  class="usb-pipeline-badge usb-pipeline-badge-emerald"
-                  >Idle</span
-                >
+                <span id="pipelineCueCount" class="usb-pipeline-badge">0 cues</span>
+                <span id="pipelineLatency" class="usb-pipeline-badge usb-pipeline-badge-emerald">Idle</span>
               </div>
             </div>
 
@@ -330,206 +334,212 @@
                 <span>Subtítulo generado</span>
               </div>
             </div>
-
-            <div class="usb-history-list">
-              <div class="usb-history-row">
-                <span>EN source</span>
-                <strong id="prefetchMode">-</strong>
-              </div>
-              <div class="usb-history-row">
-                <span>ES imported</span>
-                <strong id="pipelineImportState">0 cues</strong>
-              </div>
-              <div class="usb-history-row">
-                <span>Overlay</span>
-                <strong id="pipelineOverlayState">Off</strong>
-              </div>
-            </div>
           </section>
 
-          <section class="card usb-summary-card">
+          <section class="card usb-summary-card" style="display:none">
             <div class="usb-summary-grid">
-              <div class="row">
-                <span>Course</span><strong id="courseSlug">-</strong>
-              </div>
-              <div class="row">
-                <span>Lecture</span><strong id="lectureId">-</strong>
-              </div>
-              <div class="row">
-                <span>EN captions</span><strong id="hasEnglish">-</strong>
-              </div>
-              <div class="row">
-                <span>Imported ES cues</span
-                ><strong id="importedCount">0</strong>
-              </div>
-              <div class="row">
-                <span>Auto source</span><strong>Pipeline</strong>
-              </div>
-              <div class="row">
-                <span>Auto EN download</span
-                ><strong id="autoDownloaded">-</strong>
-              </div>
+              <div class="row"><span>Curso</span><strong id="courseSlug">-</strong></div>
+              <div class="row"><span>Lección</span><strong id="lectureId">-</strong></div>
+              <div class="row"><span>Subtítulos EN</span><strong id="hasEnglish">-</strong></div>
+              <div class="row"><span>Cues ES importados</span><strong id="importedCount">0</strong></div>
+              <div class="row"><span>Fuente auto</span><strong>Pipeline</strong></div>
+              <div class="row"><span>Auto descarga EN</span><strong id="autoDownloaded">-</strong></div>
             </div>
             <p id="statusReason" class="hint"></p>
           </section>
 
-          <section class="card actions usb-actions-grid">
-            <button id="retryAutoTranslateBtn" type="button">
-              Retry Auto EN -> ES Translation
+          <div class="usb-section-kicker">Gestión SRT</div>
+          <div class="usb-srt-grid">
+            <button id="exportBtn" type="button" class="usb-srt-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="12" height="12"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export EN
             </button>
-            <button id="exportBtn" type="button">Export EN as SRT</button>
-            <button id="importBtn" type="button">Import ES SRT</button>
-            <button id="clearBtn" type="button" class="warn">
-              Clear imported ES (this lecture)
+            <button id="importBtn" type="button" class="usb-srt-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="12" height="12"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Import ES
             </button>
             <input id="fileInput" type="file" accept=".srt,text/plain" hidden />
-          </section>
+          </div>
 
           <section class="card usb-paste-card">
-            <label for="pasteSrt">Paste ES SRT (no file upload)</label>
-            <textarea
-              id="pasteSrt"
-              rows="7"
-              placeholder="Paste translated ES SRT here..."
-            ></textarea>
-            <button id="pasteImportBtn" type="button">
-              Apply Pasted ES SRT
+            <div class="usb-paste-head">
+              <div class="usb-section-kicker" style="margin-bottom:0">Pegar SRT en español</div>
+              <button id="retryAutoTranslateBtn" type="button" class="usb-ghost-btn usb-ghost-btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="8" height="8"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+                Reintentar
+              </button>
+            </div>
+            <textarea id="pasteSrt" rows="5" placeholder="1
+00:00:01,000 --> 00:00:04,000
+Texto traducido al español...
+
+2
+00:00:04,500 --> 00:00:08,000
+Segunda línea de subtítulo..."></textarea>
+            <button id="pasteImportBtn" type="button" class="usb-apply-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="10" height="10"><polyline points="20 6 9 17 4 12"/></svg>
+              Aplicar SRT
             </button>
             <p class="hint">
-              The pasted subtitle is saved per lecture, so you do not need to
-              upload repeatedly.
+              El subtítulo se guarda por lección, no necesitas pegarlo de nuevo.
             </p>
           </section>
+
+          <button id="clearBtn" type="button" class="usb-clear-btn warn" style="display:none">
+            Limpiar ES importado (esta lección)
+          </button>
         </section>
 
         <section class="usb-pane" data-tab-panel="overlay">
-          <section class="card usb-preview-card">
-            <div class="usb-section-kicker">Extension overlay</div>
-            <div class="usb-preview-frame">
-              <div class="usb-preview-overlay">
-                <div class="usb-preview-badge">Side panel preview</div>
-                <div class="usb-preview-caption">
-                  This overlay stays attached to the lecture video while the
-                  extension keeps the study controls and caption tools in the
-                  side panel.
-                </div>
-              </div>
+          <div class="usb-overlay-preview" id="overlayPreviewFrame">
+            <div class="usb-overlay-preview-code" aria-hidden="true">
+              <pre>public class JVM {
+  public static void main
+    (String[] args) {
+    System.out.println
+      ("Hello World");
+  }
+}</pre>
             </div>
-          </section>
-
-          <section class="card usb-overlay-card">
-            <div class="usb-toggle-card">
-              <label class="switchRow" for="overlayEnabled">
-                <span
-                  >Enable ES overlay (replace native captions visually)</span
-                >
-                <input id="overlayEnabled" type="checkbox" />
-              </label>
-              <p id="overlayStatus" class="hint">Overlay disabled.</p>
+            <div class="usb-overlay-preview-sub" id="overlayPreviewSub">
+              Java es un lenguaje fuertemente tipado.
             </div>
+            <span class="usb-overlay-preview-tag">Preview</span>
+          </div>
 
-            <div class="usb-overlay-grid">
-              <label>
-                <span class="usb-overlay-label-row"
-                  ><span>Sync Offset</span><em>+-0ms</em></span
-                >
-                <input
-                  id="offsetMs"
-                  type="number"
-                  min="-15000"
-                  max="15000"
-                  step="100"
-                  value="0"
-                />
-              </label>
-
-              <label>
-                <span class="usb-overlay-label-row"
-                  ><span>Font size</span><em>32px</em></span
-                >
-                <input
-                  id="fontSizePx"
-                  type="range"
-                  min="16"
-                  max="64"
-                  value="32"
-                />
-              </label>
-
-              <label>
-                <span class="usb-overlay-label-row"
-                  ><span>Background opacity</span><em>85%</em></span
-                >
-                <input
-                  id="opacity"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0.86"
-                />
-              </label>
-
-              <label>
-                <span class="usb-overlay-label-row"
-                  ><span>Position</span><em>drag handle</em></span
-                >
-                <select id="overlayPosition">
-                  <option value="top">Top</option>
-                  <option value="center">Center</option>
-                  <option value="bottom" selected>Bottom</option>
-                </select>
-              </label>
-
-              <label>
-                <span class="usb-overlay-label-row"
-                  ><span>Text color</span><em>theme</em></span
-                >
-                <select id="overlayTextColor">
-                  <option value="white" selected>White</option>
-                  <option value="yellow">Yellow</option>
-                  <option value="cyan">Cyan</option>
-                </select>
-              </label>
+          <div class="usb-overlay-toggle-row">
+            <div>
+              <p class="usb-overlay-toggle-title">Overlay activo</p>
+              <p class="usb-overlay-toggle-desc">Mostrar traducción sobre el video</p>
             </div>
+            <label class="usb-switch" for="overlayEnabled">
+              <input id="overlayEnabled" type="checkbox" checked />
+              <span class="usb-switch-track"></span>
+            </label>
+          </div>
+          <p id="overlayStatus" class="hint" style="display:none"></p>
 
-            <div class="usb-overlay-presets" aria-hidden="true">
-              <span class="usb-overlay-presets-title">Presets rapidos</span>
-              <div class="usb-preset-grid">
-                <button type="button">Cine</button>
-                <button type="button">Minimal</button>
-                <button type="button">Alto contraste</button>
-                <button type="button">Por defecto</button>
-              </div>
-            </div>
-
-            <div class="usb-reset-row">
-              <div>
-                <strong>Reset position</strong>
-                <p class="hint">
-                  Restore the default overlay placement and tone.
-                </p>
-              </div>
-              <button id="overlayResetBtn" type="button" class="usb-reset-btn">
-                Reset
+          <div class="usb-overlay-controls" id="overlayControls">
+            <div class="usb-section-kicker">Posición</div>
+            <div class="usb-position-grid">
+              <button type="button" class="usb-pos-btn" data-pos="top">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3v18M5 12h14"/></svg>
+                Arriba
+              </button>
+              <button type="button" class="usb-pos-btn" data-pos="center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="18" y1="10" x2="6" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="18" y1="18" x2="6" y2="18"/></svg>
+                Centro
+              </button>
+              <button type="button" class="usb-pos-btn is-active" data-pos="bottom">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M4 20h16M4 4v12a2 2 0 002 2h12a2 2 0 002-2V4"/></svg>
+                Abajo
               </button>
             </div>
-          </section>
+
+            <div class="card usb-slider-card">
+              <div class="usb-slider-head">
+                <span class="usb-slider-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="10" height="10"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                  Tamaño de texto
+                </span>
+                <span class="usb-slider-value" id="fontSizeVal">24px</span>
+              </div>
+              <input id="fontSizePx" type="range" min="12" max="48" step="2" value="24" class="usb-range usb-range-violet" />
+              <div class="usb-range-limits"><span>12px</span><span>48px</span></div>
+            </div>
+
+            <div class="card usb-slider-card">
+              <div class="usb-slider-head">
+                <span class="usb-slider-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="10" height="10"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Fondo del subtítulo
+                </span>
+                <span class="usb-slider-value" id="opacityVal">85%</span>
+              </div>
+              <input id="opacity" type="range" min="0" max="100" step="5" value="85" class="usb-range usb-range-violet" />
+              <div class="usb-range-limits"><span>Transparente</span><span>Sólido</span></div>
+            </div>
+
+            <div class="card usb-slider-card">
+              <div class="usb-slider-head">
+                <span class="usb-slider-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="10" height="10"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  Sombra del texto
+                </span>
+                <span class="usb-slider-value" id="shadowVal">60%</span>
+              </div>
+              <input id="shadowStrength" type="range" min="0" max="100" step="10" value="60" class="usb-range usb-range-violet" />
+            </div>
+
+            <div class="usb-section-kicker">Color del texto</div>
+            <div class="usb-color-grid">
+              <button type="button" class="usb-color-btn is-active" data-color="white">
+                <span class="usb-color-dot" style="background:#ffffff"></span>Blanco
+              </button>
+              <button type="button" class="usb-color-btn" data-color="yellow">
+                <span class="usb-color-dot" style="background:#fde047"></span>Amarillo
+              </button>
+              <button type="button" class="usb-color-btn" data-color="cyan">
+                <span class="usb-color-dot" style="background:#67e8f9"></span>Cian
+              </button>
+            </div>
+
+            <div class="usb-overlay-drag-row">
+              <div>
+                <p class="usb-drag-title">Posición del overlay</p>
+                <p class="hint">Arrastra el handle ═══ en el video para mover</p>
+              </div>
+              <button id="overlayResetBtn" type="button" class="usb-reset-btn">Resetear</button>
+            </div>
+
+            <div class="card usb-slider-card">
+              <div class="usb-slider-head">
+                <span class="usb-slider-label usb-slider-label-amber">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="10" height="10"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+                  Sync Offset
+                </span>
+                <span class="usb-slider-value usb-slider-value-amber" id="offsetVal">+0ms</span>
+              </div>
+              <input id="offsetMs" type="range" min="-2000" max="2000" step="100" value="0" class="usb-range usb-range-amber" />
+              <p class="hint" style="margin-top:4px">Ajusta si los subtítulos van adelantados (+) o atrasados (−).</p>
+              <button id="offsetResetBtn" type="button" class="usb-offset-reset" style="display:none">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="8" height="8"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+                Resetear offset
+              </button>
+            </div>
+
+            <div class="usb-section-kicker">Presets rápidos</div>
+            <div class="usb-preset-grid">
+              <button type="button" data-preset="cine">Cine</button>
+              <button type="button" data-preset="minimal">Mínimal</button>
+              <button type="button" data-preset="hc">Alto contraste</button>
+              <button type="button" data-preset="default">Por defecto</button>
+            </div>
+          </div>
         </section>
 
         <section class="usb-pane" data-tab-panel="dev">
           <section class="card usb-dev-card">
             <h2 class="sectionTitle">Dev Panel</h2>
-            <p class="hint">Visible after triple-clicking the gear button.</p>
-            <pre id="devOutput" class="studyOutput">
-Developer telemetry is empty.</pre
-            >
+            <p class="hint">Visible tras triple-click en el engranaje.</p>
+            <pre id="devOutput" class="studyOutput">Developer telemetry is empty.</pre>
           </section>
         </section>
       </section>
 
       <p id="flash" class="flash"></p>
     </main>
+
+    <footer class="usb-footer">
+      <div class="usb-footer-left">
+        <span class="usb-footer-dot"></span>
+        <span class="usb-footer-addr">127.0.0.1:8010</span>
+      </div>
+      <span class="usb-footer-sep">·</span>
+      <span class="usb-footer-sync">Guardado</span>
+      <span class="usb-footer-sep">·</span>
+      <span class="usb-footer-ver">v1.0.0</span>
+    </footer>
 
     <script src="gemini-config.local.js"></script>
     <script src="popup.js"></script>
