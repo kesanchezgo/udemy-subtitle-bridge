@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Zap, TrendingUp, Database, WifiOff, Radio } from "lucide-react";
 import { translateLineStream } from "../services/localAI";
 import { debugStore } from "../services/debugStore";
+import { contentBridge } from "../services/contentBridge";
 
 // ── Fallback translations for offline preview ─────────────────────────────────
 const FALLBACK: Record<string, string> = {
@@ -116,6 +117,7 @@ export function TranslationPipeline({
         finalEs  = result.content.trim();
         didUseAI = true;
         setCurrentEs(finalEs);
+        contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: finalEs } });
       } else {
         // Fallback: mock-stream the translation word by word
         const mockText = FALLBACK[incomingLine] ?? incomingLine;
@@ -127,6 +129,7 @@ export function TranslationPipeline({
         if (ctrl.signal.aborted || cancelled) return;
         finalEs  = mockText;
         didUseAI = false;
+        contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: finalEs } });
       }
 
       const ms = Math.round(performance.now() - t0);
