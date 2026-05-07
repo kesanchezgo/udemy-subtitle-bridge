@@ -3,7 +3,7 @@ import {
   Settings, Download, Upload, RefreshCcw, CheckCircle2, AlertCircle,
   PlaySquare, Sparkles, Zap, Captions, Layers, GraduationCap, RotateCcw,
   Type, Eye, EyeOff, AlignCenter, FileText,
-  Loader2, ArrowUpDown, Baseline, Check,
+  Loader2, ArrowUpDown, Baseline, Check, Key, Save, X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Switch } from "./ui/switch";
@@ -14,6 +14,7 @@ import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
+import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount } from "../../gemini-config";
 
 type ExtensionSidebarProps = {
   isOpen?: boolean;
@@ -60,6 +61,11 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
 
   const [activeTab, setActiveTab] = useState<"study" | "captions" | "overlay" | "dev">("study");
   const [devMode, setDevMode] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [geminiKey1, setGeminiKey1] = useState("");
+  const [geminiKey2, setGeminiKey2] = useState("");
+  const [geminiKeyCount, setGeminiKeyCount] = useState(0);
+  const [settingsSaved, setSettingsSaved] = useState(false);
   const gearClickRef = useRef<number[]>([]);
 
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
@@ -82,6 +88,12 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   const [contentScriptConnected, setContentScriptConnected] = useState(false);
   const [syncPulse, setSyncPulse] = useState(false);
   const [currentEnLine, setCurrentEnLine] = useState<string | null>(null);
+
+  useEffect(() => {
+    initGeminiKeys().then(() => {
+      setGeminiKeyCount(getConfiguredKeyCount());
+    });
+  }, []);
 
   useEffect(() => {
     const unsub = contentBridge.onMessageFromContent((msg) => {
@@ -166,7 +178,19 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
         if (!next && activeTab === "dev") setActiveTab("study");
         return next;
       });
+    } else if (gearClickRef.current.length === 1) {
+      setShowSettings(s => !s);
     }
+  };
+
+  const handleSaveGeminiKeys = async () => {
+    const keys = [geminiKey1, geminiKey2].filter(Boolean);
+    await saveGeminiKeys(keys);
+    setGeminiKeyCount(getConfiguredKeyCount());
+    setSettingsSaved(true);
+    setGeminiKey1("");
+    setGeminiKey2("");
+    setTimeout(() => setSettingsSaved(false), 2000);
   };
 
   const tabs = [
@@ -215,6 +239,77 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            key="settings-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden border-b border-white/5 bg-[#0f1012]"
+          >
+            <div className="p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Key size={11} className="text-violet-400" />
+                  <span className="text-white/55 text-[11px]" style={{ fontWeight: 600 }}>Gemini API Keys</span>
+                  {geminiKeyCount > 0 && (
+                    <span className="text-[9px] text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0.5">
+                      {geminiKeyCount} {geminiKeyCount === 1 ? "key" : "keys"}
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => setShowSettings(false)} className="text-white/30 hover:text-white/60 transition-colors">
+                  <X size={12} />
+                </button>
+              </div>
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  value={geminiKey1}
+                  onChange={e => setGeminiKey1(e.target.value)}
+                  placeholder="API Key 1 (principal)"
+                  className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
+                />
+                <input
+                  type="password"
+                  value={geminiKey2}
+                  onChange={e => setGeminiKey2(e.target.value)}
+                  placeholder="API Key 2 (fallback, opcional)"
+                  className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveGeminiKeys}
+                  disabled={!geminiKey1.trim() && !geminiKey2.trim()}
+                  className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-violet-700 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-[10px] transition-all"
+                >
+                  <Save size={10} />Guardar keys
+                </button>
+                <AnimatePresence>
+                  {settingsSaved && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="text-emerald-400 text-[10px] flex items-center gap-1"
+                    >
+                      <CheckCircle2 size={10} />Guardado
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </div>
+              <p className="text-white/20 text-[9px] leading-relaxed">
+                Las keys se guardan en chrome.storage.local y se usan para traducción y Study Agent.
+                Clic triple en ⚙ para Dev mode.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex shrink-0 p-1.5 gap-1 bg-[#121214] border-b border-white/5 relative z-10">
         {tabs.map(tab => {
