@@ -14,7 +14,7 @@ import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
-import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount, validateGeminiKey } from "../../gemini-config";
+import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount, validateGeminiKey, normalizeGeminiKeys } from "../../gemini-config";
 import { checkLocalAIHealth } from "../services/localAI";
 
 type ExtensionSidebarProps = {
@@ -69,6 +69,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [validatingKeys, setValidatingKeys] = useState(false);
   const [keyValidationError, setKeyValidationError] = useState<string | null>(null);
+  const [keyValidationWarning, setKeyValidationWarning] = useState<string | null>(null);
   const gearClickRef = useRef<number[]>([]);
 
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
@@ -193,27 +194,61 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   };
 
   const handleSaveGeminiKeys = async () => {
-    const keys = [geminiKey1, geminiKey2].filter(Boolean);
+    const keys = normalizeGeminiKeys([geminiKey1, geminiKey2]);
     if (!keys.length) return;
 
     setValidatingKeys(true);
     setKeyValidationError(null);
+    setKeyValidationWarning(null);
+
+    const validKeys: string[] = [];
+    const rateLimitedKeys: string[] = [];
+    const rejectedMessages: string[] = [];
 
     for (const key of keys) {
       const result = await validateGeminiKey(key);
-      if (!result.valid) {
-        setValidatingKeys(false);
-        setKeyValidationError(result.error || 'Key inválida.');
-        return;
+      if (result.status === "valid") {
+        validKeys.push(key);
+        continue;
       }
+
+      if (result.status === "rate-limited") {
+        rateLimitedKeys.push(key);
+        continue;
+      }
+
+      rejectedMessages.push(result.error || 'Key inválida.');
     }
 
-    await saveGeminiKeys(keys);
+    if (!validKeys.length) {
+      const skippedCount = rateLimitedKeys.length + rejectedMessages.length;
+      const skippedMessage = skippedCount > 0
+        ? `Se omitieron ${skippedCount} ${skippedCount === 1 ? 'key' : 'keys'} porque no quedaron operativas.`
+        : 'No se pudo guardar ninguna key.';
+      setKeyValidationError(rejectedMessages[0] || rateLimitedKeys[0] || skippedMessage);
+      setValidatingKeys(false);
+      return;
+    }
+
+    await saveGeminiKeys(validKeys);
     setGeminiKeyCount(getConfiguredKeyCount());
     setValidatingKeys(false);
     setSettingsSaved(true);
     setGeminiKey1("");
     setGeminiKey2("");
+    setKeyValidationError(null);
+
+    if (rateLimitedKeys.length > 0 || rejectedMessages.length > 0) {
+      const warningParts: string[] = [];
+      if (rateLimitedKeys.length > 0) {
+        warningParts.push(`${rateLimitedKeys.length} ${rateLimitedKeys.length === 1 ? 'key quedó' : 'keys quedaron'} limitadas y no se guardaron`);
+      }
+      if (rejectedMessages.length > 0) {
+        warningParts.push(`${rejectedMessages.length} ${rejectedMessages.length === 1 ? 'key fue omitida' : 'keys fueron omitidas'} por inválidas`);
+      }
+      setKeyValidationWarning(`Se guardaron ${validKeys.length} ${validKeys.length === 1 ? 'key' : 'keys'}; ${warningParts.join(' y ')}.`);
+    }
+
     setTimeout(() => setSettingsSaved(false), 2000);
   };
 
@@ -335,6 +370,16 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                       className="text-red-400 text-[10px] flex items-center gap-1"
                     >
                       <AlertCircle size={10} />{keyValidationError}
+                    </motion.span>
+                  )}
+                  {keyValidationWarning && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="text-amber-400 text-[10px] flex items-center gap-1"
+                    >
+                      <AlertCircle size={10} />{keyValidationWarning}
                     </motion.span>
                   )}
                 </AnimatePresence>

@@ -1,6 +1,8 @@
+import { buildGeminiGenerateContentUrl, buildGeminiStreamContentUrl, normalizeGeminiKeys } from '../../gemini-config';
+
 const LOCAL_AI_URL = 'http://127.0.0.1:8010';
 const LOCAL_AI_MODEL = 'local-model';
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
@@ -37,7 +39,7 @@ export interface AIMessage {
 
 function getGeminiApiKeys(): string[] {
   const g = globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] };
-  return Array.isArray(g.USB_GEMINI_API_KEYS) ? g.USB_GEMINI_API_KEYS.filter(Boolean) : [];
+  return Array.isArray(g.USB_GEMINI_API_KEYS) ? normalizeGeminiKeys(g.USB_GEMINI_API_KEYS) : [];
 }
 
 function getGeminiModel(): string {
@@ -68,14 +70,12 @@ async function callGemini(messages: AIMessage[], maxTokens: number, temperature:
 
   for (const apiKey of apiKeys) {
     try {
-      const response = await fetch(
-        `${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify(body)
-        }
-      );
+      const normalizedKey = apiKey.trim();
+      const response = await fetch(buildGeminiGenerateContentUrl(model, normalizedKey), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
 
       const text = await response.text();
       if (!response.ok) {
@@ -212,15 +212,13 @@ async function streamGemini(
 
   for (const apiKey of apiKeys) {
     try {
-      const response = await fetch(
-        `${GEMINI_API_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify(body),
-          signal
-        }
-      );
+      const normalizedKey = apiKey.trim();
+      const response = await fetch(buildGeminiStreamContentUrl(model, normalizedKey), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal
+      });
 
       if (!response.ok || !response.body) {
         const text = await response.text().catch(() => '');
