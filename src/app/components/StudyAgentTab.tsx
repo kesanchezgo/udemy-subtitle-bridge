@@ -103,7 +103,14 @@ const DIFFICULTY_LABEL: Record<ConfidenceLevel, string> = {
   mastered: 'Avanzada'
 };
 
-const FLOW_STEPS = ['Autocalibrar', 'Conceptos', 'Verificar', 'Aplicar', 'Anki'] as const;
+const BLOOM_STYLE: Record<ConfidenceLevel, string> = {
+  confused: 'border-red-500/20 bg-red-500/10 text-red-400',
+  partial: 'border-amber-500/20 bg-amber-500/10 text-amber-400',
+  clear: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400',
+  mastered: 'border-violet-500/20 bg-violet-500/10 text-violet-400',
+};
+
+const FLOW_STEPS = ['Conceptos', 'Calibrar', 'Verificar', 'Aplicar', 'Anki'] as const;
 
 const FALLBACK_QUESTION = {
   q: '¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada.',
@@ -143,6 +150,19 @@ function getFeedbackLineClass(line: string) {
   return 'text-white/80';
 }
 
+function StepConnectorLine({ filled }: { filled: boolean }) {
+  return (
+    <div className="relative mx-1 mb-4 h-px flex-1 overflow-hidden bg-white/5">
+      <motion.div
+        className="absolute inset-0 bg-gradient-to-r from-emerald-500/50 to-emerald-400/80 origin-left"
+        initial={{ scaleX: 0 }}
+        animate={{ scaleX: filled ? 1 : 0 }}
+        transition={{ duration: 0.6, ease: 'easeInOut' }}
+      />
+    </div>
+  );
+}
+
 function StudyStepBadge({
   index,
   label,
@@ -155,21 +175,21 @@ function StudyStepBadge({
   return (
     <div className="usb-study-step flex min-w-0 flex-1 flex-col items-center gap-1">
       <div className="flex w-full items-center">
-        {index > 0 ? <div className={`h-px flex-1 ${status === 'pending' ? 'bg-white/5' : 'bg-gradient-to-r from-emerald-500/45 via-violet-500/45 to-emerald-400/65'}`} /> : null}
+        {index > 0 ? <StepConnectorLine filled={status !== 'pending'} /> : null}
         <div
           className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[9px] font-semibold transition-all ${
             status === 'done'
-              ? 'border-emerald-500/35 bg-emerald-500/12 text-emerald-400'
+              ? 'border-emerald-500/35 bg-emerald-500/12 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
               : status === 'active'
-                ? 'border-violet-500/40 bg-violet-500/12 text-violet-300'
+                ? 'border-violet-500/40 bg-violet-500/12 text-violet-300 shadow-[0_0_8px_rgba(139,92,246,0.3)]'
                 : 'border-white/10 bg-white/5 text-white/22'
           }`}
         >
           {status === 'done' ? <CheckIcon className="h-2.5 w-2.5" /> : index + 1}
         </div>
-        {index < FLOW_STEPS.length - 1 ? <div className={`h-px flex-1 ${status === 'pending' ? 'bg-white/5' : 'bg-gradient-to-r from-emerald-500/45 via-violet-500/45 to-emerald-400/65'}`} /> : null}
+        {index < FLOW_STEPS.length - 1 ? <StepConnectorLine filled={status === 'done'} /> : null}
       </div>
-      <span className={`mt-1 text-center text-[9px] uppercase tracking-[0.14em] ${status === 'done' ? 'text-emerald-400/70' : status === 'active' ? 'text-violet-300/90' : 'text-white/20'}`}>
+      <span className={`mt-1 text-center text-[9px] uppercase tracking-[0.14em] ${status === 'done' ? 'text-emerald-400/70 font-medium' : status === 'active' ? 'text-violet-300/90 font-medium' : 'text-white/20'}`}>
         {label}
       </span>
     </div>
@@ -211,8 +231,19 @@ function StepHeader({
   );
 }
 
-function getChromeApi() {
-  return (globalThis as typeof globalThis & { chrome?: any }).chrome;
+interface ChromeApiSubset {
+  runtime: {
+    sendMessage: (message: Record<string, unknown>, callback: (response: Record<string, unknown>) => void) => void;
+    lastError?: { message?: string };
+  };
+  tabs: {
+    query: (queryInfo: Record<string, unknown>, callback: (tabs: { id?: number }[]) => void) => void;
+    sendMessage: (tabId: number, message: Record<string, unknown>, callback: (response: Record<string, unknown>) => void) => void;
+  };
+}
+
+function getChromeApi(): ChromeApiSubset | undefined {
+  return (globalThis as typeof globalThis & { chrome?: ChromeApiSubset }).chrome;
 }
 
 async function fetchTranscriptFromContentScript(): Promise<{ text: string; lectureTitle?: string; courseSlug?: string; lectureKey?: string } | null> {
@@ -355,20 +386,16 @@ export function StudyAgentTab() {
 
   const activeGoal = useMemo(() => GOALS.find((item) => item.id === goal) ?? GOALS[0], [goal]);
   const currentStep = useMemo(() => {
-    if (!confidence) {
-      return 1;
-    }
-    if (!evalAccumulated) {
-      return 2;
-    }
-    if (!showSolution) {
-      return 3;
-    }
-    if (!ankiFlipped) {
-      return 4;
-    }
+    // Step 1: Conceptos — always done once we reach result phase
+    // Step 2: Calibrar — done when confidence is selected
+    if (!confidence) return 2;
+    // Step 3: Verificar — done when evaluation answer is received
+    if (!evalAccumulated) return 3;
+    // Step 4: Aplicar — done when code review received or solution viewed
+    if (!codeReviewAccumulated && !showSolution) return 4;
+    // Step 5: Anki
     return 5;
-  }, [confidence, evalAccumulated, showSolution, ankiFlipped]);
+  }, [confidence, evalAccumulated, codeReviewAccumulated, showSolution]);
 
   const startGeneration = async () => {
     setStage('generating');
@@ -552,8 +579,18 @@ export function StudyAgentTab() {
             <p className="usb-relevance-text">{studyData?.relevance?.reason || 'Cimientos críticos. Spring Boot vive dentro de la JVM — sin esto, el resto del curso es memorizar sin entender.'}</p>
           </section>
 
+          <section className="usb-result-card">
+            <StepHeader index={1} label="Conceptos clave del video" status="done" subtitle="Asegura la base antes de pasar a las preguntas." />
+            {(studyData?.keyConcepts || ['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.']).map((concept) => (
+              <label key={concept} className="usb-check-item">
+                <span className="usb-check-box"><CheckIcon className="usb-check-mark" /></span>
+                <span>{concept}</span>
+              </label>
+            ))}
+          </section>
+
           <section className="usb-result-card usb-confidence-card">
-            <StepHeader index={2} label="¿Cómo te fue con este video?" status={confidence ? 'done' : 'active'} subtitle="Elige tu nivel para calibrar el siguiente paso del plan de estudio." />
+            <StepHeader index={2} label="¿Cómo te fue con este video?" status={currentStep > 2 ? 'done' : currentStep === 2 ? 'active' : 'pending'} subtitle="Elige tu nivel para calibrar el siguiente paso del plan de estudio." />
             <div className="usb-confidence-grid">
               {CONFIDENCE_OPTIONS.map((item) => {
                 const isActive = confidence === item.id;
@@ -579,25 +616,10 @@ export function StudyAgentTab() {
             ) : null}
           </section>
 
-          <section className="usb-result-card">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="usb-section-title">Lo que aprendiste</div>
-                <p className="mt-1 text-[10px] leading-relaxed text-white/30">Asegura la base antes de pasar a las preguntas.</p>
-              </div>
-            </div>
-            {(studyData?.keyConcepts || ['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.']).map((concept) => (
-              <label key={concept} className="usb-check-item">
-                <span className="usb-check-box"><CheckIcon className="usb-check-mark" /></span>
-                <span>{concept}</span>
-              </label>
-            ))}
-          </section>
-
           <section className="usb-result-card usb-quiz-card">
-            <StepHeader index={3} label="Verifica tu comprensión" status={confidence ? (evalAccumulated ? 'done' : 'active') : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
+            <StepHeader index={3} label="Verifica tu comprensión" status={currentStep > 3 ? 'done' : currentStep === 3 ? 'active' : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
             <div className="usb-quiz-badges">
-              <div className="usb-bloom-badge">Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
+              <div className={`usb-bloom-badge ${confidence ? BLOOM_STYLE[confidence] : 'border-white/10 bg-white/5 text-white/40'}`}>Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
               {confidence ? <div className={`usb-difficulty-badge ${CONFIDENCE_STYLES[confidence]}`}>{DIFFICULTY_LABEL[confidence]}</div> : null}
             </div>
             {studyData?.questions && studyData.questions.length > 1 ? (
@@ -688,7 +710,7 @@ export function StudyAgentTab() {
                 {evalStreaming ? <LoaderIcon className="usb-btn-icon is-spinning" /> : <SendIcon className="usb-btn-icon" />}
                 {evalStreaming ? 'Cancel' : 'Evaluar con IA'}
               </button>
-              <button type="button" className="usb-small-btn usb-muted-btn">
+              <button type="button" className="usb-small-btn usb-muted-btn" onClick={() => { setEvalAccumulated('Pregunta omitida por el estudiante.'); setEvalRating('unknown'); }}>
                 <PlayIcon className="usb-btn-icon" />
                 Continuar sin responder
               </button>
@@ -712,7 +734,7 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card usb-code-card">
-            <StepHeader index={4} label="Aplícalo en código / situación real" status={showSolution ? 'done' : evalAccumulated ? 'active' : 'pending'} subtitle={activeApplication.setup} />
+            <StepHeader index={4} label="Aplícalo en código / situación real" status={currentStep > 4 ? 'done' : currentStep === 4 ? 'active' : 'pending'} subtitle={activeApplication.setup} />
             <pre className="usb-code-block">{activeApplication.challenge}</pre>
             <textarea className="usb-answer-box usb-code-answer" placeholder="Escribe tu solución o explicación aquí…" value={codeAnswer} onChange={(e) => setCodeAnswer(e.target.value)} />
             <div className="usb-card-actions">
@@ -845,7 +867,26 @@ export function StudyAgentTab() {
                 <FileDownIcon className="usb-btn-icon" />
                 Exportar .txt
               </button>
-              <button type="button" className="usb-small-btn usb-primary-btn">
+              <button
+                type="button"
+                className="usb-small-btn usb-primary-btn"
+                onClick={async () => {
+                  const cards = activeAnkiCards;
+                  try {
+                    const { buildAnkiApkg, downloadApkg } = await import('../services/ankiApkg');
+                    const apkgData = await buildAnkiApkg(
+                      cards.map(c => ({ front: c.front, back: c.back, tags: [c.tag || 'SubtitleBridge'] })),
+                      `SubtitleBridge - ${courseName}`,
+                      '.card { font-family: -apple-system, sans-serif; font-size: 16px; text-align: center; padding: 20px; }',
+                      '{{Front}}',
+                      '{{FrontSide}}<hr id=answer>{{Back}}'
+                    );
+                    downloadApkg(apkgData, `subtitle-bridge-${Date.now()}.apkg`);
+                  } catch (_err) {
+                    // silently fail
+                  }
+                }}
+              >
                 <PackageIcon className="usb-btn-icon" />
                 Exportar .apkg
               </button>

@@ -50,7 +50,7 @@ function StatusRow({ label, status, ok, pulse }: { label: string; status: string
       <span className="text-white/40 text-[11px]">{label}</span>
       <span className={`flex items-center gap-1.5 text-[11px] ${ok ? "text-emerald-400" : "text-red-400"}`}>
         {pulse && ok
-          ? <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"/></span>
+          ? <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/></span>
           : ok ? <CheckCircle2 size={10}/> : <AlertCircle size={10}/>}
         {status}
       </span>
@@ -362,7 +362,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
     { id: "study"    as const, label: "Study",   icon: GraduationCap, ping: true  },
     { id: "captions" as const, label: "Captions", icon: Captions,      ping: false },
     { id: "overlay"  as const, label: "Overlay",  icon: Layers,        ping: false },
-    ...(devMode ? [{ id: "dev" as const, label: "Dev", icon: Settings, ping: false }] : []),
+    { id: "dev"      as const, label: "Dev",      icon: Settings,      ping: false },
   ];
 
   return (
@@ -396,7 +396,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               <motion.div
                 animate={devMode ? { rotate: 360 } : { rotate: 0 }}
                 transition={devMode
-                  ? { duration: 4, repeat: Infinity, ease: "linear" }
+                  ? { duration: 8, repeat: Infinity, ease: "linear" }
                   : { duration: 0.4, ease: "easeOut" }
                 }
                 style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -540,15 +540,15 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
       </div>
 
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-        <AnimatePresence>
+        <AnimatePresence mode="wait">
           {activeTab === "study" && (
-            <motion.div key="study" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col">
+            <motion.div key="study" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col">
               <StudyAgentTab />
             </motion.div>
           )}
 
           {activeTab === "captions" && (
-            <motion.div key="captions" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+            <motion.div key="captions" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
               <Card>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-1.5">
@@ -636,7 +636,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
           )}
 
           {activeTab === "overlay" && (
-            <motion.div key="overlay" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+            <motion.div key="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
               <div className="rounded-xl overflow-hidden border border-white/8 bg-[#0a0a0c]" style={{ aspectRatio: "16/9", position: "relative" }}>
                 <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-slate-900 to-[#0a0a0c]"/>
                 <div className="absolute inset-0 flex items-center justify-center opacity-20">
@@ -647,7 +647,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                 {showOverlay && (
                   <div className={`absolute left-0 right-0 px-4 flex justify-center ${position === "top" ? "top-2" : position === "center" ? "top-1/2 -translate-y-1/2" : "bottom-3"}`}>
                     <AnimatePresence mode="wait">
-                      <motion.div key={preview_es} initial={{ opacity: 0, y: position === "top" ? -4 : 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="text-center px-2.5 py-1 rounded-md max-w-full" style={{ backgroundColor: `rgba(0,0,0,${opacity[0]/100})`, fontSize: `${Math.max(7, fontSize[0] * 0.38)}px`, color: TEXT_COLORS[textColor], textShadow: shadowStrength[0] > 0 ? `0 1px ${Math.round(shadowStrength[0]/20)}px rgba(0,0,0,${shadowStrength[0]/100})` : "none", lineHeight: 1.4 }}>
+                      <motion.div key={currentLine} initial={{ opacity: 0, y: position === "top" ? -4 : 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="text-center px-2.5 py-1 rounded-md max-w-full" style={{ backgroundColor: `rgba(0,0,0,${opacity[0]/100})`, fontSize: `${Math.max(7, fontSize[0] * 0.38)}px`, color: TEXT_COLORS[textColor], textShadow: shadowStrength[0] > 0 ? `0 1px ${Math.max(2, Math.round(shadowStrength[0] / 12))}px rgba(0,0,0,${Math.min(1, shadowStrength[0] / 80)}), 0 0 ${Math.max(1, Math.round(shadowStrength[0] / 8))}px rgba(0,0,0,${Math.min(1, shadowStrength[0] / 100)})` : "none", lineHeight: 1.4 }}>
                         {preview_es}
                       </motion.div>
                     </AnimatePresence>
@@ -705,6 +705,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                     <span className="text-violet-400 text-[10px] font-mono bg-violet-500/10 border border-violet-500/15 px-2 py-0.5 rounded">{shadowStrength[0]}%</span>
                   </div>
                   <Slider value={shadowStrength} onValueChange={setShadowStrength} max={100} min={0} step={10} className="[&_[data-slot=track]]:bg-white/10 [&_[data-slot=range]]:bg-violet-500 [&_[data-slot=thumb]]:border-violet-500 [&_[data-slot=thumb]]:bg-white [&_[data-slot=thumb]]:h-3.5 [&_[data-slot=thumb]]:w-3.5"/>
+                  <div className="flex items-center justify-between text-[9px] text-white/18 px-0.5"><span>Ninguna</span><span>Máxima</span></div>
                 </Card>
 
                 <div>
@@ -728,7 +729,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                     <p className="text-white/25 text-[10px]">Arrastra el handle ═══ en el video para mover</p>
                   </div>
                   <button onClick={() => contentBridge.sendToContent({ type: "OVERLAY_RESET_POSITION" })} className="flex items-center gap-1 text-[9px] text-white/30 hover:text-amber-400 border border-white/8 hover:border-amber-500/25 px-2 py-1 rounded-lg transition-colors shrink-0 ml-2">
-                    <RefreshCcw size={8}/>Resetear
+                    <RotateCcw size={8}/>Reset
                   </button>
                 </div>
 
@@ -766,7 +767,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
           )}
 
           {activeTab === "dev" && (
-            <motion.div key="dev" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <motion.div key="dev" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col overflow-hidden">
               <DevTab />
             </motion.div>
           )}
