@@ -1,8 +1,8 @@
 import { translateLine } from './app/services/localAI';
-import { initGeminiKeys } from './gemini-config';
+import { buildGeminiGenerateContentUrl, initGeminiKeys, normalizeGeminiKeys } from './gemini-config';
 
 const SIDE_PANEL_PATH = 'index.html';
-const GEMINI_DEFAULT_MODEL = 'gemini-2.0-flash';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 type ExtensionMessage = {
@@ -204,7 +204,7 @@ async function translateSrtToSpanish(sourceSrt: string) {
 
 function getGeminiApiKeys(): string[] {
 	const g = globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] };
-	return Array.isArray(g.USB_GEMINI_API_KEYS) ? g.USB_GEMINI_API_KEYS.filter(Boolean) : [];
+	return Array.isArray(g.USB_GEMINI_API_KEYS) ? normalizeGeminiKeys(g.USB_GEMINI_API_KEYS) : [];
 }
 
 function getGeminiModel(): string {
@@ -224,17 +224,15 @@ async function requestGeminiText(prompt: string, temperature: number, maxOutputT
 
 	for (const apiKey of apiKeys) {
 		try {
-			const response = await fetch(
-				`${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`,
-				{
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-					body: JSON.stringify({
-						contents: [{ role: 'user', parts: [{ text: prompt }] }],
-						generationConfig: { temperature, maxOutputTokens }
-					})
-				}
-			);
+			const normalizedKey = apiKey.trim();
+			const response = await fetch(buildGeminiGenerateContentUrl(model, normalizedKey), {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					contents: [{ role: 'user', parts: [{ text: prompt }] }],
+					generationConfig: { temperature, maxOutputTokens }
+				})
+			});
 
 			const responseText = await response.text();
 			if (!response.ok) {
