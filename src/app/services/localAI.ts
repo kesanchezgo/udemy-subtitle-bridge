@@ -229,30 +229,30 @@ async function streamGemini(
       const decoder = new TextDecoder();
       let buffer = '';
       let accumulated = '';
+      let finished = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
+      const processBuffer = () => {
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
 
         for (const rawLine of lines) {
           const line = rawLine.trim();
-          if (!line.startsWith('data: ')) continue;
+          if (!line.startsWith('data: ')) {
+            continue;
+          }
 
           const payload = line.slice(6).trim();
           if (payload === '[DONE]') {
-            await reader.cancel().catch(() => undefined);
-            debugStore.endRequest(reqId, true);
-            return { success: true, content: accumulated };
+            finished = true;
+            return;
           }
 
           try {
             const parsed = JSON.parse(payload);
             const token = parsed?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-            if (!token) continue;
+            if (!token) {
+              continue;
+            }
 
             accumulated += token;
             debugStore.addToken(reqId, token, accumulated);
@@ -261,7 +261,18 @@ async function streamGemini(
             // skip malformed chunk
           }
         }
+      };
+
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        processBuffer();
       }
+
+      buffer += decoder.decode();
+      processBuffer();
 
       debugStore.endRequest(reqId, true);
       return { success: true, content: accumulated };
@@ -332,14 +343,9 @@ async function streamLocalAI(
     const decoder = new TextDecoder();
     let buffer = '';
     let accumulated = '';
+    let finished = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
+    const processBuffer = () => {
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
 
@@ -351,9 +357,8 @@ async function streamLocalAI(
 
         const payload = line.slice(6).trim();
         if (payload === '[DONE]') {
-          await reader.cancel().catch(() => undefined);
-          debugStore.endRequest(reqId, true);
-          return { success: true, content: accumulated };
+          finished = true;
+          return;
         }
 
         try {
@@ -370,24 +375,20 @@ async function streamLocalAI(
           // Ignore malformed chunks and keep the stream alive.
         }
       }
+    };
+
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      processBuffer();
     }
 
-    if (buffer.trim().startsWith('data: ')) {
-      const payload = buffer.trim().slice(6).trim();
-      if (payload !== '[DONE]') {
-        try {
-          const parsed = JSON.parse(payload);
-          const token = extractAssistantContent(parsed);
-          if (token) {
-            accumulated += token;
-            debugStore.addToken(reqId, token, accumulated);
-            onToken(token, accumulated);
-          }
-        } catch (_error) {
-          // Ignore last partial chunk.
-        }
-      }
-    }
+    buffer += decoder.decode();
+    processBuffer();
 
     debugStore.endRequest(reqId, true);
     return { success: true, content: accumulated };
@@ -406,7 +407,7 @@ export function buildTranslateMessages(en: string): AIMessage[] {
   return [
     {
       role: 'system',
-      content: 'Eres un traductor técnico especializado en cursos de programación en inglés. Traduce el texto al español de forma natural y precisa conservando los términos técnicos en inglés cuando sea más claro (p.ej. JVM, heap, thread, etc.). Responde ÚNICAMENTE con la traducción, sin comillas ni explicaciones.'
+      content: 'Eres un traductor técnico especializado en bloques de subtítulos de cursos de programación en inglés. Traduce el bloque completo al español de forma natural y precisa, conservando los términos técnicos en inglés cuando sea más claro (p.ej. JVM, heap, thread, etc.). Si el bloque trae varias líneas o frases, mantenlas juntas solo cuando eso mejore la lectura del subtítulo. Responde ÚNICAMENTE con la traducción, sin comillas ni explicaciones.'
     },
     {
       role: 'user',
@@ -512,7 +513,7 @@ export async function translateLineStream(
   onToken: (token: string, accumulated: string) => void,
   signal?: AbortSignal
 ): Promise<{ success: boolean; content: string }> {
-  const result = await streamWithFallback(buildTranslateMessages(en), 120, 0.1, onToken, signal, 'traducir');
+  const result = await streamWithFallback(buildTranslateMessages(en), 300, 0.1, onToken, signal, 'traducir');
   return { success: result.success, content: result.content };
 }
 
