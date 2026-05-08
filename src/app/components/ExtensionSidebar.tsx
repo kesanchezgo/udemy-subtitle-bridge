@@ -3,7 +3,7 @@ import {
   Settings, Download, Upload, RefreshCcw, CheckCircle2, AlertCircle,
   PlaySquare, Sparkles, Zap, Captions, Layers, GraduationCap, RotateCcw,
   Type, Eye, EyeOff, AlignCenter, FileText,
-  Loader2, ArrowUpDown, Baseline, Check,
+  Loader2, ArrowUpDown, Baseline, Check, Key, Save, X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Switch } from "./ui/switch";
@@ -14,6 +14,8 @@ import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
+import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount, validateGeminiKey } from "../../gemini-config";
+import { checkLocalAIHealth } from "../services/localAI";
 
 type ExtensionSidebarProps = {
   isOpen?: boolean;
@@ -60,6 +62,13 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
 
   const [activeTab, setActiveTab] = useState<"study" | "captions" | "overlay" | "dev">("study");
   const [devMode, setDevMode] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [geminiKey1, setGeminiKey1] = useState("");
+  const [geminiKey2, setGeminiKey2] = useState("");
+  const [geminiKeyCount, setGeminiKeyCount] = useState(0);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [validatingKeys, setValidatingKeys] = useState(false);
+  const [keyValidationError, setKeyValidationError] = useState<string | null>(null);
   const gearClickRef = useRef<number[]>([]);
 
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
@@ -82,6 +91,18 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   const [contentScriptConnected, setContentScriptConnected] = useState(false);
   const [syncPulse, setSyncPulse] = useState(false);
   const [currentEnLine, setCurrentEnLine] = useState<string | null>(null);
+  const [localAIOnline, setLocalAIOnline] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    initGeminiKeys().then(() => {
+      setGeminiKeyCount(getConfiguredKeyCount());
+    });
+    checkLocalAIHealth().then(setLocalAIOnline);
+    const healthInterval = setInterval(() => {
+      checkLocalAIHealth().then(setLocalAIOnline);
+    }, 10000);
+    return () => clearInterval(healthInterval);
+  }, []);
 
   useEffect(() => {
     const unsub = contentBridge.onMessageFromContent((msg) => {
@@ -166,7 +187,34 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
         if (!next && activeTab === "dev") setActiveTab("study");
         return next;
       });
+    } else if (gearClickRef.current.length === 1) {
+      setShowSettings(s => !s);
     }
+  };
+
+  const handleSaveGeminiKeys = async () => {
+    const keys = [geminiKey1, geminiKey2].filter(Boolean);
+    if (!keys.length) return;
+
+    setValidatingKeys(true);
+    setKeyValidationError(null);
+
+    for (const key of keys) {
+      const result = await validateGeminiKey(key);
+      if (!result.valid) {
+        setValidatingKeys(false);
+        setKeyValidationError(result.error || 'Key inválida.');
+        return;
+      }
+    }
+
+    await saveGeminiKeys(keys);
+    setGeminiKeyCount(getConfiguredKeyCount());
+    setValidatingKeys(false);
+    setSettingsSaved(true);
+    setGeminiKey1("");
+    setGeminiKey2("");
+    setTimeout(() => setSettingsSaved(false), 2000);
   };
 
   const tabs = [
@@ -186,16 +234,19 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               <h1 className="text-white text-xs leading-tight tracking-wide" style={{ fontWeight: 600 }}>
                 Subtitle Bridge
               </h1>
-              <p className="text-white/40 text-[9px] leading-none mt-1 font-medium tracking-wider uppercase">EN → ES · AI Local</p>
+              <p className="text-white/40 text-[9px] leading-none mt-1 font-medium tracking-wider uppercase">EN → ES · {localAIOnline ? 'AI Local' : geminiKeyCount > 0 ? 'Gemini' : 'Sin conexión'}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
+            <div className={`flex items-center gap-1.5 ${localAIOnline ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'} border rounded-full px-2.5 py-1`}>
               <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/>
+                {localAIOnline ? (
+                  <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/></>
+                ) : (
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500 shadow-[0_0_5px_#ef4444]"/>
+                )}
               </span>
-              <span className="text-emerald-400 text-[10px] font-medium tracking-wide">8010</span>
+              <span className={`text-[10px] font-medium tracking-wide ${localAIOnline ? 'text-emerald-400' : 'text-red-400'}`}>{localAIOnline ? '8010' : 'Gemini'}</span>
             </div>
             <button
               onClick={handleGearClick}
@@ -204,7 +255,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               <motion.div
                 animate={devMode ? { rotate: 360 } : { rotate: 0 }}
                 transition={devMode
-                  ? { duration: 4, repeat: Infinity, ease: "linear" }
+                  ? { duration: 8, repeat: Infinity, ease: "linear" }
                   : { duration: 0.4, ease: "easeOut" }
                 }
                 style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -215,6 +266,87 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            key="settings-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden border-b border-white/5 bg-[#0f1012]"
+          >
+            <div className="p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Key size={11} className="text-violet-400" />
+                  <span className="text-white/55 text-[11px]" style={{ fontWeight: 600 }}>Gemini API Keys</span>
+                  {geminiKeyCount > 0 && (
+                    <span className="text-[9px] text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0.5">
+                      {geminiKeyCount} {geminiKeyCount === 1 ? "key" : "keys"}
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => setShowSettings(false)} className="text-white/30 hover:text-white/60 transition-colors">
+                  <X size={12} />
+                </button>
+              </div>
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  value={geminiKey1}
+                  onChange={e => setGeminiKey1(e.target.value)}
+                  placeholder="API Key 1 (principal)"
+                  className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
+                />
+                <input
+                  type="password"
+                  value={geminiKey2}
+                  onChange={e => setGeminiKey2(e.target.value)}
+                  placeholder="API Key 2 (fallback, opcional)"
+                  className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveGeminiKeys}
+                  disabled={(!geminiKey1.trim() && !geminiKey2.trim()) || validatingKeys}
+                  className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-violet-700 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-[10px] transition-all"
+                >
+                  {validatingKeys ? <><Loader2 size={10} className="animate-spin" />Validando...</> : <><Save size={10} />Guardar keys</>}
+                </button>
+                <AnimatePresence>
+                  {settingsSaved && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="text-emerald-400 text-[10px] flex items-center gap-1"
+                    >
+                      <CheckCircle2 size={10} />Guardado
+                    </motion.span>
+                  )}
+                  {keyValidationError && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="text-red-400 text-[10px] flex items-center gap-1"
+                    >
+                      <AlertCircle size={10} />{keyValidationError}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </div>
+              <p className="text-white/20 text-[9px] leading-relaxed">
+                Las keys se guardan en chrome.storage.local y se usan para traducción y Study Agent.
+                Clic triple en ⚙ para Dev mode.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex shrink-0 p-1.5 gap-1 bg-[#121214] border-b border-white/5 relative z-10">
         {tabs.map(tab => {
@@ -413,7 +545,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                     <p className="text-white/25 text-[10px]">Arrastra el handle ═══ en el video para mover</p>
                   </div>
                   <button onClick={() => contentBridge.sendToContent({ type: "OVERLAY_RESET_POSITION" })} className="flex items-center gap-1 text-[9px] text-white/30 hover:text-amber-400 border border-white/8 hover:border-amber-500/25 px-2 py-1 rounded-lg transition-colors shrink-0 ml-2">
-                    <RefreshCcw size={8}/>Resetear
+                    <RotateCcw size={8}/>Reset
                   </button>
                 </div>
 
@@ -459,7 +591,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
       </div>
 
       <div className="px-3.5 py-2 border-t border-white/6 bg-[#161718] shrink-0 flex items-center justify-between">
-        <span className="text-white/16 text-[9px] font-mono">127.0.0.1:8010</span>
+        <span className={`text-[9px] font-mono ${localAIOnline ? 'text-emerald-400/30' : 'text-red-400/30'}`}>{localAIOnline ? '127.0.0.1:8010' : 'Gemini API'}</span>
         <div className="flex items-center gap-1.5">
           <AnimatePresence>
             {syncPulse && (

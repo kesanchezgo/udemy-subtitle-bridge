@@ -374,7 +374,7 @@ function applyOverlayStyle() {
 		return;
 	}
 
-	const isVisible = currentConfig.visible && currentConfig.autoTranslate && currentConfig.enabled;
+	const isVisible = currentConfig.visible && currentConfig.enabled;
 	const normalizedOpacity = currentConfig.opacity > 1 ? currentConfig.opacity / 100 : currentConfig.opacity;
 	const shadowStrength = Math.max(0, Math.min(100, currentConfig.shadowStrength));
 
