@@ -353,8 +353,8 @@ export function TranslationPipeline({
             {history.slice(0, 5).map((entry, i) => (
               <motion.div
                 key={entry.id}
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i === 0 ? 0 : 0 }}
                 className={`flex gap-2.5 px-3 py-2 ${
                   i < Math.min(history.length - 1, 4) ? "border-b border-white/4" : ""

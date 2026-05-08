@@ -334,7 +334,7 @@ function ensureContainerPosition(container: HTMLElement) {
 
 function getToneColor(tone: OverlayTone) {
 	if (tone === 'yellow') {
-		return '#fde68a';
+		return '#fde047';
 	}
 	if (tone === 'cyan') {
 		return '#67e8f9';

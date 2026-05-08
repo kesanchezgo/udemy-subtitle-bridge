@@ -231,8 +231,19 @@ function StepHeader({
   );
 }
 
-function getChromeApi() {
-  return (globalThis as typeof globalThis & { chrome?: any }).chrome;
+interface ChromeApiSubset {
+  runtime: {
+    sendMessage: (message: Record<string, unknown>, callback: (response: Record<string, unknown>) => void) => void;
+    lastError?: { message?: string };
+  };
+  tabs: {
+    query: (queryInfo: Record<string, unknown>, callback: (tabs: { id?: number }[]) => void) => void;
+    sendMessage: (tabId: number, message: Record<string, unknown>, callback: (response: Record<string, unknown>) => void) => void;
+  };
+}
+
+function getChromeApi(): ChromeApiSubset | undefined {
+  return (globalThis as typeof globalThis & { chrome?: ChromeApiSubset }).chrome;
 }
 
 async function fetchTranscriptFromContentScript(): Promise<{ text: string; lectureTitle?: string; courseSlug?: string; lectureKey?: string } | null> {
