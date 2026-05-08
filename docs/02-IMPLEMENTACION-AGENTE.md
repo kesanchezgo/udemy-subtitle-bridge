@@ -561,134 +561,125 @@ En el contexto de Figma Make (preview), App.tsx debe:
 2. Simular el content script: enviar SUBTITLE_LINE_RECEIVED cada 3 segundos
 3. Escuchar mensajes del sidebar via contentBridge
 4. Actualizar el overlay del video según overlayConfig recibido
-5. Mostrar el sidebar como panel lateral derecho
+5. Mostrar el sidebar como panel lateral derecho (360px)
+6. Levantar el estado de sesión con: const [appSession, setAppSession] = useState<Session | null | undefined>(undefined)
 
-La lógica de simulación del content script:
-- Array de subtitleLines con 4 líneas de ejemplo
-- setInterval 3000ms para rotar currentSubtitle
-- useEffect([currentSubtitle]) → contentBridge.sendToSidebar(SUBTITLE_LINE_RECEIVED)
-- useEffect montaje → contentBridge.onMessageFromSidebar(handler)
+PATRÓN CRÍTICO — El div de 360px DEBE envolver al AuthGuard:
 
-El overlay del video:
-- position: absolute sobre el <div> del video
-- Responde a overlayConfig (show, fontSize, opacity, position, textColor, shadowStrength)
-- AnimatePresence + motion para transición entre líneas
+// ✅ CORRECTO
+<div style={{ width: "360px" }}>
+  <AuthGuard onSessionResolved={setAppSession}>
+    {(session, requestLogin, signOut) => (
+      <div className="flex flex-col h-full w-full">
+        {/* tabs + ExtensionSidebar */}
+      </div>
+    )}
+  </AuthGuard>
+</div>
 
-El sidebar:
-- Panel derecho de 360px
-- Tabs: "Course content" | "Subtitle Bridge ⚡"
-- "Subtitle Bridge" tab muestra <ExtensionSidebar isOpen={true} onToggle={...} />
+// ❌ INCORRECTO — el ancho 360px dentro de los hijos hace que el auth
+// screen (que renderiza el AuthGuard directamente) no tenga contenedor
+<AuthGuard>
+  {(session, ...) => (
+    <div style={{ width: "360px" }}>...</div>
+  )}
+</AuthGuard>
+
+El Toaster:
+<Toaster
+  theme="dark"
+  position="bottom-center"
+  expand={false}
+  gap={8}
+  toastOptions={{
+    style: {
+      background: "rgba(17, 18, 24, 0.45)",
+      border: "1px solid rgba(255, 255, 255, 0.08)",
+      color: "#ffffff",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+    }
+  }}
+/>
+
+Pasar session al sidebar y a NotesTab:
+<ExtensionSidebar
+  isOpen={true}
+  onToggle={() => setContentTab("content")}
+  session={session ?? undefined}
+  onRequestLogin={session ? undefined : requestLogin}
+  onSignOut={session ? signOut : undefined}
+/>
+<NotesTab courseName="..." lessonName="..." session={appSession ?? null} />
 ```
 
 ---
 
-## MÓDULO 5 — Patrones de Código Importantes
+## MÓDULO 5 — Auth, Cloud Sync y NotesTab
 
-### 5.1 Patrón: AbortController para streams
+### 5.1 — `src/app/components/AuthGuard.tsx`
 
-```typescript
-// En TranslationPipeline.tsx — cancelar stream anterior al llegar nueva l��nea
-const abortRef = useRef<AbortController | null>(null);
-
-useEffect(() => {
-  if (!incomingLine || !autoTranslate) return;
-  if (incomingLine === lastLine.current) return;
-  lastLine.current = incomingLine;
-
-  // Cancelar stream anterior
-  abortRef.current?.abort();
-  const ctrl = new AbortController();
-  abortRef.current = ctrl;
-
-  let cancelled = false;
-
-  (async () => {
-    // ... pipeline logic con ctrl.signal ...
-  })();
-
-  return () => {
-    cancelled = true;
-    ctrl.abort();
-  };
-}, [incomingLine, autoTranslate]);
+**Instrucción al agente:**
 ```
+AuthGuard es el guardián de autenticación. Envuelve toda la UI del sidebar.
 
-### 5.2 Patrón: Streaming con fallback
+MODOS DE ACCESO:
+1. Autenticado (session !== null) → renderiza children(session, requestLogin, signOut)
+2. Invitado (localStorage "subtitle_bridge_guest_mode" === "true") → children(null, ...)
+3. Sin sesión → pantalla de login INLINE (ocupa el 100% del panel de 360px)
 
-```typescript
-// Intentar streaming real, fallback a no-streaming
-const res = await evaluateActiveAnswerStream(
-  q.q, q.answer, userAns, q.bloom,
-  (_, accumulated) => {
-    setFeedback(p => ({ ...p, [idx]: { status: "streaming", content: accumulated, rating: "unknown" } }));
-  }
-);
+CARACTERÍSTICAS:
+- La pantalla de auth ocupa h-full w-full del contenedor padre
+- NO usar portales ni overlays — el auth vive dentro del panel 360px
+- Formulario: email+password + Google OAuth + "Continuar sin cuenta"
+- Pestañas: "Iniciar sesión" | "Crear cuenta"
+- Google OAuth: supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })
+- Signup: POST /signup al servidor (usa service role key, email_confirm: true)
+- Luego auto-login con signInWithPassword
 
-if (!res.success || !res.content.trim()) {
-  // Fallback a no-streaming
-  const fallback = await evaluateActiveAnswer(q.q, q.answer, userAns, q.bloom);
-  setFeedback(p => ({ ...p, [idx]: {
-    status: fallback.success ? "done" : "error",
-    content: fallback.success ? fallback.content : (fallback.error ?? "Error"),
-    rating: fallback.rating
-  }}));
-  return;
-}
+REVERSE SYNC (cloud → local) al montar con sesión existente:
+const count = await reverseSyncFromCloud(session);
+if (count > 0) toast.success(`⬇️ ${count} apuntes restaurados desde la nube`);
 
-setFeedback(p => ({ ...p, [idx]: { status: "done", content: res.content, rating: res.rating } }));
-```
+UPLOAD MIGRATION (local → cloud) al primer login:
+- Detectar con: prevSessionRef: useRef<Session | null | "unset">
+- Si wasGuest y ahora session → migrateLocalDataToCloud(session)
+- Leer claves con prefijo "usb_notes_" de localStorage
+- POST /migrate con { items: [{ key, value }] }
 
-### 5.3 Patrón: Estado de feedback
-
-```typescript
-type FeedbackState = {
-  status: "idle" | "loading" | "streaming" | "done" | "error";
-  content: string;
-  rating: AIRating;
+SIGNOUT:
+const signOut = async () => {
+  localStorage.removeItem('subtitle_bridge_guest_mode');
+  setIsGuest(false);
+  await supabase.auth.signOut();
+  onSessionResolved?.(null);
 };
-const IDLE_FB: FeedbackState = { status: "idle", content: "", rating: "unknown" };
+
+FIRMA DEL children:
+children: (session: Session | null, requestLogin: () => void, signOut: () => void) => React.ReactNode
 ```
 
-### 5.4 Patrón: forceRender para debugStore
+### 5.2 — `src/app/components/NotesTab.tsx`
 
-```typescript
-// DevTab.tsx — re-render cuando debugStore cambia
-const [, forceRender] = useState(0);
-useEffect(() => {
-  return debugStore.subscribe(() => forceRender(n => n + 1));
-}, []);
+**Instrucción al agente:**
 ```
+Props: { courseName: string; lessonName: string; session: Session | null }
 
-### 5.5 Patrón: Auto-scroll a secciones
+FEATURES:
+1. Textarea con usePersistedState(`notes_${courseName}_${lessonName}`, "")
+2. Auto-save a cloud debounced 1500ms via POST /progress (cuando session)
+3. Tarjeta de cloud sync (solo visible con session):
+   - GET /migrate → contar items con key.startsWith("notes_")
+   - Mostrar: "X apuntes en la nube · Hace N min"
+   - Estados: loading | synced | error | idle
+   - Botón de refresh
+4. Indicador de estado: "Sincronizado" (con sesión) | "Solo local" (sin sesión)
+5. Export Markdown (.md) y Notion (misma función)
 
-```typescript
-const scrollTo = useCallback((ref: React.RefObject<HTMLDivElement | null>) => {
-  setTimeout(() => {
-    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, 200);
-}, []);
-
-// Activar auto-scroll cuando se desbloquea una sección
-useEffect(() => { if (confidence) scrollTo(conceptsRef); }, [confidence]);
-useEffect(() => { if (questionsComplete) scrollTo(applyRef); }, [questionsComplete]);
-```
-
-### 5.6 Patrón: Debounce para sync overlay
-
-```typescript
-// ExtensionSidebar.tsx — sync overlay config con debounce 280ms
-useEffect(() => {
-  const t = setTimeout(() => {
-    contentBridge.sendToContent({
-      type: "OVERLAY_CONFIG_UPDATE",
-      payload: { show: showOverlay, fontSize: fontSize[0], opacity: opacity[0],
-        position, textColor, shadowStrength: shadowStrength[0], syncOffset: syncOffset[0] },
-    });
-    setSyncPulse(true);
-    setTimeout(() => setSyncPulse(false), 1800);
-  }, 280);
-  return () => clearTimeout(t);
-}, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset]);
+CLOUD NOTE COUNT:
+const res = await fetch(`${API_BASE}/migrate`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+const data = await res.json();
+const noteCount = data.items?.filter(i => i.key.startsWith("notes_")).length ?? 0;
 ```
 
 ---
@@ -747,6 +738,25 @@ useEffect(() => {
 - [ ] Slider de sombra
 - [ ] Reset de posición envía mensaje al content script
 - [ ] Cambios se sincronizan al video en tiempo real (debounce 280ms)
+
+### ✅ Auth + Cloud Sync
+- [ ] Auth screen aparece dentro del panel de 360px (no fullscreen, no portal)
+- [ ] "Continuar sin cuenta" guarda `subtitle_bridge_guest_mode = "true"` en localStorage
+- [ ] Login con email+password funciona
+- [ ] Google OAuth button visible (nota: requiere config en Supabase dashboard)
+- [ ] Al primer login, se migran notas locales a la nube
+- [ ] Al cargar con sesión existente, se restauran datos cloud a localStorage
+- [ ] Banner "Sincronizar en la nube" aparece en el footer cuando hay sesión = null
+- [ ] Header del sidebar muestra avatar + email + botón "Salir" cuando session activo
+- [ ] El botón "Salir" llama a signOut() y vuelve a la pantalla de auth
+- [ ] NotesTab muestra contador de notas en la nube con session
+
+### ✅ Notificaciones (Toaster)
+- [ ] Toaster en position="bottom-center" con diseño glassmorphism
+- [ ] Aparece centrado en la parte inferior, sin recuadros de tarjetas para celebraciones (solo confeti)
+- [ ] Toast de bienvenida al cargar la app (800ms delay)
+- [ ] Toast de sync exitoso al migrar datos
+- [ ] Toast de reverse sync al restaurar datos cloud
 
 ---
 

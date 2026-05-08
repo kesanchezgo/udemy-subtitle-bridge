@@ -1,5 +1,5 @@
 # Udemy Subtitle Bridge — Arquitectura Técnica
-> Estructura de archivos · Servicios · Contratos de datos · Flujo de comunicación
+> Estructura de archivos · Servicios · Contratos de datos · Flujo de comunicación · Auth · Cloud Sync · Udemy DOM
 
 ---
 
@@ -12,15 +12,21 @@ Una extensión Chrome tiene 4 contextos de ejecución separados:
 │  PÁGINA WEB (udemy.com/course/*)                                │
 │  ┌─────────────────────────────────────────────┐               │
 │  │  content_script.ts                           │               │
-│  │  - MutationObserver → captura subtítulos EN │               │
-│  │  - Inyecta div overlay sobre el video       │               │
-│  │  - Escucha mensajes del sidebar             │               │
+│  │  - MutationObserver → captura subtítulos EN  │               │
+│  │  - Inyecta div overlay sobre el video        │               │
+│  │  - Escucha mensajes del sidebar              │               │
 │  └─────────────┬───────────────────────────────┘               │
 └────────────────┼────────────────────────────────────────────────┘
                  │ chrome.tabs.sendMessage / chrome.runtime.sendMessage
                  │ (contentBridge.ts abstrae esto)
 ┌────────────────▼────────────────────────────────────────────────┐
-│  SIDEBAR / POPUP (sidebar.html → App.tsx)                      │
+│  SIDE PANEL (Chrome Side Panel API — sidebar.html → App.tsx)   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                   AuthGuard.tsx (wraps everything)       │   │
+│  │   - Guest mode / Email-Password / Google OAuth           │   │
+│  │   - Local→Cloud migration on first login                 │   │
+│  │   - Cloud→Local reverse sync on session restore          │   │
+│  └─────────────────────────────────────────────────────────┘   │
 │  ┌─────────────────┐ ┌──────────────────┐ ┌─────────────────┐ │
 │  │ StudyAgentTab   │ │ TranslationPipeline│ │  DevTab         │ │
 │  │ (Study Agent)   │ │ (Captions tab)    │ │  (Dev Panel)    │ │
@@ -28,22 +34,29 @@ Una extensión Chrome tiene 4 contextos de ejecución separados:
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │                   ExtensionSidebar.tsx                   │  │
 │  │  (3 tabs: Study | Captions | Overlay + hidden Dev tab)   │  │
+│  │  Header: Logo + AI badge + gear + User strip (if authed) │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                  │
 ┌────────────────▼─────────────────────┐
 │  SERVICE WORKER (background.ts)      │
 │  - Registra content script           │
-│  - Maneja eventos de instalación     │
+│  - Abre Side Panel al hacer click    │
 │  - Relay opcional de mensajes        │
 └──────────────────────────────────────┘
                  │
-┌────────────────▼─────────────────────┐
-│  IA LOCAL EXTERNA                    │
-│  http://127.0.0.1:8010               │
-│  OpenAI-compatible API               │
-│  (LM Studio / Ollama / llama.cpp)    │
-└──────────────────────────────────────┘
+┌────────────────▼──────────────────────────────────┐
+│  IA LOCAL EXTERNA                                 │
+│  http://127.0.0.1:8010 (OpenAI-compatible API)   │
+│  (LM Studio / Ollama / llama.cpp)                │
+└───────────────────────────────────────────────────┘
+                 │
+┌────────────────▼──────────────────────────────────┐
+│  SUPABASE BACKEND (Deno Edge Functions + KV)      │
+│  - Auth (signup, signIn, OAuth)                   │
+│  - Cloud sync de notas y progreso                 │
+│  - KV store con prefijos por usuario              │
+└───────────────────────────────────────────────────┘
 ```
 
 ---
@@ -54,74 +67,67 @@ Una extensión Chrome tiene 4 contextos de ejecución separados:
 udemy-subtitle-bridge/
 ├── public/
 │   ├── manifest.json         ← Manifest V3 (Chrome) / V2 (Firefox build)
-│   ├── icon-16.png           ��� Íconos de la extensión
+│   ├── icon-16.png
 │   ├── icon-48.png
 │   ├── icon-128.png
-│   └── sidebar.html          ← HTML de la sidebar/popup
+│   └── sidebar.html          ← HTML del Side Panel
 │
 ├── src/
-│   ├── app/                  ← Código de la UI (sidebar)
+│   ├── app/                  ← Código de la UI (sidebar / side panel)
 │   │   ├── App.tsx           ← Root component (en extensión real: sidebar puro)
-│   │   ├── routes.tsx        ← React Router (solo si se necesitan sub-rutas)
+│   │   │                       En el prototipo Figma Make: simula toda la página Udemy
 │   │   │
 │   │   ├── components/
+│   │   │   ├── AuthGuard.tsx          ← Protección de auth + guest mode + cloud sync
 │   │   │   ├── ExtensionSidebar.tsx   ← Shell principal con tabs
 │   │   │   ├── StudyAgentTab.tsx      ← Agente de estudio pedagógico
+│   │   │   ├── NotesTab.tsx           ← Apuntes con sync cloud
+│   │   │   ├── LearningToolsTab.tsx   ← Herramientas de aprendizaje
 │   │   │   ├── TranslationPipeline.tsx ← Pipeline visual EN→ES
 │   │   │   ├── DevTab.tsx             ← Panel de debug (oculto)
+│   │   │   ├── AppLogo.tsx            ← Logo SVG de la extensión
 │   │   │   └── figma/
-│   │   │       └── ImageWithFallback.tsx ← Wrapper de img con fallback
+│   │   │       └── ImageWithFallback.tsx ← img con fallback
 │   │   │
 │   │   ├── hooks/
-│   │   │   └── usePersistedState.ts   ← Estado persistido en chromeStorage
+│   │   │   ├── usePersistedState.ts   ← Estado persistido en chromeStorage
+│   │   │   └── useHotkeys.ts          ← Atajos de teclado globales
 │   │   │
 │   │   └── services/
 │   │       ├── localAI.ts       ← Traducción + evaluación IA con SSE streaming
 │   │       ├── contentBridge.ts ← Abstracción chrome.runtime ↔ window events
 │   │       ├── chromeStorage.ts ← Abstracción chrome.storage.sync ↔ localStorage
 │   │       ├── debugStore.ts    ← Singleton para telemetría SSE (Dev Tab)
-│   │       └── ankiApkg.ts      ← Generador de .apkg (SQLite WASM + JSZip)
+│   │       ├── ankiApkg.ts      ← Generador de .apkg (SQLite WASM + JSZip)
+│   │       └── supabaseClient.ts ← Singleton createClient(SUPABASE_URL, ANON_KEY)
 │   │
 │   ├── content_script.ts      ← Inyectado en udemy.com/course/*
-│   │                            Captura subtítulos, inyecta overlay
-│   │
-│   ├── background.ts           ← Service Worker (registra scripts, relay mensajes)
-│   │
+│   ├── background.ts          ← Service Worker
 │   ├── styles/
-│   │   ├── index.css           ← Import de Tailwind
-│   │   ├── theme.css           ← Tokens CSS custom (colores, tipografía)
-│   │   ├── tailwind.css        ← Config Tailwind v4
-│   │   └── fonts.css           ← Import de Google Fonts
-│   │
-│   └── vite-env.d.ts           ← Types para variables de entorno Vite
+│   │   ├── index.css
+│   │   ├── theme.css          ← Tokens CSS custom
+│   │   ├── tailwind.css
+│   │   └── fonts.css
+│   └── vite-env.d.ts
 │
-├── tests/
-│   ├── unit/
-│   │   ├── services/
-│   │   │   ├── localAI.test.ts
-│   │   │   ├── contentBridge.test.ts
-│   │   │   ├── chromeStorage.test.ts
-│   │   │   ├── debugStore.test.ts
-│   │   │   └── ankiApkg.test.ts
-│   │   └── hooks/
-│   │       └── usePersistedState.test.ts
-│   ├── component/
-│   │   ├── TranslationPipeline.test.tsx
-│   │   ├── StudyAgentTab.test.tsx
-│   │   └── DevTab.test.tsx
-│   └── e2e/
-│       ├── subtitle-capture.spec.ts
-│       ├── study-agent.spec.ts
-│       └── anki-export.spec.ts
+── supabase/
+│   └── functions/
+│       └── server/
+│           ├── index.tsx      ← Servidor Hono (Deno) con todas las rutas
+│           └── kv_store.tsx   ← Utilidades del KV store (NO MODIFICAR)
 │
-├── vite.config.ts             ← Vite + @crxjs/vite-plugin + Tailwind
-├── manifest.json              ← Fuente de verdad del manifest (copiado a public/)
-├── package.json
-├── tsconfig.json
-├── .eslintrc.json
-└── .github/
-    └── workflows/
-        └── ci.yml             ← Lint + Build + Tests en cada push
+├── utils/
+│   └── supabase/
+│       └── info.tsx           ← projectId y publicAnonKey (NO MODIFICAR)
+│
+└── docs/
+    ├── 00-PLAN-PROYECTO.md
+    ├── 01-ARQUITECTURA-TECH.md    (este archivo)
+    ├── 02-IMPLEMENTACION-AGENTE.md
+    ├── 03-DISEÑO-UI-DETALLADO.md
+    ├── 04-PROMPTS-IA-LOCAL.md
+    ├── 05-MCP-HERRAMIENTAS.md
+    └── 06-UDEMY-HTML-INTEGRACION.md  ← Selectores reales del DOM de Udemy
 ```
 
 ---
@@ -140,13 +146,16 @@ udemy-subtitle-bridge/
     "128": "icon-128.png"
   },
   "action": {
-    "default_popup": "sidebar.html",
     "default_icon": { "48": "icon-48.png" }
+  },
+  "side_panel": {
+    "default_path": "sidebar.html"
   },
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://www.udemy.com/*",
@@ -169,278 +178,397 @@ udemy-subtitle-bridge/
 }
 ```
 
-**IMPORTANTE sobre CSP:**
-- `wasm-unsafe-eval` es necesario para que `sql.js` pueda ejecutar el WASM de SQLite.
-- Chrome Web Store permite esto si se justifica correctamente en el Privacy Policy.
+**NOTA IMPORTANTE — Chrome Side Panel vs Popup:**
+En Chrome Manifest V3 se recomienda usar la **Side Panel API** (`sidePanel`) en lugar de `default_popup`. La extensión se abre como un panel lateral nativo del navegador, **separado del DOM de la página Udemy**. Esto significa:
+- El sidebar React corre en su propio contexto aislado
+- No hay problemas de z-index ni de CSS con Udemy
+- La comunicación con el content script usa `chrome.runtime.sendMessage` / `chrome.tabs.sendMessage`
+- El background service worker abre el panel con `chrome.sidePanel.open()`
 
 ---
 
-## 4. Contratos de Servicios
+## 4. Sistema de Autenticación (AuthGuard.tsx)
 
-### 4.1 `contentBridge.ts`
+### 4.1 Flujo de autenticación
 
-**Tipos exportados:**
+```
+App.tsx                  AuthGuard.tsx              Supabase
+   │                           │                        │
+   ├── onSessionResolved ───►  │                        │
+   │                           │── getSession() ──────► │
+   │                           │◄── Session | null ───── │
+   │                           │                        │
+   │   [No session, no guest]  │                        │
+   │◄── render auth form ──── │                        │
+   │                           │                        │
+   │   [User submits email+pw] │                        │
+   │                           │── signInWithPassword ► │
+   │                           │◄── Session ──────────── │
+   │                           │                        │
+   │   [First login]           │                        │
+   │                           │── POST /migrate ──────► Server
+   │                           │   (local→cloud)        │
+   │                           │                        │
+   │   [Session on mount]      │                        │
+   │                           │── GET /migrate ───────► Server
+   │                           │   (cloud→local)        │
+   │◄── children(session, ──── │                        │
+   │     requestLogin,         │                        │
+   │     signOut)              │                        │
+```
+
+### 4.2 Props de AuthGuard
+
 ```typescript
-// Todos los mensajes posibles entre sidebar y content script
-type BridgeMessageType =
-  | "PING"                    // Sidebar → Content: ¿estás ahí?
-  | "PONG"                    // Content → Sidebar: sí, activo
-  | "OVERLAY_CONFIG_UPDATE"   // Sidebar → Content: nueva config del overlay
-  | "AUTO_TRANSLATE_TOGGLE"   // Sidebar → Content: activar/desactivar traducción
-  | "SUBTITLE_LINE_RECEIVED"  // Content → Sidebar: nueva línea EN capturada
-  | "VIDEO_TIME_UPDATE"       // Content → Sidebar: timestamp actual del video
-  | "OVERLAY_RESET_POSITION"; // Sidebar → Content: resetear posición del overlay
-
-interface OverlayConfig {
-  show: boolean;              // Mostrar u ocultar overlay
-  fontSize: number;           // Tamaño de fuente en px (12-48)
-  opacity: number;            // Opacidad del fondo (0-100)
-  position: "top" | "center" | "bottom"; // Posición vertical
-  textColor: "white" | "yellow" | "cyan"; // Color del texto
-  shadowStrength: number;     // Intensidad de sombra (0-100)
-  syncOffset: number;         // Offset de sincronización en ms (-2000 a +2000)
-}
-
-interface BridgeMessage {
-  type: BridgeMessageType;
-  payload?: unknown;          // Payload específico según el tipo
+interface AuthGuardProps {
+  children: (
+    session: Session | null,      // null = guest mode
+    requestLogin: () => void,     // llama a esto para salir del guest mode
+    signOut: () => void           // cierra sesión y limpia guest key
+  ) => React.ReactNode;
+  onSessionResolved?: (session: Session | null) => void;  // callback para App.tsx
 }
 ```
 
-**API pública:**
+### 4.3 Modos de acceso
+
+| Modo | Descripción | Datos |
+|------|-------------|-------|
+| **Autenticado** | Email+password o Google OAuth | Cloud sync activo |
+| **Invitado** | "Continuar sin cuenta" | Solo localStorage |
+| **Sin sesión** | Muestra el formulario de auth | N/A |
+
+### 4.4 Claves en localStorage
+
+```
+subtitle_bridge_guest_mode              → "true" si usuario eligió modo invitado
+subtitle_bridge_migrated_<userId>       → "true" cuando se completó local→cloud
+subtitle_bridge_reverse_synced_<userId> → "true" cuando se completó cloud→local
+```
+
+### 4.5 AuthGuard en App.tsx — Patrón correcto
+
+**⚠️ CRÍTICO:** El contenedor de 360px DEBE envolver al `<AuthGuard>`, no estar dentro de sus hijos:
+
+```tsx
+// ✅ CORRECTO — AuthGuard vive DENTRO del contenedor fijo
+<div className="flex flex-col shrink-0" style={{ width: "360px" }}>
+  <AuthGuard onSessionResolved={setAppSession}>
+    {(session, requestLogin, signOut) => (
+      <div className="flex flex-col h-full w-full">
+        {/* contenido del sidebar */}
+      </div>
+    )}
+  </AuthGuard>
+</div>
+
+// ❌ INCORRECTO — el div 360px está dentro de los hijos, cuando AuthGuard
+//   renderiza su propia pantalla de auth, no hay contenedor de ancho fijo
+<AuthGuard>
+  {(session, requestLogin, signOut) => (
+    <div style={{ width: "360px" }}>
+      ...
+    </div>
+  )}
+</AuthGuard>
+```
+
+---
+
+## 5. Sistema de Notificaciones (Toaster / Sonner)
+
+### 5.1 Posicionamiento
+
+Para este prototipo (simulación de Udemy + sidebar), el Toaster usa:
+
+```tsx
+<Toaster
+  theme="dark"
+  position="bottom-center"      // centrado horizontalmente, abajo
+  expand={false}
+  gap={8}
+  toastOptions={{
+    duration: 3500,
+    style: {
+      background: "rgba(17, 18, 24, 0.45)",
+      border: "1px solid rgba(255, 255, 255, 0.08)",
+      color: "#ffffff",
+      borderRadius: "16px",
+      padding: "14px 18px",
+      fontSize: "13.5px",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+      boxShadow: "0 16px 48px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 0 20px rgba(139, 92, 246, 0.05)",
+      maxWidth: "360px",
+    },
+  }}
+/>
+```
+
+**Razonamiento UX:** `bottom-center` es el estándar para apps de productividad y plataformas de e-learning. Aparece en el centro de la pantalla sin bloquear la UI del video ni del sidebar, y es familiar para el usuario.
+
+### 5.2 Sistema de Celebraciones — `CelebrationOverlay.tsx`
+
+Un sistema separado y más impactante para momentos clave. Se activa con la función global `celebrate()`:
+
 ```typescript
+// Importar desde cualquier componente
+import { celebrate } from "./CelebrationOverlay";
+
+// Llamar cuando ocurre un evento importante
+celebrate({
+  type: "session_complete",
+  title: "¡Lección Dominada! 🏆",
+  subtitle: "Has completado todos los pasos de esta sesión de estudio",
+  icon: "🎓",
+});
+```
+
+**Tipos de celebración (`CelebrationType`):**
+
+| Tipo | Tamaño | Confetti | Cuándo |
+|------|--------|----------|--------|
+| `session_complete` | Grande | ✅ | Todos los pasos de estudio completados |
+| `question_correct` | Pequeño | ❌ | Pregunta respondida correctamente |
+| `cloud_synced` | Pequeño | ❌ | Datos sincronizados a/desde la nube |
+| `login_welcome` | Grande | ❌ | Usuario inicia sesión exitosamente |
+| `export_done` | Grande | ✅ | Export TXT de tarjetas Anki completado |
+| `anki_export` | Grande | ✅ | Paquete .apkg generado exitosamente |
+| `streak` | Grande | ✅ | Racha diaria de estudio |
+
+**Características visuales:**
+- **Estrictamente SOLO efecto de confeti** sin recuadros ni cards visuales adicionales
+- Confetti explosión doble (izquierda + derecha) para tipos con confetti
+- Segunda ola de confetti 800ms después para eventos importantes como `session_complete`
+- `pointer-events: none` — no bloquea la interacción del usuario
+- Sistema minimalista y elegante que no interfiere con el contenido
+
+**Arquitectura (Event-based):**
+```typescript
+// 1. Función global que despacha un CustomEvent
+export function celebrate(config: CelebrationConfig): void {
+  window.dispatchEvent(new CustomEvent("usb:celebrate", { detail: config }));
+}
+
+// 2. CelebrationOverlay.tsx escucha el evento
+window.addEventListener("usb:celebrate", handler);
+
+// 3. CelebrationOverlay se renderiza en App.tsx
+<CelebrationOverlay />  // junto al <Toaster />
+```
+
+**Patrón de responsabilidad:**
+- Toasts (`sonner`) → feedback rápido de acciones menores (shortcut activado, notas exportadas, errores)
+- `celebrate()` → feedback impactante para logros y momentos de motivación
+
+### 5.3 Mapa completo de feedback
+
+| Evento | Mecanismo | Config |
+|--------|-----------|--------|
+| App iniciada | `toast.success` | "Subtitle Bridge activado 🚀" |
+| Video pausado/reanudado | `toast` | Con icono ⏸️/▶️ |
+| Shortcut Alt+C | `toast.success` | "Captura guardada 📸" |
+| Pregunta correcta | `celebrate()` | `question_correct` con elogio aleatorio |
+| Lección dominada | `celebrate()` | `session_complete` + confetti |
+| Export TXT Anki | `celebrate()` | `export_done` + confetti |
+| Export .apkg Anki | `celebrate()` | `anki_export` + confetti |
+| Login exitoso | `celebrate()` | `login_welcome` |
+| Datos cloud → local | `celebrate()` | `cloud_synced` |
+| Datos local → cloud | `celebrate()` | `cloud_synced` |
+| Respuesta parcial | `toast.info` | "Vas por buen camino 💡" |
+| Export notas .md | `toast.success` | "Notes exported as Markdown 📥" |
+| Error .apkg | `toast.error` | Mensaje de error descriptivo |
+
+---
+
+## 6. Cloud Sync — Contratos del Backend
+
+### 6.1 Servidor Hono (supabase/functions/server/index.tsx)
+
+URL base: `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c`
+
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| POST | `/signup` | publicAnonKey | Crea usuario con `auth.admin.createUser` |
+| GET | `/anki?userId=X` | publicAnonKey | Obtiene tarjetas Anki del usuario |
+| POST | `/anki?userId=X` | publicAnonKey | Guarda tarjetas Anki |
+| DELETE | `/anki/:id?userId=X` | publicAnonKey | Elimina tarjeta Anki |
+| GET | `/progress?userId=X` | publicAnonKey | Obtiene progreso del usuario |
+| POST | `/progress?userId=X` | publicAnonKey | Guarda progreso del usuario |
+| POST | `/migrate` | access_token | Upload local→cloud (con manifest) |
+| GET | `/migrate` | access_token | Download cloud→local (via manifest) |
+
+### 6.2 Patrón del KV Store para Cloud Sync
+
+```
+Clave                              Valor
+────────────────────────────────────────────────────────────
+cloud_<userId>__manifest           string[]  ← lista de keys del usuario
+cloud_<userId>_notes_<course>_<lesson>  objeto de nota
+user_progress_<userId>             objeto de progreso
+anki_<userId>_<cardId>             objeto AnkiCard
+```
+
+**⚠️ IMPORTANTE — Por qué el manifest:**
+El KV store de Supabase tiene `getByPrefix()` que retorna solo **valores**, no keys. Para poder hacer el reverse sync (cloud→local), necesitamos saber las keys. Por eso se mantiene un **manifest** separado que lista todas las keys del usuario.
+
+### 6.3 Flujo de migración local→cloud (POST /migrate)
+
+```typescript
+// El cuerpo del request:
+{ items: [{ key: "notes_JavaCourse_Lesson1", value: { text: "..." } }, ...] }
+
+// El servidor:
+// 1. Valida el access_token con supabase.auth.getUser()
+// 2. Guarda cada item en KV: kv.set(`cloud_${userId}_${key}`, value)
+// 3. Actualiza el manifest: kv.set(`cloud_${userId}__manifest`, [...existentes, ...nuevas])
+// 4. Retorna: { success: true, migrated: N }
+```
+
+### 6.4 Flujo de reverse sync cloud→local (GET /migrate)
+
+```typescript
+// El servidor:
+// 1. Valida el access_token
+// 2. Lee el manifest: kv.get(`cloud_${userId}__manifest`) → string[]
+// 3. Para cada key en manifest: kv.get(`cloud_${userId}_${key}`)
+// 4. Retorna: { success: true, items: [{ key, value }, ...], count: N }
+
+// El cliente (AuthGuard.tsx):
+// 1. Escribe cada item en localStorage con prefijo "usb_"
+// 2. Marca como done: localStorage.setItem(`subtitle_bridge_reverse_synced_${userId}`, "true")
+```
+
+---
+
+## 7. Contratos de Servicios Internos
+
+### 7.1 `contentBridge.ts`
+
+```typescript
+type BridgeMessageType =
+  | "PING"
+  | "PONG"
+  | "OVERLAY_CONFIG_UPDATE"
+  | "AUTO_TRANSLATE_TOGGLE"
+  | "SUBTITLE_LINE_RECEIVED"
+  | "VIDEO_TIME_UPDATE"
+  | "OVERLAY_RESET_POSITION";
+
+interface OverlayConfig {
+  show: boolean;
+  fontSize: number;           // 12-48px
+  opacity: number;            // 0-100 (fondo del overlay)
+  position: "top" | "center" | "bottom";
+  textColor: "white" | "yellow" | "cyan";
+  shadowStrength: number;     // 0-100
+  syncOffset: number;         // -2000 a +2000 ms
+}
+
+// API pública
 contentBridge.sendToContent(message: BridgeMessage): void
 contentBridge.sendToSidebar(message: BridgeMessage): void
 contentBridge.onMessageFromContent(cb: (msg: BridgeMessage) => void): () => void
 contentBridge.onMessageFromSidebar(cb: (msg: BridgeMessage) => void): () => void
 ```
 
-**Comportamiento en extensión real:** usa `chrome.tabs.sendMessage` / `chrome.runtime.sendMessage`.
-**Comportamiento en preview (Figma Make / browser):** usa `window.dispatchEvent` con `CustomEvent`.
+### 7.2 `chromeStorage.ts`
 
----
-
-### 4.2 `chromeStorage.ts`
-
-**API pública:**
 ```typescript
 chromeStorage.get(keys: string[]): Promise<Record<string, unknown>>
 chromeStorage.set(items: Record<string, unknown>): Promise<void>
 chromeStorage.onChange(cb: (changes: Record<string, unknown>) => void): () => void
 ```
 
-**Todas las claves usadas (prefijo `usb_` en localStorage):**
+**Prefijo en localStorage: `usb_`**
 
-| Clave                     | Tipo              | Defecto          | Descripción                           |
-|---------------------------|-------------------|------------------|---------------------------------------|
-| `captions_auto_translate` | boolean           | `true`           | Toggle de auto-traducción             |
-| `overlay_show`            | boolean           | `true`           | Overlay visible                       |
-| `overlay_font_size`       | number[]          | `[24]`           | Tamaño de fuente [min, max, step=2]   |
-| `overlay_opacity`         | number[]          | `[85]`           | Opacidad del fondo [0-100]            |
-| `overlay_sync_offset`     | number[]          | `[0]`            | Sync offset [-2000, +2000]            |
-| `overlay_position`        | string            | `"bottom"`       | top / center / bottom                 |
-| `overlay_text_color`      | string            | `"white"`        | white / yellow / cyan                 |
-| `overlay_shadow`          | number[]          | `[60]`           | Sombra del texto [0-100]              |
-| `agent_selected_obj`      | string            | `"spring-senisenior"` | Objetivo de estudio preseleccionado |
-| `agent_custom_obj`        | string            | `""`             | Objetivo custom escrito por el usuario|
-| `agent_course_name`       | string            | `"Java In-Depth"` | Nombre del curso                     |
-| `agent_lesson_name`       | string            | `"02 - JVM"`     | Nombre de la lección actual           |
+| Clave | Tipo | Default |
+|-------|------|---------|
+| `captions_auto_translate` | boolean | `true` |
+| `overlay_show` | boolean | `true` |
+| `overlay_font_size` | number[] | `[24]` |
+| `overlay_opacity` | number[] | `[85]` |
+| `overlay_position` | string | `"bottom"` |
+| `overlay_text_color` | string | `"white"` |
+| `overlay_shadow` | number[] | `[60]` |
+| `overlay_sync_offset` | number[] | `[0]` |
+| `notes_<course>_<lesson>` | string | `""` |
 
----
-
-### 4.3 `localAI.ts`
-
-**Configuración:**
-```typescript
-const LOCAL_AI_URL = "http://127.0.0.1:8010";
-// Modelo: "local-model" (nombre genérico compatible con todos los servidores locales)
-```
-
-**Funciones exportadas:**
+### 7.3 `localAI.ts`
 
 ```typescript
-// Traducción (no-streaming)
+// Funciones exportadas
 translateLine(en: string): Promise<AIResponse>
+translateLineStream(en: string, onToken: (token: string, acc: string) => void, signal?: AbortSignal): Promise<{ success: boolean; content: string }>
+evaluateActiveAnswer(question, expectedAnswer, studentAnswer, bloomLevel): Promise<AIResponse>
+evaluateActiveAnswerStream(question, expectedAnswer, studentAnswer, bloomLevel, onToken): Promise<{ success: boolean; content: string; rating: AIRating }>
+evaluateCodeSolution(title, expectedSolution, studentCode): Promise<AIResponse>
+evaluateCodeSolutionStream(title, expectedSolution, studentCode, onToken): Promise<{ success: boolean; content: string; rating: AIRating }>
+evaluateFeynman(topic, modelAnswer, studentAnswer): Promise<AIResponse>
 
-// Traducción (streaming SSE) ← USO PRINCIPAL
-translateLineStream(
-  en: string,
-  onToken: (token: string, accumulated: string) => void,
-  signal?: AbortSignal
-): Promise<{ success: boolean; content: string }>
-
-// Evaluación de respuesta a pregunta (no-streaming)
-evaluateActiveAnswer(
-  question: string, expectedAnswer: string,
-  studentAnswer: string, bloomLevel: string
-): Promise<AIResponse>
-
-// Evaluación de respuesta a pregunta (streaming) ← USO PRINCIPAL
-evaluateActiveAnswerStream(
-  question: string, expectedAnswer: string,
-  studentAnswer: string, bloomLevel: string,
-  onToken: (token: string, accumulated: string) => void
-): Promise<{ success: boolean; content: string; rating: AIRating }>
-
-// Code review (no-streaming)
-evaluateCodeSolution(
-  challengeTitle: string, expectedSolution: string, studentCode: string
-): Promise<AIResponse>
-
-// Code review (streaming) ← USO PRINCIPAL
-evaluateCodeSolutionStream(
-  challengeTitle: string, expectedSolution: string, studentCode: string,
-  onToken: (token: string, accumulated: string) => void
-): Promise<{ success: boolean; content: string; rating: AIRating }>
-
-// Evaluación Feynman (no-streaming)
-evaluateFeynman(
-  topic: string, modelAnswer: string, studentAnswer: string
-): Promise<AIResponse>
-
-// Función interna core SSE (NO exportar en versión de producción simplificada)
-streamLocalAI(
-  messages: AIMessage[],
-  maxTokens: number,
-  temperature: number,
-  onToken: (token: string, accumulated: string) => void,
-  signal?: AbortSignal,
-  debugContext?: string
-): Promise<{ success: boolean; content: string; error?: string }>
-```
-
-**Tipos:**
-```typescript
 type AIRating = "correct" | "partial" | "wrong" | "unknown";
-
-interface AIResponse {
-  success: boolean;
-  content: string;
-  rating: AIRating;
-  error?: string;
-}
-
-interface AIMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
+interface AIResponse { success: boolean; content: string; rating: AIRating; error?: string; }
 ```
 
-**Lógica de parseRating:**
-```
-El contenido de la IA se parsea buscando estas cadenas (case-insensitive):
-- "correct" si contiene: "[CORRECTO]", "COMPRENSION: PROFUNDA"
-- "partial" si contiene: "[PARCIAL]", "COMPRENSION: SOLIDA"
-- "wrong"   si contiene: "[INCORRECTO]", "COMPRENSION: BASICA"
-- Fallback: contar emojis ✅ vs ❌ — el que más haya determina el rating
-- Default: "unknown"
-```
-
----
-
-### 4.4 `debugStore.ts`
-
-**Singleton reactivo** que recopila toda la telemetría de las peticiones SSE.
+### 7.4 `usePersistedState.ts`
 
 ```typescript
-// Tipos
-interface SSEToken {
-  token: string;
-  accumulated: string;
-  deltaMs: number;      // ms desde el token anterior
-  timestamp: number;    // performance.now()
-}
-
-interface DebugRequest {
-  id: string;
-  context: "translate" | "eval-question" | "eval-code" | "unknown";
-  startTs: number;
-  tokens: SSEToken[];
-  totalMs?: number;
-  status: "streaming" | "done" | "error" | "aborted";
-}
-
-interface CacheEntry {
-  en: string;
-  es: string;
-  latencyMs: number;
-  usedAI: boolean;
-  timestamp: number;
-}
-
-// API pública
-debugStore.startRequest(id: string, context: string): void
-debugStore.addToken(id: string, token: string, accumulated: string): void
-debugStore.endRequest(id: string, success: boolean, aborted?: boolean): void
-debugStore.addCacheEntry(entry: CacheEntry): void
-debugStore.subscribe(fn: () => void): () => void  // retorna unsubscribe
-debugStore.clear(): void
-debugStore.getLatestStats(): { avgDeltaMs, minDeltaMs, maxDeltaMs, tokenCount, totalMs, tokensPerSec } | null
+function usePersistedState<T>(key: string, defaultValue: T): [T, (value: T | ((prev: T) => T)) => void]
 ```
 
-**Límites:**
-- `MAX_REQUESTS = 15` — mantiene las últimas 15 peticiones.
-- `MAX_CACHE = 60` — mantiene las últimas 60 traducciones en caché.
+### 7.5 `ankiApkg.ts`
 
----
-
-### 4.5 `ankiApkg.ts`
-
-**Schema SQLite Anki 2.0 (version 11):**
-
-El archivo `.apkg` es un ZIP con:
-- `collection.anki2` — base SQLite con tablas: `col`, `notes`, `cards`, `revlog`, `graves`
-- `media` — JSON `{}` (sin archivos multimedia)
-
-**Tablas clave:**
-- `col` — 1 fila: configuración global, modelos (note types), decks, dconf
-- `notes` — 1 fila por tarjeta: guid, fields (front\x1fback), tags
-- `cards` — 1 fila por nota: vincula nota con deck, scheduling data
-
-**API pública:**
 ```typescript
-interface AnkiCardData {
-  front: string;   // HTML del frente (con CSS de Prism.js)
-  back: string;    // HTML del reverso
-  tags: string[];  // Tags de la tarjeta
-}
-
-// Construye el .apkg completo y retorna el Uint8Array
-buildAnkiApkg(
-  cards: AnkiCardData[],
-  deckName: string,        // formato: "Curso::Lección"
-  modelCss: string,        // CSS completo para las tarjetas
-  frontTemplate: string,   // Template HTML del frente
-  backTemplate: string,    // Template HTML del reverso
-  onProgress?: (msg: string) => void
-): Promise<Uint8Array>
-
-// Descarga el .apkg en el navegador
+interface AnkiCardData { front: string; back: string; tags: string[]; }
+buildAnkiApkg(cards: AnkiCardData[], deckName: string, modelCss: string, frontTemplate: string, backTemplate: string, onProgress?: (msg: string) => void): Promise<Uint8Array>
 downloadApkg(data: Uint8Array, filename: string): void
 ```
 
 ---
 
-### 4.6 `usePersistedState.ts`
+## 8. ExtensionSidebar.tsx — Props
 
 ```typescript
-// Hook custom que usa chromeStorage para persistir state entre sesiones
-function usePersistedState<T>(
-  key: string,       // clave en chromeStorage
-  defaultValue: T    // valor por defecto si no existe en storage
-): [T, (value: T | ((prev: T) => T)) => void]
+interface ExtensionSidebarProps {
+  isOpen: boolean;
+  onToggle: () => void;
+  session?: Session;            // Session de Supabase (undefined = guest)
+  onRequestLogin?: () => void;  // Callback para mostrar el banner de sync
+  onSignOut?: () => void;       // Callback para cerrar sesión
+}
 ```
 
-**Comportamiento:**
-1. En mount: lee el valor de `chromeStorage.get([key])`.
-2. Al hacer setState: llama `chromeStorage.set({ [key]: newValue })`.
-3. Escucha cambios externos con `chromeStorage.onChange()` para sincronizar entre tabs.
+**Header del sidebar (cuando `session` está activo):**
+- Strip debajo del logo con: avatar (inicial del email, gradiente violeta), email truncado, indicador de sync pulsante, botón "Salir"
+- Animado con `AnimatePresence` (entra/sale con height animation)
+
+**Banner de sync (cuando `!session && onRequestLogin`):**
+- Footer del sidebar con botón "Sincronizar en la nube → Login"
+- Solo visible en modo invitado
 
 ---
 
-## 5. Flujo de Datos Completo
+## 9. NotesTab.tsx — Props y Features
 
-### 5.1 Flujo de Traducción (Subtitle Pipeline)
+```typescript
+interface NotesTabProps {
+  courseName: string;
+  lessonName: string;
+  session: Session | null;
+}
+```
+
+**Features:**
+- Textarea con autoguardado en `usePersistedState`
+- Cuando hay sesión: tarjeta "X apuntes en la nube" con refresh
+- Auto-save a cloud debounced (1500ms) via `POST /progress`
+- Export Markdown (.md) y Notion
+
+---
+
+## 10. Flujo de Datos Completo
+
+### 10.1 Flujo de Traducción
 
 ```
 Udemy Video ──► MutationObserver ──► content_script.ts
@@ -455,169 +583,46 @@ Udemy Video ──► MutationObserver ──► content_script.ts
                                    │          │
                        translateLineStream()  mockStream() (fallback)
                                    │
-                              localAI.ts
+                              localAI.ts → SSE → 127.0.0.1:8010
                                    │
-                         SSE stream a 127.0.0.1:8010
+                          token a token ──► setCurrentEs(acc)
                                    │
-                         token a token ──► setCurrentEs(acc)
-                                   │
-                         debugStore.addToken()
-                                   │
-                         Done ──► debugStore.addCacheEntry()
+                          Done ──► debugStore.addCacheEntry()
                                           │
-                        sendToContent("OVERLAY_CONFIG_UPDATE")
+                         sendToContent("OVERLAY_CONFIG_UPDATE")
                                           │
                               content_script.ts
                                    │
-                         overlay div actualizado con nueva traducción ES
+                          overlay div actualizado con nueva traducción ES
 ```
 
-### 5.2 Flujo del Study Agent
+### 10.2 Flujo Auth → Cloud Sync
 
 ```
-Usuario selecciona objetivo
-        │
-handleGenerate()
-        │
-generateContent() [mock síncrono en MVP]
-o
-generateStudyContentFromAI() [versión con IA local]
-        │
-StudyContent {
-  relevance, keyConcepts, quickWin,
-  questions[], application, interviewQ,
-  ankiCards[]
-}
-        │
-setContent() ──► renderizar "result" phase
-        │
-Usuario selecciona confianza (confused/partial/clear/mastered)
-        │
-visibleQuestions = filter questions by QUESTIONS_FOR[confidence]
-        │
-Usuario escribe respuesta ──► handleEvalQuestion()
-        │
-evaluateActiveAnswerStream() ──► streaming feedback
-        │
-setQuestionFeedbacks ──► AIFeedback component con cursor parpadeante
-        │
-Si rating !== "wrong" ──► auto-avanzar al siguiente question
-        │
-Todas respondidas ──► questionsComplete = true
-        │
-Desafío de código ──► handleEvalApp()
-        │
-evaluateCodeSolutionStream() ──► code review streaming
-        │
-sessionComplete = true
-        │
-handleExport() ──► 3 archivos TXT
-o
-handleExportApkg() ──► buildAnkiApkg() ──► .apkg download
+App carga
+   │
+   ├── [Guest en localStorage] → skip auth, render children(null, ...)
+   │
+   ├── [Session existente] → reverseSyncFromCloud() → children(session, ...)
+   │        │
+   │        └── GET /migrate → { items } → escribe en localStorage
+   │
+   └── [Sin sesión, sin guest] → muestra auth screen inline (360px panel)
+            │
+            ├── [Google OAuth / Email+Password]
+            │        │
+            │        └── onAuthStateChange → session detectada
+            │                 │
+            │                 └── [Primera vez] → migrateLocalDataToCloud()
+            │                          │
+            │                          └── POST /migrate → KV store
+            │
+            └── [Continuar sin cuenta] → setIsGuest(true) → children(null, ...)
 ```
 
 ---
 
-## 6. content_script.ts — Arquitectura Interna
-
-```typescript
-// Selector CSS del elemento de subtítulos de Udemy
-// NOTA: Udemy puede cambiar estas clases. Mantener múltiples selectores.
-const SUBTITLE_SELECTORS = [
-  '.ud-transcript-cue',                    // Selector principal 2024
-  '[data-purpose="transcript-cue-active"]', // Alternativo
-  '.captions-display--captions-cue-text--ECkct', // Clase generada
-];
-
-// State interno del content script
-let currentSubtitle = "";
-let overlayEl: HTMLDivElement | null = null;
-let overlayConfig: OverlayConfig = { /* defaults */ };
-let observer: MutationObserver | null = null;
-
-// 1. Al cargar el video, crear el overlay div
-function createOverlay(): void {
-  overlayEl = document.createElement('div');
-  overlayEl.id = 'usb-overlay';
-  overlayEl.style.cssText = `
-    position: absolute;
-    bottom: 10%;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 9999;
-    pointer-events: none;
-    max-width: 80%;
-    text-align: center;
-  `;
-  // Agregar al contenedor del video
-  videoContainer.appendChild(overlayEl);
-  makeDraggable(overlayEl); // drag con mouse/touch
-}
-
-// 2. Observar cambios de subtítulos
-function startObserver(): void {
-  observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      const target = mutation.target as HTMLElement;
-      const newText = target.textContent?.trim();
-      if (newText && newText !== currentSubtitle) {
-        currentSubtitle = newText;
-        contentBridge.sendToSidebar({
-          type: "SUBTITLE_LINE_RECEIVED",
-          payload: { en: newText, ts: Date.now() }
-        });
-      }
-    }
-  });
-  // Observar el elemento de subtítulos o el documento completo como fallback
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true
-  });
-}
-
-// 3. Escuchar mensajes del sidebar
-contentBridge.onMessageFromSidebar((msg) => {
-  if (msg.type === "PING") {
-    contentBridge.sendToSidebar({ type: "PONG" });
-  }
-  if (msg.type === "OVERLAY_CONFIG_UPDATE") {
-    overlayConfig = { ...overlayConfig, ...(msg.payload as Partial<OverlayConfig>) };
-    updateOverlayStyle();
-  }
-  if (msg.type === "AUTO_TRANSLATE_TOGGLE") {
-    const { active } = msg.payload as { active: boolean };
-    if (overlayEl) overlayEl.style.display = active ? 'block' : 'none';
-  }
-  if (msg.type === "OVERLAY_RESET_POSITION") {
-    if (overlayEl) {
-      overlayEl.style.transform = 'translateX(-50%)';
-      overlayEl.style.bottom = '10%';
-      overlayEl.style.left = '50%';
-    }
-  }
-});
-
-// 4. Actualizar overlay con nueva traducción
-export function updateOverlayText(es: string): void {
-  if (!overlayEl) return;
-  overlayEl.innerHTML = `
-    <span style="
-      background: rgba(0,0,0,${overlayConfig.opacity / 100});
-      color: ${overlayConfig.textColor === 'white' ? '#fff' : overlayConfig.textColor === 'yellow' ? '#fde047' : '#67e8f9'};
-      font-size: ${overlayConfig.fontSize}px;
-      padding: 4px 12px;
-      border-radius: 4px;
-      display: inline-block;
-    ">${es}</span>
-  `;
-}
-```
-
----
-
-## 7. Configuración de Build — vite.config.ts
+## 11. Configuración de Build — vite.config.ts
 
 ```typescript
 import { defineConfig } from 'vite';
@@ -627,99 +632,23 @@ import manifest from './manifest.json';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    crx({ manifest }),
-  ],
+  plugins: [react(), tailwindcss(), crx({ manifest })],
   build: {
-    rollupOptions: {
-      input: {
-        sidebar: 'sidebar.html',
-      },
-    },
+    rollupOptions: { input: { sidebar: 'sidebar.html' } },
   },
-  // Necesario para sql.js WASM
-  optimizeDeps: {
-    exclude: ['sql.js'],
-  },
-  worker: {
-    format: 'es',
-  },
-  // Permite importar .wasm como URL
+  optimizeDeps: { exclude: ['sql.js'] },
+  worker: { format: 'es' },
   assetsInclude: ['**/*.wasm'],
 });
 ```
 
 ---
 
-## 8. TypeScript Config
+## 12. Seguridad
 
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitAny": true,
-    "skipLibCheck": true,
-    "types": ["chrome", "vite/client"]
-  },
-  "include": ["src", "tests"]
-}
-```
-
-**Nota:** Instalar `@types/chrome` para tener tipos de la API de extensiones.
-
----
-
-## 9. CI/CD — GitHub Actions
-
-```yaml
-# .github/workflows/ci.yml
-name: CI
-
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
-
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 8
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm tsc --noEmit    # TypeScript check
-      - run: pnpm lint            # ESLint
-      - run: pnpm test            # Vitest
-      - run: pnpm build           # Build de producción
-      - uses: actions/upload-artifact@v4
-        with:
-          name: extension-dist
-          path: dist/
-```
-
----
-
-## 10. Consideraciones de Seguridad
-
-1. **CSP de la extensión**: Solo `'self'` para scripts. El WASM necesita `'wasm-unsafe-eval'`.
-2. **No hay almacenamiento de datos de usuario**: Solo configuración (overlay, objetivo de estudio). No se recopilan subtítulos del usuario.
-3. **IA local**: La comunicación es `127.0.0.1` únicamente — no sale a internet.
-4. **Permisos mínimos**: Solo `storage`, `activeTab`, `scripting`. Sin `tabs`, sin `webRequest`.
-5. **Content Security Policy en host_permissions**: Solo `udemy.com` y `127.0.0.1:8010`.
-6. **Sin datos sensibles en logs**: El debugStore no loguea datos de usuario, solo telemetría de timing.
+1. **CSP**: Solo `'self'` + `'wasm-unsafe-eval'` para sql.js WASM.
+2. **SUPABASE_SERVICE_ROLE_KEY**: Solo en el servidor Deno. NUNCA en el frontend.
+3. **Tokens de auth**: Se envían en `Authorization: Bearer <access_token>`, nunca en URL.
+4. **IA local**: Solo `127.0.0.1` — no sale a internet.
+5. **Permisos mínimos**: `storage`, `activeTab`, `scripting`, `sidePanel`.
+6. **No datos sensibles en logs**: debugStore solo loguea timing, no contenido de subtítulos.
