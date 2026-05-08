@@ -221,7 +221,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
     { id: "study"    as const, label: "Study",   icon: GraduationCap, ping: true  },
     { id: "captions" as const, label: "Captions", icon: Captions,      ping: false },
     { id: "overlay"  as const, label: "Overlay",  icon: Layers,        ping: false },
-    ...(devMode ? [{ id: "dev" as const, label: "Dev", icon: Settings, ping: false }] : []),
+    { id: "dev"      as const, label: "Dev",      icon: Settings,      ping: false },
   ];
 
   return (

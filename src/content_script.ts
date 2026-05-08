@@ -384,7 +384,7 @@ function applyOverlayStyle() {
 	overlayTextEl.style.background = `rgba(0, 0, 0, ${Math.max(0, Math.min(1, normalizedOpacity))})`;
 	overlayTextEl.style.color = getToneColor(currentConfig.tone);
 	overlayTextEl.style.textShadow = shadowStrength > 0
-		? `0 1px ${Math.max(1, Math.round(shadowStrength / 20))}px rgba(0, 0, 0, ${shadowStrength / 100})`
+		? `0 1px ${Math.max(2, Math.round(shadowStrength / 12))}px rgba(0, 0, 0, ${Math.min(1, shadowStrength / 80)}), 0 0 ${Math.max(1, Math.round(shadowStrength / 8))}px rgba(0, 0, 0, ${Math.min(1, shadowStrength / 100)})`
 		: 'none';
 
 	const positionStyles = getPositionStyles(currentConfig.position, currentConfig.offsetMs);
