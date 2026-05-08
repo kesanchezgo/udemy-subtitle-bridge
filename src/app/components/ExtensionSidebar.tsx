@@ -255,7 +255,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               <motion.div
                 animate={devMode ? { rotate: 360 } : { rotate: 0 }}
                 transition={devMode
-                  ? { duration: 4, repeat: Infinity, ease: "linear" }
+                  ? { duration: 8, repeat: Infinity, ease: "linear" }
                   : { duration: 0.4, ease: "easeOut" }
                 }
                 style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -545,7 +545,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                     <p className="text-white/25 text-[10px]">Arrastra el handle ═══ en el video para mover</p>
                   </div>
                   <button onClick={() => contentBridge.sendToContent({ type: "OVERLAY_RESET_POSITION" })} className="flex items-center gap-1 text-[9px] text-white/30 hover:text-amber-400 border border-white/8 hover:border-amber-500/25 px-2 py-1 rounded-lg transition-colors shrink-0 ml-2">
-                    <RefreshCcw size={8}/>Resetear
+                    <RotateCcw size={8}/>Reset
                   </button>
                 </div>
 

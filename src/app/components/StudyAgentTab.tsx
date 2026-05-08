@@ -103,6 +103,13 @@ const DIFFICULTY_LABEL: Record<ConfidenceLevel, string> = {
   mastered: 'Avanzada'
 };
 
+const BLOOM_STYLE: Record<ConfidenceLevel, string> = {
+  confused: 'border-red-500/20 bg-red-500/10 text-red-400',
+  partial: 'border-amber-500/20 bg-amber-500/10 text-amber-400',
+  clear: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400',
+  mastered: 'border-violet-500/20 bg-violet-500/10 text-violet-400',
+};
+
 const FLOW_STEPS = ['Autocalibrar', 'Conceptos', 'Verificar', 'Aplicar', 'Anki'] as const;
 
 const FALLBACK_QUESTION = {
@@ -143,6 +150,19 @@ function getFeedbackLineClass(line: string) {
   return 'text-white/80';
 }
 
+function StepConnectorLine({ filled }: { filled: boolean }) {
+  return (
+    <div className="relative mx-1 mb-4 h-px flex-1 overflow-hidden bg-white/5">
+      <motion.div
+        className="absolute inset-0 bg-gradient-to-r from-emerald-500/50 to-emerald-400/80 origin-left"
+        initial={{ scaleX: 0 }}
+        animate={{ scaleX: filled ? 1 : 0 }}
+        transition={{ duration: 0.6, ease: 'easeInOut' }}
+      />
+    </div>
+  );
+}
+
 function StudyStepBadge({
   index,
   label,
@@ -155,21 +175,21 @@ function StudyStepBadge({
   return (
     <div className="usb-study-step flex min-w-0 flex-1 flex-col items-center gap-1">
       <div className="flex w-full items-center">
-        {index > 0 ? <div className={`h-px flex-1 ${status === 'pending' ? 'bg-white/5' : 'bg-gradient-to-r from-emerald-500/45 via-violet-500/45 to-emerald-400/65'}`} /> : null}
+        {index > 0 ? <StepConnectorLine filled={status !== 'pending'} /> : null}
         <div
           className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[9px] font-semibold transition-all ${
             status === 'done'
-              ? 'border-emerald-500/35 bg-emerald-500/12 text-emerald-400'
+              ? 'border-emerald-500/35 bg-emerald-500/12 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
               : status === 'active'
-                ? 'border-violet-500/40 bg-violet-500/12 text-violet-300'
+                ? 'border-violet-500/40 bg-violet-500/12 text-violet-300 shadow-[0_0_8px_rgba(139,92,246,0.3)]'
                 : 'border-white/10 bg-white/5 text-white/22'
           }`}
         >
           {status === 'done' ? <CheckIcon className="h-2.5 w-2.5" /> : index + 1}
         </div>
-        {index < FLOW_STEPS.length - 1 ? <div className={`h-px flex-1 ${status === 'pending' ? 'bg-white/5' : 'bg-gradient-to-r from-emerald-500/45 via-violet-500/45 to-emerald-400/65'}`} /> : null}
+        {index < FLOW_STEPS.length - 1 ? <StepConnectorLine filled={status === 'done'} /> : null}
       </div>
-      <span className={`mt-1 text-center text-[9px] uppercase tracking-[0.14em] ${status === 'done' ? 'text-emerald-400/70' : status === 'active' ? 'text-violet-300/90' : 'text-white/20'}`}>
+      <span className={`mt-1 text-center text-[9px] uppercase tracking-[0.14em] ${status === 'done' ? 'text-emerald-400/70 font-medium' : status === 'active' ? 'text-violet-300/90 font-medium' : 'text-white/20'}`}>
         {label}
       </span>
     </div>
@@ -597,7 +617,7 @@ export function StudyAgentTab() {
           <section className="usb-result-card usb-quiz-card">
             <StepHeader index={3} label="Verifica tu comprensión" status={confidence ? (evalAccumulated ? 'done' : 'active') : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
             <div className="usb-quiz-badges">
-              <div className="usb-bloom-badge">Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
+              <div className={`usb-bloom-badge ${confidence ? BLOOM_STYLE[confidence] : 'border-white/10 bg-white/5 text-white/40'}`}>Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
               {confidence ? <div className={`usb-difficulty-badge ${CONFIDENCE_STYLES[confidence]}`}>{DIFFICULTY_LABEL[confidence]}</div> : null}
             </div>
             {studyData?.questions && studyData.questions.length > 1 ? (
@@ -688,7 +708,7 @@ export function StudyAgentTab() {
                 {evalStreaming ? <LoaderIcon className="usb-btn-icon is-spinning" /> : <SendIcon className="usb-btn-icon" />}
                 {evalStreaming ? 'Cancel' : 'Evaluar con IA'}
               </button>
-              <button type="button" className="usb-small-btn usb-muted-btn">
+              <button type="button" className="usb-small-btn usb-muted-btn" onClick={() => { setEvalAccumulated('Pregunta omitida por el estudiante.'); setEvalRating('unknown'); }}>
                 <PlayIcon className="usb-btn-icon" />
                 Continuar sin responder
               </button>
@@ -845,7 +865,26 @@ export function StudyAgentTab() {
                 <FileDownIcon className="usb-btn-icon" />
                 Exportar .txt
               </button>
-              <button type="button" className="usb-small-btn usb-primary-btn">
+              <button
+                type="button"
+                className="usb-small-btn usb-primary-btn"
+                onClick={async () => {
+                  const cards = activeAnkiCards;
+                  try {
+                    const { buildAnkiApkg, downloadApkg } = await import('../services/ankiApkg');
+                    const apkgData = await buildAnkiApkg(
+                      cards.map(c => ({ front: c.front, back: c.back, tags: [c.tag || 'SubtitleBridge'] })),
+                      `SubtitleBridge - ${courseName}`,
+                      '.card { font-family: -apple-system, sans-serif; font-size: 16px; text-align: center; padding: 20px; }',
+                      '{{Front}}',
+                      '{{FrontSide}}<hr id=answer>{{Back}}'
+                    );
+                    downloadApkg(apkgData, `subtitle-bridge-${Date.now()}.apkg`);
+                  } catch (_err) {
+                    // silently fail
+                  }
+                }}
+              >
                 <PackageIcon className="usb-btn-icon" />
                 Exportar .apkg
               </button>
