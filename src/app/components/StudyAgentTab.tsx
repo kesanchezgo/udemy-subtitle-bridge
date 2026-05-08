@@ -110,7 +110,7 @@ const BLOOM_STYLE: Record<ConfidenceLevel, string> = {
   mastered: 'border-violet-500/20 bg-violet-500/10 text-violet-400',
 };
 
-const FLOW_STEPS = ['Autocalibrar', 'Conceptos', 'Verificar', 'Aplicar', 'Anki'] as const;
+const FLOW_STEPS = ['Conceptos', 'Calibrar', 'Verificar', 'Aplicar', 'Anki'] as const;
 
 const FALLBACK_QUESTION = {
   q: '¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada.',
@@ -231,8 +231,19 @@ function StepHeader({
   );
 }
 
-function getChromeApi() {
-  return (globalThis as typeof globalThis & { chrome?: any }).chrome;
+interface ChromeApiSubset {
+  runtime: {
+    sendMessage: (message: Record<string, unknown>, callback: (response: Record<string, unknown>) => void) => void;
+    lastError?: { message?: string };
+  };
+  tabs: {
+    query: (queryInfo: Record<string, unknown>, callback: (tabs: { id?: number }[]) => void) => void;
+    sendMessage: (tabId: number, message: Record<string, unknown>, callback: (response: Record<string, unknown>) => void) => void;
+  };
+}
+
+function getChromeApi(): ChromeApiSubset | undefined {
+  return (globalThis as typeof globalThis & { chrome?: ChromeApiSubset }).chrome;
 }
 
 async function fetchTranscriptFromContentScript(): Promise<{ text: string; lectureTitle?: string; courseSlug?: string; lectureKey?: string } | null> {
@@ -375,20 +386,16 @@ export function StudyAgentTab() {
 
   const activeGoal = useMemo(() => GOALS.find((item) => item.id === goal) ?? GOALS[0], [goal]);
   const currentStep = useMemo(() => {
-    if (!confidence) {
-      return 1;
-    }
-    if (!evalAccumulated) {
-      return 2;
-    }
-    if (!showSolution) {
-      return 3;
-    }
-    if (!ankiFlipped) {
-      return 4;
-    }
+    // Step 1: Conceptos — always done once we reach result phase
+    // Step 2: Calibrar — done when confidence is selected
+    if (!confidence) return 2;
+    // Step 3: Verificar — done when evaluation answer is received
+    if (!evalAccumulated) return 3;
+    // Step 4: Aplicar — done when code review received or solution viewed
+    if (!codeReviewAccumulated && !showSolution) return 4;
+    // Step 5: Anki
     return 5;
-  }, [confidence, evalAccumulated, showSolution, ankiFlipped]);
+  }, [confidence, evalAccumulated, codeReviewAccumulated, showSolution]);
 
   const startGeneration = async () => {
     setStage('generating');
@@ -572,8 +579,18 @@ export function StudyAgentTab() {
             <p className="usb-relevance-text">{studyData?.relevance?.reason || 'Cimientos críticos. Spring Boot vive dentro de la JVM — sin esto, el resto del curso es memorizar sin entender.'}</p>
           </section>
 
+          <section className="usb-result-card">
+            <StepHeader index={1} label="Conceptos clave del video" status="done" subtitle="Asegura la base antes de pasar a las preguntas." />
+            {(studyData?.keyConcepts || ['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.']).map((concept) => (
+              <label key={concept} className="usb-check-item">
+                <span className="usb-check-box"><CheckIcon className="usb-check-mark" /></span>
+                <span>{concept}</span>
+              </label>
+            ))}
+          </section>
+
           <section className="usb-result-card usb-confidence-card">
-            <StepHeader index={2} label="¿Cómo te fue con este video?" status={confidence ? 'done' : 'active'} subtitle="Elige tu nivel para calibrar el siguiente paso del plan de estudio." />
+            <StepHeader index={2} label="¿Cómo te fue con este video?" status={currentStep > 2 ? 'done' : currentStep === 2 ? 'active' : 'pending'} subtitle="Elige tu nivel para calibrar el siguiente paso del plan de estudio." />
             <div className="usb-confidence-grid">
               {CONFIDENCE_OPTIONS.map((item) => {
                 const isActive = confidence === item.id;
@@ -599,23 +616,8 @@ export function StudyAgentTab() {
             ) : null}
           </section>
 
-          <section className="usb-result-card">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="usb-section-title">Lo que aprendiste</div>
-                <p className="mt-1 text-[10px] leading-relaxed text-white/30">Asegura la base antes de pasar a las preguntas.</p>
-              </div>
-            </div>
-            {(studyData?.keyConcepts || ['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.']).map((concept) => (
-              <label key={concept} className="usb-check-item">
-                <span className="usb-check-box"><CheckIcon className="usb-check-mark" /></span>
-                <span>{concept}</span>
-              </label>
-            ))}
-          </section>
-
           <section className="usb-result-card usb-quiz-card">
-            <StepHeader index={3} label="Verifica tu comprensión" status={confidence ? (evalAccumulated ? 'done' : 'active') : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
+            <StepHeader index={3} label="Verifica tu comprensión" status={currentStep > 3 ? 'done' : currentStep === 3 ? 'active' : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
             <div className="usb-quiz-badges">
               <div className={`usb-bloom-badge ${confidence ? BLOOM_STYLE[confidence] : 'border-white/10 bg-white/5 text-white/40'}`}>Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
               {confidence ? <div className={`usb-difficulty-badge ${CONFIDENCE_STYLES[confidence]}`}>{DIFFICULTY_LABEL[confidence]}</div> : null}
@@ -732,7 +734,7 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card usb-code-card">
-            <StepHeader index={4} label="Aplícalo en código / situación real" status={showSolution ? 'done' : evalAccumulated ? 'active' : 'pending'} subtitle={activeApplication.setup} />
+            <StepHeader index={4} label="Aplícalo en código / situación real" status={currentStep > 4 ? 'done' : currentStep === 4 ? 'active' : 'pending'} subtitle={activeApplication.setup} />
             <pre className="usb-code-block">{activeApplication.challenge}</pre>
             <textarea className="usb-answer-box usb-code-answer" placeholder="Escribe tu solución o explicación aquí…" value={codeAnswer} onChange={(e) => setCodeAnswer(e.target.value)} />
             <div className="usb-card-actions">
