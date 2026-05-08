@@ -42,46 +42,34 @@ function addFallbackListener(eventName: string, handler: (message: BridgeMessage
   return () => window.removeEventListener(eventName, listener as EventListener);
 }
 
-export async function sendToContent<TResponse = void>(message: BridgeMessage): Promise<TResponse> {
-  const payload = { ...message, source: 'sidebar' as const, target: 'content' as const };
+async function postBridgeMessage<TResponse = void>(payload: BridgeMessage, fallbackEventName: string): Promise<TResponse | undefined> {
   const chromeApi = getChromeApi();
 
   if (chromeApi?.runtime?.sendMessage) {
-    return await new Promise<TResponse>((resolve, reject) => {
-      chromeApi.runtime.sendMessage(payload, (response: TResponse) => {
-        const error = chromeApi.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message || 'Bridge message failed.'));
-          return;
-        }
-        resolve(response);
-      });
-    });
+    try {
+      const result = chromeApi.runtime.sendMessage(payload);
+      if (result && typeof result.then === 'function') {
+        return await result.catch(() => undefined);
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
   }
 
-  dispatchFallback(CONTENT_EVENT, payload);
-  return undefined as TResponse;
+  dispatchFallback(fallbackEventName, payload);
+  return undefined;
+}
+
+export async function sendToContent<TResponse = void>(message: BridgeMessage): Promise<TResponse> {
+  const payload = { ...message, source: 'sidebar' as const, target: 'content' as const };
+  return (await postBridgeMessage<TResponse>(payload, CONTENT_EVENT)) as TResponse;
 }
 
 export async function sendToSidebar<TResponse = void>(message: BridgeMessage): Promise<TResponse> {
   const payload = { ...message, source: 'content' as const, target: 'sidebar' as const };
-  const chromeApi = getChromeApi();
-
-  if (chromeApi?.runtime?.sendMessage) {
-    return await new Promise<TResponse>((resolve, reject) => {
-      chromeApi.runtime.sendMessage(payload, (response: TResponse) => {
-        const error = chromeApi.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message || 'Bridge message failed.'));
-          return;
-        }
-        resolve(response);
-      });
-    });
-  }
-
-  dispatchFallback(SIDEBAR_EVENT, payload);
-  return undefined as TResponse;
+  return (await postBridgeMessage<TResponse>(payload, SIDEBAR_EVENT)) as TResponse;
 }
 
 export function onMessageFromContent(handler: (message: BridgeMessage) => void) {

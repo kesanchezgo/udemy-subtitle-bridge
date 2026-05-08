@@ -14,13 +14,23 @@ import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
-import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount, validateGeminiKey } from "../../gemini-config";
+import { initGeminiKeys, saveGeminiKeys, getConfiguredKeyCount, validateGeminiKey, normalizeGeminiKeys } from "../../gemini-config";
 import { checkLocalAIHealth } from "../services/localAI";
+import { debugStore } from "../services/debugStore";
 
 type ExtensionSidebarProps = {
   isOpen?: boolean;
   onToggle?: () => void;
 };
+
+type GeminiKeyFieldStatus = {
+  status: "idle" | "valid" | "rate-limited" | "invalid";
+  message?: string;
+};
+
+const SUBTITLE_BLOCK_IDLE_MS = 1400;
+const SUBTITLE_BLOCK_MAX_LINES = 3;
+const SUBTITLE_BLOCK_MAX_CHARS = 280;
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <p className="text-white/22 text-[9px] uppercase tracking-widest mb-2">{children}</p>;
@@ -40,7 +50,7 @@ function StatusRow({ label, status, ok, pulse }: { label: string; status: string
       <span className="text-white/40 text-[11px]">{label}</span>
       <span className={`flex items-center gap-1.5 text-[11px] ${ok ? "text-emerald-400" : "text-red-400"}`}>
         {pulse && ok
-          ? <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"/></span>
+          ? <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/></span>
           : ok ? <CheckCircle2 size={10}/> : <AlertCircle size={10}/>}
         {status}
       </span>
@@ -69,6 +79,11 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [validatingKeys, setValidatingKeys] = useState(false);
   const [keyValidationError, setKeyValidationError] = useState<string | null>(null);
+  const [keyValidationWarning, setKeyValidationWarning] = useState<string | null>(null);
+  const [keyFieldStates, setKeyFieldStates] = useState<GeminiKeyFieldStatus[]>([
+    { status: "idle" },
+    { status: "idle" }
+  ]);
   const gearClickRef = useRef<number[]>([]);
 
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
@@ -90,8 +105,60 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
 
   const [contentScriptConnected, setContentScriptConnected] = useState(false);
   const [syncPulse, setSyncPulse] = useState(false);
-  const [currentEnLine, setCurrentEnLine] = useState<string | null>(null);
+  const [currentTranscriptBlock, setCurrentTranscriptBlock] = useState<string | null>(null);
+  const [capturedLineCount, setCapturedLineCount] = useState(0);
+  const [recentCaptions, setRecentCaptions] = useState<Array<{ en: string; ts: number }>>([]);
+  const [latestTranslation, setLatestTranslation] = useState<{ en: string; es: string; latencyMs: number } | null>(null);
   const [localAIOnline, setLocalAIOnline] = useState<boolean | null>(null);
+  const exportSrtPendingRef = useRef(false);
+  const subtitleBlockBufferRef = useRef<string[]>([]);
+  const subtitleBlockTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  const clearSubtitleBlockTimer = () => {
+    if (subtitleBlockTimerRef.current !== null) {
+      window.clearTimeout(subtitleBlockTimerRef.current);
+      subtitleBlockTimerRef.current = null;
+    }
+  };
+
+  const flushSubtitleBlock = () => {
+    clearSubtitleBlockTimer();
+    if (subtitleBlockBufferRef.current.length === 0) {
+      return;
+    }
+
+    const block = subtitleBlockBufferRef.current.join(" ").replace(/\s+/g, " ").trim();
+    subtitleBlockBufferRef.current = [];
+
+    if (block) {
+      setCurrentTranscriptBlock(block);
+    }
+  };
+
+  const queueSubtitleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const buffer = subtitleBlockBufferRef.current;
+    const lastBuffered = buffer[buffer.length - 1];
+    if (lastBuffered !== trimmed) {
+      buffer.push(trimmed);
+    }
+
+    const block = buffer.join(" ").replace(/\s+/g, " ").trim();
+    if (buffer.length >= SUBTITLE_BLOCK_MAX_LINES || block.length >= SUBTITLE_BLOCK_MAX_CHARS) {
+      flushSubtitleBlock();
+      return;
+    }
+
+    clearSubtitleBlockTimer();
+    subtitleBlockTimerRef.current = window.setTimeout(() => {
+      subtitleBlockTimerRef.current = null;
+      flushSubtitleBlock();
+    }, SUBTITLE_BLOCK_IDLE_MS);
+  };
 
   useEffect(() => {
     initGeminiKeys().then(() => {
@@ -108,12 +175,54 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
     const unsub = contentBridge.onMessageFromContent((msg) => {
       if (msg.type === "PONG") setContentScriptConnected(true);
       if (msg.type === "SUBTITLE_LINE_RECEIVED") {
-        const payload = msg.payload as { en: string };
-        setCurrentEnLine(payload.en);
+        const payload = msg.payload as { en?: string; ts?: number };
+        if (payload?.en) {
+          setContentScriptConnected(true);
+          queueSubtitleLine(payload.en);
+          setCapturedLineCount((count) => count + 1);
+          setRecentCaptions((previous) => [{ en: payload.en as string, ts: typeof payload.ts === "number" ? payload.ts : Date.now() }, ...previous].slice(0, 8));
+        }
+      }
+      if (msg.type === "EN_SRT_RESULT") {
+        const payload = msg.payload as { srt?: string; fileName?: string } | undefined;
+        if (exportSrtPendingRef.current) {
+          exportSrtPendingRef.current = false;
+          const srt = payload?.srt || "";
+          if (srt.trim()) {
+            const fileName = payload?.fileName?.trim() || "udemy_en.srt";
+            const blob = new Blob([srt], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+          }
+        }
       }
     });
     const t = setTimeout(() => contentBridge.sendToContent({ type: "PING" }), 600);
-    return () => { clearTimeout(t); unsub(); };
+    return () => { clearTimeout(t); clearSubtitleBlockTimer(); unsub(); };
+  }, []);
+
+  useEffect(() => {
+    const unsub = debugStore.subscribe(() => {
+      const latest = debugStore.cacheEntries[0];
+      if (!latest) {
+        setLatestTranslation(null);
+        return;
+      }
+
+      setLatestTranslation({
+        en: latest.en,
+        es: latest.es,
+        latencyMs: latest.latencyMs
+      });
+    });
+
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -149,12 +258,6 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoTranslate]);
 
-  useEffect(() => {
-    if (!showLiveLines || !autoTranslate) return;
-    const iv = setInterval(() => setCurrentLine(p => (p + 1) % MOCK_LINES.length), 4000);
-    return () => clearInterval(iv);
-  }, [showLiveLines, autoTranslate]);
-
   const handleApplySrt = () => {
     if (!pasteSrt.trim()) return;
     setApplyingCopy(true);
@@ -162,20 +265,19 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   };
 
   const handleExportSrt = () => {
-    const content = MOCK_LINES.map((l, i) => `${i + 1}\n00:05:0${i},000 --> 00:05:0${i + 2},000\n${l.es}\n`).join("\n");
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "subtitulos_es.srt";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    exportSrtPendingRef.current = true;
+    void contentBridge.sendToContent({ type: "GET_EN_SRT" }).catch(() => {
+      exportSrtPendingRef.current = false;
+    });
+    window.setTimeout(() => {
+      if (exportSrtPendingRef.current) {
+        exportSrtPendingRef.current = false;
+      }
+    }, 1500);
   };
 
   const TEXT_COLORS = { white: "#ffffff", yellow: "#fde047", cyan: "#67e8f9" };
-  const preview_es = MOCK_LINES[currentLine]?.es ?? "";
+  const preview_es = latestTranslation?.es?.trim() || currentTranscriptBlock || (recentCaptions[0]?.en ?? "Esperando subtítulos…");
 
   const handleGearClick = () => {
     const now = Date.now();
@@ -193,27 +295,66 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   };
 
   const handleSaveGeminiKeys = async () => {
-    const keys = [geminiKey1, geminiKey2].filter(Boolean);
+    const keys = normalizeGeminiKeys([geminiKey1, geminiKey2]);
     if (!keys.length) return;
 
     setValidatingKeys(true);
     setKeyValidationError(null);
+    setKeyValidationWarning(null);
 
-    for (const key of keys) {
+    const validKeys: string[] = [];
+    const nextFieldStates: GeminiKeyFieldStatus[] = [{ status: "idle" }, { status: "idle" }];
+
+    for (const [index, key] of keys.entries()) {
       const result = await validateGeminiKey(key);
-      if (!result.valid) {
-        setValidatingKeys(false);
-        setKeyValidationError(result.error || 'Key inválida.');
-        return;
+      if (result.status === "valid") {
+        validKeys.push(key);
+        nextFieldStates[index] = { status: "valid", message: "Key activa" };
+        continue;
       }
+
+      if (result.status === "rate-limited") {
+        nextFieldStates[index] = { status: "rate-limited", message: "Limitada por rate limit" };
+        continue;
+      }
+
+      nextFieldStates[index] = { status: "invalid", message: result.error || 'Key inválida.' };
     }
 
-    await saveGeminiKeys(keys);
+    setKeyFieldStates(nextFieldStates);
+
+    if (!validKeys.length) {
+      const skippedCount = nextFieldStates.filter((field) => field.status !== "valid" && field.status !== "idle").length;
+      const skippedMessage = skippedCount > 0
+        ? `Se omitieron ${skippedCount} ${skippedCount === 1 ? 'key' : 'keys'} porque no quedaron operativas.`
+        : 'No se pudo guardar ninguna key.';
+      setKeyValidationError(nextFieldStates.find((field) => field.status === "invalid")?.message || nextFieldStates.find((field) => field.status === "rate-limited")?.message || skippedMessage);
+      setValidatingKeys(false);
+      return;
+    }
+
+    await saveGeminiKeys(validKeys);
     setGeminiKeyCount(getConfiguredKeyCount());
     setValidatingKeys(false);
     setSettingsSaved(true);
     setGeminiKey1("");
     setGeminiKey2("");
+    setKeyValidationError(null);
+
+    const skippedFields = nextFieldStates.filter((field) => field.status === "rate-limited" || field.status === "invalid");
+    if (skippedFields.length > 0) {
+      const warningParts: string[] = [];
+      const rateLimitedCount = skippedFields.filter((field) => field.status === "rate-limited").length;
+      const invalidCount = skippedFields.filter((field) => field.status === "invalid").length;
+      if (rateLimitedCount > 0) {
+        warningParts.push(`${rateLimitedCount} ${rateLimitedCount === 1 ? 'key quedó' : 'keys quedaron'} limitadas y no se guardaron`);
+      }
+      if (invalidCount > 0) {
+        warningParts.push(`${invalidCount} ${invalidCount === 1 ? 'key fue omitida' : 'keys fueron omitidas'} por inválidas`);
+      }
+      setKeyValidationWarning(`Se guardaron ${validKeys.length} ${validKeys.length === 1 ? 'key' : 'keys'}; ${warningParts.join(' y ')}.`);
+    }
+
     setTimeout(() => setSettingsSaved(false), 2000);
   };
 
@@ -221,7 +362,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
     { id: "study"    as const, label: "Study",   icon: GraduationCap, ping: true  },
     { id: "captions" as const, label: "Captions", icon: Captions,      ping: false },
     { id: "overlay"  as const, label: "Overlay",  icon: Layers,        ping: false },
-    ...(devMode ? [{ id: "dev" as const, label: "Dev", icon: Settings, ping: false }] : []),
+    { id: "dev"      as const, label: "Dev",      icon: Settings,      ping: false },
   ];
 
   return (
@@ -293,20 +434,36 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                 </button>
               </div>
               <div className="space-y-2">
-                <input
-                  type="password"
-                  value={geminiKey1}
-                  onChange={e => setGeminiKey1(e.target.value)}
-                  placeholder="API Key 1 (principal)"
-                  className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
-                />
-                <input
-                  type="password"
-                  value={geminiKey2}
-                  onChange={e => setGeminiKey2(e.target.value)}
-                  placeholder="API Key 2 (fallback, opcional)"
-                  className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
-                />
+                <div className="space-y-1.5">
+                  <input
+                    type="password"
+                    value={geminiKey1}
+                    onChange={e => {
+                      setGeminiKey1(e.target.value);
+                      setKeyFieldStates((prev) => [{ status: "idle" }, prev[1] ?? { status: "idle" }]);
+                    }}
+                    placeholder="API Key 1 (principal)"
+                    className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
+                  />
+                  <p className={`text-[9px] ${keyFieldStates[0]?.status === "valid" ? "text-emerald-400/70" : keyFieldStates[0]?.status === "rate-limited" ? "text-amber-400/70" : keyFieldStates[0]?.status === "invalid" ? "text-red-400/70" : "text-white/20"}`}>
+                    {keyFieldStates[0]?.message || "Todavía no validada."}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <input
+                    type="password"
+                    value={geminiKey2}
+                    onChange={e => {
+                      setGeminiKey2(e.target.value);
+                      setKeyFieldStates((prev) => [prev[0] ?? { status: "idle" }, { status: "idle" }]);
+                    }}
+                    placeholder="API Key 2 (fallback, opcional)"
+                    className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
+                  />
+                  <p className={`text-[9px] ${keyFieldStates[1]?.status === "valid" ? "text-emerald-400/70" : keyFieldStates[1]?.status === "rate-limited" ? "text-amber-400/70" : keyFieldStates[1]?.status === "invalid" ? "text-red-400/70" : "text-white/20"}`}>
+                    {keyFieldStates[1]?.message || "Todavía no validada."}
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -335,6 +492,16 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                       className="text-red-400 text-[10px] flex items-center gap-1"
                     >
                       <AlertCircle size={10} />{keyValidationError}
+                    </motion.span>
+                  )}
+                  {keyValidationWarning && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="text-amber-400 text-[10px] flex items-center gap-1"
+                    >
+                      <AlertCircle size={10} />{keyValidationWarning}
                     </motion.span>
                   )}
                 </AnimatePresence>
@@ -373,15 +540,15 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
       </div>
 
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-        <AnimatePresence>
+        <AnimatePresence mode="wait">
           {activeTab === "study" && (
-            <motion.div key="study" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col">
+            <motion.div key="study" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col">
               <StudyAgentTab />
             </motion.div>
           )}
 
           {activeTab === "captions" && (
-            <motion.div key="captions" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+            <motion.div key="captions" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
               <Card>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-1.5">
@@ -394,8 +561,8 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                 </div>
                 <div className="divide-y divide-white/5">
                   <StatusRow label="Subtítulos ES nativos" status="No disponible" ok={false}/>
-                  <StatusRow label="Subtítulos EN capturados" status="248 líneas" ok={true} pulse/>
-                  <StatusRow label="API local (8010)" status="Conectada" ok={true} pulse/>
+                  <StatusRow label="Subtítulos EN capturados" status={capturedLineCount > 0 ? `${capturedLineCount} líneas` : "Esperando…"} ok={capturedLineCount > 0} pulse={capturedLineCount > 0}/>
+                  <StatusRow label="API local (8010)" status={localAIOnline ? "Conectada" : "Sin conexión"} ok={Boolean(localAIOnline)} pulse={Boolean(localAIOnline)}/>
                   <StatusRow label="Traducción activa" status={autoTranslate ? "En curso" : "Pausada"} ok={autoTranslate}/>
                   <StatusRow label="Content script" status={contentScriptConnected ? "Activo" : "Esperando…"} ok={contentScriptConnected} pulse={contentScriptConnected}/>
                 </div>
@@ -412,7 +579,23 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                 <Switch checked={autoTranslate} onCheckedChange={setAutoTranslate} className="data-[state=checked]:bg-violet-600 scale-[0.82] shrink-0"/>
               </div>
 
-              <TranslationPipeline incomingLine={currentEnLine} autoTranslate={autoTranslate} />
+              <TranslationPipeline incomingBlock={currentTranscriptBlock} autoTranslate={autoTranslate} />
+
+              <div className="space-y-2">
+                <SectionLabel>Últimas líneas reales</SectionLabel>
+                <Card className="space-y-2 px-3 py-3">
+                  {recentCaptions.length > 0 ? (
+                    recentCaptions.map((line, index) => (
+                      <div key={`${line.ts}-${index}`} className="border-b border-white/5 last:border-0 pb-2 last:pb-0">
+                        <p className="text-white/45 text-[8px] font-mono">{new Date(line.ts).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>
+                        <p className="text-white/80 text-[10px] leading-relaxed mt-0.5">{line.en}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-white/25 text-[10px] leading-relaxed">Esperando subtítulos reales del video…</p>
+                  )}
+                </Card>
+              </div>
 
               <div className="space-y-2">
                 <SectionLabel>Gestión SRT</SectionLabel>
@@ -453,7 +636,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
           )}
 
           {activeTab === "overlay" && (
-            <motion.div key="overlay" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+            <motion.div key="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
               <div className="rounded-xl overflow-hidden border border-white/8 bg-[#0a0a0c]" style={{ aspectRatio: "16/9", position: "relative" }}>
                 <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-slate-900 to-[#0a0a0c]"/>
                 <div className="absolute inset-0 flex items-center justify-center opacity-20">
@@ -464,13 +647,13 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                 {showOverlay && (
                   <div className={`absolute left-0 right-0 px-4 flex justify-center ${position === "top" ? "top-2" : position === "center" ? "top-1/2 -translate-y-1/2" : "bottom-3"}`}>
                     <AnimatePresence mode="wait">
-                      <motion.div key={currentLine} initial={{ opacity: 0, y: position === "top" ? -4 : 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="text-center px-2.5 py-1 rounded-md max-w-full" style={{ backgroundColor: `rgba(0,0,0,${opacity[0]/100})`, fontSize: `${Math.max(7, fontSize[0] * 0.38)}px`, color: TEXT_COLORS[textColor], textShadow: shadowStrength[0] > 0 ? `0 1px ${Math.round(shadowStrength[0]/20)}px rgba(0,0,0,${shadowStrength[0]/100})` : "none", lineHeight: 1.4 }}>
+                      <motion.div key={currentLine} initial={{ opacity: 0, y: position === "top" ? -4 : 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="text-center px-2.5 py-1 rounded-md max-w-full" style={{ backgroundColor: `rgba(0,0,0,${opacity[0]/100})`, fontSize: `${Math.max(7, fontSize[0] * 0.38)}px`, color: TEXT_COLORS[textColor], textShadow: shadowStrength[0] > 0 ? `0 1px ${Math.max(2, Math.round(shadowStrength[0] / 12))}px rgba(0,0,0,${Math.min(1, shadowStrength[0] / 80)}), 0 0 ${Math.max(1, Math.round(shadowStrength[0] / 8))}px rgba(0,0,0,${Math.min(1, shadowStrength[0] / 100)})` : "none", lineHeight: 1.4 }}>
                         {preview_es}
                       </motion.div>
                     </AnimatePresence>
                   </div>
                 )}
-                <div className="absolute top-1.5 left-2"><span className="text-white/20 text-[8px] bg-black/40 px-1.5 py-0.5 rounded">Preview</span></div>
+                <div className="absolute top-1.5 left-2"><span className="text-white/20 text-[8px] bg-black/40 px-1.5 py-0.5 rounded">EN → ES</span></div>
                 {!showOverlay && <div className="absolute inset-0 flex items-center justify-center"><p className="text-white/20 text-[10px] flex items-center gap-1.5"><EyeOff size={11}/>Overlay desactivado</p></div>}
               </div>
 
@@ -522,6 +705,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                     <span className="text-violet-400 text-[10px] font-mono bg-violet-500/10 border border-violet-500/15 px-2 py-0.5 rounded">{shadowStrength[0]}%</span>
                   </div>
                   <Slider value={shadowStrength} onValueChange={setShadowStrength} max={100} min={0} step={10} className="[&_[data-slot=track]]:bg-white/10 [&_[data-slot=range]]:bg-violet-500 [&_[data-slot=thumb]]:border-violet-500 [&_[data-slot=thumb]]:bg-white [&_[data-slot=thumb]]:h-3.5 [&_[data-slot=thumb]]:w-3.5"/>
+                  <div className="flex items-center justify-between text-[9px] text-white/18 px-0.5"><span>Ninguna</span><span>Máxima</span></div>
                 </Card>
 
                 <div>
@@ -583,7 +767,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
           )}
 
           {activeTab === "dev" && (
-            <motion.div key="dev" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <motion.div key="dev" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col overflow-hidden">
               <DevTab />
             </motion.div>
           )}

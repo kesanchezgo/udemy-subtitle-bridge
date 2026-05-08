@@ -8,12 +8,19 @@
 
 const STORAGE_KEY = 'usg_gemini_api_keys';
 const STORAGE_MODEL_KEY = 'usg_gemini_model';
-const GEMINI_DEFAULT_MODEL = 'gemini-2.0-flash';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 type GeminiGlobal = typeof globalThis & {
   USB_GEMINI_API_KEYS?: string[];
   USB_GEMINI_MODEL?: string;
+};
+
+type GeminiKeyValidationStatus = 'valid' | 'rate-limited' | 'invalid' | 'error';
+
+type GeminiKeyValidationResult = {
+  status: GeminiKeyValidationStatus;
+  error?: string;
 };
 
 type ChromeStorageLocal = {
@@ -28,6 +35,35 @@ function getChromeStorage(): ChromeStorageLocal | undefined {
     }
   ).chrome;
   return chromeApi?.storage?.local;
+}
+
+export function normalizeGeminiKeys(apiKeys: string[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const apiKey of apiKeys) {
+    const trimmed = String(apiKey || '').trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
+}
+
+export function buildGeminiGenerateContentUrl(model: string, apiKey?: string): string {
+  const baseUrl = `${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`;
+  const normalizedKey = String(apiKey || '').trim();
+  return normalizedKey ? `${baseUrl}?key=${encodeURIComponent(normalizedKey)}` : baseUrl;
+}
+
+export function buildGeminiStreamContentUrl(model: string, apiKey?: string): string {
+  const normalizedKey = String(apiKey || '').trim();
+  const keyQuery = normalizedKey ? `&key=${encodeURIComponent(normalizedKey)}` : '';
+  return `${GEMINI_API_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse${keyQuery}`;
 }
 
 /**
@@ -46,7 +82,7 @@ export async function initGeminiKeys(): Promise<void> {
 
       const keys = result[STORAGE_KEY];
       if (Array.isArray(keys) && keys.length > 0) {
-        g.USB_GEMINI_API_KEYS = keys.filter(Boolean).map(String);
+        g.USB_GEMINI_API_KEYS = normalizeGeminiKeys(keys.map(String));
       }
 
       const model = result[STORAGE_MODEL_KEY];
@@ -67,11 +103,12 @@ export async function saveGeminiKeys(
   model?: string
 ): Promise<void> {
   const g = globalThis as GeminiGlobal;
-  const filtered = apiKeys.filter(Boolean);
+  const filtered = normalizeGeminiKeys(apiKeys);
   g.USB_GEMINI_API_KEYS = filtered;
 
-  if (model) {
-    g.USB_GEMINI_MODEL = model.trim();
+  const normalizedModel = model?.trim();
+  if (normalizedModel) {
+    g.USB_GEMINI_MODEL = normalizedModel;
   }
 
   const storage = getChromeStorage();
@@ -97,9 +134,10 @@ export function setGeminiKeysSync(
   model?: string
 ): void {
   const g = globalThis as GeminiGlobal;
-  g.USB_GEMINI_API_KEYS = apiKeys.filter(Boolean);
-  if (model) {
-    g.USB_GEMINI_MODEL = model.trim();
+  g.USB_GEMINI_API_KEYS = normalizeGeminiKeys(apiKeys);
+  const normalizedModel = model?.trim();
+  if (normalizedModel) {
+    g.USB_GEMINI_MODEL = normalizedModel;
   }
 }
 
@@ -109,7 +147,7 @@ export function setGeminiKeysSync(
 export function getConfiguredKeyCount(): number {
   const g = globalThis as GeminiGlobal;
   return Array.isArray(g.USB_GEMINI_API_KEYS)
-    ? g.USB_GEMINI_API_KEYS.filter(Boolean).length
+    ? normalizeGeminiKeys(g.USB_GEMINI_API_KEYS).length
     : 0;
 }
 
@@ -117,37 +155,36 @@ export function getConfiguredKeyCount(): number {
  * Validate a Gemini API key by making a minimal test request.
  * Returns { valid: true } if the key is active, or { valid: false, error: string } if not.
  */
-export async function validateGeminiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
-  if (!apiKey || !apiKey.trim()) {
-    return { valid: false, error: 'La key está vacía.' };
+export async function validateGeminiKey(apiKey: string): Promise<GeminiKeyValidationResult> {
+  const normalizedKey = String(apiKey || '').trim();
+
+  if (!normalizedKey) {
+    return { status: 'invalid', error: 'La key está vacía.' };
   }
 
   try {
-    const response = await fetch(
-      `${GEMINI_API_URL}/${encodeURIComponent(GEMINI_DEFAULT_MODEL)}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: 'Responde solo "ok".' }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 4 }
-        })
-      }
-    );
+    const response = await fetch(buildGeminiGenerateContentUrl(GEMINI_DEFAULT_MODEL, normalizedKey), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: 'Responde solo "ok".' }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 4 }
+      })
+    });
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       if (response.status === 400 || response.status === 403) {
-        return { valid: false, error: `Key inválida o sin permisos (HTTP ${response.status}).` };
+        return { status: 'invalid', error: `Key inválida o sin permisos (HTTP ${response.status}).` };
       }
       if (response.status === 429) {
-        return { valid: false, error: 'Key activa pero con rate limit excedido. Intenta más tarde.' };
+        return { status: 'rate-limited', error: 'Key activa pero con rate limit excedido. Intenta más tarde.' };
       }
-      return { valid: false, error: `Error HTTP ${response.status}: ${text.slice(0, 120)}` };
+      return { status: 'error', error: `Error HTTP ${response.status}: ${text.slice(0, 120)}` };
     }
 
-    return { valid: true };
+    return { status: 'valid' };
   } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : String(error) };
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) };
   }
 }

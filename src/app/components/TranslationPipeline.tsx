@@ -1,5 +1,5 @@
 // ─── TranslationPipeline ──────────────────────────────────────────────────────
-// Visualizes the real-time EN → AI → ES subtitle translation pipeline.
+// Visualizes the block-based EN → AI → ES subtitle translation pipeline.
 // Uses SSE streaming so the Spanish translation types out token-by-token,
 // exactly as the local AI generates it. Falls back to mock when offline.
 
@@ -51,13 +51,13 @@ interface PipelineEntry {
 }
 
 interface TranslationPipelineProps {
-  incomingLine: string | null;
+  incomingBlock: string | null;
   autoTranslate: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function TranslationPipeline({
-  incomingLine,
+  incomingBlock,
   autoTranslate,
 }: TranslationPipelineProps) {
   const [status, setStatus]       = useState<PipelineStatus>("idle");
@@ -68,15 +68,15 @@ export function TranslationPipeline({
   const [history, setHistory]     = useState<PipelineEntry[]>([]);
   const [stats, setStats]         = useState({ total: 0, aiCalls: 0, totalMs: 0 });
 
-  // Ref to abort in-flight stream when a new line arrives
+  // Ref to abort in-flight stream when a new block arrives
   const abortRef  = useRef<AbortController | null>(null);
-  const lastLine  = useRef<string>("");
+  const lastBlock  = useRef<string>("");
 
   // ── Pipeline runner ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!incomingLine || !autoTranslate) return;
-    if (incomingLine === lastLine.current) return;
-    lastLine.current = incomingLine;
+    if (!incomingBlock || !autoTranslate) return;
+    if (incomingBlock === lastBlock.current) return;
+    lastBlock.current = incomingBlock;
 
     // Cancel any in-flight stream
     abortRef.current?.abort();
@@ -87,10 +87,11 @@ export function TranslationPipeline({
 
     (async () => {
       // ── Step 1: Capturing ────────────────────────────────────────────────
-      setCurrentEn(incomingLine);
+      setCurrentEn(incomingBlock);
       setCurrentEs("");
       setLatency(null);
       setStatus("capturing");
+      void contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: "" } }).catch(() => undefined);
       await new Promise<void>((r) => setTimeout(r, 180));
       if (cancelled || ctrl.signal.aborted) return;
 
@@ -102,7 +103,7 @@ export function TranslationPipeline({
 
       // Attempt real streaming AI
       const result = await translateLineStream(
-        incomingLine,
+        incomingBlock,
         (_, accumulated) => {
           if (!cancelled && !ctrl.signal.aborted) {
             setCurrentEs(accumulated);
@@ -117,10 +118,9 @@ export function TranslationPipeline({
         finalEs  = result.content.trim();
         didUseAI = true;
         setCurrentEs(finalEs);
-        contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: finalEs } });
       } else {
         // Fallback: mock-stream the translation word by word
-        const mockText = FALLBACK[incomingLine] ?? incomingLine;
+        const mockText = FALLBACK[incomingBlock] ?? incomingBlock;
         await mockStream(
           mockText,
           (_, acc) => { if (!cancelled && !ctrl.signal.aborted) setCurrentEs(acc); },
@@ -129,17 +129,17 @@ export function TranslationPipeline({
         if (ctrl.signal.aborted || cancelled) return;
         finalEs  = mockText;
         didUseAI = false;
-        contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: finalEs } });
       }
 
       const ms = Math.round(performance.now() - t0);
       setLatency(ms);
       setUsedAI(didUseAI);
       setStatus("done");
+      void contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: finalEs } }).catch(() => undefined);
 
       const entry: PipelineEntry = {
-        id: `${t0}-${incomingLine.slice(0, 8)}`,
-        en: incomingLine,
+        id: `${t0}-${incomingBlock.slice(0, 8)}`,
+        en: incomingBlock,
         es: finalEs,
         latencyMs: ms,
         usedAI: didUseAI,
@@ -153,7 +153,7 @@ export function TranslationPipeline({
 
       // Emit to Dev tab debug store
       debugStore.addCacheEntry({
-        en: incomingLine,
+        en: incomingBlock,
         es: finalEs,
         latencyMs: ms,
         usedAI: didUseAI,
@@ -166,7 +166,7 @@ export function TranslationPipeline({
       ctrl.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [incomingLine, autoTranslate]);
+  }, [incomingBlock, autoTranslate]);
 
   const avgMs  = stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null;
   const aiPct  = stats.total > 0 ? Math.round((stats.aiCalls / stats.total) * 100) : null;
@@ -192,7 +192,7 @@ export function TranslationPipeline({
           {stats.total > 0 && (
             <>
               <span className="flex items-center gap-1 text-[9px] text-white/28">
-                <TrendingUp size={8} />{stats.total} líneas
+                <TrendingUp size={8} />{stats.total} bloques
               </span>
               {avgMs !== null && (
                 <span className="flex items-center gap-1 text-[9px] text-violet-400/55">
@@ -239,12 +239,12 @@ export function TranslationPipeline({
                   key={currentEn}
                   initial={{ opacity: 0, x: -4 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="text-white/80 text-[12px] leading-relaxed font-medium"
+                  className="text-white/80 text-[12px] leading-relaxed font-medium whitespace-pre-wrap"
                 >
                   {currentEn}
                 </motion.p>
               ) : (
-                <p className="text-white/20 text-[11px] italic">Esperando subtítulo…</p>
+                <p className="text-white/20 text-[11px] italic">Esperando bloque de subtítulos…</p>
               )}
             </AnimatePresence>
           </div>
@@ -315,7 +315,7 @@ export function TranslationPipeline({
                   key={`es-${currentEn}`}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className={`text-[13px] leading-relaxed font-medium ${
+                  className={`text-[13px] leading-relaxed font-medium whitespace-pre-wrap ${
                     status === "done" ? "text-violet-200" : "text-violet-300/80"
                   }`}
                 >
@@ -347,14 +347,14 @@ export function TranslationPipeline({
       {history.length > 0 && (
         <div>
           <p className="text-white/22 text-[9px] uppercase tracking-widest mb-1.5">
-            Historial · {history.length} línea{history.length !== 1 ? "s" : ""}
+            Historial · {history.length} bloque{history.length !== 1 ? "s" : ""}
           </p>
           <div className="bg-[#0d0e0f] border border-white/7 rounded-xl overflow-hidden">
             {history.slice(0, 5).map((entry, i) => (
               <motion.div
                 key={entry.id}
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i === 0 ? 0 : 0 }}
                 className={`flex gap-2.5 px-3 py-2 ${
                   i < Math.min(history.length - 1, 4) ? "border-b border-white/4" : ""

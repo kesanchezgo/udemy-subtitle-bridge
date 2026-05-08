@@ -30,6 +30,12 @@ const SUBTITLE_SELECTORS = [
 	'[data-purpose="transcript-cue"]'
 ];
 
+const NATIVE_CAPTION_SELECTORS = [
+	'[class*="captions-display--captions-container"]',
+	'.captions-display--captions-cue-text--ECkct',
+	'[data-purpose="captions-cue-text"]'
+];
+
 const DEFAULT_CONFIG: OverlayConfig = {
 	visible: true,
 	autoTranslate: true,
@@ -44,6 +50,7 @@ const DEFAULT_CONFIG: OverlayConfig = {
 
 let overlayEl: HTMLDivElement | null = null;
 let overlayTextEl: HTMLDivElement | null = null;
+let nativeCaptionStyleEl: HTMLStyleElement | null = null;
 let observer: MutationObserver | null = null;
 let currentSubtitle = '';
 let currentConfig: OverlayConfig = { ...DEFAULT_CONFIG };
@@ -334,7 +341,7 @@ function ensureContainerPosition(container: HTMLElement) {
 
 function getToneColor(tone: OverlayTone) {
 	if (tone === 'yellow') {
-		return '#fde68a';
+		return '#fde047';
 	}
 	if (tone === 'cyan') {
 		return '#67e8f9';
@@ -374,7 +381,7 @@ function applyOverlayStyle() {
 		return;
 	}
 
-	const isVisible = currentConfig.visible && currentConfig.enabled;
+	const isVisible = currentConfig.visible && currentConfig.autoTranslate;
 	const normalizedOpacity = currentConfig.opacity > 1 ? currentConfig.opacity / 100 : currentConfig.opacity;
 	const shadowStrength = Math.max(0, Math.min(100, currentConfig.shadowStrength));
 
@@ -384,13 +391,34 @@ function applyOverlayStyle() {
 	overlayTextEl.style.background = `rgba(0, 0, 0, ${Math.max(0, Math.min(1, normalizedOpacity))})`;
 	overlayTextEl.style.color = getToneColor(currentConfig.tone);
 	overlayTextEl.style.textShadow = shadowStrength > 0
-		? `0 1px ${Math.max(1, Math.round(shadowStrength / 20))}px rgba(0, 0, 0, ${shadowStrength / 100})`
+		? `0 1px ${Math.max(2, Math.round(shadowStrength / 12))}px rgba(0, 0, 0, ${Math.min(1, shadowStrength / 80)}), 0 0 ${Math.max(1, Math.round(shadowStrength / 8))}px rgba(0, 0, 0, ${Math.min(1, shadowStrength / 100)})`
 		: 'none';
 
 	const positionStyles = getPositionStyles(currentConfig.position, currentConfig.offsetMs);
 	overlayEl.style.top = positionStyles.top ?? 'auto';
 	overlayEl.style.bottom = positionStyles.bottom ?? 'auto';
 	overlayEl.style.transform = positionStyles.transform ?? 'translateX(-50%)';
+	syncNativeCaptionVisibility();
+}
+
+function syncNativeCaptionVisibility() {
+	const shouldHideNative = currentConfig.visible && currentConfig.autoTranslate;
+
+	if (!shouldHideNative) {
+		if (nativeCaptionStyleEl) {
+			nativeCaptionStyleEl.remove();
+			nativeCaptionStyleEl = null;
+		}
+		return;
+	}
+
+	if (!nativeCaptionStyleEl) {
+		nativeCaptionStyleEl = document.createElement('style');
+		nativeCaptionStyleEl.id = 'usb-native-caption-hide-style';
+		(document.head || document.documentElement).appendChild(nativeCaptionStyleEl);
+	}
+
+	nativeCaptionStyleEl.textContent = `${NATIVE_CAPTION_SELECTORS.join(', ')} { opacity: 0 !important; visibility: hidden !important; }`;
 }
 
 function makeDraggable(element: HTMLDivElement, container: HTMLElement) {
@@ -411,7 +439,10 @@ function makeDraggable(element: HTMLDivElement, container: HTMLElement) {
 			return;
 		}
 
-		const containerRect = container.getBoundingClientRect();
+		const isFixed = window.getComputedStyle(element).position === 'fixed';
+		const containerRect = isFixed
+			? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+			: container.getBoundingClientRect();
 		const nextLeft = event.clientX - containerRect.left - startX;
 		const nextTop = event.clientY - containerRect.top - startY;
 
@@ -435,8 +466,9 @@ function createOverlay(container: HTMLElement) {
 	overlayEl = document.createElement('div');
 	overlayEl.id = 'usb-overlay';
 	overlayEl.style.cssText = [
-		'position:absolute',
+		'position:fixed',
 		'left:50%',
+		'bottom:10%',
 		'z-index:9999',
 		'max-width:80%',
 		'text-align:center',
@@ -461,15 +493,19 @@ function createOverlay(container: HTMLElement) {
 	].join(';');
 
 	overlayEl.appendChild(overlayTextEl);
-	container.appendChild(overlayEl);
+	(document.body || container).appendChild(overlayEl);
 	makeDraggable(overlayEl, container);
 	applyOverlayStyle();
 }
 
 function updateOverlayText(text: string) {
 	if (overlayTextEl) {
-		overlayTextEl.textContent = text;
+		const trimmed = text.trim();
+		overlayTextEl.textContent = trimmed;
+		overlayTextEl.style.display = trimmed ? 'inline-block' : 'none';
 	}
+
+	syncNativeCaptionVisibility();
 }
 
 async function emitSubtitleLine(text: string) {
@@ -479,7 +515,6 @@ async function emitSubtitleLine(text: string) {
 	}
 
 	currentSubtitle = trimmed;
-	updateOverlayText(trimmed);
 
 	collectedLines.push({ text: trimmed, ts: Date.now() });
 	if (collectedLines.length > 5000) {
@@ -701,9 +736,7 @@ function bootstrap() {
 	injectNetworkBridge();
 
 	const container = findVideoContainer();
-	if (container) {
-		createOverlay(container);
-	}
+	createOverlay(container || document.body || document.documentElement as HTMLElement);
 
 	startObserver();
 	scanForSubtitleChanges();
@@ -759,7 +792,10 @@ function bootstrap() {
 
 		if (message.type === 'AUTO_TRANSLATE_TOGGLE') {
 			const payload = message.payload as { active?: boolean } | undefined;
-			currentConfig = { ...currentConfig, autoTranslate: Boolean(payload?.active), enabled: Boolean(payload?.active) };
+			currentConfig = { ...currentConfig, autoTranslate: Boolean(payload?.active) };
+			if (!currentConfig.autoTranslate) {
+				updateOverlayText('');
+			}
 			applyOverlayStyle();
 			return;
 		}
@@ -778,8 +814,8 @@ function bootstrap() {
 
 		if (message.type === 'OVERLAY_TEXT_UPDATE') {
 			const payload = message.payload as { text?: string } | undefined;
-			if (payload?.text) {
-				updateOverlayText(payload.text);
+			if (payload && 'text' in payload) {
+				updateOverlayText(typeof payload.text === 'string' ? payload.text : '');
 			}
 		}
 
