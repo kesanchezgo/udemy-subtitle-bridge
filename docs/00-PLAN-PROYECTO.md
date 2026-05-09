@@ -9,9 +9,13 @@
 1. **Captura** los subtítulos en inglés de cualquier video de Udemy en tiempo real.
 2. **Traduce** cada línea al español usando una IA local (OpenAI-compatible, puerto 8010) con streaming SSE.
 3. **Superpone** el subtítulo traducido sobre el video mediante un overlay arrastrable.
-4. **Potencia el aprendizaje** con un Study Agent pedagógico (Taxonomía de Bloom, metodología Feynman) que genera preguntas, evalúa respuestas con IA y exporta tarjetas a Anki (.apkg nativo).
+4. **Dock in-page** con Shadow DOM: panel lateral resizable (300–560px) y colapsable inyectado directamente en el DOM de Udemy.
+5. **Potencia el aprendizaje** con un Study Agent pedagógico (Taxonomía de Bloom, metodología Feynman) que genera preguntas, evalúa respuestas con IA y exporta tarjetas a Anki (.apkg nativo).
 
 **Producto final:** extensión empaquetada como `.zip` lista para Chrome Web Store y Firefox Add-ons.
+
+**Arquitectura clave (v1.1):** In-page Dock con Shadow DOM — migrado desde Chrome Side Panel API.
+Ver docs completos: `07-INPAGE-DOCK-SHADOW-DOM.md`.
 
 ---
 
@@ -44,12 +48,12 @@
 |-------------------------|-------------------------------------------|------------------------------------------------|
 | UI Framework            | React 18 + TypeScript                     | Mismo ecosistema que el prototipo Figma Make   |
 | Bundler                 | Vite 5 + `@crxjs/vite-plugin`             | HMR en Chrome, watch de manifest.json         |
-| Estilos                 | Tailwind CSS v4                           | Utility-first, compatible con shadow DOM       |
+| Estilos                 | Tailwind CSS v4                           | Utility-first, **compatible con Shadow DOM** (inyectado en shadow root) |
 | Animaciones             | Motion (Framer Motion v12)                | API ya integrada en el prototipo               |
 | Iconos                  | Lucide React                              | Consistente con el prototipo                   |
 | UI Primitives           | Radix UI (Switch, Slider, Tooltip, etc.)  | Accesible, headless                            |
 | Estado persistido       | `chrome.storage.sync` + localStorage FB  | Abstracción en `chromeStorage.ts`              |
-| Mensajería              | `chrome.runtime` / `chrome.tabs`         | Abstracción en `contentBridge.ts`              |
+| Mensajería              | CustomEvents `window` (dock↔CS) + `chrome.runtime` | CustomEvents para comunicación in-page |
 | IA local (traducción)   | Fetch SSE → `http://127.0.0.1:8010`       | OpenAI-compatible (LM Studio / Ollama)         |
 | Anki .apkg              | `sql.js` (SQLite WASM) + `jszip`          | Genera binario Anki2 real sin backend          |
 | Anki TXT export         | Blob + download nativo                    | Formato TSV para importar en Anki              |
@@ -90,13 +94,14 @@ Requisitos mínimos:
 1. Crear repo GitHub con protección de rama `main`.
 2. Scaffold Vite + React + TypeScript + Tailwind v4.
 3. Instalar `@crxjs/vite-plugin` y configurar `vite.config.ts`.
-4. Crear `public/manifest.json` con permisos mínimos.
+4. Crear `public/manifest.json` v1.1 (sin `sidePanel` permission, con in-page dock).
 5. Crear estructura de carpetas completa (ver doc 01-ARQUITECTURA-TECH.md).
 6. Configurar Vitest, ESLint, Prettier.
 7. CI con GitHub Actions: lint + build en cada push.
 8. Configurar `snyk` para escaneo de dependencias.
 
 **Entregable:** `npm run build` genera `dist/` cargable en Chrome como extensión desempaquetada.
+El In-page Dock aparece en `udemy.com/course/*` como columna derecha fija, colapsable.
 
 **MCPs a usar en esta fase:**
 - `context7`: Obtener docs actualizadas de `@crxjs/vite-plugin`.
@@ -105,32 +110,31 @@ Requisitos mínimos:
 
 ---
 
-### Fase 1 — Content Script + Pipeline de Traducción (Sprint 1)
+### Fase 1 — Content Script + In-page Dock + Pipeline de Traducción (Sprint 1)
 
-**Objetivo:** Captura de subtítulos de Udemy y traducción en tiempo real funcionando.
+**Objetivo:** Captura de subtítulos, dock in-page funcional y traducción en tiempo real.
 
 **Actividades:**
 1. Implementar `content_script.ts`:
-   - Selector CSS del elemento de subtítulos de Udemy.
+   - Tres responsabilidades: ① captura subtítulos, ② overlay, ③ `initInPageDock()`
    - `MutationObserver` para detectar cambios de texto en tiempo real.
-   - Envío de mensajes `SUBTITLE_LINE_RECEIVED` al sidebar.
-2. Implementar `localAI.ts`:
+   - `initInPageDock()` con `attachShadow({ mode: "closed" })`.
+   - CSS Tailwind inyectado en el Shadow Root.
+   - `adjustUdemyLayout()` para ajustar `margin-right` del contenido de Udemy.
+2. Implementar `InPageDock.tsx`:
+   - Resize handle (izquierdo, 300–560px).
+   - Collapse/expand con animación spring.
+   - Meta bar con badges: Shadow DOM, In-page, :8010.
+   - `AuthGuard` → `ExtensionSidebar` dentro del dock.
+3. Implementar `localAI.ts`:
    - `streamLocalAI()` — SSE reader con buffer de líneas.
    - `translateLineStream()` — prompt de traducción.
    - Fallback gracioso cuando el servidor no responde.
-3. Implementar `debugStore.ts` — singleton para telemetría SSE.
-4. Implementar `contentBridge.ts` — abstracción chrome.runtime ↔ window events.
-5. Implementar el overlay arrastrable (div absoluto sobre el video).
-6. Pestaña **Captions** del sidebar (`ExtensionSidebar.tsx`):
-   - Toggle auto-traducción.
-   - `TranslationPipeline` component.
-   - Export/Import SRT.
-7. Pestaña **Overlay** del sidebar:
-   - Preview en mini-frame.
-   - Controles de posición, font-size, opacity, text-color, shadow.
-   - Reset de posición.
+4. Subtitle overlay arrastrable (div absoluto sobre el video).
+5. Pestaña **Captions** del sidebar con TranslationPipeline.
+6. Pestaña **Overlay** con controles de config.
 
-**Entregable:** Instalar extensión → ir a cualquier video Udemy con CC en inglés → ver traducción en tiempo real sobre el video.
+**Entregable:** Instalar extensión → ir a cualquier video Udemy con CC en inglés → ver traducción en tiempo real sobre el video + dock lateral funcional.
 
 **MCPs a usar:**
 - `playwright` + `chrome-extension-tester`: Verificar que el content script se inyecta y capta subtítulos.
@@ -170,7 +174,7 @@ Requisitos mínimos:
 
 ---
 
-### Fase 3 ��� Study Agent Avanzado + .apkg (Sprint 3)
+### Fase 3  Study Agent Avanzado + .apkg (Sprint 3)
 
 **Objetivo:** Evaluación IA con streaming real y exportación .apkg nativa.
 
@@ -257,6 +261,7 @@ TC-11: Panel Dev muestra tokens SSE en tiempo real
 TC-12: Extension funciona offline (mock fallback en traducción)
 TC-13: No memory leaks en MutationObserver al navegar entre videos
 TC-14: Overlay se resetea correctamente al cambiar de video
+TC-DOCK: In-page Dock se ajusta correctamente al resize/collapse
 ```
 
 #### 5.3 Empaquetado
@@ -292,14 +297,14 @@ web-ext sign --api-key $AMO_KEY --api-secret $AMO_SECRET
 
 ## 5. Estructura de Sprints — Tabla Resumen
 
-| Sprint | Duración | Features                                          | Tests                         | MCPs                                          |
-|--------|----------|--------------------------------------------------|-------------------------------|-----------------------------------------------|
-| 0      | 3 días   | Scaffold, manifest, build pipeline               | Build CI                      | github, context7, snyk                        |
-| 1      | 7 días   | content_script, TranslationPipeline, Overlay tab | TC-01..TC-06                  | playwright, chrome-devtools, context7         |
-| 2      | 7 días   | StudyAgent MVP, Anki TXT                         | TC-07, TC-09 (parcial)        | context7, playwright, postman                 |
-| 3      | 7 días   | Streaming eval, .apkg, AnkiFlipPreview           | TC-08, TC-09 completo         | playwright, snyk, semgrep                     |
-| 4      | 3 días   | DevTab, glassmorphism, micro-UX                  | TC-10..TC-11, regression      | chrome-devtools, playwright                   |
-| 5      | 3 días   | Testing completo, empaquetado, publicación       | TC-01..TC-14 completos        | snyk, github, playwright+chrome-extension-tester |
+| Sprint | Duración | Features | Tests | MCPs |
+|--------|----------|----------|-------|------|
+| 0 | 3 días | Scaffold, manifest v1.1, build pipeline | Build CI | github, context7, snyk |
+| 1 | 7 días | content_script, **InPageDock Shadow DOM**, TranslationPipeline | TC-01..TC-06 + TC-DOCK | playwright, chrome-devtools, context7 |
+| 2 | 7 días | StudyAgent MVP, Anki TXT | TC-07, TC-09 (parcial) | context7, playwright, postman |
+| 3 | 7 días | Streaming eval, .apkg, AnkiFlipPreview | TC-08, TC-09 completo | playwright, snyk, semgrep |
+| 4 | 3 días | DevTab, glassmorphism, micro-UX, resize polish | TC-10..TC-11, regression | chrome-devtools, playwright |
+| 5 | 3 días | Testing completo, empaquetado, publicación | TC-01..TC-14 completos | snyk, github, playwright+chrome-extension-tester |
 
 ---
 
@@ -319,11 +324,13 @@ web-ext sign --api-key $AMO_KEY --api-secret $AMO_SECRET
 | Riesgo                                         | Probabilidad | Impacto | Mitigación                                                  |
 |------------------------------------------------|--------------|---------|-------------------------------------------------------------|
 | Udemy cambia el selector CSS de subtítulos     | Media        | Alto    | Usar múltiples selectores CSS + MutationObserver configurable |
+| Udemy cambia `.app--content-column--LnPGp` (margin-right dock) | Media | Medio | Múltiples selectores fallback para `adjustUdemyLayout()` |
 | Chrome Web Store rechaza la extensión          | Baja         | Alto    | Revisar políticas de privacidad, no capturar datos sensibles |
 | IA local no disponible (usuario sin servidor)  | Media        | Medio   | Fallback a mock translations con aviso claro al usuario     |
 | sql.js WASM no carga en extensión              | Baja         | Alto    | Usar `locateFile` con URL del WASM embebida en el bundle    |
-| Firefox incompatibilidad Manifest V3           | Media        | Medio   | Mantener manifest v2 alternativo para Firefox               |
-| Rendimiento: overlay causa repintados          | Baja         | Medio   | Usar `position: fixed` con `will-change: transform`         |
+| Firefox incompatibilidad Manifest V3           | Media        | Medio   | Mantener manifest v2 alternativo; Shadow DOM es estándar web |
+| Rendimiento: dock causa repintados al resize | Baja         | Medio   | `adjustUdemyLayout()` con requestAnimationFrame throttle |
+| Shadow DOM "closed" rompe herramientas de debug | Baja         | Bajo    | Añadir `mode: "open"` flag en desarrollo, "closed" en producción |
 
 ---
 
@@ -349,11 +356,11 @@ Ver documento completo: `05-MCP-HERRAMIENTAS.md`
 
 | MCP                      | Cuándo usarlo en este proyecto                                    |
 |--------------------------|-------------------------------------------------------------------|
-| `context7`               | Antes de escribir código que usa cualquier API externa o librería |
+| `context7`               | Antes de escribir código que usa Shadow DOM API, CustomEvents, o cualquier API externa |
 | `figma`                  | Al replicar diseños del prototipo Figma Make                     |
-| `playwright`             | Tests E2E de la extensión instalada en Chrome                    |
+| `playwright`             | Tests E2E de la extensión instalada en Chrome (incluyendo dock resize/collapse) |
 | `chrome-extension-tester`| Instalar y probar la extensión en un navegador real              |
-| `chrome-devtools`        | Debug de content script, overlay performance                     |
+| `chrome-devtools`        | Debug del Shadow Root, overlay performance, margin-right adjustment |
 | `git`                    | Historial de cambios antes de refactorizar                       |
 | `github`                 | Issues, PRs, releases, CI status                                 |
 | `snyk`                   | Scan de vulnerabilidades antes de cada release                   |
@@ -369,10 +376,13 @@ Ver documento completo: `05-MCP-HERRAMIENTAS.md`
 
 ## 10. Notas Importantes para el Agente IA
 
-1. **El modelo es GPT-4.1-mini**: leer SIEMPRE el doc `02-IMPLEMENTACION-AGENTE.md` completo antes de implementar cualquier feature.
-2. **Orden estricto**: seguir el orden de sprints. No implementar Sprint 2 antes de que Sprint 1 esté completo.
-3. **Antes de escribir código**: usar `context7` para obtener la API actualizada de cualquier librería.
-4. **Antes de instalar paquetes**: verificar que no estén ya en `package.json`.
-5. **Prompts de IA**: usar EXACTAMENTE los prompts del doc `04-PROMPTS-IA-LOCAL.md`. No inventar prompts nuevos.
-6. **Diseño UI**: replicar EXACTAMENTE las specs del doc `03-DISEÑO-UI-DETALLADO.md`. Usar los mismos colores, tamaños y animaciones.
-7. **Servicios**: los contratos de los servicios están en `01-ARQUITECTURA-TECH.md`. No cambiar las interfaces públicas.
+1. **Arquitectura v1.1 In-page Dock**: LEER `07-INPAGE-DOCK-SHADOW-DOM.md` antes de tocar `content_script.ts` o `InPageDock.tsx`.
+2. **Shadow DOM "closed"**: Nunca cambiar a "open" sin documentar el motivo. En desarrollo se puede usar "open" para facilitar debugging.
+3. **El orden es estricto**: seguir el orden de sprints. No implementar Sprint 2 antes de que Sprint 1 esté completo.
+4. **Antes de escribir código**: usar `context7` para obtener la API actualizada de cualquier librería.
+5. **Antes de instalar paquetes**: verificar que no estén ya en `package.json`.
+6. **Prompts de IA**: usar EXACTAMENTE los prompts del doc `04-PROMPTS-IA-LOCAL.md`. No inventar prompts nuevos.
+7. **Diseño UI**: replicar EXACTAMENTE las specs del doc `03-DISEÑO-UI-DETALLADO.md`.
+8. **Servicios**: los contratos de los servicios están en `01-ARQUITECTURA-TECH.md`. No cambiar las interfaces públicas.
+9. **Selectores Udemy**: después de cada cambio en `content_script.ts`, actualizar `06-UDEMY-HTML-INTEGRACION.md`.
+10. **adjustUdemyLayout()**: siempre que cambie el ancho o estado del dock, llamar esta función para ajustar el margen de Udemy.

@@ -6,7 +6,6 @@
   "permissions": [
     "storage",
     "activeTab",
-    "sidePanel",
     "downloads"
   ],
   "host_permissions": [
@@ -16,10 +15,8 @@
     "http://localhost:8010/*"
   ],
   "action": {
-    "default_title": "Udemy Subtitle Bridge"
-  },
-  "side_panel": {
-    "default_path": "index.html"
+    "default_title": "Udemy Subtitle Bridge",
+    "default_popup": "src/popup.html"
   },
   "background": {
     "service_worker": "src/background.ts",
@@ -28,7 +25,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.udemy.com/course/*/learn/*"
+        "https://www.udemy.com/course/*/learn/lecture/*"
       ],
       "js": [
         "src/content_script.ts"
@@ -39,7 +36,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/page-network-bridge.js"
+        "src/page-network-bridge.js",
+        "src/app/styles/*"
       ],
       "matches": [
         "https://www.udemy.com/*"

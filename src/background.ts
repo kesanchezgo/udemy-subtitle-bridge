@@ -1,7 +1,6 @@
 import { translateLine } from './app/services/localAI';
 import { buildGeminiGenerateContentUrl, initGeminiKeys, normalizeGeminiKeys } from './gemini-config';
 
-const SIDE_PANEL_PATH = 'index.html';
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -18,18 +17,14 @@ type ExtensionMessage = {
 
 const chromeApi = (globalThis as typeof globalThis & { chrome?: any }).chrome;
 
-void initGeminiKeys().then(() => configureSidePanelBehavior());
+void initGeminiKeys();
 
 chromeApi?.runtime?.onInstalled?.addListener(() => {
-	void initGeminiKeys().then(() => configureSidePanelBehavior());
+	void initGeminiKeys();
 });
 
 chromeApi?.runtime?.onStartup?.addListener(() => {
-	void initGeminiKeys().then(() => configureSidePanelBehavior());
-});
-
-chromeApi?.action?.onClicked?.addListener((tab: { id?: number }) => {
-	void openSidePanelForTab(tab);
+	void initGeminiKeys();
 });
 
 chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, _sender: unknown, sendResponse: (response: unknown) => void) => {
@@ -90,35 +85,6 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, _sender: 
 
 	return false;
 });
-
-async function configureSidePanelBehavior() {
-	if (!chromeApi?.sidePanel || typeof chromeApi.sidePanel.setPanelBehavior !== 'function') {
-		return;
-	}
-
-	try {
-		await chromeApi.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-	} catch (_error) {
-		// Fall back to the explicit action handler below.
-	}
-}
-
-async function openSidePanelForTab(tab: { id?: number }) {
-	if (!chromeApi?.sidePanel || !tab || typeof tab.id !== 'number') {
-		return;
-	}
-
-	try {
-		await chromeApi.sidePanel.setOptions({
-			tabId: tab.id,
-			path: SIDE_PANEL_PATH,
-			enabled: true
-		});
-		await chromeApi.sidePanel.open({ tabId: tab.id });
-	} catch (error) {
-		console.warn('[USG] Could not open side panel:', toErrorMessage(error));
-	}
-}
 
 function sanitizeFileName(fileName: string) {
 	const base = fileName.replace(/[\\/:*?"<>|]/g, '-').trim();

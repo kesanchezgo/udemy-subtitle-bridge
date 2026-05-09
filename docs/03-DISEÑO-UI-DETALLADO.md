@@ -436,6 +436,13 @@ Cada step:
 ```
 Container: flex, items-center, gap-0, w-full, mb-2
 
+Nombres de los 5 steps (v1.4):
+  0 → Mi nivel
+  1 → Lo que vi
+  2 → ¿Lo sé?
+  3 → Practícalo
+  4 → No olvidar
+
 Cada step circle (20×20px):
   - Done: bg emerald/20, border emerald/30, shadow glow esmeralda
     ícono: Check 10px strokeWidth=3 text-emerald-400
@@ -484,7 +491,7 @@ Cada item: flex, items-start, gap-2, py-1.5
 
 **Autocalibración:**
 ```
-StepHeader: n=2, "¿Cómo te fue con este video?"
+StepHeader: n=2, "¿Cómo llegaste al video?"
 
 Hint text (si confidence !== null):
   bg: white/3, border: white/6, rounded-lg, p-2.5
@@ -510,7 +517,7 @@ Botón seleccionado:
 
 **Preguntas Adaptativas:**
 ```
-StepHeader: n=3, "Verifica tu comprensión"
+StepHeader: n=3, "¿Cuánto retuviste?" (paso "¿Lo sé?")
 
 Badge de Bloom:
   - inline, 8px, border, rounded, px-1.5 py-0.5
@@ -526,49 +533,95 @@ Badge de dificultad:
 Texto de la pregunta:
   - 12px, font-weight 600, text-white/85, leading-relaxed
 
-Controles (hint / ver respuesta):
-  - Botones pequeños: text-[9px], border-white/8, px-2 py-1, rounded
+Toggle de pista (encima del textarea):
+  - Botón completo: flex items-center, border, rounded-lg, px-2.5 py-1.5
+  - Activo: bg-amber-500/8, border-amber-500/20, text-amber-300/80
+  - Inactivo: bg-white/3, border-white/7, text-white/28
+  - Ícono Sparkles 9px (amber) + texto "Ver pista" / "Ocultar pista" + ChevronDown
+  ⚠️ El hint NO aparece en el strip de AIFeedback — solo en este toggle
 
 Textarea respuesta:
-  - h-[72px], resize-none, outline-none
-  - bg-black/25, border-white/8, rounded-xl
-  - placeholder: text-white/20, font-size 11px
+  - h-[80px], resize-none, outline-none
+  - bg-black/35, border-white/8, rounded-xl
+  - placeholder: text-white/18, font-size 11px
+  - Borde coloreado según rating tras evaluación
 
-Botón "Evaluar con IA":
-  - h-9, rounded-xl, bg-violet-700, hover: bg-violet-600
-  - disabled: opacity-25
-  - Ícono Send: 11px
+Botón "Evaluar":
+  - rounded-lg, bg-violet-600, hover: bg-violet-500
+  - disabled: opacity-40, bg-white/8
+  - Ícono Wifi: 10px
 
-Botón "Continuar sin responder":
-  - h-8, rounded-lg, text-[9px], text-white/22, border-white/6
-  - hover: text-white/45
+Strip de AIFeedback (acciones contextuales — solo wrong/partial):
+  "Siguiente paso" label + botones:
+  - rating=wrong: <RotateCcw/> "Reintentar"  (limpia textarea)
+  - onShowModel:  <BookOpen/>  "Ver respuesta"
+  ⚠️ "Ver pista" fue ELIMINADO del strip
+
+QUESTION DOTS (v1.2 — rating-aware):
+  Header de la card de preguntas: dos filas
+  Fila 1: StepHeader izquierda + dots derecha
+  Fila 2: barra de progreso (h-2px, gradient violet)
+
+  Cada dot (Motion animate width/height con spring stiffness 400, damping 28):
+    - Respondido correcto/excellent: w-3.5 h-1.5, bg-emerald-400
+        shadow: "0 0 6px rgba(52,211,153,0.7)"
+    - Respondido partial:            w-3.5 h-1.5, bg-amber-400
+        shadow: "0 0 6px rgba(251,191,36,0.7)"
+    - Respondido wrong:              w-3.5 h-1.5, bg-red-400
+        shadow: "0 0 6px rgba(248,113,113,0.6)"
+    - Respondido (unknown/default):  w-3.5 h-1.5, bg-emerald-400 (glow)
+    - Actual (isCurrent, no done):   w-3.5 h-1.5, bg-violet-400
+        shadow: "0 0 8px rgba(167,139,250,0.7)"
+    - Pendiente:                     w-1.5 h-1.5, bg-white/15
+  Gap entre dots: 1.5 (gap-1.5)
+
+  Barra de progreso debajo de fila 1:
+    h-[2px], bg-white/5, rounded-full, overflow-hidden
+    Motion div interior:
+      width: (done_count / total) * 100%  → "100%" si questionsComplete
+      bg: gradient-to-r from-violet-500 to-violet-400
+      transition: duration 0.5, ease easeOut
 ```
 
-**Desafío de Aplicación:**
+**Desafío de Aplicación (paso "Practícalo"):**
 ```
-StepHeader: n=4, "Aplícalo en código / situación real"
+StepHeader: n=4, "Escribe código real" (subLabel: "desafío práctico")
 
-Setup text: 11px, text-white/65, leading-relaxed
+Setup text: 11px, text-white/50, leading-relaxed
+  - En card violet-500/7 con emoji 📋
 
-Bloque de código:
-  bg-[#0a0a0c], border: white/8, rounded-xl, p-3
-  font: monospace (JetBrains Mono si disponible), font-size 10px
-  color: violet-300/70 (código principal)
-  color: sky-300/50 (comentarios "#Bug")
+Bloque de código del challenge:
+  bg-black/50, border: white/6, rounded-xl, p-3
+  font: monospace, font-size 10px
+  color: emerald-300/80
+  whitespace-pre-wrap, overflow-x-auto
 
 Textarea para solución:
-  - h-[88px], font-mono, font-size 10px
-  - bg-black/30, border-white/8, rounded-xl
-  - placeholder: "Escribe tu solución o explicación aquí…"
-  - color: white/60
+  - h-[90px], font-mono, font-size 10px
+  - bg-black/40, border-white/8, rounded-xl
+  - placeholder: "// Tu solución aquí…"
+  - color: emerald-300/80
 
-Botón "Enviar para code review":
-  - bg-violet-700, hover: violet-600, h-9
-  - Ícono: <Loader2 spin> o <Send 11px>
+Botón "Revisar con IA":
+  - bg-violet-600, hover: violet-500, rounded-lg
+  - Ícono: <Loader2 spin> o <Send 10px>
 
 Toggle "Ver solución":
-  - si showSolution: bg-white/6, text-white/65
-  - Solución: bg-black/20, p-3, rounded-lg, font-mono 10px, text-emerald-300/70
+  - si showSolution: bg-white/5, border-white/12, text-white/55
+  - Solución: bg-emerald-500/5, border-emerald-500/12, rounded-xl
+    pre: font-mono 10px, text-emerald-300/75
+
+QuickWin "Llévalo al mundo real · bonus" (AQUÍ — no en paso 1):
+  - bg-gradient-to-br from-amber-500/6, border-amber-500/18
+  - Header: <Zap/> amber + "LLÉVALO AL MUNDO REAL · BONUS" + "~2 min"
+  - Cuerpo: texto content.quickWin, text-white/60, 11px
+  - shimmer sweep animado
+
+Botón "🎯 Fíjalo en memoria →" / "Continuar de todas formas →":
+  - Aparece (AnimatePresence) cuando appFeedback.status === "done"
+  - rating correct/excellent: bg-violet-600, text-white
+  - rating other: border-white/10, text-white/40 (tenue)
+  ⚠️ Este botón es la ÚNICA forma de avanzar al paso 4 — no hay auto-avance
 ```
 
 **Preview Tarjetas Anki:**
@@ -644,273 +697,300 @@ Guide collapsible (después de exportar):
 
 ---
 
-## 7. Overlay Tab
+### 6.4 Focus Navigator (v1.4 — nombres cálidos + scroll robusto)
 
-### Preview frame:
+> Reemplaza el scroll libre por una **navegación secuencial de 1 paso a la vez**.  
+> El estudiante sólo ve el paso en el que está; el resto está oculto. Esto reduce la carga cognitiva y fuerza completar cada etapa antes de pasar a la siguiente.
 
-```
-border-radius: xl, overflow: hidden, border: white/8, bg-[#0a0a0c]
-aspect-ratio: 16/9, position: relative
+#### Nombres de los pasos (v1.4 — nombres cálidos)
 
-Fondo: bg-gradient-to-br from-slate-800 via-slate-900 to-[#0a0a0c]
+| focusStep | Nombre en UI  | Descripción técnica                       |
+|-----------|---------------|-------------------------------------------|
+| 0         | Mi nivel      | Autocalibración de confianza (4 botones)  |
+| 1         | Lo que vi     | Checkboxes de conceptos clave             |
+| 2         | ¿Lo sé?       | Preguntas adaptativas por nivel           |
+| 3         | Practícalo    | Desafío de código + code review IA        |
+| 4         | No olvidar    | Entrevista + exportar tarjetas Anki       |
 
-Código ficticio:
-  position: absolute, inset-0, flex items-center justify-center
-  opacity: 0.20
-  font-mono, 7px, text-emerald-400, leading-relaxed
+#### Arquitectura de estado
 
-Label "Preview": top-1.5 left-2
-  text-white/20, 8px, bg-black/40, px-1.5 py-0.5, rounded
-```
+```typescript
+// En StudyAgentTab.tsx
+const [focusStep, setFocusStep] = useState(0);   // 0-4 paso visible
+const [focusDir,  setFocusDir]  = useState(1);    // +1 hacia adelante, -1 hacia atrás
 
-### Controles overlay:
+// Unlock gates: el paso N se habilita cuando su condición es true
+const stepUnlocked = [
+  true,                   // 0 — Mi nivel       (siempre disponible)
+  confidence !== null,    // 1 — Lo que vi
+  confidence !== null,    // 2 — ¿Lo sé?
+  questionsComplete,      // 3 — Practícalo
+  showApply,              // 4 — No olvidar  (showApply = confidence !== null && questionsComplete)
+] as const;
 
-**Toggle "Overlay activo":**
-```
-Container: flex, justify-between, p-3.5, rounded-xl, border, transition
-  Activo: bg-white/4, border-white/10
-  Inactivo: bg-white/2, border-white/6
-
-Switch: Radix UI Switch
-  data-[state=checked]: bg-violet-600
-  scale: 0.82
-```
-
-**Sección desactivada cuando overlay off:**
-```
-opacity-25, pointer-events-none, transition-opacity duration-300
-```
-
-**Selector de posición (3 botones):**
-```
-Grid 3 columns, gap-2
-Cada botón: flex-col, items-center, gap-1.5, py-2.5, rounded-lg, border
-  Activo: bg-gradient-to-b from-violet-500/20 to-violet-500/10
-          border-violet-400/40, text-violet-300
-          shadow "0 0 10px rgba(139,92,246,0.15)"
-          font-semibold
-  Inactivo: bg-white/5, border-white/5, text-white/40
-            hover: text-white/70 bg-white/10 border-white/10
-  Ícono: 14px
-  Label: 10px, tracking-wide
+// ⚠️ CRÍTICO — scrollTop = 0 ANTES del re-render para que AnimatePresence
+//              no empuje el contenido nuevo hacia abajo
+const goToStep = (target: number) => {
+  if (target < 0 || target > 4) return;
+  if (!stepUnlocked[target]) return;
+  if (scrollRef.current) scrollRef.current.scrollTop = 0; // síncrono, antes de setState
+  setFocusDir(target > focusStep ? 1 : -1);
+  setFocusStep(target);
+};
 ```
 
-**Cards de sliders (font-size, opacity, shadow):**
-```
-Card: bg-gradient-to-b from-[#18181b] to-[#121214]
-      border: white/5, rounded-xl, p-4, space-y-3.5
+#### Auto-avance automático
 
-Header de la card:
-  Label izquierda: ícono 10px + texto, text-white/50, 11px
-  Badge valor: text-violet-400, 10px, font-mono
-               bg-violet-500/10, border-violet-500/15, px-2 py-0.5, rounded
+```typescript
+// Mi nivel → Lo que vi (automático al seleccionar confianza)
+useEffect(() => {
+  if (confidence && focusStep === 0) { setFocusDir(1); setFocusStep(1); }
+}, [confidence]);
 
-Slider Radix UI:
-  Track: bg-white/10
-  Range: bg-violet-500
-  Thumb: border-violet-500, bg-white, h-3.5 w-3.5
+// ¿Lo sé? → Practícalo (automático al completar preguntas) + sonido victoria
+useEffect(() => {
+  if (questionsComplete && focusStep <= 2) { setFocusDir(1); setFocusStep(3); }
+}, [questionsComplete]);
 
-Labels min/max:
-  text-white/18, 9px, px-0.5
+// ⚠️ Practícalo → No olvidar: NO es automático.
+// El usuario lee el feedback de la IA y avanza manualmente con
+// "🎯 Fíjalo en memoria →" o "Continuar de todas formas →"
+// sessionComplete SOLO activa el banner "¡Sesión completada!" — no navega.
+
+// Scroll a top — triple-disparo para vencer el timing de AnimatePresence:
+// 1. Inmediato (síncrono vía scrollTop)
+// 2. Doble requestAnimationFrame (post-paint del nuevo contenido)
+// 3. setTimeout 350ms (post-animación spring ~300ms)
+useEffect(() => {
+  if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  const raf = requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    });
+  });
+  const t = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, 350);
+  return () => { cancelAnimationFrame(raf); clearTimeout(t); };
+}, [focusStep]);
 ```
 
-**Selector de color de texto (3 botones):**
+#### Barra de puntos (dots de progreso)
+
 ```
-Grid 3 columns, gap-2
-Dot de color: w-2.5 h-2.5, rounded-full, shadow-sm
-Activo: bg-white/10, border-white/30, text-white
-        shadow "0 0 10px rgba(255,255,255,0.1)"
-Inactivo: bg-white/5, border-white/5, text-white/40
+Container: flex items-center gap-2, w-full
+
+Cada dot:
+  - Activo (isCurrent): w-6 h-2, bg-violet-500, rounded-full
+    shadow: "0 0 8px rgba(139,92,246,0.5)"
+  - Completado (done):  w-2 h-2, bg-emerald-400/65, rounded-full
+    hover: bg-emerald-400, cursor-pointer (clicable)
+  - Desbloqueado (unlocked, !done, !current): w-2 h-2, bg-white/25
+    hover: bg-white/45, cursor-pointer
+  - Bloqueado:          w-2 h-2, bg-white/8, cursor-not-allowed
+  - transition-all duration-300
+
+Contador: "X / 5" — text-[10px], text-white/30, font-mono tabular-nums
 ```
 
-**Reset de posición:**
+#### Barra Anterior / Siguiente
+
 ```
-Container: flex, justify-between, p-3, bg-white/3, border-white/7, rounded-xl
-Título: 11px, font-weight 500, text-white/55
-Desc: 10px, text-white/25
-Botón reset: text-[9px], text-white/30, hover: text-amber-400
-             border-white/8, px-2 py-1, rounded, flex items-center gap-1
-             <RotateCcw 8px/> Reset
+Container: flex items-center justify-between
+
+Botón Anterior:
+  - flex items-center gap-1, px-2.5 py-1.5, rounded-lg, text-[10px]
+  - Habilitado: text-white/50, hover:bg-white/8, cursor-pointer
+  - Deshabilitado: text-white/15, cursor-not-allowed
+  - <ChevronLeft size={12}/> Anterior
+
+Label del paso (centro):
+  - text-[10px], text-white/50, font-weight: 600
+  - Muestra steps[focusStep].label
+
+Botón Siguiente:
+  - flex items-center gap-1, px-2.5 py-1.5, rounded-lg, text-[10px]
+  - Habilitado: text-violet-400, hover:bg-violet-500/10, cursor-pointer
+  - Deshabilitado: text-white/15, cursor-not-allowed
+  - title (tooltip): "Completa este paso primero" si !canGoNext && focusStep < 4
+  - Siguiente <ChevronRight size={12}/>
+```
+
+#### Animación de slide entre pasos
+
+```typescript
+// AnimatePresence custom={focusDir} mode="wait"
+<motion.div
+  key={focusStep}
+  custom={focusDir}
+  variants={{
+    enter:  (d: number) => ({ x: d >= 0 ? 56 : -56, opacity: 0, scale: 0.98 }),
+    center: (_d: number) => ({ x: 0, opacity: 1, scale: 1 }),
+    exit:   (d: number) => ({ x: d >= 0 ? -56 : 56, opacity: 0, scale: 0.98 }),
+  }}
+  initial="enter" animate="center" exit="exit"
+  transition={{ type: "spring", stiffness: 380, damping: 34 }}
+>
+  {/* Paso visible según focusStep */}
+</motion.div>
+```
+
+**Mapeo focusStep → contenido:**
+
+| focusStep | Nombre UI     | Contenido mostrado                       | Condición de visibilidad |
+|-----------|---------------|------------------------------------------|--------------------------| 
+| 0         | Mi nivel      | Autocalibración (4 botones emoji)        | siempre |
+| 1         | Lo que vi     | Conceptos clave (checkboxes)             | `confidence !== null` |
+| 2         | ¿Lo sé?       | Preguntas adaptativas                    | `confidence !== null && visibleQuestions.length > 0` |
+| 3         | Practícalo    | Desafío de código + QuickWin bonus       | `showApply` (questionsComplete) |
+| 4         | No olvidar    | Entrevista + Anki                        | siempre (Anki bloqueado visualmente si !showApply) |
+
+**Posición en el DOM de la fase "result":**
+
+```
+<sticky header>
+  ProgressStepper (lineal) — Mi nivel / Lo que vi / ¿Lo sé? / Practícalo / No olvidar
+</sticky header>
+<div p-3 space-y-3>
+  [sessionComplete banner]         ← AnimatePresence (sessionComplete && !allStepsComplete)
+                                     Banner motivacional SOLAMENTE — NO navega al paso 4
+  [relevance bar mini]             ← siempre visible
+  [dots de progreso]               ← siempre visible
+  [botones Anterior / Label / Siguiente]  ← siempre visible
+  <AnimatePresence mode="wait">    ← 1 paso a la vez
+    <motion.div key={focusStep}>
+      {focusStep === 0 && <MiNivelStep />}
+      {focusStep === 1 && <LoQueViStep />}
+      {focusStep === 2 && <LoSéStep />}
+      {focusStep === 3 && <PractíaloStep />}
+      {focusStep === 4 && <NoOlvidarStep />}
+    </motion.div>
+  </AnimatePresence>
+  [Grand completion banner]        ← AnimatePresence (allStepsComplete)
+</div>
 ```
 
 ---
 
-## 8. Dev Tab
+### 6.5 UX Motivacional por Paso (v1.3)
 
-### Request Card:
+> Cada paso tiene: intro de contexto + mejoras visuales de aliento + feedback post-acción.  
+> Objetivo: el estudiante siente que aprende y progresa, no que rellena formularios.
 
-```
-Container: border, rounded-xl, overflow-hidden, transition
-  Expandido: bg-[#18181b], border-white/10, shadow-lg
-  Colapsado: bg-[#121214], border-white/5, hover: border-white/10
-
-Header button: px-4 py-2.5, flex items-center, gap-2.5
-
-Status icon: 11px
-  streaming: dot violeta pulsante (w-2 h-2, shadow "0 0 8px #8b5cf6")
-  done: CheckCircle2 emerald-400
-  aborted: RefreshCcw amber-400
-  error: AlertCircle red-400
-
-Pill de contexto (font-mono, 10px, border, rounded, px-2 py-0.5):
-  translate: bg-sky-500/15, text-sky-400, border-sky-500/25
-  eval-question: bg-violet-500/15, text-violet-400, border-violet-500/25
-  eval-code: bg-emerald-500/15, text-emerald-400, border-emerald-500/25
-
-Preview text: text-white/40, 11px, font-mono, truncate
-
-Total ms: text-white/30, font-mono, 10px
-Token count: text-white/30, 10px, bg-white/5, rounded-md, px-2 py-0.5
-```
-
-### Histograma LatencyBar:
-
-```
-Container: flex items-end, gap-px
-Cada barra: w-1, rounded-sm, transition-all
-  verde: #34d399 si <50ms
-  ámbar: #fbbf24 si 50-150ms
-  rojo: #f87171 si >150ms
-Opacidad: 0.7 + (index / total) * 0.3 (más opaco lo más reciente)
-```
-
----
-
-## 9. Captions Tab
-
-### Status Card:
-
-```
-Card genérica: bg-gradient-to-b from-[#18181b] to-[#121214]
-               border: white/5, rounded-xl, p-4
-
-Header: PlaySquare 11px violet-400 + "Estado en vivo" 11px font-weight 600
-Botón Refresh: text-[9px], text-white/25, border-white/8, px-1.5 py-0.5, rounded
-
-StatusRow:
-  label: text-white/40, 11px
-  status con ok=true: text-emerald-400, 11px, dot pulsante si pulse=true
-  status con ok=false: text-red-400, 11px, AlertCircle 10px
-  divider: divide-y divide-white/5
-```
-
-### Toggle Auto-translate:
-
-```
-Container: flex, justify-between, p-3.5, rounded-xl, border, transition
-  Activo: bg-violet-600/10, border-violet-500/22
-  Inactivo: bg-white/3, border-white/7
-
-Ícono Sparkles: 11px, color violet-400 (activo) / white/30 (inactivo)
-Título: "Auto EN → ES", 11px, font-weight 500
-Desc: "Traducción en tiempo real · IA local", 10px, text-white/30
-
-Switch: data-[state=checked]: bg-violet-600, scale-[0.82]
-```
-
----
-
-## 10. Animaciones Globales
-
-### Glassmorphism del header:
-
-```css
-backdrop-filter: blur(12px);
--webkit-backdrop-filter: blur(12px);
-background: rgba(18, 18, 20, 0.80);
-```
-
-### Cursor parpadeante SSE:
-
-```
-width: 3px, height: 14-15px
-bg: violet-400 / bg-violet-400
-rounded-sm, align-middle
-shadow: 0 0 8px #a78bfa
-Motion animate: opacity [1, 0, 1]
-transition: duration 0.5-0.55, repeat Infinity
-```
-
-### Ping dots (conexión activa):
-
-```html
-<!-- Ping animado para indicadores de conexión -->
-<span class="relative flex h-1.5 w-1.5">
-  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/>
-  <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/>
-</span>
-```
-
-### Transiciones de tabs (AnimatePresence mode="wait"):
-
-```
-initial: { opacity: 0 }
-animate: { opacity: 1 }
-exit: { opacity: 0 }
-transition: { duration: 0.14 }
-```
-
-### Scrollbar custom:
-
-```css
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
-```
-
-### Motion dots de streaming (3 puntos):
+#### Constantes añadidas en `StudyAgentTab.tsx`
 
 ```typescript
-{[0,1,2].map(i => (
-  <motion.span key={i}
-    className="w-1 h-1 rounded-full bg-violet-400"
-    animate={{ opacity: [0.2, 1, 0.2], y: [0, -2, 0] }}
-    transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.15 }}
-  />
-))}
+// Coach bubble post-selección de confianza (personalizada por nivel)
+const COACH_BUBBLE: Record<ConfidenceLevel, { emoji, title, tip }> = {
+  confused:  { emoji: "💪", title: "¡La honestidad es el primer paso real!", tip: "Cada experto que conoces pasó exactamente por aquí..." },
+  partial:   { emoji: "🎯", title: "Ya tienes la base.",                      tip: "Solo necesitas conectar los puntos..." },
+  clear:     { emoji: "⚡", title: "Buen nivel de comprensión.",              tip: "Ahora viene la prueba real: aplicarlo sin mirar..." },
+  mastered:  { emoji: "🔥", title: "¡Nivel alto, vamos a confirmarlo!",      tip: "Te espera un análisis en profundidad..." },
+};
+
+// Tiempo de sesión
+const sessionStartRef = useRef<number>(Date.now()); // para calcular tiempo en Grand Banner
 ```
 
----
+#### Paso 0 — Mi nivel (Autocalibración)
+```
+Micro-intro (encima de la card):
+  emoji 🧭 + "Sé honesto — esta respuesta calibra todo lo que sigue."
+  text-white/35, text-[11px]
 
-## 11. Micro-componentes Reutilizables
+Mejoras al botón seleccionado:
+  - Shimmer sweep: gradient skewed animado (x: -100% → 200%, 1.8s loop)
+  - CheckCircle2 aparece con scale 0→1 (spring)
+  - Emoji bounce: scale 1→1.2→1
 
-### SectionLabel:
+Coach Bubble post-selección (AnimatePresence, delay 0.15s):
+  - emoji + título bold + tip más suave
+  - Separado con border-t border-white/6
 
-```typescript
-function SectionLabel({ children }) {
-  return (
-    <p className="text-white/22 text-[9px] uppercase tracking-widest mb-2">
-      {children}
-    </p>
-  );
-}
+CTA inline "Lo que vi →" al fondo de la card (cuando confidence !== null)
 ```
 
-### Card:
+#### Paso 1 — Lo que vi (Conceptos)
+```
+Micro-intro: 📌 + "Marca solo los que realmente entendiste."
 
-```typescript
-function Card({ children, className = "" }) {
-  return (
-    <div className={`bg-gradient-to-b from-[#18181b] to-[#121214] border border-white/5 shadow-sm rounded-xl p-4 ${className}`}>
-      {children}
-    </div>
-  );
-}
+Progress counter (badge animado): "X/N"
+  - bg-white/5 → bg-emerald-500/12 cuando isReady (≥2 marcados)
+
+Cuando isReady: banner "¡Base sólida!" con CTA inline "Verificar mi comprensión →"
+  - bg-gradient-to-r from-emerald-600/15 to-emerald-600/5
+  - Shimmer verde
+  - Botón emerald en el fondo del banner
 ```
 
-### StatusRow:
+#### Paso 2 — ¿Lo sé? (Preguntas)
+```
+Preguntas una a la vez (currentQIdx)
+Hint toggle: "Ver pista" / "Ocultar pista" (encima del textarea, no en strip de IA)
+Model answer toggle: "Respuesta modelo" (debajo del feedback IA)
 
-```typescript
-function StatusRow({ label, status, ok, pulse }) {
-  return (
-    <div className="flex items-center justify-between py-1.5">
-      <span className="text-white/40 text-[11px]">{label}</span>
-      <span className={`flex items-center gap-1.5 text-[11px] ${ok ? "text-emerald-400" : "text-red-400"}`}>
-        {pulse && ok ? <PingDot /> : ok ? <CheckCircle2 size={10}/> : <AlertCircle size={10}/>}
-        {status}
-      </span>
-    </div>
-  );
-}
+Cuando questionsComplete: VerifyDoneReview (resumen con botón "Ir al desafío →")
+Escape hatch: "Saltar al desafío práctico" (texto muy sutil, text-white/15)
+```
+
+#### Paso 3 — Practícalo (Código)
+```
+Micro-intro: 🛠️ + "El código imperfecto que escribas ahora vale más..."
+
+Setup en card violet con emoji 📋
+Challenge en <pre> monospace emerald
+Textarea monospace para solución
+Botón "Revisar con IA" → feedback streaming
+Toggle "Ver solución" → solution ref en card emerald
+
+QuickWin "Llévalo al mundo real · bonus":
+  ⚠️ Ubicado en este paso (no en Lo que vi)
+  bg-amber-500/6, border-amber-500/18, shimmer ámbar lento (3.5s)
+  Texto content.quickWin
+
+Botón CTA al paso 4 (aparece cuando appFeedback.status === "done"):
+  ⚠️ ÚNICO punto de avance al paso 4 — NO hay auto-avance
+  - Correcto: "🎯 Fíjalo en memoria →" (violeta sólido)
+  - Incompleto: "Continuar de todas formas →" (tenue, borde sutil)
+```
+
+#### Paso 4 — No olvidar (Anki + Entrevista)
+```
+Achievement summary al top:
+  - emoji 🏁 + "¡Llegaste al último paso!"
+  - Stats inline: conceptos marcados, X/N preguntas correctas, tiempo sesión
+
+Pregunta de entrevista (si content.interviewQ):
+  - Card sky: header con Star icon + "Pregunta de entrevista"
+  - Toggle "Estructura de respuesta ideal" (ChevronDown)
+
+Próximo paso concreto (si showApply):
+  - Card violet + ArrowRight icon + content.nextAction
+
+Tarjetas Anki:
+  - Header: Repeat2 icon + "Fíjalo en memoria" + contador tarjetas
+  - AnkiFlipPreview (flip 3D)
+  - Info sobre archivos (primera vez vs. actualización)
+  - Botones grid: [.txt] [.apkg]
+  - Guía de importación collapsible
+```
+
+#### Completion Flow
+```
+allStepsComplete = steps.every(s => s.done)
+  = confidence + conceptsDone + questionsComplete + appFeedback.done + ankiExported
+
+Al hacerse true:
+1. celebrate({ type: "session_complete", ... })
+2. Confetti lateral (3s, colores violeta/emerald/amarillo)
+3. Chord musical triunfal (C4-E4-G4-C5, stagger 50ms)
+4. scrollToBottom() → muestra Grand Banner
+
+⚠️ BUG CONOCIDO Y CORREGIDO: El useEffect de allStepsComplete existía duplicado
+   (causaba chord doble). La versión correcta tiene UN SOLO useEffect.
+
+Grand Banner:
+  - Borde animado gradient (violeta/emerald)
+  - 🏆 animado (scale + rotate loop)
+  - "¡Sesión 100% completada!"
+  - Stats finales: conceptos / correctas / tiempo
+  - "Esperando siguiente video…" (Loader2 spin + texto uppercase tracking)
 ```

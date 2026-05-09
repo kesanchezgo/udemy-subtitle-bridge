@@ -1,3 +1,8 @@
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import type { Session } from '@supabase/supabase-js';
+import dockStylesheet from './app/styles/index.css?inline';
+import { InPageDock } from './app/components/InPageDock';
 import { onMessageFromSidebar, sendToSidebar } from './app/services/contentBridge';
 
 type OverlayPosition = 'top' | 'center' | 'bottom';
@@ -48,6 +53,17 @@ const DEFAULT_CONFIG: OverlayConfig = {
 	shadowStrength: 60
 };
 
+const DOCK_HOST_ID = 'usb-dock-host';
+const DOCK_MOUNT_ID = 'usb-dock-root';
+const UDEMY_NAVBAR_HEIGHT = 48;
+const MIN_DOCK_WIDTH = 300;
+const MAX_DOCK_WIDTH = 560;
+const DEFAULT_DOCK_WIDTH = 360;
+const COLLAPSED_DOCK_WIDTH = 40;
+const DOCK_Z_INDEX = 2147483646;
+const OVERLAY_Z_INDEX = 2147483647;
+
+let dockHostEl: HTMLDivElement | null = null;
 let overlayEl: HTMLDivElement | null = null;
 let overlayTextEl: HTMLDivElement | null = null;
 let nativeCaptionStyleEl: HTMLStyleElement | null = null;
@@ -58,6 +74,8 @@ let currentConfig: OverlayConfig = { ...DEFAULT_CONFIG };
 let capturedEnVtt: string | null = null;
 let capturedCues: CapturedCue[] = [];
 let collectedLines: Array<{ text: string; ts: number }> = [];
+let dockWidth = DEFAULT_DOCK_WIDTH;
+let dockCollapsed = false;
 
 function getLectureKey() {
 	const match = window.location.pathname.match(/lecture\/(\d+)/);
@@ -90,6 +108,10 @@ function getLectureTitle() {
 	}
 
 	return null;
+}
+
+function isUdemyLecturePage() {
+	return /^\/course\/[^/]+\/learn\/lecture\/\d+\/?$/.test(window.location.pathname);
 }
 
 // ── Network Bridge: inject page-network-bridge.js to capture VTT from fetch/XHR ──
@@ -376,6 +398,176 @@ function readNumber(value: unknown, fallback: number) {
 	return fallback;
 }
 
+function clampDockWidth(value: number) {
+	return Math.max(MIN_DOCK_WIDTH, Math.min(MAX_DOCK_WIDTH, value));
+}
+
+function findContentColumn() {
+	return document.querySelector<HTMLElement>('.app--content-column--LnPGp')
+		?? document.querySelector<HTMLElement>("[data-purpose='course-taking-container']")
+		?? document.querySelector<HTMLElement>('.ud-app-loader')
+		?? document.body;
+}
+
+function adjustUdemyLayout(width: number, collapsed: boolean) {
+	const contentColumn = findContentColumn();
+	if (!contentColumn) {
+		return;
+	}
+
+	const effectiveWidth = collapsed ? COLLAPSED_DOCK_WIDTH : width;
+	contentColumn.style.marginRight = `${effectiveWidth}px`;
+	contentColumn.style.transition = 'margin-right 0.3s cubic-bezier(0.4,0,0.2,1)';
+}
+
+function handleDockBridgeEvent(event: Event) {
+	const detail = (event as CustomEvent<{ type?: string; payload?: { width?: number } }>).detail;
+	if (!detail?.type) {
+		return;
+	}
+
+	if (detail.type === 'DOCK_RESIZE') {
+		dockWidth = clampDockWidth(readNumber(detail.payload?.width, dockWidth));
+		dockCollapsed = false;
+		adjustUdemyLayout(dockWidth, dockCollapsed);
+		return;
+	}
+
+	if (detail.type === 'DOCK_COLLAPSE') {
+		dockCollapsed = true;
+		adjustUdemyLayout(dockWidth, dockCollapsed);
+		return;
+	}
+
+	if (detail.type === 'DOCK_EXPAND') {
+		dockCollapsed = false;
+		adjustUdemyLayout(dockWidth, dockCollapsed);
+	}
+}
+
+function initInPageDock() {
+	if (dockHostEl || document.getElementById(DOCK_HOST_ID)) {
+		adjustUdemyLayout(dockWidth, dockCollapsed);
+		return;
+	}
+
+	const host = document.createElement('div');
+	dockHostEl = host;
+	host.id = DOCK_HOST_ID;
+	host.style.position = 'fixed';
+	host.style.top = `${UDEMY_NAVBAR_HEIGHT}px`;
+	host.style.right = '0';
+	host.style.height = `calc(100vh - ${UDEMY_NAVBAR_HEIGHT}px)`;
+	host.style.zIndex = String(DOCK_Z_INDEX);
+	host.style.display = 'block';
+	host.style.pointerEvents = 'auto';
+	host.style.contain = 'layout style paint';
+	host.style.isolation = 'isolate';
+	host.style.overflow = 'visible';
+
+	const shadow = host.attachShadow({ mode: 'closed' });
+
+	const stylesheet = document.createElement('style');
+	stylesheet.textContent = dockStylesheet;
+
+	const hostReset = document.createElement('style');
+	hostReset.textContent = `
+:host {
+	display: block;
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font-size: 14px;
+	line-height: 1.5;
+	color-scheme: dark;
+	box-sizing: border-box;
+}
+`;
+
+	const mount = document.createElement('div');
+	mount.id = DOCK_MOUNT_ID;
+	mount.style.width = '100%';
+	mount.style.height = '100%';
+
+	shadow.appendChild(stylesheet);
+	shadow.appendChild(hostReset);
+	shadow.appendChild(mount);
+
+	(document.body || document.documentElement).appendChild(host);
+
+	createRoot(mount).render(createElement(InPageDock, {
+		onSessionResolved: (_session: Session | null) => {
+			void _session;
+		},
+		localAiConnected: true
+	}));
+
+	adjustUdemyLayout(dockWidth, dockCollapsed);
+}
+
+function resetUdemyLayout() {
+	const contentColumn = findContentColumn();
+	if (!contentColumn) {
+		return;
+	}
+
+	contentColumn.style.removeProperty('margin-right');
+	contentColumn.style.removeProperty('transition');
+}
+
+function destroyInPageDock() {
+	const host = dockHostEl || document.getElementById(DOCK_HOST_ID);
+	if (host) {
+		host.remove();
+	}
+	dockHostEl = null;
+	resetUdemyLayout();
+}
+
+function destroyOverlay() {
+	if (overlayEl) {
+		overlayEl.remove();
+		overlayEl = null;
+		overlayTextEl = null;
+	}
+
+	if (nativeCaptionStyleEl) {
+		nativeCaptionStyleEl.remove();
+		nativeCaptionStyleEl = null;
+	}
+}
+
+function stopObserver() {
+	if (observer) {
+		observer.disconnect();
+		observer = null;
+	}
+}
+
+function resetRuntimeState() {
+	capturedEnVtt = null;
+	capturedCues = [];
+	collectedLines = [];
+	currentSubtitle = '';
+	updateOverlayText('');
+}
+
+function syncUdemyRuntimeForUrl() {
+	if (isUdemyLecturePage()) {
+		initInPageDock();
+		if (!overlayEl) {
+			const container = findVideoContainer();
+			createOverlay(container || document.body || document.documentElement as HTMLElement);
+		}
+		startObserver();
+		scanForSubtitleChanges();
+		return;
+	}
+
+	destroyInPageDock();
+	destroyOverlay();
+	stopObserver();
+	resetRuntimeState();
+}
+
 function applyOverlayStyle() {
 	if (!overlayEl || !overlayTextEl) {
 		return;
@@ -469,7 +661,7 @@ function createOverlay(container: HTMLElement) {
 		'position:fixed',
 		'left:50%',
 		'bottom:10%',
-		'z-index:9999',
+		`z-index:${OVERLAY_Z_INDEX}`,
 		'max-width:80%',
 		'text-align:center',
 		'pointer-events:auto',
@@ -722,10 +914,7 @@ function watchUrlChanges() {
 		const currentUrl = window.location.href;
 		if (currentUrl !== lastUrl) {
 			lastUrl = currentUrl;
-			capturedEnVtt = null;
-			capturedCues = [];
-			collectedLines = [];
-			currentSubtitle = '';
+			syncUdemyRuntimeForUrl();
 		}
 	}, 1000);
 }
@@ -734,12 +923,8 @@ function watchUrlChanges() {
 
 function bootstrap() {
 	injectNetworkBridge();
-
-	const container = findVideoContainer();
-	createOverlay(container || document.body || document.documentElement as HTMLElement);
-
-	startObserver();
-	scanForSubtitleChanges();
+	window.addEventListener('usb:dock→cs', handleDockBridgeEvent as EventListener);
+	syncUdemyRuntimeForUrl();
 	setupChromeMessageHandler();
 	watchUrlChanges();
 

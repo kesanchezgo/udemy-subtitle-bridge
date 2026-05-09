@@ -229,6 +229,9 @@ export function DevTab() {
 
   const totalRequests = requests.length;
   const streaming = requests.find(r => r.status === "streaming");
+  const activeCount = requests.filter((request) => request.status === "streaming").length;
+  const completedCount = requests.filter((request) => request.status === "done").length;
+  const abortedCount = requests.filter((request) => request.status === "aborted").length;
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
@@ -250,6 +253,24 @@ export function DevTab() {
         >
           <Trash2 size={8}/>Limpiar
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/6 bg-white/[0.03] px-2.5 py-2">
+        <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[8px] uppercase tracking-widest text-violet-300">
+          Dev activo
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
+          SSE · {totalRequests}
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
+          Stream · {activeCount}
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
+          Done · {completedCount}
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
+          Abort · {abortedCount}
+        </span>
       </div>
 
       {/* ── Latest request stats strip ────────────────────────────────────── */}
@@ -277,15 +298,15 @@ export function DevTab() {
       )}
 
       {/* ── Section toggle ────────────────────────────────────────────────── */}
-      <div className="flex gap-1">
+      <div className="flex gap-1 rounded-xl border border-white/6 bg-[#0d0e0f] p-1">
         {(["sse", "cache"] as const).map(s => (
           <button
             key={s}
             onClick={() => setActiveSection(s)}
             className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] transition-all ${
               activeSection === s
-                ? "bg-white/7 text-white/70 border border-white/12"
-                : "text-white/28 hover:text-white/50 hover:bg-white/4"
+                ? "bg-white/8 text-white/75 border border-white/10 shadow-sm"
+                : "text-white/28 hover:text-white/55 hover:bg-white/5"
             }`}
           >
             {s === "sse"

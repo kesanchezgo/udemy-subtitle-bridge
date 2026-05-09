@@ -2,15 +2,20 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   Settings, Download, Upload, RefreshCcw, CheckCircle2, AlertCircle,
   PlaySquare, Sparkles, Zap, Captions, Layers, GraduationCap, RotateCcw,
-  Type, Eye, EyeOff, AlignCenter, FileText,
-  Loader2, ArrowUpDown, Baseline, Check, Key, Save, X,
+  Type, Eye, EyeOff, AlignCenter, FileText, Timer,
+  Loader2, ArrowUpDown, Baseline, Check,
+  Cloud, HardDrive,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import type { Session } from "@supabase/supabase-js";
 import { Switch } from "./ui/switch";
 import { Slider } from "./ui/slider";
 import { StudyAgentTab } from "./StudyAgentTab";
 import { TranslationPipeline } from "./TranslationPipeline";
+import { NotesTab } from "./NotesTab";
+import { LearningToolsTab } from "./LearningToolsTab";
 import { DevTab } from "./DevTab";
+import { ApiKeysPanel, type GeminiKeyFieldStatus } from "./ApiKeysPanel";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
@@ -21,11 +26,9 @@ import { debugStore } from "../services/debugStore";
 type ExtensionSidebarProps = {
   isOpen?: boolean;
   onToggle?: () => void;
-};
-
-type GeminiKeyFieldStatus = {
-  status: "idle" | "valid" | "rate-limited" | "invalid";
-  message?: string;
+  session?: Session | null;
+  onRequestLogin?: () => void;
+  onSignOut?: () => void;
 };
 
 const SUBTITLE_BLOCK_IDLE_MS = 1400;
@@ -66,11 +69,34 @@ const MOCK_LINES = [
   { en: "Data types can be primitive or reference", es: "Los tipos de datos pueden ser primitivos o de referencia", ts: "5:13" },
 ];
 
-export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
+function getNotesContext() {
+  const currentLecture = document.querySelector<HTMLElement>(
+    'li[aria-current="true"] [data-purpose="item-title"]',
+  )?.textContent?.trim();
+  const currentSection = document
+    .querySelector<HTMLElement>('li[aria-current="true"]')
+    ?.closest('[data-purpose^="section-panel-"]')
+    ?.querySelector<HTMLElement>('.ud-accordion-panel-title')
+    ?.textContent?.trim();
+  const courseName =
+    document.querySelector<HTMLElement>('.curriculum-item-view--course-title--s5jCa')?.textContent?.trim() ||
+    document.querySelector<HTMLElement>('[data-purpose="title"]')?.textContent?.trim() ||
+    document.title.trim() ||
+    "Curso actual";
+  const pathSegments = window.location.pathname.split("/").filter(Boolean);
+  const pathFallback = pathSegments[pathSegments.length - 1]?.replace(/-/g, " ").trim();
+
+  return {
+    courseName,
+    lessonName: [currentSection, currentLecture].filter(Boolean).join(" · ") || pathFallback || courseName || "Lección actual",
+  };
+}
+
+export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, onSignOut }: ExtensionSidebarProps) {
   void isOpen;
   void onToggle;
 
-  const [activeTab, setActiveTab] = useState<"study" | "captions" | "overlay" | "dev">("study");
+  const [activeTab, setActiveTab] = useState<"study" | "captions" | "overlay" | "notes" | "learning" | "dev">("study");
   const [devMode, setDevMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [geminiKey1, setGeminiKey1] = useState("");
@@ -112,7 +138,7 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   const [localAIOnline, setLocalAIOnline] = useState<boolean | null>(null);
   const exportSrtPendingRef = useRef(false);
   const subtitleBlockBufferRef = useRef<string[]>([]);
-  const subtitleBlockTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const subtitleBlockTimerRef = useRef<number | null>(null);
 
   const clearSubtitleBlockTimer = () => {
     if (subtitleBlockTimerRef.current !== null) {
@@ -359,11 +385,17 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
   };
 
   const tabs = [
-    { id: "study"    as const, label: "Study",   icon: GraduationCap, ping: true  },
+    { id: "study"    as const, label: "Study",    icon: GraduationCap, ping: true  },
     { id: "captions" as const, label: "Captions", icon: Captions,      ping: false },
     { id: "overlay"  as const, label: "Overlay",  icon: Layers,        ping: false },
+    { id: "notes"    as const, label: "Notes",    icon: FileText,      ping: false },
+    { id: "learning" as const, label: "Learning", icon: Timer, ping: false },
     { id: "dev"      as const, label: "Dev",      icon: Settings,      ping: false },
   ];
+  const notesContext = getNotesContext();
+  const isGuestMode = !session;
+  const sessionEmail = session?.user.email?.trim() || "Usuario";
+  const sessionInitial = sessionEmail.charAt(0).toUpperCase() || "U";
 
   return (
     <div className="flex flex-col h-full w-full bg-[#1a1b1d]">
@@ -375,19 +407,21 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               <h1 className="text-white text-xs leading-tight tracking-wide" style={{ fontWeight: 600 }}>
                 Subtitle Bridge
               </h1>
-              <p className="text-white/40 text-[9px] leading-none mt-1 font-medium tracking-wider uppercase">EN → ES · {localAIOnline ? 'AI Local' : geminiKeyCount > 0 ? 'Gemini' : 'Sin conexión'}</p>
+              <p className="text-white/40 text-[9px] leading-none mt-1 font-medium tracking-wider uppercase">EN → ES · {localAIOnline ? 'IA Local' : geminiKeyCount > 0 ? 'Gemini' : 'Mock'}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`flex items-center gap-1.5 ${localAIOnline ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'} border rounded-full px-2.5 py-1`}>
+            <div className={`flex items-center gap-1.5 ${localAIOnline ? 'bg-emerald-500/10 border-emerald-500/20' : geminiKeyCount > 0 ? 'bg-violet-500/10 border-violet-500/20' : 'bg-amber-500/10 border-amber-500/20'} border rounded-full px-2.5 py-1`}>
               <span className="relative flex h-1.5 w-1.5">
                 {localAIOnline ? (
                   <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_5px_#10b981]"/></>
+                ) : geminiKeyCount > 0 ? (
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-400 shadow-[0_0_5px_#8b5cf6]"/>
                 ) : (
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500 shadow-[0_0_5px_#ef4444]"/>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400 shadow-[0_0_5px_#f59e0b]"/>
                 )}
               </span>
-              <span className={`text-[10px] font-medium tracking-wide ${localAIOnline ? 'text-emerald-400' : 'text-red-400'}`}>{localAIOnline ? '8010' : 'Gemini'}</span>
+              <span className={`text-[10px] font-medium tracking-wide ${localAIOnline ? 'text-emerald-400' : geminiKeyCount > 0 ? 'text-violet-400' : 'text-amber-400'}`}>{localAIOnline ? '8010' : geminiKeyCount > 0 ? `Gemini ${geminiKeyCount}` : 'Mock'}</span>
             </div>
             <button
               onClick={handleGearClick}
@@ -408,112 +442,103 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
         </div>
       </div>
 
-      <AnimatePresence>
-        {showSettings && (
-          <motion.div
-            key="settings-panel"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="overflow-hidden border-b border-white/5 bg-[#0f1012]"
-          >
-            <div className="p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Key size={11} className="text-violet-400" />
-                  <span className="text-white/55 text-[11px]" style={{ fontWeight: 600 }}>Gemini API Keys</span>
-                  {geminiKeyCount > 0 && (
-                    <span className="text-[9px] text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0.5">
-                      {geminiKeyCount} {geminiKeyCount === 1 ? "key" : "keys"}
-                    </span>
-                  )}
-                </div>
-                <button onClick={() => setShowSettings(false)} className="text-white/30 hover:text-white/60 transition-colors">
-                  <X size={12} />
-                </button>
+      <div className="px-3 py-3 border-b border-white/6 bg-white/[0.02]">
+        <div className="rounded-2xl border border-white/8 bg-[#111214] overflow-hidden shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+          <div className="flex items-center justify-between gap-3 px-3.5 py-3 border-b border-white/6">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-violet-500/12 border border-violet-500/20 flex items-center justify-center text-[10px] font-semibold text-violet-300 shrink-0">
+                {sessionInitial}
               </div>
-              <div className="space-y-2">
-                <div className="space-y-1.5">
-                  <input
-                    type="password"
-                    value={geminiKey1}
-                    onChange={e => {
-                      setGeminiKey1(e.target.value);
-                      setKeyFieldStates((prev) => [{ status: "idle" }, prev[1] ?? { status: "idle" }]);
-                    }}
-                    placeholder="API Key 1 (principal)"
-                    className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
-                  />
-                  <p className={`text-[9px] ${keyFieldStates[0]?.status === "valid" ? "text-emerald-400/70" : keyFieldStates[0]?.status === "rate-limited" ? "text-amber-400/70" : keyFieldStates[0]?.status === "invalid" ? "text-red-400/70" : "text-white/20"}`}>
-                    {keyFieldStates[0]?.message || "Todavía no validada."}
-                  </p>
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-1 rounded-full border border-white/8 bg-white/[0.03] px-2 py-0.5 text-[8px] uppercase tracking-[0.22em] text-white/35">
+                  {isGuestMode ? "Sin cuenta" : "Con cuenta"}
                 </div>
-                <div className="space-y-1.5">
-                  <input
-                    type="password"
-                    value={geminiKey2}
-                    onChange={e => {
-                      setGeminiKey2(e.target.value);
-                      setKeyFieldStates((prev) => [prev[0] ?? { status: "idle" }, { status: "idle" }]);
-                    }}
-                    placeholder="API Key 2 (fallback, opcional)"
-                    className="w-full h-7 rounded-lg bg-black/30 border border-white/8 text-white/70 text-[10px] px-2.5 placeholder:text-white/20 focus:border-violet-500/30 outline-none"
-                  />
-                  <p className={`text-[9px] ${keyFieldStates[1]?.status === "valid" ? "text-emerald-400/70" : keyFieldStates[1]?.status === "rate-limited" ? "text-amber-400/70" : keyFieldStates[1]?.status === "invalid" ? "text-red-400/70" : "text-white/20"}`}>
-                    {keyFieldStates[1]?.message || "Todavía no validada."}
-                  </p>
-                </div>
+                <p className="mt-1 text-[11px] font-semibold text-white truncate">
+                  {isGuestMode ? "Modo invitado" : sessionEmail}
+                </p>
+                <p className="text-[9px] uppercase tracking-[0.22em] text-white/28 truncate">
+                  {isGuestMode ? "Datos solo en este dispositivo" : "Cloud sync activa"}
+                </p>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleSaveGeminiKeys}
-                  disabled={(!geminiKey1.trim() && !geminiKey2.trim()) || validatingKeys}
-                  className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-violet-700 hover:bg-violet-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-[10px] transition-all"
-                >
-                  {validatingKeys ? <><Loader2 size={10} className="animate-spin" />Validando...</> : <><Save size={10} />Guardar keys</>}
-                </button>
-                <AnimatePresence>
-                  {settingsSaved && (
-                    <motion.span
-                      initial={{ opacity: 0, x: -4 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="text-emerald-400 text-[10px] flex items-center gap-1"
-                    >
-                      <CheckCircle2 size={10} />Guardado
-                    </motion.span>
-                  )}
-                  {keyValidationError && (
-                    <motion.span
-                      initial={{ opacity: 0, x: -4 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="text-red-400 text-[10px] flex items-center gap-1"
-                    >
-                      <AlertCircle size={10} />{keyValidationError}
-                    </motion.span>
-                  )}
-                  {keyValidationWarning && (
-                    <motion.span
-                      initial={{ opacity: 0, x: -4 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="text-amber-400 text-[10px] flex items-center gap-1"
-                    >
-                      <AlertCircle size={10} />{keyValidationWarning}
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-              </div>
-              <p className="text-white/20 text-[9px] leading-relaxed">
-                Las keys se guardan en chrome.storage.local y se usan para traducción y Study Agent.
-                Clic triple en ⚙ para Dev mode.
-              </p>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+            {isGuestMode ? (
+              <button
+                type="button"
+                onClick={onRequestLogin}
+                className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-violet-300 hover:bg-violet-500/15 hover:border-violet-500/30 transition-colors"
+              >
+                Sincronizar en la nube
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="shrink-0 rounded-full border border-white/8 bg-white/5 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-white/55 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                Salir
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 p-3">
+            <div className="rounded-xl border border-white/6 bg-white/[0.03] p-2.5">
+              <div className="flex items-center gap-1.5 mb-2">
+                <HardDrive size={9} className="text-white/30" />
+                <span className="text-white/40 text-[9px]" style={{ fontWeight: 600 }}>Sin cuenta</span>
+              </div>
+              {['Traducción en vivo', 'Overlay en Udemy', 'Apuntes locales'].map((feature) => (
+                <div key={feature} className="flex items-center gap-1.5 mb-1">
+                  <CheckCircle2 size={8} className="text-emerald-500/60 shrink-0" />
+                  <span className="text-white/30 text-[10px]">{feature}</span>
+                </div>
+              ))}
+              {['Sync cross-device', 'Backup nube'].map((feature) => (
+                <div key={feature} className="flex items-center gap-1.5 mb-1 last:mb-0">
+                  <div className="w-2 h-px bg-white/15 shrink-0 ml-px" />
+                  <span className="text-white/18 text-[10px]">{feature}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-violet-500/22 bg-violet-500/[0.05] p-2.5">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Cloud size={9} className="text-violet-400" />
+                <span className="text-violet-300/70 text-[9px]" style={{ fontWeight: 600 }}>Con cuenta</span>
+              </div>
+              {['Traducción en vivo', 'Overlay en Udemy', 'Apuntes locales', 'Sync cross-device', 'Backup nube'].map((feature) => (
+                <div key={feature} className="flex items-center gap-1.5 mb-1 last:mb-0">
+                  <CheckCircle2 size={8} className="text-violet-400 shrink-0" />
+                  <span className="text-white/45 text-[10px]">{feature}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <ApiKeysPanel
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        apiKey1={geminiKey1}
+        apiKey2={geminiKey2}
+        onApiKey1Change={(value) => {
+          setGeminiKey1(value);
+          setKeyFieldStates((prev) => [{ status: "idle" }, prev[1] ?? { status: "idle" }]);
+        }}
+        onApiKey2Change={(value) => {
+          setGeminiKey2(value);
+          setKeyFieldStates((prev) => [prev[0] ?? { status: "idle" }, { status: "idle" }]);
+        }}
+        localConnected={Boolean(localAIOnline)}
+        keyCount={geminiKeyCount}
+        onSave={handleSaveGeminiKeys}
+        saving={validatingKeys}
+        saved={settingsSaved}
+        validationError={keyValidationError}
+        validationWarning={keyValidationWarning}
+        fieldStates={keyFieldStates as [GeminiKeyFieldStatus?, GeminiKeyFieldStatus?]}
+      />
 
       <div className="flex shrink-0 p-1.5 gap-1 bg-[#121214] border-b border-white/5 relative z-10">
         {tabs.map(tab => {
@@ -579,7 +604,13 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
                 <Switch checked={autoTranslate} onCheckedChange={setAutoTranslate} className="data-[state=checked]:bg-violet-600 scale-[0.82] shrink-0"/>
               </div>
 
-              <TranslationPipeline incomingBlock={currentTranscriptBlock} autoTranslate={autoTranslate} />
+              <TranslationPipeline
+                incomingBlock={currentTranscriptBlock}
+                autoTranslate={autoTranslate}
+                apiKey1={geminiKey1}
+                apiKey2={geminiKey2}
+                localConnected={Boolean(localAIOnline)}
+              />
 
               <div className="space-y-2">
                 <SectionLabel>Últimas líneas reales</SectionLabel>
@@ -763,6 +794,22 @@ export function ExtensionSidebar({ isOpen, onToggle }: ExtensionSidebarProps) {
               </div>
 
               <div className="h-2"/>
+            </motion.div>
+          )}
+
+          {activeTab === "notes" && (
+            <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              <NotesTab
+                courseName={notesContext.courseName}
+                lessonName={notesContext.lessonName}
+                session={session ?? null}
+              />
+            </motion.div>
+          )}
+
+          {activeTab === "learning" && (
+            <motion.div key="learning" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              <LearningToolsTab session={session ?? undefined} />
             </motion.div>
           )}
 

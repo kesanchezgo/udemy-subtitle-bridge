@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Zap, TrendingUp, Database, WifiOff, Radio } from "lucide-react";
+import { Zap, TrendingUp, Database, WifiOff, Radio, RefreshCcw, Key, ChevronDown, Copy, Check } from "lucide-react";
 import { translateLineStream } from "../services/localAI";
 import { debugStore } from "../services/debugStore";
 import { contentBridge } from "../services/contentBridge";
@@ -21,6 +21,15 @@ const FALLBACK: Record<string, string> = {
   "The JVM (Java Virtual Machine) is what makes this possible":
     "La JVM (Máquina Virtual de Java) es lo que hace esto posible",
 };
+
+const TRANSLATION_PROMPT = `Actúa como un traductor técnico experto especializado en desarrollo de software. Tu tarea es traducir subtítulos en formato .srt de inglés a español.
+
+Reglas:
+1. Traduce bloque por bloque en el mismo orden.
+2. Conserva los números y marcas de tiempo exactamente.
+3. Devuelve únicamente SRT en texto plano.
+4. Mantén en inglés los nombres de tecnologías y frameworks.
+5. Usa español latino neutro, fluido y natural.`;
 
 // Slow-type a mock translation word-by-word to simulate streaming
 async function mockStream(
@@ -42,6 +51,8 @@ async function mockStream(
 // ── Types ─────────────────────────────────────────────────────────────────────
 type PipelineStatus = "idle" | "capturing" | "streaming" | "done";
 
+type ModelSource = "local" | "gemini_k1" | "gemini_k2" | "mock";
+
 interface PipelineEntry {
   id: string;
   en: string;
@@ -53,12 +64,18 @@ interface PipelineEntry {
 interface TranslationPipelineProps {
   incomingBlock: string | null;
   autoTranslate: boolean;
+  apiKey1?: string;
+  apiKey2?: string;
+  localConnected?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function TranslationPipeline({
   incomingBlock,
   autoTranslate,
+  apiKey1 = "",
+  apiKey2 = "",
+  localConnected = false,
 }: TranslationPipelineProps) {
   const [status, setStatus]       = useState<PipelineStatus>("idle");
   const [currentEn, setCurrentEn] = useState("");
@@ -67,10 +84,27 @@ export function TranslationPipeline({
   const [usedAI, setUsedAI]       = useState(false);
   const [history, setHistory]     = useState<PipelineEntry[]>([]);
   const [stats, setStats]         = useState({ total: 0, aiCalls: 0, totalMs: 0 });
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
 
   // Ref to abort in-flight stream when a new block arrives
   const abortRef  = useRef<AbortController | null>(null);
   const lastBlock  = useRef<string>("");
+
+  const modelUsed: ModelSource = localConnected ? "local" : apiKey1.trim() ? "gemini_k1" : apiKey2.trim() ? "gemini_k2" : "mock";
+
+  const MODEL_LABEL: Record<ModelSource, string> = {
+    local: "IA Local · 8010",
+    gemini_k1: "Gemini Flash · Key 1",
+    gemini_k2: "Gemini Flash · Key 2",
+    mock: "Mock · sin conexión",
+  };
+
+  const handleCopyPrompt = async () => {
+    await navigator.clipboard.writeText(TRANSLATION_PROMPT);
+    setPromptCopied(true);
+    window.setTimeout(() => setPromptCopied(false), 2000);
+  };
 
   // ── Pipeline runner ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -186,7 +220,7 @@ export function TranslationPipeline({
               transition={{ duration: 0.8, repeat: Infinity }}
             />
           )}
-          Pipeline EN → ES
+          Pipeline SRT · EN → ES
         </p>
         <div className="ml-auto flex items-center gap-2.5">
           {stats.total > 0 && (
@@ -229,7 +263,7 @@ export function TranslationPipeline({
             <span className={`text-[10px] font-semibold uppercase tracking-widest transition-colors ${
               status !== "idle" ? "text-sky-400" : "text-white/20"
             }`}>
-              Capturado · Udemy
+              {status === "capturing" ? "Leyendo transcripción…" : status !== "idle" ? "Transcripción .srt · Udemy" : "Transcripción"}
             </span>
           </div>
           <div className="ml-6 pl-1 border-l-2 border-transparent">
@@ -266,8 +300,14 @@ export function TranslationPipeline({
             <span className={`text-[10px] font-semibold uppercase tracking-widest transition-colors ${
               isLive ? "text-violet-400" : "text-white/20"
             }`}>
-              {isLive ? "IA Local · Procesando..." : "IA Local (Offline/Idle)"}
+              {status === "capturing" ? "Enviando payload .srt…" : isLive ? "Generando traducción SRT…" : status === "done" ? MODEL_LABEL[modelUsed] : "Modelo IA"}
             </span>
+
+            {(status === "capturing" || isLive) && (
+              <span className="text-[9px] text-violet-400/55 shrink-0 flex items-center gap-1">
+                {localConnected ? <><Database size={7} />Local</> : apiKey1.trim() ? <><Key size={7} />Gemini 1</> : apiKey2.trim() ? <><Key size={7} />Gemini 2</> : <><WifiOff size={7} />Mock</>}
+              </span>
+            )}
 
             {/* Done badge */}
             {status === "done" && latency !== null && (
@@ -304,7 +344,7 @@ export function TranslationPipeline({
               status === "done" ? "text-emerald-400" :
               isLive            ? "text-violet-300"  : "text-white/20"
             }`}>
-              {isLive ? "Traduciendo..." : "Subtítulo Generado"}
+              {status === "capturing" ? "Preparando salida…" : isLive ? "Traduciendo SRT…" : status === "done" ? "SRT Español · Completo" : "Salida .srt"}
             </span>
           </div>
 
@@ -374,6 +414,62 @@ export function TranslationPipeline({
           </div>
         </div>
       )}
+
+      <div className="rounded-xl border border-white/6 bg-[#0d0e0f] overflow-hidden">
+        <button
+          onClick={() => setShowPrompt((value) => !value)}
+          className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white/3 transition-colors"
+        >
+          <span className="text-white/35 text-[9px] uppercase tracking-widest flex-1 text-left" style={{ fontWeight: 600 }}>
+            Prompt de traducción
+          </span>
+          <span className="text-violet-400/50 text-[9px]">
+            {showPrompt ? "ocultar" : "ver →"}
+          </span>
+          <motion.div animate={{ rotate: showPrompt ? 180 : 0 }} transition={{ duration: 0.2 }}>
+            <ChevronDown size={11} className="text-white/25" />
+          </motion.div>
+        </button>
+
+        <AnimatePresence>
+          {showPrompt && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="border-t border-white/5">
+                <div className="flex items-center justify-between px-3 py-2">
+                  <p className="text-white/22 text-[9px]">
+                    Copia y pega en Gemini · ChatGPT · Claude
+                  </p>
+                  <button
+                    onClick={handleCopyPrompt}
+                    className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border transition-all ${
+                      promptCopied
+                        ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/8"
+                        : "text-white/35 hover:text-white/65 border-white/8 hover:border-white/18"
+                    }`}
+                    style={{ fontWeight: 600 }}
+                  >
+                    {promptCopied ? <><Check size={9} />Copiado</> : <><Copy size={9} />Copiar</>}
+                  </button>
+                </div>
+
+                <div className="px-3 pb-3">
+                  <div className="rounded-lg border border-white/6 bg-[#070809] overflow-hidden">
+                    <pre className="px-3 py-2.5 text-[9px] text-white/45 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
+                      {TRANSLATION_PROMPT}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

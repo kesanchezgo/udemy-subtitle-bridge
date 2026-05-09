@@ -110,7 +110,7 @@ const BLOOM_STYLE: Record<ConfidenceLevel, string> = {
   mastered: 'border-violet-500/20 bg-violet-500/10 text-violet-400',
 };
 
-const FLOW_STEPS = ['Conceptos', 'Calibrar', 'Verificar', 'Aplicar', 'Anki'] as const;
+const FLOW_STEPS = ['Mi nivel', 'Lo que vi', '¿Lo sé?', 'Practícalo', 'No olvidar'] as const;
 
 const FALLBACK_QUESTION = {
   q: '¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada.',
@@ -173,7 +173,14 @@ function StudyStepBadge({
   status: 'pending' | 'active' | 'done';
 }) {
   return (
-    <div className="usb-study-step flex min-w-0 flex-1 flex-col items-center gap-1">
+    <div className="usb-study-step relative flex min-w-0 flex-1 flex-col items-center gap-1">
+      {status === 'active' ? (
+        <motion.div
+          layoutId="usb-study-active-glow"
+          className="absolute top-0 h-8 w-8 rounded-full bg-violet-500/20 blur-xl pointer-events-none"
+          transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+        />
+      ) : null}
       <div className="flex w-full items-center">
         {index > 0 ? <StepConnectorLine filled={status !== 'pending'} /> : null}
         <div
@@ -452,7 +459,7 @@ export function StudyAgentTab() {
   };
 
   return (
-    <div className="usb-study">
+    <div className="usb-study flex-1 min-h-0 overflow-y-auto pr-1 pb-3">
       <article className="usb-study-hero-card">
         <div className="usb-hero-logo">
           <BrainIcon className="usb-hero-icon" />
@@ -462,6 +469,22 @@ export function StudyAgentTab() {
           <div className="usb-hero-desc">5–8 min por video. Preguntas adaptadas a tu nivel. Retención garantizada con Anki.</div>
         </div>
       </article>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-white/6 bg-white/[0.03] px-3 py-2.5">
+        <span className="flex items-center gap-1.5 rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[9px] uppercase tracking-[0.14em] text-violet-300">
+          <SparklesIcon className="h-3 w-3" />
+          Sesión activa
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2.5 py-1 text-[9px] uppercase tracking-[0.14em] text-white/55">
+          Objetivo · {activeGoal.label}
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2.5 py-1 text-[9px] uppercase tracking-[0.14em] text-white/55">
+          Curso · {courseName}
+        </span>
+        <span className="rounded-full border border-white/8 bg-black/20 px-2.5 py-1 text-[9px] uppercase tracking-[0.14em] text-white/55">
+          Clase · {lessonName}
+        </span>
+      </div>
 
       {stage === 'objective' ? (
         <>
@@ -580,7 +603,7 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card">
-            <StepHeader index={1} label="Conceptos clave del video" status="done" subtitle="Asegura la base antes de pasar a las preguntas." />
+            <StepHeader index={1} label="Lo que vi" status="done" subtitle="Asegura la base antes de pasar a las preguntas." />
             {(studyData?.keyConcepts || ['La JVM ejecuta Spring Boot y su ApplicationContext vive en el heap.', 'int nunca es null; Integer sí puede serlo y puede fallar en colecciones.', '== compara referencias; .equals() compara valores.']).map((concept) => (
               <label key={concept} className="usb-check-item">
                 <span className="usb-check-box"><CheckIcon className="usb-check-mark" /></span>
@@ -590,7 +613,7 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card usb-confidence-card">
-            <StepHeader index={2} label="¿Cómo te fue con este video?" status={currentStep > 2 ? 'done' : currentStep === 2 ? 'active' : 'pending'} subtitle="Elige tu nivel para calibrar el siguiente paso del plan de estudio." />
+            <StepHeader index={2} label="Mi nivel" status={currentStep > 2 ? 'done' : currentStep === 2 ? 'active' : 'pending'} subtitle="Elige tu nivel para calibrar el siguiente paso del plan de estudio." />
             <div className="usb-confidence-grid">
               {CONFIDENCE_OPTIONS.map((item) => {
                 const isActive = confidence === item.id;
@@ -617,7 +640,7 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card usb-quiz-card">
-            <StepHeader index={3} label="Verifica tu comprensión" status={currentStep > 3 ? 'done' : currentStep === 3 ? 'active' : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
+            <StepHeader index={3} label="¿Lo sé?" status={currentStep > 3 ? 'done' : currentStep === 3 ? 'active' : 'pending'} subtitle="Responde, mira la pista o revisa la respuesta si te trabas." />
             <div className="usb-quiz-badges">
               <div className={`usb-bloom-badge ${confidence ? BLOOM_STYLE[confidence] : 'border-white/10 bg-white/5 text-white/40'}`}>Bloom · {confidence ? BLOOM_BY_CONFIDENCE[confidence] : (activeQuestion as { bloomLevel?: string }).bloomLevel || 'Aplicar'}</div>
               {confidence ? <div className={`usb-difficulty-badge ${CONFIDENCE_STYLES[confidence]}`}>{DIFFICULTY_LABEL[confidence]}</div> : null}
@@ -734,7 +757,7 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-result-card usb-code-card">
-            <StepHeader index={4} label="Aplícalo en código / situación real" status={currentStep > 4 ? 'done' : currentStep === 4 ? 'active' : 'pending'} subtitle={activeApplication.setup} />
+            <StepHeader index={4} label="Practícalo" status={currentStep > 4 ? 'done' : currentStep === 4 ? 'active' : 'pending'} subtitle={activeApplication.setup} />
             <pre className="usb-code-block">{activeApplication.challenge}</pre>
             <textarea className="usb-answer-box usb-code-answer" placeholder="Escribe tu solución o explicación aquí…" value={codeAnswer} onChange={(e) => setCodeAnswer(e.target.value)} />
             <div className="usb-card-actions">
@@ -819,6 +842,14 @@ export function StudyAgentTab() {
           </section>
 
           <section className="usb-anki-strip">
+            <div className="mb-2.5">
+              <StepHeader
+                index={5}
+                label="No olvidar"
+                status={currentStep === 5 ? 'active' : 'pending'}
+                subtitle="Repasa las tarjetas y exporta el paquete final para fijarlo en memoria."
+              />
+            </div>
             <div className="usb-anki-toprow">
               <span className="usb-anki-chip">{currentAnkiIndex + 1} de {activeAnkiCards.length}</span>
               <span className="usb-anki-chip usb-anki-chip-alt">{activeAnkiCard.tag || 'Spring Boot'}</span>

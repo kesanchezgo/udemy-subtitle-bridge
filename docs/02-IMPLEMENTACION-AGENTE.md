@@ -403,50 +403,145 @@ FASE "generating" CONTIENE:
   "Creando tarjetas Anki optimizadas…"
 - Spinner en el step activo
 
-FASE "result" CONTIENE (en scroll):
-- ProgressStepper: 5 steps (Autocalibrar, Conceptos, Verificar, Aplicar, Anki)
-- Card de relevancia: score + razón
-- Grid de conceptos clave: checkboxes interactivos
-- AUTOCALIBRACIÓN: 4 botones emoji (😕🤔👍🔥)
-- PREGUNTAS ADAPTATIVAS: filtradas por confidence level
+FASE "result" CONTIENE (Focus Navigator — ver §6.4 de doc 03):
+- Sticky header con ProgressStepper (5 steps lineal)
+- Relevance bar mini (siempre visible)
+- FOCUS NAVIGATOR: 1 paso visible a la vez, navegación con dots + Prev/Next
+  - Paso 0: Mi nivel        (4 botones emoji 😕🤔👍🔥 — autocalibración)
+  - Paso 1: Lo que vi       (checkboxes interactivos, mínimo 2 para avanzar)
+  - Paso 2: ¿Lo sé?         (preguntas adaptativas, filtradas por confidence, una a la vez)
+  - Paso 3: Practícalo      (código + textarea + code review IA + QuickWin bonus)
+  - Paso 4: No olvidar      (pregunta de entrevista + tarjetas Anki)
+- Grand completion banner (cuando allStepsComplete)
+
+FOCUS NAVIGATOR — ESTADO REQUERIDO:
+  const [focusStep, setFocusStep] = useState(0);  // paso visible 0-4
+  const [focusDir,  setFocusDir]  = useState(1);   // dirección de slide +1/-1
+
+FOCUS NAVIGATOR — UNLOCK GATES:
+  const stepUnlocked = [
+    true,                   // 0 — siempre
+    confidence !== null,    // 1 — después de calibrar
+    confidence !== null,    // 2 — después de calibrar
+    questionsComplete,      // 3 — después de responder preguntas
+    showApply,              // 4 — showApply = confidence !== null && questionsComplete
+  ] as const;
+
+FOCUS NAVIGATOR — AUTO-AVANCE:
+  // Paso 0→1: al seleccionar confianza (automático)
+  useEffect(() => {
+    if (confidence && focusStep === 0) { setFocusDir(1); setFocusStep(1); }
+  }, [confidence]);
+
+  // Paso ≤2→3: al completar preguntas (automático) + sonido victoria
+  useEffect(() => {
+    if (questionsComplete && focusStep <= 2) { setFocusDir(1); setFocusStep(3); }
+  }, [questionsComplete]);
+
+  // ⚠️ CRÍTICO: Paso 3→4 NO es automático.
+  // El usuario lee el feedback de la IA y decide cuándo avanzar
+  // pulsando "🎯 Fíjalo en memoria →" o "Continuar de todas formas →"
+  // sessionComplete solo activa el banner "¡Sesión completada!" — NO navega.
+
+  // Scroll a top al cambiar de paso — triple-disparo para vencer AnimatePresence
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      });
+    });
+    const t = setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, 350);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); };
+  }, [focusStep]);
+
+  // goToStep también resetea scrollTop síncronamente ANTES del re-render
+  const goToStep = (target: number) => {
+    if (target < 0 || target > 4) return;
+    if (!stepUnlocked[target]) return;
+    if (scrollRef.current) scrollRef.current.scrollTop = 0; // ← CRÍTICO: antes del render
+    setFocusDir(target > focusStep ? 1 : -1);
+    setFocusStep(target);
+  };
+
+FOCUS NAVIGATOR — ANIMACIÓN SLIDE:
+  <AnimatePresence custom={focusDir} mode="wait">
+    <motion.div key={focusStep} custom={focusDir}
+      variants={{
+        enter:  (d) => ({ x: d >= 0 ? 56 : -56, opacity: 0, scale: 0.98 }),
+        center: (_d) => ({ x: 0, opacity: 1, scale: 1 }),
+        exit:   (d) => ({ x: d >= 0 ? -56 : 56, opacity: 0, scale: 0.98 }),
+      }}
+      initial="enter" animate="center" exit="exit"
+      transition={{ type: "spring", stiffness: 380, damping: 34 }}
+    >
+      {focusStep === 0 && <AutocalibraciónStep />}
+      {focusStep === 1 && <ConceptosStep />}
+      {focusStep === 2 && <PreguntasStep />}
+      {focusStep === 3 && <AplicarStep />}
+      {focusStep === 4 && <AnkiEntrevistaStep />}
+    </motion.div>
+  </AnimatePresence>
+
+PREGUNTAS ADAPTATIVAS (paso 2 — "¿Lo sé?"):
   - Solo mostrar preguntas cuya difficulty esté en QUESTIONS_FOR[confidence]
   - Una pregunta a la vez (currentQIdx)
-  - Bloom badge + hint toggle + show answer toggle
+  - Bloom badge + hint toggle (Ver pista / Ocultar pista) + respuesta modelo
   - Textarea para respuesta del estudiante
   - Botón "Evaluar con IA"
   - AIFeedback component (streaming)
-  - Auto-avanzar si rating !== "wrong"
-- DESAFÍO DE CÓDIGO/APLICACIÓN:
-  - Solo visible si questionsComplete === true
+    - Strip contextual (solo para wrong/partial): "Reintentar" + "Ver respuesta"
+    - ⚠️ "Ver pista" fue ELIMINADO del strip de AIFeedback (redundante con el toggle arriba)
+  - NO hay auto-avance de pregunta en pregunta — usuario hace clic "Siguiente"
+  - Escape hatch: "Saltar al desafío práctico" (handleForceComplete)
+    ⚠️ handleForceComplete NO llama scrollToBottom — el scroll-to-top lo maneja goToStep
+
+DESAFÍO DE CÓDIGO/APLICACIÓN (paso 3 — "Practícalo"):
+  - Solo visible si questionsComplete === true (showApply)
   - Setup text + código del challenge (monospace)
-  - Textarea o editor para la respuesta
-  - Botón "Enviar para code review"
+  - Textarea para la respuesta
+  - Botón "Revisar con IA"
   - AIFeedback component (streaming)
-- TARJETAS ANKI:
+  - Toggle "Ver solución"
+  - QuickWin "Llévalo al mundo real · bonus" (content.quickWin) — AQUÍ, no en paso 1
+  - Botón "🎯 Fíjalo en memoria →" / "Continuar de todas formas →" (al terminar eval)
+    → El usuario avanza MANUALMENTE a paso 4; no hay auto-avance
+
+TARJETAS ANKI + ENTREVISTA (paso 4 — "No olvidar"):
+  - Achievement summary (conceptos marcados, preguntas correctas, tiempo sesión)
+  - Pregunta de entrevista con toggle "Estructura de respuesta ideal"
+  - "Próximo paso concreto" (content.nextAction) si showApply
   - AnkiFlipPreview con las cards generadas
-  - Botón "Exportar .txt" → 3 archivos
-  - Botón "Exportar .apkg" → con progress feedback
-  - Badge "Primera vez con este curso" → exporta también CSS y plantilla
+  - Botón ".txt" → 3 archivos (primera vez: + CSS + plantilla)
+  - Botón ".apkg" → buildAnkiApkg + downloadApkg con progress feedback
+  - Sección Anki bloqueada visualmente si !showApply (opacity-60)
 
 SUB-COMPONENTES:
 - StepHeader({ n, label, status, subLabel })
-- AIFeedback({ fb, onRetry })
+- AIFeedback({ fb, onRetry, onShowModel, onClearAnswer })
+  Props: onShowHint fue ELIMINADO del strip (el hint vive como toggle propio en cada pregunta)
 - AnkiFlipPreview({ cards })
 - ProgressStepper({ steps })
+- VerifyDoneReview({ questions, answers, feedbacks, onGoApply })
+  Muestra resumen de resultados cuando questionsComplete === true en paso 2
 
 FUNCIONES CLAVE:
 - generateContent(objectiveId, custom, course, lesson) → StudyContent
   (En MVP: datos mock. En v2: llamar a IA local con el prompt del doc 04)
-- handleEvalQuestion(idx) → evaluateActiveAnswerStream con fallback
-- handleEvalApp() → evaluateCodeSolutionStream con fallback
+- handleEvalQuestion(idx) → evaluateActiveAnswerStream con fallback (NO scrollToBottom al final)
+- handleEvalApp() → evaluateCodeSolutionStream con fallback (NO scrollToBottom — usuario lee el feedback)
+  setSessionComplete(true) al terminar (activa banner "¡Sesión completada!") — NO auto-avanza
 - handleExport() → 3 archivos TXT
 - handleExportApkg() → buildAnkiApkg + downloadApkg
+- handleForceComplete() → setQuestionsComplete(true), toast — NO llama scrollToBottom
 
 PERSISTENCIA (usePersistedState):
 - agent_selected_obj (default: "spring-senisenior")
 - agent_custom_obj (default: "")
 - agent_course_name (default: "Java In-Depth - Udemy")
 - agent_lesson_name (default: "02 - JVM y Tipos de Datos")
+
+NOTA: focusStep y focusDir NO se persisten — se resetean a 0/1 en cada sesión nueva.
 ```
 
 ---
@@ -463,13 +558,20 @@ Props: { n: number; label: string; status: "pending"|"active"|"done"; subLabel?:
 
 **AIFeedback:**
 ```
-Props: { fb: FeedbackState; onRetry?: () => void }
+Props: { fb: FeedbackState; onRetry?: () => void; onShowModel?: () => void; onClearAnswer?: () => void }
 - status=idle: null (no renderizar)
-- status=loading: Loader2 animado + texto "IA local analizando…"
-- status=streaming: borde violeta + texto línea a línea + cursor parpadeante
-- status=done: borde coloreado según rating (verde=correct, ámbar=partial, rojo=wrong)
-- status=error: borde rojo + botón "Reintentar"
-Colores por línea de texto:
+- status=loading: <AIAnalyzingLoader /> (spinner pulsante)
+- status=streaming: borde violeta + texto línea a línea + cursor parpadeante + top bar "IA evaluando tu respuesta"
+- status=done: borde coloreado según rating + Verdict Hero Band (ícono 40px + label + sublabel)
+- status=error: borde rojo + icono WifiOff + botón "Reintentar conexión" (solo 1 bloque — el segundo fue eliminado)
+
+Strip de acciones contextuales (solo visible para wrong/partial, al fondo):
+  "Siguiente paso" label + botones:
+  - rating=wrong + onClearAnswer:  <RotateCcw/> "Reintentar"
+  - onShowModel:                   <BookOpen/>  "Ver respuesta"
+  ⚠️ "Ver pista" fue ELIMINADO del strip (el hint vive como toggle propio encima de la pregunta)
+
+Colores por línea de texto (parseLine):
 - Líneas que empiezan con ✅ → text-emerald-300
 - Líneas que empiezan con ❌ → text-red-300
 - Líneas que empiezan con ⚠️ → text-amber-300
@@ -477,7 +579,12 @@ Colores por línea de texto:
 - Líneas que empiezan con 🎯 → text-violet-300
 - Líneas que empiezan con 🔁 → text-fuchsia-300
 - Líneas que empiezan con 🚀 → text-emerald-400
-- Resto → text-white/80
+- Resto → text-white/50
+
+Efecto de sonido interno al cambiar fb.status → "done":
+- correct/excellent: tone ascendente
+- partial: tono triángulo medio
+- wrong: tono descendente
 ```
 
 **AnkiFlipPreview:**

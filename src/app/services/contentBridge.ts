@@ -1,5 +1,25 @@
 export type BridgeContext = 'content' | 'sidebar' | 'background';
 
+export type OverlayPosition = 'top' | 'center' | 'bottom';
+
+export type OverlayTextColor = 'white' | 'yellow' | 'cyan';
+
+export type OverlayConfig = {
+  show?: boolean;
+  visible?: boolean;
+  enabled?: boolean;
+  autoTranslate?: boolean;
+  showOverlay?: boolean;
+  position?: OverlayPosition;
+  tone?: OverlayTextColor;
+  textColor?: OverlayTextColor;
+  fontSize?: number;
+  opacity?: number;
+  shadowStrength?: number;
+  offsetMs?: number;
+  syncOffset?: number | number[];
+};
+
 export type BridgeMessage = {
   type: string;
   payload?: unknown;
@@ -9,10 +29,6 @@ export type BridgeMessage = {
 
 const CONTENT_EVENT = 'usb_to_content';
 const SIDEBAR_EVENT = 'usb_to_sidebar';
-
-function getChromeApi() {
-  return (globalThis as typeof globalThis & { chrome?: any }).chrome;
-}
 
 function isBrowserFallback() {
   return typeof window !== 'undefined' && typeof window.dispatchEvent === 'function';
@@ -43,21 +59,6 @@ function addFallbackListener(eventName: string, handler: (message: BridgeMessage
 }
 
 async function postBridgeMessage<TResponse = void>(payload: BridgeMessage, fallbackEventName: string): Promise<TResponse | undefined> {
-  const chromeApi = getChromeApi();
-
-  if (chromeApi?.runtime?.sendMessage) {
-    try {
-      const result = chromeApi.runtime.sendMessage(payload);
-      if (result && typeof result.then === 'function') {
-        return await result.catch(() => undefined);
-      }
-    } catch {
-      return undefined;
-    }
-
-    return undefined;
-  }
-
   dispatchFallback(fallbackEventName, payload);
   return undefined;
 }
@@ -73,34 +74,10 @@ export async function sendToSidebar<TResponse = void>(message: BridgeMessage): P
 }
 
 export function onMessageFromContent(handler: (message: BridgeMessage) => void) {
-  const chromeApi = getChromeApi();
-  if (chromeApi?.runtime?.onMessage) {
-    const listener = (message: BridgeMessage) => {
-      if (message?.source === 'content' || message?.target === 'sidebar') {
-        handler(message);
-      }
-    };
-
-    chromeApi.runtime.onMessage.addListener(listener);
-    return () => chromeApi.runtime.onMessage.removeListener(listener);
-  }
-
   return addFallbackListener(SIDEBAR_EVENT, handler);
 }
 
 export function onMessageFromSidebar(handler: (message: BridgeMessage) => void) {
-  const chromeApi = getChromeApi();
-  if (chromeApi?.runtime?.onMessage) {
-    const listener = (message: BridgeMessage) => {
-      if (message?.source === 'sidebar' || message?.target === 'content') {
-        handler(message);
-      }
-    };
-
-    chromeApi.runtime.onMessage.addListener(listener);
-    return () => chromeApi.runtime.onMessage.removeListener(listener);
-  }
-
   return addFallbackListener(CONTENT_EVENT, handler);
 }
 
