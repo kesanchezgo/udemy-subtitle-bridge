@@ -1,22 +1,24 @@
 {
   "manifest_version": 3,
   "name": "Udemy Subtitle Bridge",
-  "description": "Export EN subtitles from Udemy to SRT, import ES SRT, and overlay translated subtitles locally.",
-  "version": "0.1.0",
+  "description": "Captura subtítulos EN de Udemy, los traduce con IA local y superpone la traducción EN → ES en tiempo real. Dock in-page con Shadow DOM: Study Agent, Anki .apkg y cloud sync.",
+  "version": "1.1.0",
   "permissions": [
     "storage",
     "activeTab",
-    "downloads"
+    "downloads",
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
-    "https://www.udemy.com/*",
+    "https://*.udemy.com/*",
+    "https://*.supabase.co/*",
     "https://generativelanguage.googleapis.com/*",
     "http://127.0.0.1:8010/*",
     "http://localhost:8010/*"
   ],
   "action": {
-    "default_title": "Udemy Subtitle Bridge",
-    "default_popup": "src/popup.html"
+    "default_title": "Mostrar/ocultar Subtitle Bridge"
   },
   "background": {
     "service_worker": "src/background.ts",
@@ -25,12 +27,12 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.udemy.com/course/*/learn/lecture/*"
+        "https://*.udemy.com/course/*"
       ],
       "js": [
         "src/content_script.ts"
       ],
-      "run_at": "document_end"
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
@@ -40,7 +42,7 @@
         "src/app/styles/*"
       ],
       "matches": [
-        "https://www.udemy.com/*"
+        "https://*.udemy.com/*"
       ]
     }
   ]

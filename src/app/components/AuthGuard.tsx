@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
-import type { Session } from '@supabase/supabase-js';
+import { Session } from '@supabase/supabase-js';
 import {
   Loader2, Mail, Key, Eye, EyeOff, Cloud, HardDrive, ArrowRight,
   CheckCircle2, LogIn, UserPlus,
@@ -8,14 +8,20 @@ import {
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 import { motion, AnimatePresence } from 'motion/react';
 import { AppLogo } from './AppLogo';
+import { toast } from 'sonner';
 import { celebrate } from './CelebrationOverlay';
+import { useDockTheme } from '../contexts/ThemeContext';
 
 const GUEST_KEY  = 'subtitle_bridge_guest_mode';
 const USB_PREFIX = 'usb_';
 
-async function reverseSyncFromCloud(session: Session): Promise<number> {
-  if (!projectId) return 0;
+function isNetworkSignupFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return err instanceof TypeError || /failed to fetch|networkerror|load failed|err_/i.test(message);
+}
 
+// ─── Cloud → local (reverse sync) ────────────────────────────────────────────
+async function reverseSyncFromCloud(session: Session): Promise<number> {
   const doneKey = `subtitle_bridge_reverse_synced_${session.user.id}`;
   if (localStorage.getItem(doneKey)) return 0;
   try {
@@ -33,15 +39,14 @@ async function reverseSyncFromCloud(session: Session): Promise<number> {
     }
     localStorage.setItem(doneKey, 'true');
     return items.length;
-  } catch (error) {
-    console.error('[AuthGuard] Reverse sync error:', error);
+  } catch (err) {
+    console.error('[AuthGuard] Reverse sync error:', err);
     return 0;
   }
 }
 
+// ─── Local → cloud (upload migration) ────────────────────────────────────────
 async function migrateLocalDataToCloud(session: Session) {
-  if (!projectId) return;
-
   const doneKey = `subtitle_bridge_migrated_${session.user.id}`;
   if (localStorage.getItem(doneKey)) return;
 
@@ -50,26 +55,19 @@ async function migrateLocalDataToCloud(session: Session) {
     const lsKey = localStorage.key(i);
     if (lsKey?.startsWith(USB_PREFIX)) {
       const originalKey = lsKey.slice(USB_PREFIX.length);
-      if (originalKey.startsWith('notes_')) {
-        const raw = localStorage.getItem(lsKey);
-        if (raw) {
-          try {
-            const value = JSON.parse(raw);
-            if (value !== undefined && value !== null && value !== '') {
-              items.push({ key: originalKey, value });
-            }
-          } catch {
-            // skip invalid payloads
+      const raw = localStorage.getItem(lsKey);
+      if (raw) {
+        try {
+          const value = JSON.parse(raw);
+          if (value !== undefined && value !== null && value !== '') {
+            items.push({ key: originalKey, value });
           }
-        }
+        } catch { /* skip */ }
       }
     }
   }
 
-  if (items.length === 0) {
-    localStorage.setItem(doneKey, 'true');
-    return;
-  }
+  if (items.length === 0) { localStorage.setItem(doneKey, 'true'); return; }
 
   try {
     const res = await fetch(
@@ -85,16 +83,17 @@ async function migrateLocalDataToCloud(session: Session) {
       localStorage.setItem(doneKey, 'true');
       celebrate({
         type: 'cloud_synced',
-        title: `${items.length} apunte${items.length !== 1 ? 's' : ''} en la nube`,
-        subtitle: 'Tus datos locales ya están respaldados ☁️',
+        title: `${items.length} elemento${items.length !== 1 ? 's' : ''} en la nube`,
+        subtitle: 'Tu configuración local ya está respaldada ☁️',
         icon: '☁️',
       });
     }
-  } catch (error) {
-    console.error('[AuthGuard] Upload error:', error);
+  } catch (err) {
+    console.error('[AuthGuard] Upload error:', err);
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 export function AuthGuard({
   children,
   onSessionResolved,
@@ -106,99 +105,93 @@ export function AuthGuard({
   ) => React.ReactNode;
   onSessionResolved?: (session: Session | null) => void;
 }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [isGuest, setIsGuest] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [session,   setSession]   = useState<Session | null>(null);
+  const [isGuest,   setIsGuest]   = useState(false);
+  const [loading,   setLoading]   = useState(true);
 
-  const [tab, setTab] = useState<'login' | 'signup'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-  const [signupSuccess, setSignupSuccess] = useState(false);
+  const { t, isSepia } = useDockTheme();
+
+  const [tab,            setTab]            = useState<'login' | 'signup'>('login');
+  const [email,          setEmail]          = useState('');
+  const [password,       setPassword]       = useState('');
+  const [showPassword,   setShowPassword]   = useState(false);
+  const [error,          setError]          = useState('');
+  const [authLoading,    setAuthLoading]    = useState(false);
+  const [signupSuccess,  setSignupSuccess]  = useState(false);
 
   const prevSessionRef = useRef<Session | null | 'unset'>('unset');
 
+  // ── Bootstrap ────────────────────────────────────────────────────────────
   useEffect(() => {
     const guestPref = localStorage.getItem(GUEST_KEY);
     if (guestPref === 'true') {
-      setIsGuest(true);
-      setLoading(false);
-      onSessionResolved?.(null);
-      return;
+      setIsGuest(true); setLoading(false); onSessionResolved?.(null); return;
     }
-
-    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
-      if (s && projectId) {
-        const count = await reverseSyncFromCloud(s);
-        if (count > 0) {
-          celebrate({
+    supabase.auth.getSession()
+      .then(async ({ data: { session: s } }) => {
+        if (s) {
+          const count = await reverseSyncFromCloud(s);
+          if (count > 0) celebrate({
             type: 'cloud_synced',
-            title: `${count} apunte${count !== 1 ? 's' : ''} restaurado${count !== 1 ? 's' : ''}`,
-            subtitle: 'Sincronizado desde la nube ☁️',
+            title: `${count} elemento${count !== 1 ? 's' : ''} restaurado${count !== 1 ? 's' : ''}`,
+            subtitle: 'Configuración sincronizada desde la nube ☁️',
             icon: '⬇️',
           });
         }
-      }
+        setSession(s); setLoading(false); onSessionResolved?.(s);
+      })
+      .catch((err) => {
+        console.error('[AuthGuard] Session bootstrap error:', err);
+        setSession(null);
+        setLoading(false);
+        onSessionResolved?.(null);
+      });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
-      setLoading(false);
-      onSessionResolved?.(s);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      setSession(nextSession);
-      if (nextSession) {
+      if (s) {
+        localStorage.removeItem(GUEST_KEY);
         setIsGuest(false);
+        // Welcome back celebration on sign-in events
         if (event === 'SIGNED_IN') {
-          const name = nextSession.user.email?.split('@')[0] ?? 'estudiante';
+          const name = s.user.email?.split('@')[0] ?? 'estudiante';
           celebrate({
             type: 'login_welcome',
             title: `¡Bienvenido, ${name}!`,
-            subtitle: 'Tus notas y progreso están sincronizados en la nube ☁️',
+            subtitle: 'Tu configuración y tarjetas están sincronizadas en la nube ☁️',
             icon: '👋',
           });
         }
       }
-      onSessionResolved?.(nextSession);
+      onSessionResolved?.(s);
     });
-
     return () => subscription.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── First login → upload migration ───────────────────────────────────────
   useEffect(() => {
-    if (prevSessionRef.current === 'unset') {
-      prevSessionRef.current = session;
-      return;
-    }
-    if (!prevSessionRef.current && session) {
-      void migrateLocalDataToCloud(session);
-    }
+    if (prevSessionRef.current === 'unset') { prevSessionRef.current = session; return; }
+    if (!prevSessionRef.current && session) migrateLocalDataToCloud(session);
     prevSessionRef.current = session;
   }, [session]);
 
-  const requestLogin = () => {
-    localStorage.removeItem(GUEST_KEY);
-    setIsGuest(false);
-  };
-
+  // ── Callbacks ─────────────────────────────────────────────────────────────
+  const requestLogin = () => { localStorage.removeItem(GUEST_KEY); setIsGuest(false); };
   const signOut = async () => {
-    localStorage.removeItem(GUEST_KEY);
-    setIsGuest(false);
-    await supabase.auth.signOut();
-    onSessionResolved?.(null);
+    localStorage.removeItem(GUEST_KEY); setIsGuest(false);
+    await supabase.auth.signOut(); onSessionResolved?.(null);
   };
 
-  const handleAuth = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError('');
-    setAuthLoading(true);
+  // ── Auth handlers ─────────────────────────────────────────────────────────
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(''); setAuthLoading(true);
     try {
       if (tab === 'login') {
-        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInError) throw new Error(signInError.message);
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw new Error(error.message);
       } else {
-        if (projectId && publicAnonKey) {
+        let serverSignupCreated = false;
+        try {
           const res = await fetch(
             `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/signup`,
             {
@@ -209,58 +202,58 @@ export function AuthGuard({
           );
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || `Error ${res.status}`);
+          serverSignupCreated = true;
+        } catch (signupErr) {
+          if (!isNetworkSignupFailure(signupErr)) throw signupErr;
+          console.warn('[AuthGuard] Signup endpoint unreachable; using local auth fallback.', signupErr);
         }
-
-        const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-        if (loginError) {
-          setSignupSuccess(true);
-          setTab('login');
-          setAuthLoading(false);
-          return;
+        if (!serverSignupCreated) {
+          const { error: signupDirectErr } = await supabase.auth.signUp({ email, password });
+          if (signupDirectErr) throw new Error(signupDirectErr.message);
         }
+        const { error: loginErr } = await supabase.auth.signInWithPassword({ email, password });
+        if (loginErr) { setSignupSuccess(true); setTab('login'); setAuthLoading(false); return; }
       }
     } catch (err: any) {
       setError(err.message || 'Error desconocido');
-    } finally {
-      setAuthLoading(false);
-    }
+    } finally { setAuthLoading(false); }
   };
 
   const handleGoogleOAuth = async () => {
-    setError('');
-    setAuthLoading(true);
+    setError(''); setAuthLoading(true);
     try {
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo: window.location.origin },
       });
-      if (oauthError) throw new Error(oauthError.message);
+      if (error) throw new Error(error.message);
     } catch (err: any) {
-      setError(err.message || 'Error al conectar con Google');
-      setAuthLoading(false);
+      setError(err.message || 'Error al conectar con Google'); setAuthLoading(false);
     }
   };
 
   const handleGuest = () => {
-    localStorage.setItem(GUEST_KEY, 'true');
-    setIsGuest(true);
-    onSessionResolved?.(null);
+    localStorage.setItem(GUEST_KEY, 'true'); setIsGuest(true); onSessionResolved?.(null);
   };
 
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[#1a1b1d]">
+      <div className={`flex-1 flex items-center justify-center ${t("bg-[#1a1b1d]", "bg-[#f8f7f6]")}`}>
         <Loader2 className="animate-spin text-violet-500" size={20} />
       </div>
     );
   }
 
+  // ── Authenticated / Guest → render children ───────────────────────────────
   if (session || isGuest) return <>{children(session, requestLogin, signOut)}</>;
 
+  // ── Auth screen — fills the extension sidebar panel completely ────────────
   return (
-    <div className="flex flex-col h-full w-full bg-[#0f1012] overflow-y-auto"
-      style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}
+    <div className={`flex flex-col h-full w-full overflow-y-auto ${t("bg-[#0f1012]", "bg-[#f8f7f6]")}`}
+      style={{ scrollbarWidth: 'thin', scrollbarColor: isSepia ? 'rgba(0,0,0,0.12) transparent' : 'rgba(255,255,255,0.1) transparent' }}
     >
+      {/* Brand header */}
       <div className="flex flex-col items-center pt-7 pb-3 px-5">
         <div className="w-11 h-11 rounded-2xl bg-violet-600/15 border border-violet-500/20 flex items-center justify-center mb-3 shadow-[0_0_28px_rgba(139,92,246,0.18)]">
           <AppLogo size={22} iconOnly />
@@ -269,58 +262,68 @@ export function AuthGuard({
           Subtitle Bridge
         </h2>
         <p className="text-white/35 text-[11px] mt-1 text-center leading-relaxed">
-          Accede para sincronizar tus apuntes<br />en todos tus dispositivos
+          Accede para sincronizar tu progreso<br />en todos tus dispositivos
         </p>
       </div>
 
+      {/* Feature comparison */}
       <div className="px-3 mb-3 grid grid-cols-2 gap-2">
+        {/* Guest */}
         <div className="rounded-xl border border-white/6 bg-white/[0.03] p-2.5 flex flex-col gap-1.5">
           <div className="flex items-center gap-1.5 mb-0.5">
             <HardDrive size={9} className="text-white/30" />
             <span className="text-white/40 text-[9px]" style={{ fontWeight: 600 }}>Sin cuenta</span>
           </div>
-          {['Traducción en vivo', 'Overlay en Udemy', 'Apuntes locales'].map((feature) => (
-            <div key={feature} className="flex items-center gap-1.5">
+          {['Traducción en vivo', 'Overlay en Udemy', 'Tarjetas Anki (local)'].map(f => (
+            <div key={f} className="flex items-center gap-1.5">
               <CheckCircle2 size={8} className="text-emerald-500/60 shrink-0" />
-              <span className="text-white/30 text-[10px]">{feature}</span>
+              <span className="text-white/30 text-[10px]">{f}</span>
             </div>
           ))}
-          {['Sync cross-device', 'Backup nube'].map((feature) => (
-            <div key={feature} className="flex items-center gap-1.5">
+          {['Sync cross-device', 'Backup nube'].map(f => (
+            <div key={f} className="flex items-center gap-1.5">
               <div className="w-2 h-px bg-white/15 shrink-0 ml-px" />
-              <span className="text-white/18 text-[10px]">{feature}</span>
+              <span className="text-white/18 text-[10px]">{f}</span>
             </div>
           ))}
         </div>
-
+        {/* Account */}
         <div className="rounded-xl border border-violet-500/22 bg-violet-500/[0.05] p-2.5 flex flex-col gap-1.5">
           <div className="flex items-center gap-1.5 mb-0.5">
             <Cloud size={9} className="text-violet-400" />
             <span className="text-violet-300/70 text-[9px]" style={{ fontWeight: 600 }}>Con cuenta</span>
           </div>
-          {['Traducción en vivo', 'Overlay en Udemy', 'Apuntes locales', 'Sync cross-device', 'Backup nube'].map((feature) => (
-            <div key={feature} className="flex items-center gap-1.5">
+          {['Traducción en vivo', 'Overlay en Udemy', 'Tarjetas Anki (local)'].map(f => (
+            <div key={f} className="flex items-center gap-1.5">
+              <CheckCircle2 size={8} className="text-emerald-500/60 shrink-0" />
+              <span className="text-white/30 text-[10px]">{f}</span>
+            </div>
+          ))}
+          {['Sync cross-device', 'Backup nube'].map(f => (
+            <div key={f} className="flex items-center gap-1.5">
               <CheckCircle2 size={8} className="text-violet-400 shrink-0" />
-              <span className="text-white/45 text-[10px]">{feature}</span>
+              <span className="text-white/45 text-[10px]">{f}</span>
             </div>
           ))}
         </div>
       </div>
 
+      {/* Auth card — full width */}
       <div className="mx-3 bg-[#141416] border border-white/8 rounded-2xl overflow-hidden">
+        {/* Tabs */}
         <div className="flex border-b border-white/6">
-          {(['login', 'signup'] as const).map((currentTab) => (
+          {(['login', 'signup'] as const).map(tabId => (
             <button
-              key={currentTab}
-              onClick={() => { setTab(currentTab); setError(''); setSignupSuccess(false); }}
+              key={tabId}
+              onClick={() => { setTab(tabId); setError(''); setSignupSuccess(false); }}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] transition-all relative ${
-                tab === currentTab ? 'text-white' : 'text-white/30 hover:text-white/60'
+                tab === tabId ? 'text-white' : 'text-white/30 hover:text-white/60'
               }`}
-              style={{ fontWeight: tab === currentTab ? 600 : 400 }}
+              style={{ fontWeight: tab === tabId ? 600 : 400 }}
             >
-              {currentTab === 'login' ? <LogIn size={11} /> : <UserPlus size={11} />}
-              {currentTab === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
-              {tab === currentTab && (
+              {tabId === 'login' ? <LogIn size={11} /> : <UserPlus size={11} />}
+              {tabId === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+              {tab === tabId && (
                 <motion.div
                   layoutId="authTabLine"
                   className="absolute bottom-0 left-0 right-0 h-[2px] bg-violet-500 rounded-t-full"
@@ -332,6 +335,7 @@ export function AuthGuard({
         </div>
 
         <div className="p-4 space-y-3">
+          {/* Banners */}
           <AnimatePresence>
             {signupSuccess && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
@@ -350,6 +354,7 @@ export function AuthGuard({
             )}
           </AnimatePresence>
 
+          {/* Google */}
           <button type="button" onClick={handleGoogleOAuth} disabled={authLoading}
             className="w-full flex items-center justify-center gap-2 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/12 hover:border-white/20 text-white/70 hover:text-white text-[11px] transition-all disabled:opacity-40"
             style={{ fontWeight: 500 }}>
@@ -372,7 +377,7 @@ export function AuthGuard({
             <div className="relative">
               <Mail size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
               <input type="email" required autoComplete="email" value={email}
-                onChange={(event) => { setEmail(event.target.value); setError(''); }}
+                onChange={e => { setEmail(e.target.value); setError(''); }}
                 className="w-full bg-white/5 border border-white/8 rounded-lg py-2 pl-8 pr-3 text-[12px] text-white placeholder:text-white/20 focus:outline-none focus:border-violet-500/60 focus:bg-white/7 transition-all"
                 placeholder="correo@ejemplo.com" />
             </div>
@@ -380,10 +385,11 @@ export function AuthGuard({
               <Key size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
               <input type={showPassword ? 'text' : 'password'} required
                 autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
-                value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }}
+                minLength={tab === 'signup' ? 6 : undefined}
+                value={password} onChange={e => { setPassword(e.target.value); setError(''); }}
                 className="w-full bg-white/5 border border-white/8 rounded-lg py-2 pl-8 pr-8 text-[12px] text-white placeholder:text-white/20 focus:outline-none focus:border-violet-500/60 focus:bg-white/7 transition-all"
                 placeholder={tab === 'signup' ? 'Mínimo 6 caracteres' : 'Contraseña'} />
-              <button type="button" onClick={() => setShowPassword((value) => !value)}
+              <button type="button" onClick={() => setShowPassword(v => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/50 transition-colors">
                 {showPassword ? <EyeOff size={12} /> : <Eye size={12} />}
               </button>
@@ -398,6 +404,7 @@ export function AuthGuard({
         </div>
       </div>
 
+      {/* Guest CTA */}
       <div className="flex items-center gap-2 mx-3 my-3">
         <div className="flex-1 h-px bg-white/6" />
         <span className="text-white/20 text-[10px]">sin cuenta</span>
