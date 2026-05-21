@@ -1,14 +1,21 @@
+// ─── Debug Store ──────────────────────────────────────────────────────────────
+// Singleton event bus for the Dev tab.
+// Collects SSE token chunks, per-token latencies and translation cache entries
+// emitted by localAI.ts and TranslationPipeline.tsx.
+
 export interface SSEToken {
   token: string;
   accumulated: string;
+  /** ms elapsed since the previous token (or request start for first token) */
   deltaMs: number;
   timestamp: number;
 }
 
-export type RequestStatus = 'streaming' | 'done' | 'error' | 'aborted';
+export type RequestStatus = "streaming" | "done" | "error" | "aborted";
 
 export interface DebugRequest {
   id: string;
+  /** e.g. 'translate' | 'eval-question' | 'eval-code' */
   context: string;
   startTs: number;
   tokens: SSEToken[];
@@ -26,98 +33,102 @@ export interface CacheEntry {
   timestamp: number;
 }
 
-const MAX_REQUESTS = 20;
-const MAX_CACHE = 80;
+const MAX_REQUESTS = 15;
+const MAX_CACHE    = 60;
 
 class DebugStore {
-  requests: DebugRequest[] = [];
+  requests: DebugRequest[]  = [];
   cacheEntries: CacheEntry[] = [];
   private listeners = new Set<() => void>();
 
-  subscribe(listener: () => void) {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+  // ── Subscription ──────────────────────────────────────────────────────────
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
   }
 
-  private notify() {
-    this.listeners.forEach((listener) => listener());
+  private notify(): void {
+    this.listeners.forEach((fn) => fn());
   }
 
-  startRequest(id: string, context: string) {
-    const request: DebugRequest = {
+  // ── Request lifecycle ─────────────────────────────────────────────────────
+  startRequest(id: string, context: string): void {
+    // A retry or mock fallback may reuse a generated id during fast abort/retry cycles.
+    // Keep the newest lifecycle authoritative instead of showing duplicate rows.
+    this.requests = this.requests.filter((r) => r.id !== id);
+    const req: DebugRequest = {
       id,
       context,
       startTs: performance.now(),
-      tokens: [],
-      status: 'streaming'
+      tokens:  [],
+      status:  "streaming",
     };
-
-    this.requests = [request, ...this.requests.slice(0, MAX_REQUESTS - 1)];
+    this.requests = [req, ...this.requests.slice(0, MAX_REQUESTS - 1)];
     this.notify();
   }
 
-  addToken(id: string, token: string, accumulated: string) {
-    const request = this.requests.find((item) => item.id === id);
-    if (!request) {
-      return;
-    }
-
-    const previous = request.tokens.length ? request.tokens[request.tokens.length - 1] : undefined;
-    const previousTs = previous ? previous.timestamp : request.startTs;
-    const now = performance.now();
-
-    request.tokens.push({
+  addToken(id: string, token: string, accumulated: string): void {
+    const req = this.requests.find((r) => r.id === id);
+    if (!req) return;
+    if (req.status !== "streaming") req.status = "streaming";
+    const prev   = req.tokens.length > 0 ? req.tokens[req.tokens.length - 1] : undefined;
+    const prevTs = prev ? prev.timestamp : req.startTs;
+    const now    = performance.now();
+    req.tokens.push({
       token,
       accumulated,
-      deltaMs: Math.round(now - previousTs),
-      timestamp: now
+      deltaMs:   Math.max(0, Math.round(now - prevTs)),
+      timestamp: now,
     });
     this.notify();
   }
 
-  endRequest(id: string, success: boolean, aborted = false) {
-    const request = this.requests.find((item) => item.id === id);
-    if (!request) {
-      return;
-    }
-
-    request.totalMs = Math.round(performance.now() - request.startTs);
-    request.totalTokens = request.tokens.length;
-    request.success = success;
-    request.status = aborted ? 'aborted' : success ? 'done' : 'error';
+  endRequest(id: string, success: boolean, aborted = false): void {
+    const req = this.requests.find((r) => r.id === id);
+    if (!req) return;
+    req.totalMs     = Math.round(performance.now() - req.startTs);
+    req.totalTokens = req.tokens.length;
+    req.success     = success;
+    req.status      = aborted ? "aborted" : success ? "done" : "error";
     this.notify();
   }
 
-  addCacheEntry(entry: CacheEntry) {
+  // ── Cache tracking ────────────────────────────────────────────────────────
+  addCacheEntry(entry: CacheEntry): void {
     this.cacheEntries = [entry, ...this.cacheEntries.slice(0, MAX_CACHE - 1)];
     this.notify();
   }
 
-  clear() {
-    this.requests = [];
+  // ── Utility ───────────────────────────────────────────────────────────────
+  clear(): void {
+    this.requests    = [];
     this.cacheEntries = [];
     this.notify();
   }
 
-  getLatestStats() {
-    const latest = this.requests.find((item) => item.status === 'done' || item.status === 'aborted');
-    if (!latest || latest.tokens.length === 0) {
-      return null;
-    }
-
-    const deltas = latest.tokens.map((item) => item.deltaMs).filter((delta) => delta > 0);
-    const avg = deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : 0;
-    const total = latest.totalMs ?? 0;
-
+  /** Derived stats for the most recent completed request */
+  getLatestStats(): {
+    avgDeltaMs: number;
+    minDeltaMs: number;
+    maxDeltaMs: number;
+    tokenCount: number;
+    totalMs: number;
+    tokensPerSec: number;
+  } | null {
+    const done = this.requests.find((r) => r.status === "done" || r.status === "aborted");
+    if (!done || done.tokens.length === 0) return null;
+    const deltas   = done.tokens.map((t) => t.deltaMs).filter((d) => d > 0);
+    const safeDeltas = deltas.length > 0 ? deltas : [0];
+    const avg      = safeDeltas.reduce((a, b) => a + b, 0) / safeDeltas.length;
+    const total    = done.totalMs ?? 0;
+    const tps      = total > 0 ? Math.round((done.tokens.length / total) * 1000 * 10) / 10 : 0;
     return {
-      avgDeltaMs: Math.round(avg),
-      minDeltaMs: deltas.length ? Math.min(...deltas) : 0,
-      maxDeltaMs: deltas.length ? Math.max(...deltas) : 0,
-      tokenCount: latest.tokens.length,
-      totalMs: total,
-      tokensPerSec: total > 0 ? Math.round((latest.tokens.length / total) * 1000 * 10) / 10 : 0
+      avgDeltaMs:  Math.round(avg),
+      minDeltaMs:  Math.min(...safeDeltas),
+      maxDeltaMs:  Math.max(...safeDeltas),
+      tokenCount:  done.tokens.length,
+      totalMs:     total,
+      tokensPerSec: tps,
     };
   }
 }

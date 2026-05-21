@@ -81,9 +81,9 @@ export async function initGeminiKeys(): Promise<void> {
       const g = globalThis as GeminiGlobal;
 
       const keys = result[STORAGE_KEY];
-      if (Array.isArray(keys) && keys.length > 0) {
-        g.USB_GEMINI_API_KEYS = normalizeGeminiKeys(keys.map(String));
-      }
+      g.USB_GEMINI_API_KEYS = Array.isArray(keys)
+        ? normalizeGeminiKeys(keys.map(String))
+        : [];
 
       const model = result[STORAGE_MODEL_KEY];
       if (typeof model === 'string' && model.trim()) {

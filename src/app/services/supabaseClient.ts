@@ -1,4 +1,5 @@
-import type { Session } from '@supabase/supabase-js';
+import { createClient, type Session } from '@supabase/supabase-js';
+import { publicAnonKey, supabaseUrl } from '../../../utils/supabase/info';
 
 type AuthListener = (event: string, session: Session | null) => void;
 
@@ -14,48 +15,69 @@ type OAuthOptions = {
   };
 };
 
+type AuthResult = {
+  data: {
+    session: Session | null;
+    user: Session['user'] | null;
+  };
+  error: { message: string } | null;
+};
+
+type AuthClientSubset = {
+  auth: {
+    getSession(): Promise<{ data: { session: Session | null }; error: { message: string } | null }>;
+    onAuthStateChange(callback: AuthListener): {
+      data: {
+        subscription: {
+          unsubscribe(): void;
+        };
+      };
+    };
+    signInWithPassword(credentials: PasswordCredentials): Promise<AuthResult>;
+    signInWithOAuth(options: OAuthOptions): Promise<{ data: unknown; error: { message: string } | null }>;
+    signUp(credentials: PasswordCredentials): Promise<AuthResult>;
+    signOut(): Promise<{ error: { message: string } | null }>;
+  };
+};
+
 const STORAGE_KEY = 'usb_mock_supabase_session';
 const listeners = new Set<AuthListener>();
 
-function readSession(): Session | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
+const hasSupabaseConfig =
+  /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) &&
+  publicAnonKey.length > 20;
 
+function readSession(): Session | null {
+  if (typeof window === 'undefined') return null;
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return null;
-  }
+  if (!raw) return null;
 
   try {
     return JSON.parse(raw) as Session;
   } catch {
+    window.localStorage.removeItem(STORAGE_KEY);
     return null;
   }
 }
 
 function writeSession(session: Session | null) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
+  if (typeof window === 'undefined') return;
   if (session) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
     return;
   }
-
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
 function notify(event: string, session: Session | null) {
-  for (const listener of listeners) {
-    listener(event, session);
-  }
+  for (const listener of listeners) listener(event, session);
 }
 
-function createSession(email: string, provider: string): Session {
+function createMockSession(email: string, provider: string): Session {
   const now = new Date().toISOString();
-  const userId = `usb_${provider}_${email.replace(/[^a-z0-9]+/gi, '_').toLowerCase() || 'guest'}`;
+  const safeEmail = email.trim().toLowerCase() || `${provider}@local.test`;
+  const userId = `usb_${provider}_${safeEmail.replace(/[^a-z0-9]+/gi, '_')}`;
+
   return {
     access_token: `mock_${provider}_${Date.now()}`,
     refresh_token: `mock_refresh_${Date.now()}`,
@@ -66,7 +88,7 @@ function createSession(email: string, provider: string): Session {
       id: userId,
       aud: 'authenticated',
       role: 'authenticated',
-      email,
+      email: safeEmail,
       phone: '',
       created_at: now,
       updated_at: now,
@@ -78,7 +100,7 @@ function createSession(email: string, provider: string): Session {
   } as Session;
 }
 
-export const supabase = {
+const mockSupabase: AuthClientSubset = {
   auth: {
     async getSession() {
       return { data: { session: readSession() }, error: null };
@@ -98,13 +120,20 @@ export const supabase = {
       };
     },
     async signInWithPassword(credentials: PasswordCredentials) {
-      const session = createSession(credentials.email, 'email');
+      const session = createMockSession(credentials.email, 'email');
       writeSession(session);
       notify('SIGNED_IN', session);
       return { data: { session, user: session.user }, error: null };
     },
     async signInWithOAuth(options: OAuthOptions) {
-      const session = createSession(`${options.provider}@oauth.local`, options.provider);
+      const provider = options.provider || 'oauth';
+      const session = createMockSession(`${provider}@oauth.local`, provider);
+      writeSession(session);
+      notify('SIGNED_IN', session);
+      return { data: { session, user: session.user }, error: null };
+    },
+    async signUp(credentials: PasswordCredentials) {
+      const session = createMockSession(credentials.email, 'email');
       writeSession(session);
       notify('SIGNED_IN', session);
       return { data: { session, user: session.user }, error: null };
@@ -116,3 +145,16 @@ export const supabase = {
     },
   },
 };
+
+const realSupabase = hasSupabaseConfig
+  ? createClient(supabaseUrl, publicAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    })
+  : null;
+
+export const isUsingMockSupabase = !realSupabase;
+export const supabase = (realSupabase ?? mockSupabase) as unknown as AuthClientSubset;

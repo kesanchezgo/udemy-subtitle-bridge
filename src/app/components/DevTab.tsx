@@ -24,10 +24,13 @@ function msBgColor(ms: number): string {
 }
 
 function contextPill(ctx: string) {
+  const isMock = ctx.endsWith(":mock");
+  const baseCtx = isMock ? ctx.replace(/:mock$/, "") : ctx;
   const map: Record<string, string> = {
     "translate":    "bg-sky-500/15 text-sky-400 border-sky-500/25",
     "eval-question":"bg-violet-500/15 text-violet-400 border-violet-500/25",
     "eval-code":    "bg-emerald-500/15 text-emerald-400 border-emerald-500/25",
+    "mock":         "bg-amber-500/12 text-amber-400 border-amber-500/22",
     "unknown":      "bg-white/8 text-white/35 border-white/12",
   };
   const labels: Record<string, string> = {
@@ -36,7 +39,10 @@ function contextPill(ctx: string) {
     "eval-code":    "eval·code",
     "unknown":      "?",
   };
-  return { cls: map[ctx] ?? map.unknown, label: labels[ctx] ?? ctx };
+  if (isMock) {
+    return { cls: map.mock, label: `${labels[baseCtx] ?? baseCtx}·mock` };
+  }
+  return { cls: map[baseCtx] ?? map.unknown, label: labels[baseCtx] ?? baseCtx };
 }
 
 // Micro histogram bar
@@ -67,6 +73,7 @@ function RequestCard({ req, expanded, onToggle }: {
   const avgDelta = deltas.length ? Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length) : 0;
   const tps = req.totalMs && req.tokens.length
     ? Math.round((req.tokens.length / req.totalMs) * 1000 * 10) / 10 : null;
+  const lastAccumulated = req.tokens.length > 0 ? req.tokens[req.tokens.length - 1].accumulated : "";
 
   // Auto-scroll the token stream container while streaming
   const chunkScrollRef = useRef<HTMLDivElement>(null);
@@ -83,8 +90,6 @@ function RequestCard({ req, expanded, onToggle }: {
     req.status === "aborted"   ? <RefreshCcw size={11} className="text-amber-400"/> :
                                   <AlertCircle size={11} className="text-red-400"/>;
 
-  const latestToken = req.tokens.length > 0 ? req.tokens[req.tokens.length - 1] : null;
-
   return (
     <div className={`border rounded-xl overflow-hidden transition-colors duration-300 ${expanded ? "bg-[#18181b] border-white/10 shadow-lg" : "bg-[#121214] border-white/5 hover:border-white/10"}`}>
       <button
@@ -94,7 +99,7 @@ function RequestCard({ req, expanded, onToggle }: {
         {statusIcon}
         <span className={`text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded border ${cls}`}>{label}</span>
         <span className="text-white/40 text-[11px] font-mono flex-1 truncate">
-          {latestToken ? latestToken.accumulated.slice(0, 45) + (latestToken.accumulated.length > 45 ? "…" : "") : "—"}
+          {req.tokens.length > 0 ? lastAccumulated.slice(0, 45) + (lastAccumulated.length > 45 ? "…" : "") : "—"}
         </span>
         <div className="flex items-center gap-3 shrink-0">
           {req.totalMs && <span className="text-[10px] text-white/30 font-mono">{req.totalMs}ms</span>}
@@ -218,10 +223,18 @@ export function DevTab() {
   // Auto-expand the latest streaming request
   useEffect(() => {
     const latest = debugStore.requests[0];
+    if (!latest) {
+      setExpandedId(null);
+      return;
+    }
     if (latest && latest.status === "streaming") {
       setExpandedId(latest.id);
     }
-  }, [debugStore.requests.length]);
+  }, [
+    debugStore.requests.length,
+    debugStore.requests[0]?.id,
+    debugStore.requests[0]?.status,
+  ]);
 
   const stats = debugStore.getLatestStats();
   const requests = debugStore.requests;
@@ -229,9 +242,6 @@ export function DevTab() {
 
   const totalRequests = requests.length;
   const streaming = requests.find(r => r.status === "streaming");
-  const activeCount = requests.filter((request) => request.status === "streaming").length;
-  const completedCount = requests.filter((request) => request.status === "done").length;
-  const abortedCount = requests.filter((request) => request.status === "aborted").length;
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
@@ -253,24 +263,6 @@ export function DevTab() {
         >
           <Trash2 size={8}/>Limpiar
         </button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/6 bg-white/[0.03] px-2.5 py-2">
-        <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[8px] uppercase tracking-widest text-violet-300">
-          Dev activo
-        </span>
-        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
-          SSE · {totalRequests}
-        </span>
-        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
-          Stream · {activeCount}
-        </span>
-        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
-          Done · {completedCount}
-        </span>
-        <span className="rounded-full border border-white/8 bg-black/20 px-2 py-0.5 text-[8px] uppercase tracking-widest text-white/50">
-          Abort · {abortedCount}
-        </span>
       </div>
 
       {/* ── Latest request stats strip ────────────────────────────────────── */}
@@ -298,15 +290,15 @@ export function DevTab() {
       )}
 
       {/* ── Section toggle ────────────────────────────────────────────────── */}
-      <div className="flex gap-1 rounded-xl border border-white/6 bg-[#0d0e0f] p-1">
+      <div className="flex gap-1">
         {(["sse", "cache"] as const).map(s => (
           <button
             key={s}
             onClick={() => setActiveSection(s)}
             className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] transition-all ${
               activeSection === s
-                ? "bg-white/8 text-white/75 border border-white/10 shadow-sm"
-                : "text-white/28 hover:text-white/55 hover:bg-white/5"
+                ? "bg-white/7 text-white/70 border border-white/12"
+                : "text-white/28 hover:text-white/50 hover:bg-white/4"
             }`}
           >
             {s === "sse"

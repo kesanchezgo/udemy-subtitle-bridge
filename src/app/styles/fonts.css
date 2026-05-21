@@ -1,0 +1,13 @@
+:root,
+:host {
+  --usb-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--usb-font-sans);
+}

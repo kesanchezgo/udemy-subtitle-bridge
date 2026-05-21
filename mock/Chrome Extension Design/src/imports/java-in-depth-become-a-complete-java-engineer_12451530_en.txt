@@ -1,0 +1,343 @@
+1
+00:00:09,680 --> 00:00:17,200
+A problem many software engineers are facing today is in writing good, clean, and well-designed code.
+
+2
+00:00:17,880 --> 00:00:25,120
+The code works correctly and perhaps efficiently too, but due to poor design, the code is not maintainable.
+
+3
+00:00:25,600 --> 00:00:31,840
+That is, it is not easy to understand, and if it is not easy to understand, it is not easily extendable.
+
+4
+00:00:32,640 --> 00:00:36,360
+That's the maintenance problem and it can be a huge nightmare.
+
+5
+00:00:37,080 --> 00:00:44,760
+By poor design I mean not following proper design principles and best practices, and this often leads
+
+6
+00:00:44,760 --> 00:00:52,280
+to several rounds of code refactoring or code enhancement, due to which there is loss of valuable time
+
+7
+00:00:52,280 --> 00:00:53,040
+for the company.
+
+8
+00:00:53,880 --> 00:01:00,640
+So with every software release, instead of adding new features, a significant amount of time is spent
+
+9
+00:01:00,640 --> 00:01:04,160
+on refactoring the badly designed code.
+
+10
+00:01:05,080 --> 00:01:08,800
+To a large extent, this has to do with the way we are taught programming.
+
+11
+00:01:09,160 --> 00:01:10,720
+And there are three limitations here.
+
+12
+00:01:11,240 --> 00:01:17,400
+First, limitation is most courses are good at teaching the language fundamentals, but they are still
+
+13
+00:01:17,400 --> 00:01:21,720
+not comprehensive enough and miss out on several important features.
+
+14
+00:01:22,320 --> 00:01:26,520
+Or even if they do discuss them, they're still not in-depth enough.
+
+15
+00:01:27,280 --> 00:01:33,880
+Many times the focus is on teaching the syntax of a particular feature, but why that particular feature
+
+16
+00:01:33,880 --> 00:01:36,320
+is being taught is not clearly explained.
+
+17
+00:01:36,880 --> 00:01:40,000
+So the motivation or the purpose is being missed out here.
+
+18
+00:01:40,600 --> 00:01:44,160
+Now the second limitation is perhaps the most important one.
+
+19
+00:01:44,640 --> 00:01:50,960
+Almost always, they never teach best practices and design principles which are essential for writing
+
+20
+00:01:51,080 --> 00:01:52,240
+high quality code.
+
+21
+00:01:53,120 --> 00:01:55,600
+The third limitation is also very important.
+
+22
+00:01:55,920 --> 00:02:02,840
+Most of these courses do not include an instructor led project that follows professional coding conventions,
+
+23
+00:02:03,360 --> 00:02:07,640
+although concepts are demonstrated via small demo programs.
+
+24
+00:02:07,800 --> 00:02:08,840
+But that's not enough.
+
+25
+00:02:09,440 --> 00:02:16,160
+So due to these three limitations, what we have is a sort of incomplete engineer who is pretty good
+
+26
+00:02:16,160 --> 00:02:22,400
+at working on small to medium sized projects, but falls short when it comes to implementing large,
+
+27
+00:02:22,400 --> 00:02:23,520
+complex features.
+
+28
+00:02:24,000 --> 00:02:29,880
+And this affects his or her confidence levels and also puts a lot of stress on that individual.
+
+29
+00:02:30,520 --> 00:02:36,200
+Now, this comprehensive master course aims to address the shortcomings in the current courses, and
+
+30
+00:02:36,200 --> 00:02:41,760
+the main goal of this course is to help you become a complete Java engineer right by the end of this
+
+31
+00:02:41,760 --> 00:02:48,440
+course, and to also help you fall in love with this incredible and robust programming language, which
+
+32
+00:02:48,480 --> 00:02:55,760
+for over 25 years has been helping companies to solve some really complex problems on a complete Java
+
+33
+00:02:55,760 --> 00:03:00,680
+engineer, someone who has a comprehensive understanding of the Java language, along with the many
+
+34
+00:03:00,720 --> 00:03:06,080
+design principles, best practices, and professional coding conventions for building well-designed
+
+35
+00:03:06,080 --> 00:03:06,720
+software.
+
+36
+00:03:07,600 --> 00:03:14,080
+This course has already helped tens of thousands of students across over 150 countries, ranging from
+
+37
+00:03:14,120 --> 00:03:18,200
+absolute beginners to even experienced Java professionals.
+
+38
+00:03:18,960 --> 00:03:24,360
+Many top companies are also using this course content as part of their official training programs,
+
+39
+00:03:24,520 --> 00:03:28,440
+and many universities are also using it as a reference material.
+
+40
+00:03:28,880 --> 00:03:36,360
+It is truly one of the top Java courses out there, and it takes a holistic approach to teach Java programming.
+
+41
+00:03:36,800 --> 00:03:41,000
+It covers most of the language features in a very in-depth way.
+
+42
+00:03:41,360 --> 00:03:48,000
+Everything from language basics to object oriented design to advanced topics like multithreading, database
+
+43
+00:03:48,000 --> 00:03:50,480
+programming, and functional style programming.
+
+44
+00:03:50,480 --> 00:03:54,440
+Features like lambdas and streams are discussed in great detail.
+
+45
+00:03:54,840 --> 00:04:02,040
+It's not just syntax, but motivation behind introducing these features is also discussed, and a highlight
+
+46
+00:04:02,080 --> 00:04:08,560
+of this course is we discuss several best practices and design principles that a good software engineer
+
+47
+00:04:08,560 --> 00:04:09,640
+is ought to know.
+
+48
+00:04:10,040 --> 00:04:16,280
+Many design principles outlined in the popular Effective Java book are also discussed, and many of
+
+49
+00:04:16,280 --> 00:04:21,280
+them are actually demonstrated in code using our own custom examples.
+
+50
+00:04:21,880 --> 00:04:28,080
+Top engineering teams, like the ones at Amazon or Google would expect you to know these best practices
+
+51
+00:04:28,080 --> 00:04:29,240
+and design rules.
+
+52
+00:04:30,760 --> 00:04:38,000
+Another highlight is that it includes an instructor led project where we develop a real world bookmarking
+
+53
+00:04:38,000 --> 00:04:43,120
+web application using Spring Boot with MySQL as the database.
+
+54
+00:04:43,760 --> 00:04:51,240
+The project is initially built using core web technologies like servlets and JSP, and is then migrated
+
+55
+00:04:51,240 --> 00:04:59,320
+into a modern spring boot application so that you can clearly see the benefits of spring Boot project
+
+56
+00:04:59,320 --> 00:05:05,680
+also follows standards like MVC and TDD, where TDD stands for Test Driven Development.
+
+57
+00:05:06,040 --> 00:05:12,280
+So you are going to gain some good real world experience right from the comfort of your home or the
+
+58
+00:05:12,320 --> 00:05:13,040
+workplace.
+
+59
+00:05:13,600 --> 00:05:16,520
+So these three are the core objectives of this course.
+
+60
+00:05:17,640 --> 00:05:20,280
+Next we use eclipse for writing our programs.
+
+61
+00:05:20,280 --> 00:05:23,320
+And a comprehensive eclipse tutorial is also included.
+
+62
+00:05:23,320 --> 00:05:29,000
+And it teaches you all the things that you need to know as a professional developer, including debugging,
+
+63
+00:05:29,000 --> 00:05:31,280
+Java programs and JUnit testing.
+
+64
+00:05:32,200 --> 00:05:38,240
+Finally, we have a special chapter giving a solid introduction to JVM, which stands for Java Virtual
+
+65
+00:05:38,240 --> 00:05:42,640
+Machine, and it is an incredible platform on which Java programs run.
+
+66
+00:05:43,080 --> 00:05:48,680
+Most courses never discuss this topic, or even if they do, they barely scratch the surface.
+
+67
+00:05:49,520 --> 00:05:55,440
+Furthermore, to help you stay ahead in the industry, we have added bonus sections on the popular Spring
+
+68
+00:05:55,440 --> 00:06:01,120
+Framework and Spring Boot, along with a quick Maven tutorial to get you up and running.
+
+69
+00:06:02,360 --> 00:06:07,920
+Several challenging quizzes and coding exercises are included to validate what you have learned.
+
+70
+00:06:08,480 --> 00:06:14,240
+So together, all of these will help you in becoming a complete Java engineer.
+
+71
+00:06:14,400 --> 00:06:18,400
+And if you are complete, it means you are confident and a happy engineer.
+
+72
+00:06:19,080 --> 00:06:27,200
+Only requirement is to concentrate really well, as over half to one year of your self-study effort
+
+73
+00:06:27,320 --> 00:06:29,440
+is packed into this master course.
+
+74
+00:06:29,920 --> 00:06:32,800
+It is a sort of mini degree in itself.
+
+75
+00:06:33,280 --> 00:06:37,880
+You can reach out to me if you have any questions, and I will respond within a day or so.
+
+76
+00:06:38,240 --> 00:06:41,560
+and my answers are very detailed and personalized too.
+
+77
+00:06:42,120 --> 00:06:45,200
+And over 10,000 questions have already been answered.
+
+78
+00:06:46,080 --> 00:06:50,280
+And finally, this is zero and I'll be your instructor for this course.
+
+79
+00:06:50,720 --> 00:06:55,760
+I'm a passionate software engineer and an educator with a PhD in computer science, and I have several
+
+80
+00:06:55,760 --> 00:07:01,920
+years of experience working as a principal software engineer in and around Silicon Valley, developing
+
+81
+00:07:01,920 --> 00:07:08,920
+complex algorithms in areas such as search, data mining, and data integration, where we deal with
+
+82
+00:07:08,960 --> 00:07:10,360
+tons and tons of data.
+
+83
+00:07:10,360 --> 00:07:15,320
+And I have used Java for this, and I've been using it for a very long time.
+
+84
+00:07:15,800 --> 00:07:19,640
+So I have brought all of this experience into this Java master course.
+
+85
+00:07:20,320 --> 00:07:24,800
+Now, if you have liked what you have just heard from me, and if you want to become a complete Java
+
+86
+00:07:24,800 --> 00:07:30,920
+engineer, then please go ahead and sign up for this course and thank you for your time and have fun.

@@ -1,423 +1,748 @@
-// ─── TranslationPipeline ──────────────────────────────────────────────────────
-// Visualizes the block-based EN → AI → ES subtitle translation pipeline.
-// Uses SSE streaming so the Spanish translation types out token-by-token,
-// exactly as the local AI generates it. Falls back to mock when offline.
+// ─── TranslationPipeline — SRT Batch Mode ─────────────────────────────────────
+// Captura la transcripción .srt completa del video y la traduce de una vez.
+// Fallback: IA Local (8010) → Gemini Key 1 → Gemini Key 2 → Mock
+// ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Zap, TrendingUp, Database, WifiOff, Radio, RefreshCcw, Key, ChevronDown, Copy, Check } from "lucide-react";
-import { translateLineStream } from "../services/localAI";
+import {
+  Zap, TrendingUp, Database, WifiOff, Radio, RefreshCcw,
+  Key, ChevronDown, ChevronRight, Copy, Check,
+} from "lucide-react";
 import { debugStore } from "../services/debugStore";
 import { contentBridge } from "../services/contentBridge";
 
-// ── Fallback translations for offline preview ─────────────────────────────────
-const FALLBACK: Record<string, string> = {
-  "Java is a high-level, object-oriented programming language":
-    "Java es un lenguaje de programación de alto nivel y orientado a objetos",
-  "desarrollado por Sun Microsystems en 1995":
-    "desarrollado por Sun Microsystems en 1995",
-  "que sigue el principio 'Write Once, Run Anywhere'":
-    "que sigue el principio 'escribe una vez, ejecuta en cualquier lugar'",
-  "The JVM (Java Virtual Machine) is what makes this possible":
-    "La JVM (Máquina Virtual de Java) es lo que hace esto posible",
-};
+// ── Real SRT blocks (first 5 from actual course file) ─────────────────────────
+const MOCK_SRT_BLOCKS = [
+  { num: 1,  ts: "00:00:09,680 --> 00:00:17,200", text: "A problem many software engineers are facing today is in writing good, clean, and well-designed code." },
+  { num: 2,  ts: "00:00:17,880 --> 00:00:25,120", text: "The code works correctly and perhaps efficiently too, but due to poor design, the code is not maintainable." },
+  { num: 3,  ts: "00:00:25,600 --> 00:00:31,840", text: "That is, it is not easy to understand, and if it is not easy to understand, it is not easily extendable." },
+  { num: 4,  ts: "00:00:32,640 --> 00:00:36,360", text: "That's the maintenance problem and it can be a huge nightmare." },
+  { num: 5,  ts: "00:00:37,080 --> 00:00:44,760", text: "By poor design I mean not following proper design principles and best practices, and this often leads" },
+];
 
+// Total blocks in the real file
+const TOTAL_BLOCKS = 248;
+
+// ── Mock translated SRT output (exact format the AI would return) ──────────────
+const MOCK_ES_SRT = `1
+00:00:09,680 --> 00:00:17,200
+Un problema que muchos ingenieros de software enfrentan hoy en día es escribir código bueno, limpio y bien diseñado.
+
+2
+00:00:17,880 --> 00:00:25,120
+El código funciona correctamente y quizás también de forma eficiente, pero por un diseño deficiente, no es mantenible.
+
+3
+00:00:25,600 --> 00:00:31,840
+Es decir, no es fácil de entender, y si no es fácil de entender, tampoco es fácilmente extensible.
+
+4
+00:00:32,640 --> 00:00:36,360
+Ese es el problema de mantenimiento y puede convertirse en una pesadilla enorme.
+
+5
+00:00:37,080 --> 00:00:44,760
+Por diseño deficiente me refiero a no seguir los principios de diseño adecuados y las mejores prácticas, lo que a menudo lleva
+
+6
+00:00:44,760 --> 00:00:52,280
+a varias rondas de refactorización o mejora del código, lo que genera una pérdida de tiempo valioso para la empresa.
+
+7
+00:00:52,280 --> 00:00:53,040
+para la empresa.
+
+8
+00:00:53,880 --> 00:01:00,640
+Así que con cada lanzamiento de software, en lugar de agregar nuevas funcionalidades, se invierte una cantidad significativa de tiempo
+
+9
+00:01:00,640 --> 00:01:04,160
+en refactorizar el código mal diseñado.
+
+10
+00:01:05,080 --> 00:01:08,800
+En gran medida, esto tiene que ver con la forma en que nos enseñan a programar.`;
+
+// ── Refined translation prompt ─────────────────────────────────────────────────
 const TRANSLATION_PROMPT = `Actúa como un traductor técnico experto especializado en desarrollo de software. Tu tarea es traducir subtítulos en formato .srt de inglés a español.
 
-Reglas:
-1. Traduce bloque por bloque en el mismo orden.
-2. Conserva los números y marcas de tiempo exactamente.
-3. Devuelve únicamente SRT en texto plano.
-4. Mantén en inglés los nombres de tecnologías y frameworks.
-5. Usa español latino neutro, fluido y natural.`;
+Es CRÍTICO que respetes estas reglas exactamente. Romper cualquiera corromperá el archivo:
 
-// Slow-type a mock translation word-by-word to simulate streaming
-async function mockStream(
-  text: string,
-  onToken: (token: string, acc: string) => void,
-  signal?: AbortSignal
-): Promise<void> {
-  const words = text.split(" ");
+1. SINCRONIZACIÓN ESTRICTA: Traduce bloque a bloque, en el mismo orden. NO unas, no fusiones ni separes texto entre bloques, aunque la oración quede cortada. Cada bloque traducido debe corresponder exactamente al bloque original.
+
+2. FORMATO SRT EXACTO: Estructura por bloque:
+   - Línea 1: Número de secuencia idéntico al original.
+   - Línea 2: Marca de tiempo exacta sin modificar (ej: 00:00:09,680 --> 00:00:17,200).
+   - Línea 3+: Texto traducido. Si el original tiene múltiples líneas de texto, mantén la misma cantidad de líneas.
+   - Exactamente UNA línea en blanco entre bloques.
+
+3. SIN ETIQUETAS NI METADATOS: Devuelve ÚNICAMENTE el SRT en texto plano. Sin \`\`\`srt, sin etiquetas XML, sin comentarios, sin saludos ni despedidas.
+
+4. TÉRMINOS TÉCNICOS EN INGLÉS: Mantén sin traducir: Spring Boot, Spring Cloud, JVM, JPA, REST API, microservices, endpoints, multi-threading, streams, arrays, interfaces, annotations, beans, dependency injection, Hibernate, Maven, Gradle, Docker, Kubernetes, CI/CD, y todo nombre de tecnología o framework.
+
+5. ESPAÑOL NATURAL: Usa español latino neutro, fluido y técnicamente preciso. Evita calcos del inglés.
+
+[PEGA TU TEXTO SRT AQUÍ]`;
+
+// ── SRT line type detector & renderer ─────────────────────────────────────────
+type LineType = "number" | "timestamp" | "text" | "empty";
+
+function getSrtLineType(line: string): LineType {
+  if (!line.trim()) return "empty";
+  if (/^\d+$/.test(line.trim())) return "number";
+  if (line.includes("-->")) return "timestamp";
+  return "text";
+}
+
+function SrtOutputLine({ line }: { line: string }) {
+  const type = getSrtLineType(line);
+  if (type === "empty")     return <div className="h-[5px]" />;
+  if (type === "number")    return <p className="text-sky-400/80 text-[9px] font-mono leading-tight mt-1" style={{ fontWeight: 700 }}>{line}</p>;
+  if (type === "timestamp") return <p className="text-amber-400/60 text-[9px] font-mono leading-tight">{line}</p>;
+  return <p className="text-white/75 text-[10px] font-mono leading-relaxed">{line}</p>;
+}
+
+function parseSrtPreviewBlocks(srt: string): typeof MOCK_SRT_BLOCKS {
+  return String(srt || "")
+    .replace(/\r/g, "")
+    .trim()
+    .split(/\n\n+/)
+    .map((block) => block.split("\n").map((line) => line.trim()))
+    .filter((lines) => lines.length >= 3 && lines[1]?.includes("-->"))
+    .map((lines) => ({
+      num: Number(lines[0]) || 0,
+      ts: lines[1],
+      text: lines.slice(2).join(" ").trim(),
+    }))
+    .filter((block) => block.num > 0 && block.text.length > 0);
+}
+
+// Streaming helper
+async function streamWords(text: string, onUpdate: (acc: string) => void, signal?: AbortSignal): Promise<void> {
+  // Show translated SRT progressively by chunks (fast for large texts)
+  const lines = text.split("\n");
+  const totalLines = lines.length;
   let acc = "";
-  for (const word of words) {
+
+  // For small texts (mock-sized), stream word by word for visual effect
+  if (totalLines <= 40) {
+    const tokens = text.split(/( |\n)/);
+    for (const token of tokens) {
+      if (signal?.aborted) return;
+      if (token === " " || token === "\n") {
+        await new Promise<void>(res => setTimeout(res, 18 + Math.random() * 30));
+      } else {
+        await new Promise<void>(res => setTimeout(res, 30 + Math.random() * 50));
+      }
+      if (signal?.aborted) return;
+      acc += token;
+      onUpdate(acc);
+    }
+    return;
+  }
+
+  // For large texts, show in fast line-based chunks (~2-3 seconds total)
+  const chunkSize = Math.max(4, Math.ceil(totalLines / 25));
+  for (let i = 0; i < totalLines; i += chunkSize) {
     if (signal?.aborted) return;
-    await new Promise<void>((res) => setTimeout(res, 45 + Math.random() * 55));
-    if (signal?.aborted) return;
-    acc += (acc ? " " : "") + word;
-    onToken(word, acc);
+    const chunk = lines.slice(i, i + chunkSize).join("\n");
+    acc += (acc ? "\n" : "") + chunk;
+    onUpdate(acc);
+    await new Promise<void>(res => setTimeout(res, 80));
   }
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type PipelineStatus = "idle" | "capturing" | "streaming" | "done";
-
+type BatchPhase = "idle" | "building" | "sending" | "streaming" | "done";
 type ModelSource = "local" | "gemini_k1" | "gemini_k2" | "mock";
 
-interface PipelineEntry {
-  id: string;
-  en: string;
-  es: string;
-  latencyMs: number;
-  usedAI: boolean;
-}
-
 interface TranslationPipelineProps {
-  incomingBlock: string | null;
   autoTranslate: boolean;
   apiKey1?: string;
   apiKey2?: string;
   localConnected?: boolean;
+  capturedLineCount?: number;
+  lectureKey?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function TranslationPipeline({
-  incomingBlock,
   autoTranslate,
   apiKey1 = "",
   apiKey2 = "",
   localConnected = false,
+  capturedLineCount = 0,
+  lectureKey = "",
 }: TranslationPipelineProps) {
-  const [status, setStatus]       = useState<PipelineStatus>("idle");
-  const [currentEn, setCurrentEn] = useState("");
-  const [currentEs, setCurrentEs] = useState("");
-  const [latency, setLatency]     = useState<number | null>(null);
-  const [usedAI, setUsedAI]       = useState(false);
-  const [history, setHistory]     = useState<PipelineEntry[]>([]);
-  const [stats, setStats]         = useState({ total: 0, aiCalls: 0, totalMs: 0 });
-  const [showPrompt, setShowPrompt] = useState(false);
+
+  const [phase, setPhase]               = useState<BatchPhase>("idle");
+  const [blockCount, setBlockCount]     = useState(0);
+  const [visibleBlocks, setVisibleBlocks] = useState<typeof MOCK_SRT_BLOCKS>([]);
+  const [streamedSrt, setStreamedSrt]   = useState("");
+  const [latencyMs, setLatencyMs]       = useState<number | null>(null);
+  const [modelUsed, setModelUsed]       = useState<ModelSource>("local");
+  const [runCount, setRunCount]         = useState(0);
+  const [showPrompt, setShowPrompt]     = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  // Ref to abort in-flight stream when a new block arrives
-  const abortRef  = useRef<AbortController | null>(null);
-  const lastBlock  = useRef<string>("");
+  const abortRef     = useRef<AbortController | null>(null);
+  const hasAutoRun   = useRef(false);
+  const lastRequestedCountRef = useRef(0);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const apiKey1Ref   = useRef(apiKey1);
+  const apiKey2Ref   = useRef(apiKey2);
+  const localRef     = useRef(localConnected);
 
-  const modelUsed: ModelSource = localConnected ? "local" : apiKey1.trim() ? "gemini_k1" : apiKey2.trim() ? "gemini_k2" : "mock";
+  useEffect(() => { apiKey1Ref.current = apiKey1; }, [apiKey1]);
+  useEffect(() => { apiKey2Ref.current = apiKey2; }, [apiKey2]);
+  useEffect(() => { localRef.current = localConnected; }, [localConnected]);
 
-  const MODEL_LABEL: Record<ModelSource, string> = {
-    local: "IA Local · 8010",
-    gemini_k1: "Gemini Flash · Key 1",
-    gemini_k2: "Gemini Flash · Key 2",
-    mock: "Mock · sin conexión",
+  // Lock totalBlocks to the count at the time the pipeline first runs
+  const initialCountRef = useRef(0);
+  if (capturedLineCount > 0 && initialCountRef.current === 0) {
+    initialCountRef.current = Math.max(1, Math.round(capturedLineCount));
+  }
+  const totalBlocks = initialCountRef.current > 0 ? initialCountRef.current : TOTAL_BLOCKS;
+
+  const pickModel = (): ModelSource => {
+    if (localRef.current)   return "local";
+    if (apiKey1Ref.current) return "gemini_k1";
+    if (apiKey2Ref.current) return "gemini_k2";
+    return "mock";
   };
+
+  const payloadKb = ((totalBlocks * 82) / 1024).toFixed(1); // ~82 chars/block avg
+
+  // ── Run pipeline ────────────────────────────────────────────────────────────
+  const runPipeline = useCallback(async () => {
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
+    if (capturedLineCount <= 0) {
+      setPhase("idle");
+      setBlockCount(0);
+      setVisibleBlocks([]);
+      setStreamedSrt("");
+      setErrorMessage("Esperando subtítulos EN capturados…");
+      return;
+    }
+
+    setPhase("building");
+    setBlockCount(0);
+    setStreamedSrt("");
+    setVisibleBlocks([]);
+    setLatencyMs(null);
+    setErrorMessage("");
+    setModelUsed(pickModel());
+
+    await contentBridge.sendToContent({ type: "RUN_PIPELINE_TRANSLATION", payload: { lectureKey } });
+  }, [capturedLineCount, lectureKey]);
+
+  useEffect(() => {
+    abortRef.current?.abort();
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+    retryCountRef.current = 0;
+    initialCountRef.current = 0;
+    setPhase("idle");
+    setBlockCount(0);
+    setVisibleBlocks([]);
+    setStreamedSrt("");
+    setLatencyMs(null);
+    setErrorMessage("");
+    hasAutoRun.current = false;
+    lastRequestedCountRef.current = 0;
+  }, [lectureKey]);
+
+  useEffect(() => {
+    let sendingTimer: ReturnType<typeof setTimeout> | null = null;
+    let sendingElapsed = 0;
+    let sendingInterval: ReturnType<typeof setInterval> | null = null;
+
+    const unsubscribe = contentBridge.onMessageFromContent((msg) => {
+      if (msg.type === "PIPELINE_TRANSLATION_SOURCE") {
+        const payload = msg.payload as { sourceSrt?: unknown; sourceCueCount?: unknown; source?: unknown; lectureKey?: unknown } | undefined;
+        const payloadLectureKey = typeof payload?.lectureKey === "string" ? payload.lectureKey : "";
+        if (lectureKey && payloadLectureKey && payloadLectureKey !== lectureKey) return;
+        const sourceSrt = typeof payload?.sourceSrt === "string" ? payload.sourceSrt : "";
+        const count = typeof payload?.sourceCueCount === "number" && Number.isFinite(payload.sourceCueCount)
+          ? Math.max(0, Math.round(payload.sourceCueCount))
+          : 0;
+        const blocks = parseSrtPreviewBlocks(sourceSrt);
+
+        setBlockCount(count);
+        setVisibleBlocks(blocks.slice(0, 3));
+        setErrorMessage("");
+
+        if (count <= 0) {
+          setPhase("idle");
+          setErrorMessage("Esperando que Udemy exponga subtítulos EN para traducir.");
+        } else {
+          setPhase("sending");
+          sendingElapsed = 0;
+          // Timeout: if no response in 5min, show error
+          sendingTimer = setTimeout(() => {
+            setPhase("idle");
+            setErrorMessage("Timeout: la IA no respondió. Pulsa Retranducir para reintentar.");
+            if (sendingInterval) { clearInterval(sendingInterval); sendingInterval = null; }
+          }, 300_000);
+          // Update text to show progress phases
+          setErrorMessage("");
+          sendingInterval = setInterval(() => {
+            sendingElapsed += 4;
+            if (sendingElapsed <= 4) {
+              setErrorMessage("Conectando con IA…");
+            } else if (sendingElapsed <= 12) {
+              setErrorMessage("Esperando respuesta de Gemini…");
+            } else {
+              setErrorMessage(`Gemini procesando ${count} bloques… (${sendingElapsed}s)`);
+            }
+          }, 4000);
+        }
+        return;
+      }
+
+      if (msg.type !== "PIPELINE_TRANSLATION_RESULT") return;
+
+      // Clear sending timeout/interval since we got a response
+      if (sendingTimer) { clearTimeout(sendingTimer); sendingTimer = null; }
+      if (sendingInterval) { clearInterval(sendingInterval); sendingInterval = null; }
+      setErrorMessage("");
+
+      const payload = msg.payload as {
+        ok?: unknown;
+        srt?: unknown;
+        blockCount?: unknown;
+        sourceCueCount?: unknown;
+        error?: unknown;
+        lectureKey?: unknown;
+      } | undefined;
+      const payloadLectureKey = typeof payload?.lectureKey === "string" ? payload.lectureKey : "";
+      if (lectureKey && payloadLectureKey && payloadLectureKey !== lectureKey) return;
+
+      const ok = Boolean(payload?.ok);
+      const translatedSrt = typeof payload?.srt === "string" ? payload.srt : "";
+      const count = typeof payload?.blockCount === "number" && Number.isFinite(payload.blockCount)
+        ? Math.max(0, Math.round(payload.blockCount))
+        : typeof payload?.sourceCueCount === "number" && Number.isFinite(payload.sourceCueCount)
+          ? Math.max(0, Math.round(payload.sourceCueCount))
+          : totalBlocks;
+
+      if (!ok || !translatedSrt.trim()) {
+        // Auto-retry once after 10s if we haven't retried yet
+        if (retryCountRef.current < 1 && capturedLineCount > 0) {
+          retryCountRef.current += 1;
+          const errorDetail = typeof payload?.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : "Error en la traducción";
+          setErrorMessage(`${errorDetail} — Reintentando en 10s…`);
+          let countdown = 10;
+          const countdownInterval = setInterval(() => {
+            countdown -= 1;
+            if (countdown > 0) {
+              setErrorMessage(`${errorDetail} — Reintentando en ${countdown}s…`);
+            }
+          }, 1000);
+          retryTimerRef.current = setTimeout(() => {
+            clearInterval(countdownInterval);
+            setErrorMessage("Reintentando traducción…");
+            setPhase("sending");
+            void contentBridge.sendToContent({ type: "RUN_PIPELINE_TRANSLATION", payload: { lectureKey } });
+          }, 10_000);
+          return;
+        }
+        retryCountRef.current = 0;
+        setPhase("idle");
+        setBlockCount(Math.min(count, totalBlocks));
+        setErrorMessage(
+          typeof payload?.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : "No se pudo traducir el SRT todavía."
+        );
+        return;
+      }
+
+      retryCountRef.current = 0;
+
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const chosen = pickModel();
+      const t0 = performance.now();
+      setModelUsed(chosen);
+      setBlockCount(Math.min(count, totalBlocks));
+      setStreamedSrt("");
+      setErrorMessage("");
+      setPhase("streaming");
+
+      void streamWords(
+        translatedSrt,
+        acc => { if (!ctrl.signal.aborted) setStreamedSrt(acc); },
+        ctrl.signal
+      ).then(() => {
+        if (ctrl.signal.aborted) return;
+        const ms = Math.round(performance.now() - t0);
+        setLatencyMs(ms);
+        setPhase("done");
+        debugStore.addCacheEntry({
+          en: `[SRT Batch: ${count} bloques]`,
+          es: translatedSrt,
+          latencyMs: ms,
+          usedAI: chosen !== "mock",
+          timestamp: Date.now(),
+        });
+      });
+    });
+
+    return () => {
+      unsubscribe();
+      if (sendingTimer) clearTimeout(sendingTimer);
+      if (sendingInterval) clearInterval(sendingInterval);
+    };
+  }, [lectureKey, totalBlocks]);
+
+  // Auto-run after the captured SRT count settles.
+  useEffect(() => {
+    if (!autoTranslate) {
+      hasAutoRun.current = false;
+      lastRequestedCountRef.current = 0;
+      return;
+    }
+    if (capturedLineCount <= 0) return;
+    // Once we've successfully started a pipeline run, don't re-trigger on count changes
+    if (hasAutoRun.current) return;
+
+    const t = setTimeout(() => {
+      hasAutoRun.current = true;
+      lastRequestedCountRef.current = Math.max(1, Math.round(capturedLineCount));
+      void runPipeline();
+    }, 2200);
+
+    return () => clearTimeout(t);
+  }, [autoTranslate, capturedLineCount, runPipeline]);
+
+  // Pause when autoTranslate turns off
+  useEffect(() => {
+    if (!autoTranslate) {
+      abortRef.current?.abort();
+      if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+      retryCountRef.current = 0;
+      setPhase("idle");
+      setBlockCount(0);
+      setStreamedSrt("");
+      setErrorMessage("");
+      hasAutoRun.current = false;
+      lastRequestedCountRef.current = 0;
+    }
+  }, [autoTranslate]);
+
+  // Manual re-run trigger
+  useEffect(() => {
+    if (runCount === 0) return;
+    retryCountRef.current = 0;
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+    runPipeline();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runCount]);
 
   const handleCopyPrompt = async () => {
     await navigator.clipboard.writeText(TRANSLATION_PROMPT);
     setPromptCopied(true);
-    window.setTimeout(() => setPromptCopied(false), 2000);
+    setTimeout(() => setPromptCopied(false), 2200);
   };
 
-  // ── Pipeline runner ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!incomingBlock || !autoTranslate) return;
-    if (incomingBlock === lastBlock.current) return;
-    lastBlock.current = incomingBlock;
+  // ── Derived ─────────────────────────────────────────────────────────────────
+  const isBuilding  = phase === "building";
+  const isSending   = phase === "sending";
+  const isStreaming = phase === "streaming";
+  const isDone      = phase === "done";
+  const isActive    = isBuilding || isSending || isStreaming;
 
-    // Cancel any in-flight stream
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+  const MODEL_LABEL: Record<ModelSource, string> = {
+    local:      "IA Local · 8010",
+    gemini_k1:  "Gemini Flash · Key 1",
+    gemini_k2:  "Gemini Flash · Key 2",
+    mock:       "Mock · sin conexión",
+  };
 
-    let cancelled = false;
-
-    (async () => {
-      // ── Step 1: Capturing ────────────────────────────────────────────────
-      setCurrentEn(incomingBlock);
-      setCurrentEs("");
-      setLatency(null);
-      setStatus("capturing");
-      void contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: "" } }).catch(() => undefined);
-      await new Promise<void>((r) => setTimeout(r, 180));
-      if (cancelled || ctrl.signal.aborted) return;
-
-      // ── Step 2: Stream (real AI or mock fallback) ────────────────────────
-      setStatus("streaming");
-      const t0 = performance.now();
-      let didUseAI = false;
-      let finalEs  = "";
-
-      // Attempt real streaming AI
-      const result = await translateLineStream(
-        incomingBlock,
-        (_, accumulated) => {
-          if (!cancelled && !ctrl.signal.aborted) {
-            setCurrentEs(accumulated);
-          }
-        },
-        ctrl.signal
-      );
-
-      if (ctrl.signal.aborted || cancelled) return;
-
-      if (result.success && result.content.trim()) {
-        finalEs  = result.content.trim();
-        didUseAI = true;
-        setCurrentEs(finalEs);
-      } else {
-        // Fallback: mock-stream the translation word by word
-        const mockText = FALLBACK[incomingBlock] ?? incomingBlock;
-        await mockStream(
-          mockText,
-          (_, acc) => { if (!cancelled && !ctrl.signal.aborted) setCurrentEs(acc); },
-          ctrl.signal
-        );
-        if (ctrl.signal.aborted || cancelled) return;
-        finalEs  = mockText;
-        didUseAI = false;
-      }
-
-      const ms = Math.round(performance.now() - t0);
-      setLatency(ms);
-      setUsedAI(didUseAI);
-      setStatus("done");
-      void contentBridge.sendToContent({ type: "OVERLAY_TEXT_UPDATE", payload: { text: finalEs } }).catch(() => undefined);
-
-      const entry: PipelineEntry = {
-        id: `${t0}-${incomingBlock.slice(0, 8)}`,
-        en: incomingBlock,
-        es: finalEs,
-        latencyMs: ms,
-        usedAI: didUseAI,
-      };
-      setHistory((prev) => [entry, ...prev].slice(0, 6));
-      setStats((prev) => ({
-        total:   prev.total + 1,
-        aiCalls: prev.aiCalls + (didUseAI ? 1 : 0),
-        totalMs: prev.totalMs + ms,
-      }));
-
-      // Emit to Dev tab debug store
-      debugStore.addCacheEntry({
-        en: incomingBlock,
-        es: finalEs,
-        latencyMs: ms,
-        usedAI: didUseAI,
-        timestamp: Date.now(),
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [incomingBlock, autoTranslate]);
-
-  const avgMs  = stats.total > 0 ? Math.round(stats.totalMs / stats.total) : null;
-  const aiPct  = stats.total > 0 ? Math.round((stats.aiCalls / stats.total) * 100) : null;
-  const isLive = status === "streaming";
+  // Parse streamed SRT into lines for rendering
+  const srtLines = streamedSrt.split("\n");
+  const displayedBlockCount = Math.min(blockCount, totalBlocks);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-2.5">
 
-      {/* ── Stats bar ──────────────────────────────────────────────────────── */}
+      {/* ── Header bar ────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         <p className="text-white/22 text-[9px] uppercase tracking-widest flex items-center gap-1.5">
-          {isLive && (
+          {isActive && (
             <motion.span
-              className="w-1.5 h-1.5 rounded-full bg-violet-400 inline-block"
+              className="w-1.5 h-1.5 rounded-full bg-violet-400 inline-block shrink-0"
               animate={{ opacity: [1, 0.3, 1] }}
               transition={{ duration: 0.8, repeat: Infinity }}
             />
           )}
           Pipeline SRT · EN → ES
         </p>
-        <div className="ml-auto flex items-center gap-2.5">
-          {stats.total > 0 && (
+        <div className="ml-auto flex items-center gap-2">
+          {isDone && latencyMs !== null && (
             <>
               <span className="flex items-center gap-1 text-[9px] text-white/28">
-                <TrendingUp size={8} />{stats.total} bloques
+                <TrendingUp size={8} />{totalBlocks} bloques
               </span>
-              {avgMs !== null && (
-                <span className="flex items-center gap-1 text-[9px] text-violet-400/55">
-                  <Zap size={8} />{avgMs}ms
-                </span>
-              )}
-              {aiPct !== null && (
-                <span className="flex items-center gap-1 text-[9px] text-emerald-400/55">
-                  <Database size={8} />{aiPct}% IA
-                </span>
-              )}
+              <span className="flex items-center gap-1 text-[9px] text-violet-400/60">
+                <Zap size={8} />{(latencyMs / 1000).toFixed(1)}s
+              </span>
             </>
+          )}
+          {(isDone || phase === "idle") && (
+            <button
+              onClick={() => setRunCount(n => n + 1)}
+              disabled={!autoTranslate}
+              className="flex items-center gap-1 text-[9px] text-white/25 hover:text-white/55 disabled:opacity-30 disabled:cursor-not-allowed border border-white/8 hover:border-white/15 px-1.5 py-0.5 rounded transition-colors"
+            >
+              <RefreshCcw size={7} />Retranducir
+            </button>
           )}
         </div>
       </div>
 
       {/* ── Pipeline card ──────────────────────────────────────────────────── */}
       <div className="bg-gradient-to-b from-[#121214] to-[#0a0a0c] border border-white/10 rounded-xl overflow-hidden shadow-lg relative">
-        {/* Pipeline connecting line graphic */}
-        <div className="absolute left-6 top-6 bottom-6 w-px bg-gradient-to-b from-sky-500/20 via-violet-500/20 to-emerald-500/20 pointer-events-none" />
 
-        {/* Step 1 — EN Capture */}
+        {/* Connecting spine */}
+        <div className="absolute left-6 top-5 bottom-5 w-px bg-gradient-to-b from-sky-500/20 via-violet-500/20 to-emerald-500/20 pointer-events-none" />
+
+        {/* ── STEP 1: Captura SRT ────────────────────────────────────────── */}
         <div className="px-4 py-3 relative z-10">
           <div className="flex items-center gap-2 mb-2">
             <motion.div
-              animate={status === "capturing" ? { scale: [1, 1.3, 1], boxShadow: ["0 0 0px #0ea5e9", "0 0 10px #0ea5e9", "0 0 0px #0ea5e9"] } : {}}
-              transition={{ duration: 1.5, repeat: status === "capturing" ? Infinity : 0 }}
+              animate={isBuilding
+                ? { scale: [1, 1.35, 1], boxShadow: ["0 0 0px #0ea5e9","0 0 10px #0ea5e9","0 0 0px #0ea5e9"] }
+                : {}}
+              transition={{ duration: 1.4, repeat: isBuilding ? Infinity : 0 }}
               className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
-                status !== "idle" ? "border-sky-500/50" : "border-white/10"
+                phase !== "idle" ? "border-sky-500/50" : "border-white/10"
               }`}
             >
-              <div className={`w-1.5 h-1.5 rounded-full transition-colors ${status !== "idle" ? "bg-sky-400" : "bg-white/20"}`}/>
+              <div className={`w-1.5 h-1.5 rounded-full transition-colors ${phase !== "idle" ? "bg-sky-400" : "bg-white/20"}`} />
             </motion.div>
-            <span className={`text-[10px] font-semibold uppercase tracking-widest transition-colors ${
-              status !== "idle" ? "text-sky-400" : "text-white/20"
-            }`}>
-              {status === "capturing" ? "Leyendo transcripción…" : status !== "idle" ? "Transcripción .srt · Udemy" : "Transcripción"}
+
+            <span className={`text-[10px] uppercase tracking-widest transition-colors flex-1 ${phase !== "idle" ? "text-sky-400" : "text-white/20"}`} style={{ fontWeight: 600 }}>
+              {isBuilding ? "Leyendo transcripción…" : phase !== "idle" ? "Transcripción .srt · Udemy" : "Transcripción"}
             </span>
+
+            {phase !== "idle" && (
+              <span className={`text-[9px] font-mono shrink-0 tabular-nums ${displayedBlockCount >= totalBlocks ? "text-sky-400" : "text-sky-400/55"}`}>
+                {displayedBlockCount} / {totalBlocks}
+              </span>
+            )}
           </div>
-          <div className="ml-6 pl-1 border-l-2 border-transparent">
-            <AnimatePresence mode="wait">
-              {currentEn ? (
-                <motion.p
-                  key={currentEn}
-                  initial={{ opacity: 0, x: -4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="text-white/80 text-[12px] leading-relaxed font-medium whitespace-pre-wrap"
-                >
-                  {currentEn}
-                </motion.p>
-              ) : (
-                <p className="text-white/20 text-[11px] italic">Esperando bloque de subtítulos…</p>
-              )}
-            </AnimatePresence>
+
+          {/* SRT block preview */}
+          <div className="ml-6 space-y-0">
+            {phase === "idle" && (
+              <p className={`text-[11px] italic ${errorMessage ? "text-amber-300/55" : "text-white/20"}`}>
+                {errorMessage || "Esperando inicio del video…"}
+              </p>
+            )}
+
+            {phase !== "idle" && visibleBlocks.map((block, i) => (
+              <motion.div
+                key={block.num}
+                initial={{ opacity: 0, y: -3 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.06 }}
+                className={`py-1.5 ${i < visibleBlocks.length - 1 ? "border-b border-white/4" : ""}`}
+              >
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-sky-400/70 text-[8px] font-mono" style={{ fontWeight: 700 }}>{block.num}</span>
+                  <span className="text-amber-400/45 text-[8px] font-mono">{block.ts}</span>
+                </div>
+                <p className="text-white/40 text-[9.5px] leading-snug line-clamp-1">{block.text}</p>
+              </motion.div>
+            ))}
+
+            {phase !== "idle" && displayedBlockCount > 3 && (
+              <p className="text-white/18 text-[9px] pt-1">+ {displayedBlockCount - 3} bloques más…</p>
+            )}
           </div>
         </div>
 
-        {/* Step 2 — AI divider */}
-        <div className={`px-4 py-2 relative z-10 transition-colors duration-500 ${
-          isLive ? "bg-violet-500/5 backdrop-blur-sm border-y border-violet-500/10" : "border-y border-white/5 bg-white/2"
+        {/* ── STEP 2: Modelo IA ─────────────────────────────────────────── */}
+        <div className={`px-4 py-2.5 relative z-10 transition-colors duration-500 ${
+          isSending || isStreaming
+            ? "bg-violet-500/5 border-y border-violet-500/10"
+            : "border-y border-white/5 bg-white/[0.015]"
         }`}>
           <div className="flex items-center gap-2">
-             <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
-                isLive ? "border-violet-500/50" : "border-white/10"
-              }`}>
-               <Radio
-                size={8}
-                className={`transition-colors ${isLive ? "text-violet-400" : "text-white/20"}`}
-              />
-             </div>
-            <span className={`text-[10px] font-semibold uppercase tracking-widest transition-colors ${
-              isLive ? "text-violet-400" : "text-white/20"
+            <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
+              isSending || isStreaming ? "border-violet-500/50" : "border-white/10"
             }`}>
-              {status === "capturing" ? "Enviando payload .srt…" : isLive ? "Generando traducción SRT…" : status === "done" ? MODEL_LABEL[modelUsed] : "Modelo IA"}
+              <Radio size={8} className={`transition-colors ${isSending || isStreaming ? "text-violet-400" : "text-white/20"}`} />
+            </div>
+
+            <span className={`text-[10px] tracking-wide flex-1 transition-colors ${isSending || isStreaming ? "text-violet-300" : "text-white/20"}`} style={{ fontWeight: 600 }}>
+              {isSending   ? (errorMessage || `Enviando payload .srt · ${payloadKb}KB…`) :
+               isStreaming ? "Generando traducción SRT…" :
+               isDone      ? MODEL_LABEL[modelUsed] :
+               "Modelo IA"}
             </span>
 
-            {(status === "capturing" || isLive) && (
+            {(isSending || isStreaming) && (
               <span className="text-[9px] text-violet-400/55 shrink-0 flex items-center gap-1">
-                {localConnected ? <><Database size={7} />Local</> : apiKey1.trim() ? <><Key size={7} />Gemini 1</> : apiKey2.trim() ? <><Key size={7} />Gemini 2</> : <><WifiOff size={7} />Mock</>}
+                {apiKey1 ? <><Key size={7} />Gemini</> : <><Database size={7} />Local</>}
               </span>
             )}
 
-            {/* Done badge */}
-            {status === "done" && latency !== null && (
+            {isDone && latencyMs !== null && (
               <motion.span
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className={`text-[9px] font-medium shrink-0 flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded-full border ${
-                  usedAI ? "text-emerald-400 border-emerald-500/20" : "text-amber-400 border-amber-500/20"
+                className={`text-[9px] shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                  modelUsed === "mock"
+                    ? "text-amber-400 border-amber-500/20 bg-amber-500/8"
+                    : "text-emerald-400 border-emerald-500/20 bg-emerald-500/8"
                 }`}
+                style={{ fontWeight: 600 }}
               >
-                {usedAI ? <><Zap size={8} />{latency}ms</> : <><WifiOff size={8} />mock</>}
+                {modelUsed === "mock"
+                  ? <><WifiOff size={7} />mock</>
+                  : <><Zap size={7} />{(latencyMs / 1000).toFixed(1)}s</>}
               </motion.span>
             )}
           </div>
+
+          {/* Progress bar */}
+          <AnimatePresence>
+            {(isSending || isStreaming) && (
+              <motion.div
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="mt-2 ml-6"
+              >
+                <div className="h-0.5 bg-white/6 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 rounded-full"
+                    initial={{ width: "0%" }}
+                    animate={{
+                      width: isSending ? "28%" : ["30%", "52%", "70%", "87%", "96%"]
+                    }}
+                    transition={
+                      isStreaming
+                        ? { duration: 5, ease: "easeOut", times: [0, 0.2, 0.4, 0.7, 1] }
+                        : { duration: 0.8, ease: "easeOut" }
+                    }
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* Step 3 — ES streaming output */}
+        {/* ── STEP 3: Salida SRT en español ────────────────────────────── */}
         <div className="px-4 py-3 relative z-10">
           <div className="flex items-center gap-2 mb-2">
             <motion.div
-              animate={status === "done" ? { scale: [1, 1.2, 1], boxShadow: ["0 0 0px #10b981", "0 0 10px #10b981", "0 0 0px #10b981"] } : {}}
+              animate={isDone
+                ? { scale: [1, 1.2, 1], boxShadow: ["0 0 0px #10b981","0 0 10px #10b981","0 0 0px #10b981"] }
+                : {}}
               transition={{ duration: 0.8 }}
               className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
-                status === "done" ? "border-emerald-500/50" :
-                isLive           ? "border-violet-400/50"  : "border-white/10"
+                isDone ? "border-emerald-500/50" : isStreaming ? "border-violet-400/50" : "border-white/10"
               }`}
             >
-               <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
-                 status === "done" ? "bg-emerald-400" :
-                 isLive ? "bg-violet-400" : "bg-white/20"
-               }`}/>
+              <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                isDone ? "bg-emerald-400" : isStreaming ? "bg-violet-400" : "bg-white/20"
+              }`} />
             </motion.div>
-            <span className={`text-[10px] font-semibold uppercase tracking-widest transition-colors ${
-              status === "done" ? "text-emerald-400" :
-              isLive            ? "text-violet-300"  : "text-white/20"
-            }`}>
-              {status === "capturing" ? "Preparando salida…" : isLive ? "Traduciendo SRT…" : status === "done" ? "SRT Español · Completo" : "Salida .srt"}
+            <span className={`text-[10px] uppercase tracking-widest transition-colors ${
+              isDone ? "text-emerald-400" : isStreaming ? "text-violet-300" : "text-white/20"
+            }`} style={{ fontWeight: 600 }}>
+              {isStreaming ? "Traduciendo SRT…" : isDone ? "SRT Español · Completo" : "Salida .srt"}
             </span>
+            {isDone && (
+              <span className="ml-auto text-emerald-400/50 text-[9px]">
+                {totalBlocks} bloques listos
+              </span>
+            )}
           </div>
 
-          <div className="ml-6 pl-1 border-l-2 border-transparent min-h-[1.5rem] flex items-start">
+          {/* SRT output box */}
+          <div className="ml-6">
             <AnimatePresence mode="wait">
-              {(isLive || status === "done") && currentEs ? (
-                <motion.p
-                  key={`es-${currentEn}`}
+              {(isStreaming || isDone) && streamedSrt ? (
+                <motion.div
+                  key="srt-output"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className={`text-[13px] leading-relaxed font-medium whitespace-pre-wrap ${
-                    status === "done" ? "text-violet-200" : "text-violet-300/80"
-                  }`}
+                  className="bg-[#07080a] border border-white/6 rounded-lg overflow-hidden"
                 >
-                  {currentEs}
-                  {/* Blinking cursor while streaming */}
-                  {isLive && (
-                    <motion.span
-                      className="inline-block ml-[2px] w-[3px] h-[15px] bg-violet-400 rounded-sm align-middle shadow-[0_0_8px_#a78bfa] translate-y-[-1px]"
-                      animate={{ opacity: [1, 0, 1] }}
-                      transition={{ duration: 0.5, repeat: Infinity }}
-                    />
+                  <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/5">
+                    <span className="text-white/20 text-[8px] font-mono uppercase tracking-widest">subtitulos_es.srt</span>
+                    {isStreaming && (
+                      <motion.span
+                        className="w-1 h-3 bg-violet-400 rounded-sm"
+                        animate={{ opacity: [1, 0, 1] }}
+                        transition={{ duration: 0.45, repeat: Infinity }}
+                      />
+                    )}
+                  </div>
+                  <div
+                    className="px-2.5 py-2 overflow-y-auto"
+                    style={{ maxHeight: isDone ? "9rem" : "7rem" }}
+                  >
+                    {srtLines.map((line, i) => (
+                      <SrtOutputLine key={i} line={line} />
+                    ))}
+                    {isStreaming && (
+                      <motion.span
+                        className="inline-block ml-[1px] w-[2px] h-[12px] bg-violet-400 rounded-sm align-middle shadow-[0_0_6px_#a78bfa]"
+                        animate={{ opacity: [1, 0, 1] }}
+                        transition={{ duration: 0.5, repeat: Infinity }}
+                      />
+                    )}
+                  </div>
+                  {isDone && (
+                    <div className="px-2.5 pb-2">
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.4 }}
+                        className="text-white/18 text-[9px] font-mono"
+                      >
+                        {totalBlocks} bloques · {streamedSrt.split(" ").length} tokens
+                      </motion.p>
+                    </div>
                   )}
-                </motion.p>
-              ) : status === "capturing" ? (
-                <motion.div
-                  animate={{ opacity: [0.2, 0.5, 0.2] }}
-                  transition={{ duration: 1.5, repeat: Infinity }}
-                  className="h-3.5 rounded bg-white/10 w-3/5 mt-0.5"
-                />
-              ) : status === "idle" ? (
+                </motion.div>
+              ) : isBuilding || isSending ? (
+                <div className="bg-[#07080a] border border-white/6 rounded-lg p-2.5 space-y-1.5">
+                  {[55, 40, 65].map((w, i) => (
+                    <motion.div
+                      key={i}
+                      animate={{ opacity: [0.06, 0.18, 0.06] }}
+                      transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.18 }}
+                      className="h-2 rounded bg-white/10"
+                      style={{ width: `${w}%` }}
+                    />
+                  ))}
+                </div>
+              ) : (
                 <p className="text-white/20 text-[11px] italic">Pendiente…</p>
-              ) : null}
+              )}
             </AnimatePresence>
           </div>
         </div>
       </div>
 
-      {/* ── Recent history ─────────────────────────────────────────────────── */}
-      {history.length > 0 && (
-        <div>
-          <p className="text-white/22 text-[9px] uppercase tracking-widest mb-1.5">
-            Historial · {history.length} bloque{history.length !== 1 ? "s" : ""}
-          </p>
-          <div className="bg-[#0d0e0f] border border-white/7 rounded-xl overflow-hidden">
-            {history.slice(0, 5).map((entry, i) => (
-              <motion.div
-                key={entry.id}
-                initial={{ opacity: 0, x: -4 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i === 0 ? 0 : 0 }}
-                className={`flex gap-2.5 px-3 py-2 ${
-                  i < Math.min(history.length - 1, 4) ? "border-b border-white/4" : ""
-                }`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-white/22 text-[9px] truncate">{entry.en}</p>
-                  <p className="text-white/58 text-[10px] truncate mt-0.5">{entry.es}</p>
-                </div>
-                <span className={`text-[9px] shrink-0 mt-0.5 ${
-                  entry.usedAI ? "text-emerald-400/50" : "text-amber-400/45"
-                }`}>
-                  {entry.usedAI ? `⚡${entry.latencyMs}ms` : "mock"}
-                </span>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      )}
-
+      {/* ── Expandable Prompt section ─────────────────────────────────────── */}
       <div className="rounded-xl border border-white/6 bg-[#0d0e0f] overflow-hidden">
         <button
-          onClick={() => setShowPrompt((value) => !value)}
+          onClick={() => setShowPrompt(v => !v)}
           className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white/3 transition-colors"
         >
           <span className="text-white/35 text-[9px] uppercase tracking-widest flex-1 text-left" style={{ fontWeight: 600 }}>
@@ -426,7 +751,10 @@ export function TranslationPipeline({
           <span className="text-violet-400/50 text-[9px]">
             {showPrompt ? "ocultar" : "ver →"}
           </span>
-          <motion.div animate={{ rotate: showPrompt ? 180 : 0 }} transition={{ duration: 0.2 }}>
+          <motion.div
+            animate={{ rotate: showPrompt ? 180 : 0 }}
+            transition={{ duration: 0.2 }}
+          >
             <ChevronDown size={11} className="text-white/25" />
           </motion.div>
         </button>
@@ -441,6 +769,7 @@ export function TranslationPipeline({
               className="overflow-hidden"
             >
               <div className="border-t border-white/5">
+                {/* Copy button */}
                 <div className="flex items-center justify-between px-3 py-2">
                   <p className="text-white/22 text-[9px]">
                     Copia y pega en Gemini · ChatGPT · Claude
@@ -458,18 +787,18 @@ export function TranslationPipeline({
                   </button>
                 </div>
 
-                <div className="px-3 pb-3">
-                  <div className="rounded-lg border border-white/6 bg-[#070809] overflow-hidden">
-                    <pre className="px-3 py-2.5 text-[9px] text-white/45 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
-                      {TRANSLATION_PROMPT}
-                    </pre>
-                  </div>
+                {/* Prompt text */}
+                <div className="mx-3 mb-3 bg-[#070809] border border-white/6 rounded-lg overflow-hidden">
+                  <pre className="px-3 py-2.5 text-[9px] text-white/45 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
+                    {TRANSLATION_PROMPT}
+                  </pre>
                 </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
+
     </div>
   );
 }

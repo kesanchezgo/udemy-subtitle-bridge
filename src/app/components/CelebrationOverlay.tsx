@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import confetti from "canvas-confetti";
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
 export type CelebrationType =
   | "session_complete"
   | "question_correct"
@@ -18,9 +20,13 @@ export interface CelebrationConfig {
   icon?: React.ReactNode;
 }
 
+// ─── Global trigger (call this from anywhere) ─────────────────────────────────
+
 export function celebrate(config: CelebrationConfig): void {
   window.dispatchEvent(new CustomEvent("usb:celebrate", { detail: config }));
 }
+
+// ─── Per-type visual config ───────────────────────────────────────────────────
 
 const TYPE_CFG: Record<CelebrationType, {
   size: "big" | "small";
@@ -88,6 +94,8 @@ const TYPE_CFG: Record<CelebrationType, {
   },
 };
 
+// ─── Sparkle particle ─────────────────────────────────────────────────────────
+
 function Sparkle({ x, y, delay, size = 3 }: { x: number; y: number; delay: number; size?: number }) {
   return (
     <motion.div
@@ -100,6 +108,8 @@ function Sparkle({ x, y, delay, size = 3 }: { x: number; y: number; delay: numbe
   );
 }
 
+// ─── Ripple ring ─────────────────────────────────────────────────────────────
+
 function RippleRing({ delay = 0 }: { delay?: number }) {
   return (
     <motion.div
@@ -111,6 +121,8 @@ function RippleRing({ delay = 0 }: { delay?: number }) {
     />
   );
 }
+
+// ─── Orbital dot ─────────────────────────────────────────────────────────────
 
 function OrbitalDot({ angle, radius, color }: { angle: number; radius: number; color: string }) {
   return (
@@ -138,22 +150,26 @@ function OrbitalDot({ angle, radius, color }: { angle: number; radius: number; c
   );
 }
 
+// ─── Main overlay component ───────────────────────────────────────────────────
+
 export function CelebrationOverlay() {
   const [current, setCurrent] = useState<CelebrationConfig | null>(null);
   const [visible, setVisible] = useState(false);
-  const timerRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const handler = (event: Event) => {
-      const config = (event as CustomEvent<CelebrationConfig>).detail;
+    const handler = (e: Event) => {
+      const config = (e as CustomEvent<CelebrationConfig>).detail;
       const cfg = TYPE_CFG[config.type];
 
-      if (timerRef.current) window.clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
       setCurrent(config);
       setVisible(true);
 
+      // Confetti burst
       if (cfg.confetti) {
-        window.setTimeout(() => {
+        setTimeout(() => {
+          // Left burst
           confetti({
             particleCount: 90,
             angle: 60,
@@ -162,6 +178,7 @@ export function CelebrationOverlay() {
             colors: ["#8b5cf6", "#10b981", "#fde047", "#38bdf8", "#f472b6"],
             ticks: 200,
           });
+          // Right burst
           confetti({
             particleCount: 90,
             angle: 120,
@@ -172,8 +189,9 @@ export function CelebrationOverlay() {
           });
         }, 280);
 
+        // Second wave for big celebrations
         if (cfg.size === "big") {
-          window.setTimeout(() => {
+          setTimeout(() => {
             confetti({
               particleCount: 40,
               spread: 120,
@@ -185,18 +203,16 @@ export function CelebrationOverlay() {
         }
       }
 
-      timerRef.current = window.setTimeout(() => {
+      timerRef.current = setTimeout(() => {
         setVisible(false);
-        window.setTimeout(() => setCurrent(null), 700);
+        setTimeout(() => setCurrent(null), 700);
       }, cfg.duration);
     };
 
     window.addEventListener("usb:celebrate", handler);
     return () => {
       window.removeEventListener("usb:celebrate", handler);
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-      }
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
 
@@ -205,6 +221,7 @@ export function CelebrationOverlay() {
   const cfg = TYPE_CFG[current.type];
   const isBig = cfg.size === "big";
 
+  // Sparkle positions (seeded per type)
   const sparkles = isBig
     ? [
         { x: 8, y: 12, d: 0.0, s: 2 },

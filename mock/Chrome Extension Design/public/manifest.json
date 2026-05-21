@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "Udemy Subtitle Bridge",
+  "version": "1.1.0",
+  "description": "Captura subtítulos EN de Udemy, los traduce con IA local y superpone la traducción EN → ES en tiempo real. Dock in-page con Shadow DOM: Study Agent (Bloom + Feynman), Anki .apkg, notas con cloud sync.",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.udemy.com/*",
+    "http://127.0.0.1:8010/*"
+  ],
+
+  "action": {
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Udemy Subtitle Bridge",
+    "default_popup": "popup.html"
+  },
+
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "content_scripts": [
+    {
+      "matches":    ["https://*.udemy.com/course/*"],
+      "js":         ["assets/content_script.js"],
+      "css":        [],
+      "run_at":     "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/*",
+        "icons/*",
+        "popup.html"
+      ],
+      "matches": ["https://*.udemy.com/*"]
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+
+  "_architecture_notes": {
+    "v1.1.0_migration": "Migrado de Chrome Side Panel API a In-page Dock con Shadow DOM.",
+    "why_inpage_dock":  "El dock in-page permite ver el video y el panel simultáneamente, funciona en fullscreen, y tiene CSS aislado via Shadow DOM. Ver docs/07-INPAGE-DOCK-SHADOW-DOM.md",
+    "shadow_dom_mode":  "Se usa mode:'closed' para máximo aislamiento. Los estilos de Udemy no entran, los nuestros no salen.",
+    "permissions_removed": "sidePanel permission eliminada — ya no se usa Chrome Side Panel API.",
+    "popup":            "popup.html es un mini-popup (400×120px) que explica cómo usar el dock. El UI principal está en el dock in-page.",
+    "content_script":   "assets/content_script.js maneja: (1) overlay de subtítulos, (2) inyección del dock Shadow DOM.",
+    "build":            "vite build — content_script.ts y dock_script.ts se compilan a assets/. Ver vite.config.ts.",
+    "local_ai":         "La extensión llama http://127.0.0.1:8010 (host_permissions lo cubre). Inicia tu servidor IA local antes de usar.",
+    "storage":          "chrome.storage.sync persiste: overlay config, dock width/collapsed, traducción cache index."
+  }
+}

@@ -39,3 +39,6 @@ src/gemini-config.local.js
 *.tmp
 dist/
 .playwright-mcp/
+.tmp-dev.log
+.env
+.env.local
