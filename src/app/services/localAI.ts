@@ -915,11 +915,22 @@ export async function generateCourseObjectives(
   });
 
   if (bgResult?.ok && Array.isArray(bgResult.objectives) && bgResult.objectives.length >= 3 && !bgResult.isMock) {
+    console.log("[USG][client] ✅ objectives received from", bgResult.source ?? "background", bgResult.objectives);
     return {
       objectives: bgResult.objectives,
       isMock: false,
       source: bgResult.source ?? "gemini",
     };
+  }
+
+  // Log the failure details before falling back so the user can debug.
+  if (bgResult) {
+    console.warn("[USG][client] background returned mock — reason:", bgResult.error || "(no error message)");
+    if (bgResult.error?.includes("Raw response")) {
+      console.warn("[USG][client] Tip: copy the 'Raw response' above and paste it as a JSON validator to see the issue.");
+    }
+  } else {
+    console.warn("[USG][client] background did not respond. The extension may need to be reloaded.");
   }
 
   // Direct Gemini fallback (only reached if background is unavailable, e.g. browser preview).

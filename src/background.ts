@@ -616,12 +616,18 @@ async function requestGeminiText(
 	for (const apiKey of apiKeys) {
 		try {
 			const normalizedKey = apiKey.trim();
+			// For 'objectives' we ask Gemini to natively emit JSON. Translation
+			// stays as plain text since we ship raw SRT through.
+			const generationConfig: Record<string, unknown> = { temperature, maxOutputTokens };
+			if (purpose === 'objectives') {
+				generationConfig.responseMimeType = 'application/json';
+			}
 			const response = await fetch(buildGeminiGenerateContentUrl(model, normalizedKey), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					contents: [{ role: 'user', parts: [{ text: prompt }] }],
-					generationConfig: { temperature, maxOutputTokens }
+					generationConfig
 				})
 			});
 
@@ -633,7 +639,8 @@ async function requestGeminiText(
 			const parsed = JSON.parse(responseText);
 			const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
 			if (!text) {
-				throw new Error('Gemini returned empty content.');
+				const finishReason = parsed?.candidates?.[0]?.finishReason;
+				throw new Error(`Gemini returned empty content (finishReason: ${finishReason ?? 'unknown'}).`);
 			}
 
 			return String(text);
@@ -766,14 +773,33 @@ function buildObjectivesPrompt(courseName: string, description: string): string 
 	return [
 		'Eres un asesor pedagógico para estudiantes de Udemy.',
 		'Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.',
-		'Devuelve ESTRICTAMENTE un array JSON sin texto extra, con esta forma:',
-		'[{"id":"slug","icon":"🚀","title":"Texto corto","sub":"clarificador"}, ...]',
-		'Reglas: id en minúsculas-con-guiones; icon es UN solo emoji; title máx 35 chars; sub máx 40 chars.',
-		'Los 4 objetivos deben cubrir ángulos distintos (ej: entrevista, certificación, proyecto real, dominio profundo).',
+		'',
+		'FORMATO DE SALIDA (CRÍTICO):',
+		'- Responde EXCLUSIVAMENTE con un array JSON válido.',
+		'- NO uses bloques de código markdown (sin ``` ni ```json).',
+		'- NO añadas texto antes ni después del array.',
+		'- NO incluyas comentarios dentro del JSON.',
+		'',
+		'ESQUEMA EXACTO:',
+		'[',
+		'  {"id":"slug-en-minusculas","icon":"🚀","title":"Texto corto","sub":"clarificador"},',
+		'  {"id":"slug-2","icon":"🎯","title":"...","sub":"..."},',
+		'  {"id":"slug-3","icon":"🛠️","title":"...","sub":"..."},',
+		'  {"id":"slug-4","icon":"🏆","title":"...","sub":"..."}',
+		']',
+		'',
+		'REGLAS DE CONTENIDO:',
+		'- id: minúsculas-con-guiones (ej: "entrevista-spring", "cert-oracle"); 4-40 chars.',
+		'- icon: UN solo emoji, sin texto.',
+		'- title: máximo 35 caracteres.',
+		'- sub: máximo 40 caracteres, frase clarificadora.',
+		'- Los 4 objetivos cubren ángulos distintos: entrevista, certificación, proyecto real, dominio profundo.',
+		'- Personalízalos al curso específico, no genérico.',
 		'',
 		`Curso: ${courseName}`,
 		`Descripción: ${description || '(sin descripción)'}`,
-		'Genera los 4 objetivos.'
+		'',
+		'Genera AHORA el array JSON (4 objetos, sin texto adicional):'
 	].join('\n');
 }
 
@@ -792,10 +818,35 @@ function buildRefinePrompt(courseName: string, description: string, rawGoal: str
 
 function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
 	const attempts: string[] = [];
-	attempts.push(raw.trim());
-	attempts.push(raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim());
-	const match = raw.match(/\[[\s\S]*\]/);
-	if (match) attempts.push(match[0]);
+	const trimmed = raw.trim();
+	attempts.push(trimmed);
+
+	// Strip markdown code fences (```json ... ``` or ``` ... ```)
+	const fenced = trimmed.replace(/```(?:json|javascript|js)?\s*/gi, '').replace(/```/g, '').trim();
+	if (fenced !== trimmed) attempts.push(fenced);
+
+	// Extract first balanced JSON array
+	const arrayMatch = fenced.match(/\[[\s\S]*\]/);
+	if (arrayMatch) attempts.push(arrayMatch[0]);
+
+	// Sometimes models wrap the array in {"objectives": [...]} or {"items": [...]}
+	const objectMatch = fenced.match(/\{[\s\S]*\}/);
+	if (objectMatch) {
+		try {
+			const obj = JSON.parse(objectMatch[0]);
+			const found = obj?.objectives ?? obj?.items ?? obj?.data ?? obj?.result;
+			if (Array.isArray(found)) attempts.push(JSON.stringify(found));
+		} catch { /* ignore */ }
+	}
+
+	// Repair common LLM mistakes: trailing commas, smart quotes
+	for (const candidate of [...attempts]) {
+		const repaired = candidate
+			.replace(/[\u201C\u201D]/g, '"')        // smart double quotes
+			.replace(/[\u2018\u2019]/g, "'")        // smart single quotes
+			.replace(/,\s*([}\]])/g, '$1');         // trailing commas before } or ]
+		if (repaired !== candidate) attempts.push(repaired);
+	}
 
 	for (const candidate of attempts) {
 		try {
@@ -804,11 +855,12 @@ function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
 			const cleaned: GeneratedObjective[] = arr
 				.slice(0, 4)
 				.map((o: { id?: string; icon?: string; title?: string; sub?: string }, i: number) => ({
-					id: (o.id ?? o.title ?? `obj-${i}`).toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40),
+					id: (o.id ?? o.title ?? `obj-${i}`).toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40),
 					icon: (o.icon ?? '🎯').toString().slice(0, 4),
 					title: (o.title ?? 'Objetivo').toString().slice(0, 60),
 					sub: (o.sub ?? '').toString().slice(0, 60)
-				}));
+				}))
+				.filter((o) => o.title && o.title !== 'Objetivo');
 			if (cleaned.length >= 3) return cleaned;
 		} catch { /* try next */ }
 	}
@@ -847,43 +899,73 @@ async function requestLocalText(prompt: string, temperature: number, maxTokens: 
 async function generateObjectivesViaGemini(
 	courseName: string,
 	description: string
-): Promise<{ objectives: GeneratedObjective[]; isMock: boolean; source: 'local' | 'gemini' | 'mock'; error?: string }> {
+): Promise<{ objectives: GeneratedObjective[]; isMock: boolean; source: 'local' | 'gemini' | 'mock'; error?: string; rawResponse?: string }> {
 	const prompt = buildObjectivesPrompt(courseName, description);
+
+	console.groupCollapsed('[USG][objectives] generate', { courseName, description: description.slice(0, 80) + (description.length > 80 ? '…' : '') });
+	console.log('[USG][objectives] prompt sent (first 400 chars):', prompt.slice(0, 400));
 
 	// Try Local AI first
 	try {
 		if (await checkLocalAiHealth()) {
+			console.log('[USG][objectives] trying Local AI (8010)…');
 			const text = await requestLocalText(prompt, 0.5, 600);
+			console.log('[USG][objectives] Local AI raw response:', text);
 			const parsed = parseObjectivesJSON(text);
-			if (parsed) return { objectives: parsed, isMock: false, source: 'local' };
+			if (parsed) {
+				console.log('[USG][objectives] ✅ Local AI parsed successfully', parsed);
+				console.groupEnd();
+				return { objectives: parsed, isMock: false, source: 'local' };
+			}
+			console.warn('[USG][objectives] ⚠️ Local AI response could not be parsed as JSON array.');
+		} else {
+			console.log('[USG][objectives] Local AI health check failed — skipping.');
 		}
-	} catch (_localError) {
-		// Fall through to Gemini
+	} catch (localError) {
+		console.warn('[USG][objectives] Local AI error:', localError);
 	}
 
 	// Try Gemini using the 'objectives' key preference (reverses order so it
 	// doesn't compete with translation for the same key when 2+ keys exist).
 	let geminiError: unknown = null;
+	let rawResponse: string | undefined;
 	try {
 		await initGeminiKeys();
-		if (getGeminiApiKeys().length > 0) {
+		const keyCount = getGeminiApiKeys().length;
+		console.log(`[USG][objectives] Gemini keys configured: ${keyCount}`);
+		if (keyCount > 0) {
 			const text = await requestGeminiText(prompt, 0.5, 600, 'objectives');
+			rawResponse = text;
+			console.log('[USG][objectives] 🤖 Gemini raw response:', text);
+			console.log('[USG][objectives] response length:', text.length, 'chars');
 			const parsed = parseObjectivesJSON(text);
-			if (parsed) return { objectives: parsed, isMock: false, source: 'gemini' };
+			if (parsed) {
+				console.log('[USG][objectives] ✅ Gemini parsed successfully', parsed);
+				console.groupEnd();
+				return { objectives: parsed, isMock: false, source: 'gemini' };
+			}
 			// If parse failed, surface the raw text in the error for debugging.
-			geminiError = `Failed to parse objectives JSON. Raw response (first 200 chars): ${text.slice(0, 200)}`;
+			console.error('[USG][objectives] ❌ Failed to parse Gemini response as JSON');
+			console.error('[USG][objectives] Full raw response:', text);
+			geminiError = `Failed to parse objectives JSON. Raw response (first 240 chars): ${text.slice(0, 240)}`;
 		} else {
 			geminiError = 'No Gemini API keys configured.';
+			console.warn('[USG][objectives] ⚠️ ' + geminiError);
 		}
 	} catch (err) {
 		geminiError = toErrorMessage(err);
+		console.error('[USG][objectives] ❌ Gemini error:', err);
 	}
+
+	console.warn('[USG][objectives] Falling back to mock heuristic. Reason:', geminiError);
+	console.groupEnd();
 
 	return {
 		objectives: [],
 		isMock: true,
 		source: 'mock',
 		error: typeof geminiError === 'string' ? geminiError : undefined,
+		rawResponse,
 	};
 }
 
