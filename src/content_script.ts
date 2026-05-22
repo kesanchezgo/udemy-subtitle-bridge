@@ -260,6 +260,44 @@ function getCourseTitle() {
 	return slug ? slug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
 }
 
+// ── Course description capture ─────────────────────────────────────────────
+// Two sources, in order of preference:
+//   1. The full description block (only present when Overview tab is loaded).
+//   2. The <meta name="description"> tagline (always present in <head>).
+// The full block is HTML, so we strip tags and collapse whitespace.
+function getCourseDescription(): string {
+	// Prefer the full description block when available
+	const fullSelectors = [
+		'[data-purpose="safely-set-inner-html:course-taking:course-description"]',
+		'[data-purpose="course-description"] [data-purpose^="safely-set-inner-html"]',
+		'[data-purpose="course-description"]'
+	];
+
+	for (const sel of fullSelectors) {
+		const el = document.querySelector(sel);
+		if (!el) continue;
+		const text = ((el as HTMLElement).innerText || el.textContent || '')
+			.replace(/\s+/g, ' ')
+			.trim();
+		if (text && text.length >= 60) {
+			// Cap at 3000 chars to keep prompts within reasonable size
+			return text.length > 3000 ? text.slice(0, 2997) + '…' : text;
+		}
+	}
+
+	// Fall back to the meta tagline
+	const meta = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
+	const tagline = meta?.content ? cleanMetadataText(meta.content) : '';
+	if (tagline && tagline.length >= 20) {
+		return tagline;
+	}
+
+	// Last resort: og:description
+	const og = document.querySelector('meta[property="og:description"]') as HTMLMetaElement | null;
+	const ogText = og?.content ? cleanMetadataText(og.content) : '';
+	return ogText || '';
+}
+
 function getLectureTitle() {
 	const selectors = [
 		'li[aria-current="true"] [data-purpose="item-title"]',
@@ -1807,6 +1845,7 @@ function buildLectureContextPayload() {
 		lectureKey: getLectureKey(),
 		courseSlug: getCourseSlug(),
 		courseTitle: getCourseTitle(),
+		courseDescription: getCourseDescription(),
 		lectureTitle: getLectureTitle(),
 		cueCount: bestCueCount,
 		hasEnglish: bestCueCount > 0,
