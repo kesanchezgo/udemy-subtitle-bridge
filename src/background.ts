@@ -509,7 +509,10 @@ async function translateSrtWithGemini(blocks: SrtBlock[]) {
 		throw new Error('No Gemini API keys configured.');
 	}
 
-	const response = await requestGeminiText(buildSrtTranslationPrompt(blocks), 0.15, 32768);
+	const response = await requestGeminiText(buildSrtTranslationPrompt(blocks), 0.15, 32768, 'translation', (notice) => {
+		console.warn(`[USG][translation] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
+		broadcastRetryNotice('translation', notice);
+	});
 	return normalizeTranslatedChunk(blocks, response);
 }
 
@@ -597,11 +600,78 @@ function selectKeysForPurpose(keys: string[], purpose: 'translation' | 'objectiv
 	return [...keys].reverse();
 }
 
+/**
+ * Classify a Gemini HTTP error so callers can decide whether to retry,
+ * pivot to another key, or surface a helpful message to the user.
+ *
+ * - 429 (RESOURCE_EXHAUSTED) → rate-limit / quota exhausted (transient: try next key, then backoff)
+ * - 503 (UNAVAILABLE)        → model is busy / saturated (transient: wait + retry)
+ * - 500 / 502 / 504          → server error (transient: retry once)
+ * - 401 / 403                → invalid / unauthorized API key (terminal for THIS key)
+ * - 400                      → bad request (likely a prompt issue — terminal)
+ * - other                    → unknown (terminal)
+ */
+type GeminiErrorClass = 'rate_limit' | 'overloaded' | 'server_error' | 'invalid_key' | 'bad_request' | 'unknown';
+
+function classifyGeminiError(status: number, body: string): { class: GeminiErrorClass; transient: boolean } {
+	const lower = body.toLowerCase();
+	if (status === 429 || lower.includes('resource_exhausted') || lower.includes('quota')) {
+		return { class: 'rate_limit', transient: true };
+	}
+	if (status === 503 || lower.includes('unavailable') || lower.includes('overloaded') || lower.includes('high demand')) {
+		return { class: 'overloaded', transient: true };
+	}
+	if (status >= 500 && status < 600) {
+		return { class: 'server_error', transient: true };
+	}
+	if (status === 401 || status === 403 || lower.includes('api key not valid') || lower.includes('permission_denied')) {
+		return { class: 'invalid_key', transient: false };
+	}
+	if (status === 400) {
+		return { class: 'bad_request', transient: false };
+	}
+	return { class: 'unknown', transient: false };
+}
+
+function humanizeGeminiErrorClass(cls: GeminiErrorClass): string {
+	switch (cls) {
+		case 'rate_limit':   return 'Gemini está limitando las peticiones (cuota alcanzada). Espera unos segundos y reintenta.';
+		case 'overloaded':   return 'Gemini está saturado por alta demanda (HTTP 503). Reintenta en 1-2 minutos.';
+		case 'server_error': return 'Error temporal en los servidores de Gemini. Reintenta en unos segundos.';
+		case 'invalid_key':  return 'La API key de Gemini no es válida o no tiene permisos. Verifícala en ⚙️ → API keys.';
+		case 'bad_request':  return 'Gemini rechazó la petición (formato del prompt). Revisa los logs del Service Worker.';
+		case 'unknown':      return 'Error desconocido al hablar con Gemini. Revisa los logs del Service Worker.';
+	}
+}
+
+/**
+ * Suggested wait time before retrying, based on the error class.
+ * Conservative values: Gemini explicitly says "try again later" on 503, so we
+ * wait long enough to let the demand spike pass instead of hammering the API.
+ */
+function suggestRetryDelayMs(cls: GeminiErrorClass, round: number): number {
+	if (cls === 'overloaded')   return Math.min(30000, 8000 * (round + 1));   //  8s, 16s, 24s
+	if (cls === 'rate_limit')   return Math.min(60000, 15000 * (round + 1));  // 15s, 30s, 45s — quota window
+	if (cls === 'server_error') return Math.min(15000, 4000 * (round + 1));   //  4s,  8s, 12s
+	return 5000;
+}
+
+const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+
+interface RetryNotice {
+	round: number;        // 1-indexed round about to start
+	totalRounds: number;
+	waitMs: number;
+	errorClass: GeminiErrorClass;
+	reason: string;
+}
+
 async function requestGeminiText(
 	prompt: string,
 	temperature: number,
 	maxOutputTokens: number,
-	purpose: 'translation' | 'objectives' = 'translation'
+	purpose: 'translation' | 'objectives' = 'translation',
+	onRetry?: (notice: RetryNotice) => void
 ): Promise<string> {
 	await initGeminiKeys();
 	const apiKeys = selectKeysForPurpose(getGeminiApiKeys(), purpose);
@@ -611,45 +681,72 @@ async function requestGeminiText(
 		throw new Error('No Gemini API keys configured.');
 	}
 
+	const MAX_RETRY_ROUNDS = 3;
 	let lastError: Error | null = null;
+	let lastErrorClass: GeminiErrorClass = 'unknown';
 
-	for (const apiKey of apiKeys) {
-		try {
-			const normalizedKey = apiKey.trim();
-			// For 'objectives' we ask Gemini to natively emit JSON. Translation
-			// stays as plain text since we ship raw SRT through.
-			const generationConfig: Record<string, unknown> = { temperature, maxOutputTokens };
-			if (purpose === 'objectives') {
-				generationConfig.responseMimeType = 'application/json';
+	for (let round = 0; round < MAX_RETRY_ROUNDS; round++) {
+		let allTransient = true;
+
+		for (const apiKey of apiKeys) {
+			try {
+				const normalizedKey = apiKey.trim();
+				const generationConfig: Record<string, unknown> = { temperature, maxOutputTokens };
+				if (purpose === 'objectives') {
+					generationConfig.responseMimeType = 'application/json';
+				}
+
+				const response = await fetch(buildGeminiGenerateContentUrl(model, normalizedKey), {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						contents: [{ role: 'user', parts: [{ text: prompt }] }],
+						generationConfig
+					})
+				});
+
+				const responseText = await response.text();
+				if (!response.ok) {
+					const cls = classifyGeminiError(response.status, responseText);
+					lastErrorClass = cls.class;
+					lastError = new Error(`Gemini HTTP ${response.status} (${cls.class}): ${responseText.slice(0, 240)}`);
+					if (!cls.transient) {
+						allTransient = false;
+					}
+					continue;
+				}
+
+				const parsed = JSON.parse(responseText);
+				const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+				if (!text) {
+					const finishReason = parsed?.candidates?.[0]?.finishReason;
+					lastError = new Error(`Gemini returned empty content (finishReason: ${finishReason ?? 'unknown'}).`);
+					lastErrorClass = 'unknown';
+					allTransient = false;
+					continue;
+				}
+
+				return String(text);
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				lastErrorClass = 'server_error';
 			}
-			const response = await fetch(buildGeminiGenerateContentUrl(model, normalizedKey), {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					contents: [{ role: 'user', parts: [{ text: prompt }] }],
-					generationConfig
-				})
-			});
-
-			const responseText = await response.text();
-			if (!response.ok) {
-				throw new Error(`Gemini HTTP ${response.status}: ${responseText.slice(0, 260)}`);
-			}
-
-			const parsed = JSON.parse(responseText);
-			const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
-			if (!text) {
-				const finishReason = parsed?.candidates?.[0]?.finishReason;
-				throw new Error(`Gemini returned empty content (finishReason: ${finishReason ?? 'unknown'}).`);
-			}
-
-			return String(text);
-		} catch (error) {
-			lastError = error instanceof Error ? error : new Error(String(error));
 		}
+
+		if (!allTransient || round === MAX_RETRY_ROUNDS - 1) break;
+		const waitMs = suggestRetryDelayMs(lastErrorClass, round);
+		const reason = humanizeGeminiErrorClass(lastErrorClass);
+		console.warn(`[USG][gemini] All keys returned transient errors (${lastErrorClass}). Backing off ${waitMs}ms before retry ${round + 2}/${MAX_RETRY_ROUNDS}…`);
+		// Notify the caller (e.g. so the UI can render a "reintentando en Xs" toast).
+		try { onRetry?.({ round: round + 2, totalRounds: MAX_RETRY_ROUNDS, waitMs, errorClass: lastErrorClass, reason }); } catch { /* swallow */ }
+		await sleep(waitMs);
 	}
 
-	throw lastError || new Error('All Gemini API keys failed.');
+	const reason = humanizeGeminiErrorClass(lastErrorClass);
+	const detail = lastError?.message ?? 'unknown error';
+	const err = new Error(`${reason} (${detail})`);
+	(err as Error & { geminiClass?: GeminiErrorClass }).geminiClass = lastErrorClass;
+	throw err;
 }
 
 function safeJsonParse(text: string): unknown {
@@ -719,7 +816,10 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 	if (apiKeys.length > 0) {
 		try {
 			const prompt = buildStudyPrompt(cleaned, metadata);
-			const reply = await requestGeminiText(prompt, 0.35, 2800);
+			const reply = await requestGeminiText(prompt, 0.35, 2800, 'translation', (notice) => {
+				console.warn(`[USG][study] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
+				broadcastRetryNotice('translation', notice);
+			});
 			const parsed = safeJsonParse(reply);
 
 			if (parsed && typeof parsed === 'object') {
@@ -896,6 +996,19 @@ async function requestLocalText(prompt: string, temperature: number, maxTokens: 
 	throw lastError || new Error('Local AI request failed.');
 }
 
+function broadcastRetryNotice(purpose: 'translation' | 'objectives' | 'refine', notice: { round: number; totalRounds: number; waitMs: number; errorClass: string; reason: string }) {
+	try {
+		chromeApi?.runtime?.sendMessage?.({
+			type: 'USG_GEMINI_RETRY_NOTICE',
+			purpose,
+			...notice,
+		}, () => {
+			// Sidebar may not be open — swallow the lastError silently.
+			void chromeApi.runtime.lastError;
+		});
+	} catch { /* ignore */ }
+}
+
 async function generateObjectivesViaGemini(
 	courseName: string,
 	description: string
@@ -934,7 +1047,10 @@ async function generateObjectivesViaGemini(
 		const keyCount = getGeminiApiKeys().length;
 		console.log(`[USG][objectives] Gemini keys configured: ${keyCount}`);
 		if (keyCount > 0) {
-			const text = await requestGeminiText(prompt, 0.5, 600, 'objectives');
+			const text = await requestGeminiText(prompt, 0.5, 600, 'objectives', (notice) => {
+				console.warn(`[USG][objectives] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
+				broadcastRetryNotice('objectives', notice);
+			});
 			rawResponse = text;
 			console.log('[USG][objectives] 🤖 Gemini raw response:', text);
 			console.log('[USG][objectives] response length:', text.length, 'chars');
@@ -994,7 +1110,10 @@ async function refineObjectiveViaGemini(
 	try {
 		await initGeminiKeys();
 		if (getGeminiApiKeys().length > 0) {
-			const text = await requestGeminiText(prompt, 0.4, 200, 'objectives');
+			const text = await requestGeminiText(prompt, 0.4, 200, 'objectives', (notice) => {
+				console.warn(`[USG][refine] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
+				broadcastRetryNotice('refine', notice);
+			});
 			const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
 			if (cleaned) return { refined: cleaned, isMock: false, source: 'gemini' };
 			geminiError = 'Gemini returned empty refined text.';

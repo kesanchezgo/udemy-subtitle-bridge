@@ -2468,6 +2468,16 @@ function setupChromeMessageHandler() {
 
 		const msg = message as Record<string, unknown>;
 
+		// Forward Gemini retry notices to the in-page dock (Shadow DOM) so it
+		// can render a "reintentando en Xs" toast. Background broadcasts via
+		// chrome.runtime.sendMessage; the SidePanel receives it directly.
+		if (type === 'USG_GEMINI_RETRY_NOTICE') {
+			try {
+				window.dispatchEvent(new CustomEvent('usb_to_sidebar', { detail: message }));
+			} catch { /* ignore */ }
+			return false;
+		}
+
 		if (type === 'TOGGLE_DOCK_VISIBILITY') {
 			const enabled = setDockVisibility(!dockEnabled);
 			sendResponse({ ok: true, enabled });
