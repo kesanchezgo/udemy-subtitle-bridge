@@ -15,6 +15,7 @@ import { ApiKeysPanel } from "./ApiKeysPanel";
 import { CacheSettingsPanel } from "./CacheSettingsPanel";
 import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
+import { chromeStorage } from "../services/chromeStorage";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
 import { Session } from "@supabase/supabase-js";
@@ -222,6 +223,9 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       lectureKey?: unknown;
       cueCount?: unknown;
       hasEnglish?: unknown;
+      courseTitle?: unknown;
+      courseDescription?: unknown;
+      lectureTitle?: unknown;
     } | undefined;
     const lectureKey = typeof context?.lectureKey === "string" ? context.lectureKey : null;
 
@@ -245,6 +249,31 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       : 0;
     if (cueCount > 0) {
       setCapturedLineCount((current) => Math.max(current, cueCount));
+    }
+
+    // Forward Udemy course metadata to chrome.storage so StudyAgentTab
+    // can pre-populate course/lesson name and description for the
+    // dynamic objectives generator. We only auto-fill when the course
+    // slug changes (so we don't overwrite the user's edits within the
+    // same course). The lesson name always tracks the active lecture.
+    const courseSlug = typeof (context as { courseSlug?: unknown })?.courseSlug === "string" ? (context as { courseSlug?: string }).courseSlug?.trim() : "";
+    const courseTitle = typeof context?.courseTitle === "string" ? context.courseTitle.trim() : "";
+    const courseDescription = typeof context?.courseDescription === "string" ? context.courseDescription.trim() : "";
+    const lectureTitle = typeof context?.lectureTitle === "string" ? context.lectureTitle.trim() : "";
+    if (courseTitle || courseDescription || lectureTitle) {
+      void chromeStorage.get(["agent_autofilled_course_slug"]).then((existing) => {
+        const lastFilledSlug = typeof existing.agent_autofilled_course_slug === "string" ? existing.agent_autofilled_course_slug : "";
+        const isNewCourse = !!courseSlug && courseSlug !== lastFilledSlug;
+        const updates: Record<string, unknown> = {};
+        if (isNewCourse && courseTitle) updates.agent_course_name = courseTitle;
+        if (isNewCourse && courseDescription) updates.agent_course_description = courseDescription;
+        if (isNewCourse) updates.agent_autofilled_course_slug = courseSlug;
+        // Lesson name always tracks the active lecture — overwrite freely.
+        if (lectureTitle) updates.agent_lesson_name = lectureTitle;
+        if (Object.keys(updates).length > 0) {
+          void chromeStorage.set(updates);
+        }
+      });
     }
   }, [pushOverlayText]);
 

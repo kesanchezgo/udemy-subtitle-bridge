@@ -792,15 +792,37 @@ function buildTranslateMessages(en: string): AIMessage[] {
 
 // ─── Course-objective generation ─────────────────────────────────────────────
 // Produces 4 learning-goal cards tailored to a specific course (name + description).
-// Falls back through the same chain as translation/evaluations:
-//   Local AI (8010) → Gemini Key 1 → Gemini Key 2 → deterministic mocks.
-// All routing is handled by callLocalAI() so this stays a single call site.
+// Routes through the background script which runs the same fallback chain as
+// translation: Local AI (8010) → Gemini key 1 → Gemini key 2.
+// If the background isn't reachable (preview / dev), falls back to mocks.
 
 export interface GeneratedObjective {
   id: string;       // stable slug
   icon: string;     // single emoji
   title: string;    // short, action-oriented
   sub: string;      // one-line clarifier
+}
+
+function getChromeRuntime(): { sendMessage: (msg: unknown, cb: (res: unknown) => void) => void } | undefined {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void } };
+  }).chrome;
+  if (!chromeApi?.runtime?.sendMessage) return undefined;
+  return chromeApi.runtime as { sendMessage: (msg: unknown, cb: (res: unknown) => void) => void };
+}
+
+function sendToBackground<T>(message: unknown): Promise<T | null> {
+  const runtime = getChromeRuntime();
+  if (!runtime) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      runtime.sendMessage(message, (response) => {
+        resolve((response ?? null) as T | null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 function mockObjectivesFor(courseName: string, description: string): GeneratedObjective[] {
@@ -866,6 +888,24 @@ export async function generateCourseObjectives(
   courseName: string,
   description: string,
 ): Promise<{ objectives: GeneratedObjective[]; isMock: boolean }> {
+  // Try background first (uses local AI 8010 → Gemini key chain with smart distribution)
+  const bgResult = await sendToBackground<{
+    ok?: boolean;
+    objectives?: GeneratedObjective[];
+    isMock?: boolean;
+    source?: string;
+  }>({
+    type: "USG_GENERATE_COURSE_OBJECTIVES",
+    courseName,
+    description,
+    purpose: "objectives", // hint for key-distribution
+  });
+
+  if (bgResult?.ok && Array.isArray(bgResult.objectives) && bgResult.objectives.length >= 3 && !bgResult.isMock) {
+    return { objectives: bgResult.objectives, isMock: false };
+  }
+
+  // Direct Gemini fallback (only reached if background is unavailable, e.g. browser preview).
   const sys = [
     "Eres un asesor pedagógico para estudiantes de Udemy.",
     "Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.",
@@ -897,6 +937,24 @@ export async function refineCustomObjective(
 ): Promise<{ refined: string; isMock: boolean }> {
   if (!rawGoal.trim()) return { refined: "", isMock: false };
 
+  // Try background first
+  const bgResult = await sendToBackground<{
+    ok?: boolean;
+    refined?: string;
+    isMock?: boolean;
+  }>({
+    type: "USG_REFINE_OBJECTIVE",
+    courseName,
+    description,
+    rawGoal,
+    purpose: "objectives",
+  });
+
+  if (bgResult?.ok && typeof bgResult.refined === "string" && bgResult.refined.trim() && !bgResult.isMock) {
+    return { refined: bgResult.refined.trim(), isMock: false };
+  }
+
+  // Direct fallback via callLocalAI (browser preview path).
   const sys = [
     "Eres un coach de aprendizaje. Reescribe el objetivo del estudiante en una frase clara,",
     "específica y orientada a acción, considerando el contexto del curso.",

@@ -584,9 +584,27 @@ function getGeminiModel(): string {
 	return String(g.USB_GEMINI_MODEL || GEMINI_DEFAULT_MODEL).trim();
 }
 
-async function requestGeminiText(prompt: string, temperature: number, maxOutputTokens: number): Promise<string> {
+/**
+ * Reorder Gemini keys based on the purpose of the call so we don't always hit
+ * the same key for both translation and objectives at the same time.
+ *   - 'translation': use keys in their original order [k1, k2, ...].
+ *   - 'objectives':  use keys in REVERSED order [kN, ..., k1]. So with 2 keys,
+ *                    objectives prefer k2 while translation prefers k1.
+ * If only 1 key is configured, both purposes share it.
+ */
+function selectKeysForPurpose(keys: string[], purpose: 'translation' | 'objectives'): string[] {
+	if (keys.length <= 1 || purpose === 'translation') return keys;
+	return [...keys].reverse();
+}
+
+async function requestGeminiText(
+	prompt: string,
+	temperature: number,
+	maxOutputTokens: number,
+	purpose: 'translation' | 'objectives' = 'translation'
+): Promise<string> {
 	await initGeminiKeys();
-	const apiKeys = getGeminiApiKeys();
+	const apiKeys = selectKeysForPurpose(getGeminiApiKeys(), purpose);
 	const model = getGeminiModel();
 
 	if (!apiKeys.length) {
@@ -829,7 +847,7 @@ async function requestLocalText(prompt: string, temperature: number, maxTokens: 
 async function generateObjectivesViaGemini(
 	courseName: string,
 	description: string
-): Promise<{ objectives: GeneratedObjective[]; isMock: boolean; source: 'local' | 'gemini' | 'mock' }> {
+): Promise<{ objectives: GeneratedObjective[]; isMock: boolean; source: 'local' | 'gemini' | 'mock'; error?: string }> {
 	const prompt = buildObjectivesPrompt(courseName, description);
 
 	// Try Local AI first
@@ -843,27 +861,37 @@ async function generateObjectivesViaGemini(
 		// Fall through to Gemini
 	}
 
-	// Try Gemini (already iterates over keys)
+	// Try Gemini using the 'objectives' key preference (reverses order so it
+	// doesn't compete with translation for the same key when 2+ keys exist).
+	let geminiError: unknown = null;
 	try {
 		await initGeminiKeys();
 		if (getGeminiApiKeys().length > 0) {
-			const text = await requestGeminiText(prompt, 0.5, 600);
+			const text = await requestGeminiText(prompt, 0.5, 600, 'objectives');
 			const parsed = parseObjectivesJSON(text);
 			if (parsed) return { objectives: parsed, isMock: false, source: 'gemini' };
+			// If parse failed, surface the raw text in the error for debugging.
+			geminiError = `Failed to parse objectives JSON. Raw response (first 200 chars): ${text.slice(0, 200)}`;
+		} else {
+			geminiError = 'No Gemini API keys configured.';
 		}
-	} catch (_geminiError) {
-		// Fall through to mock
+	} catch (err) {
+		geminiError = toErrorMessage(err);
 	}
 
-	// No mock here — let the client supply one. We just signal isMock=true.
-	return { objectives: [], isMock: true, source: 'mock' };
+	return {
+		objectives: [],
+		isMock: true,
+		source: 'mock',
+		error: typeof geminiError === 'string' ? geminiError : undefined,
+	};
 }
 
 async function refineObjectiveViaGemini(
 	courseName: string,
 	description: string,
 	rawGoal: string
-): Promise<{ refined: string; isMock: boolean; source: 'local' | 'gemini' | 'mock' }> {
+): Promise<{ refined: string; isMock: boolean; source: 'local' | 'gemini' | 'mock'; error?: string }> {
 	if (!rawGoal.trim()) return { refined: '', isMock: false, source: 'mock' };
 
 	const prompt = buildRefinePrompt(courseName, description, rawGoal);
@@ -879,17 +907,26 @@ async function refineObjectiveViaGemini(
 		// Fall through to Gemini
 	}
 
-	// Try Gemini
+	// Try Gemini using 'objectives' preference
+	let geminiError: unknown = null;
 	try {
 		await initGeminiKeys();
 		if (getGeminiApiKeys().length > 0) {
-			const text = await requestGeminiText(prompt, 0.4, 200);
+			const text = await requestGeminiText(prompt, 0.4, 200, 'objectives');
 			const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
 			if (cleaned) return { refined: cleaned, isMock: false, source: 'gemini' };
+			geminiError = 'Gemini returned empty refined text.';
+		} else {
+			geminiError = 'No Gemini API keys configured.';
 		}
-	} catch (_geminiError) {
-		// Fall through
+	} catch (err) {
+		geminiError = toErrorMessage(err);
 	}
 
-	return { refined: '', isMock: true, source: 'mock' };
+	return {
+		refined: '',
+		isMock: true,
+		source: 'mock',
+		error: typeof geminiError === 'string' ? geminiError : undefined,
+	};
 }
