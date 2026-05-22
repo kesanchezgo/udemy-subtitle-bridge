@@ -35,15 +35,15 @@ export function AppLogo({
   const { isSepia } = useDockTheme();
 
   // EN subtitle line: white on dark bg, warm dark on light bg
-  const enLineColor  = isSepia ? "#3d3a38" : "#EFF6FF";
+  const enLineColor  = isSepia ? "#4b4d52" : "#EFF6FF";
   const enLineOpacity = isSepia ? 0.70 : 0.82;
   // Paragraph indicators
-  const parLineColor = isSepia ? "#3d3a38" : "#EFF6FF";
+  const parLineColor = isSepia ? "#4b4d52" : "#EFF6FF";
   const parLineOpacity1 = isSepia ? 0.22 : 0.18;
   // Node core: white on dark, violet on light
   const nodeCoreColor = isSepia ? "#7c3aed" : "#FFFFFF";
   // Particle start color
-  const particleStart = isSepia ? "#4a4744" : "#EFF6FF";
+  const particleStart = isSepia ? "#3f4147" : "#EFF6FF";
 
   const icon = (
     <svg
