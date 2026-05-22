@@ -684,6 +684,104 @@ function exportEnSrt(): { srt: string; cueCount: number; source: string; fileNam
 	return collectedCandidate;
 }
 
+// ── Translation Cache (unified with cacheService — usb_cache_ namespace) ────
+// Format matches CacheEntry from src/app/services/cacheService.ts so the
+// CacheSettingsPanel sees and manages these entries.
+const TRANSLATION_CACHE_PREFIX = 'usb_cache_';
+const DEFAULT_CACHE_TTL_DAYS = 7;
+const CACHE_TTL_KEY = 'cache_ttl_days'; // persisted by ExtensionSidebar via chromeStorage (sync)
+
+interface TranslationCacheData {
+	srt: string;
+	blockCount: number;
+}
+
+interface TranslationCacheEntry {
+	data: TranslationCacheData;
+	expires: number;
+	createdAt: number;
+	courseId?: string;
+	courseLabel?: string;
+	type?: 'srt' | 'curriculum' | 'translation' | 'other';
+}
+
+function getChromeLocal(): { get: Function; set: Function; remove: Function } | undefined {
+	const chromeApi = (globalThis as typeof globalThis & {
+		chrome?: { storage?: { local?: { get: Function; set: Function; remove: Function } } };
+	}).chrome;
+	return chromeApi?.storage?.local;
+}
+
+function getChromeSync(): { get: Function } | undefined {
+	const chromeApi = (globalThis as typeof globalThis & {
+		chrome?: { storage?: { sync?: { get: Function } } };
+	}).chrome;
+	return chromeApi?.storage?.sync;
+}
+
+async function readCacheTtlDays(): Promise<number> {
+	const sync = getChromeSync();
+	if (!sync) return DEFAULT_CACHE_TTL_DAYS;
+	return new Promise((resolve) => {
+		try {
+			sync.get([CACHE_TTL_KEY], (items: Record<string, unknown>) => {
+				const v = items?.[CACHE_TTL_KEY];
+				const n = typeof v === 'number' && v > 0 && v <= 30 ? Math.floor(v) : DEFAULT_CACHE_TTL_DAYS;
+				resolve(n);
+			});
+		} catch {
+			resolve(DEFAULT_CACHE_TTL_DAYS);
+		}
+	});
+}
+
+function readCachedTranslation(lectureKey: string): Promise<TranslationCacheData | null> {
+	if (!lectureKey) return Promise.resolve(null);
+	const local = getChromeLocal();
+	if (!local) return Promise.resolve(null);
+	const sk = TRANSLATION_CACHE_PREFIX + 'srt_' + lectureKey;
+	return new Promise((resolve) => {
+		try {
+			local.get([sk], (items: Record<string, unknown>) => {
+				const entry = items?.[sk] as TranslationCacheEntry | undefined;
+				if (!entry?.data?.srt || !entry?.expires) return resolve(null);
+				if (Date.now() > entry.expires) {
+					try { local.remove([sk]); } catch { /* ignore */ }
+					return resolve(null);
+				}
+				resolve({ srt: entry.data.srt, blockCount: entry.data.blockCount || 0 });
+			});
+		} catch {
+			resolve(null);
+		}
+	});
+}
+
+async function writeCachedTranslation(
+	lectureKey: string,
+	courseSlug: string,
+	courseLabel: string,
+	data: TranslationCacheData
+): Promise<void> {
+	if (!lectureKey || !data?.srt) return;
+	const local = getChromeLocal();
+	if (!local) return;
+	const ttlDays = await readCacheTtlDays();
+	const sk = TRANSLATION_CACHE_PREFIX + 'srt_' + lectureKey;
+	const entry: TranslationCacheEntry = {
+		data,
+		expires: Date.now() + ttlDays * 86_400_000,
+		createdAt: Date.now(),
+		courseId: courseSlug || lectureKey,
+		courseLabel: courseLabel || courseSlug || 'Curso',
+		type: 'srt'
+	};
+	return new Promise((resolve) => {
+		try { local.set({ [sk]: entry }, () => resolve()); }
+		catch { resolve(); }
+	});
+}
+
 function requestPipelineTranslation(expectedLectureKey?: string) {
 	const currentLectureKey = getLectureKey();
 	if (expectedLectureKey && currentLectureKey && expectedLectureKey !== currentLectureKey) {
@@ -743,35 +841,62 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 		return;
 	}
 
-	chromeRuntime.runtime.sendMessage({
-		type: 'USG_TRANSLATE_EN_SRT_AUTO',
-		srtText: enSrt.srt,
-		lectureKey: getLectureKey(),
-		courseSlug: getCourseSlug(),
-		lectureId: getLectureKey()
-	}, (response) => {
-		const result = (response && typeof response === 'object' ? response : {}) as {
-			ok?: boolean;
-			srt?: string;
-			blockCount?: number;
-			chunkCount?: number;
-			error?: string;
-		};
-		if (result.ok && typeof result.srt === 'string' && result.srt.trim()) {
-			importedEsCues = parseTimedTextIntoCues(result.srt);
+	void readCachedTranslation(currentLectureKey).then((cached) => {
+		if (cached?.srt) {
+			importedEsCues = parseTimedTextIntoCues(cached.srt);
 			currentSubtitle = '';
 			scanForSubtitleChanges();
+			void sendToSidebar({
+				type: 'PIPELINE_TRANSLATION_RESULT',
+				payload: {
+					...basePayload,
+					ok: true,
+					srt: cached.srt,
+					blockCount: cached.blockCount,
+					chunkCount: 1,
+					cached: true,
+					importedCount: importedEsCues.length
+				}
+			}).catch(() => undefined);
+			return;
 		}
-		void sendToSidebar({
-			type: 'PIPELINE_TRANSLATION_RESULT',
-			payload: {
-				...basePayload,
-				...result,
-				ok: Boolean(result.ok),
-				importedCount: importedEsCues.length,
-				blockCount: typeof result.blockCount === 'number' ? result.blockCount : enSrt.cueCount
+
+		chromeRuntime.runtime!.sendMessage!({
+			type: 'USG_TRANSLATE_EN_SRT_AUTO',
+			srtText: enSrt.srt,
+			lectureKey: currentLectureKey,
+			courseSlug: getCourseSlug(),
+			lectureId: currentLectureKey
+		}, (response) => {
+			const result = (response && typeof response === 'object' ? response : {}) as {
+				ok?: boolean;
+				srt?: string;
+				blockCount?: number;
+				chunkCount?: number;
+				error?: string;
+			};
+			if (result.ok && typeof result.srt === 'string' && result.srt.trim()) {
+				importedEsCues = parseTimedTextIntoCues(result.srt);
+				currentSubtitle = '';
+				scanForSubtitleChanges();
+				void writeCachedTranslation(
+					currentLectureKey,
+					getCourseSlug(),
+					getCourseTitle(),
+					{ srt: result.srt, blockCount: result.blockCount || 0 }
+				);
 			}
-		}).catch(() => undefined);
+			void sendToSidebar({
+				type: 'PIPELINE_TRANSLATION_RESULT',
+				payload: {
+					...basePayload,
+					...result,
+					ok: Boolean(result.ok),
+					importedCount: importedEsCues.length,
+					blockCount: typeof result.blockCount === 'number' ? result.blockCount : enSrt.cueCount
+				}
+			}).catch(() => undefined);
+		});
 	});
 }
 
@@ -2442,21 +2567,39 @@ function setupChromeMessageHandler() {
 			}
 
 			const chromeRuntime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void } } }).chrome;
-			if (chromeRuntime?.runtime?.sendMessage) {
-				chromeRuntime.runtime.sendMessage({
-					type: 'USG_TRANSLATE_EN_SRT_AUTO',
-					srtText: enSrt.srt,
-					lectureKey: getLectureKey(),
-					courseSlug: getCourseSlug(),
-					lectureId: getLectureKey()
-				}, (response) => {
-					sendResponse(response || { ok: false, error: 'No response from background.' });
-				});
-				return true;
+			if (!chromeRuntime?.runtime?.sendMessage) {
+				sendResponse({ ok: false, error: 'Chrome runtime not available.' });
+				return false;
 			}
 
-			sendResponse({ ok: false, error: 'Chrome runtime not available.' });
-			return false;
+			const lectureKey = getLectureKey();
+			void readCachedTranslation(lectureKey).then((cached) => {
+				if (cached?.srt) {
+					sendResponse({ ok: true, srt: cached.srt, blockCount: cached.blockCount, chunkCount: 1, cached: true });
+					return;
+				}
+				chromeRuntime.runtime!.sendMessage!({
+					type: 'USG_TRANSLATE_EN_SRT_AUTO',
+					srtText: enSrt.srt,
+					lectureKey,
+					courseSlug: getCourseSlug(),
+					lectureId: lectureKey
+				}, (response) => {
+					const result = (response && typeof response === 'object' ? response : {}) as {
+						ok?: boolean; srt?: string; blockCount?: number;
+					};
+					if (result.ok && typeof result.srt === 'string' && result.srt.trim()) {
+						void writeCachedTranslation(
+							lectureKey,
+							getCourseSlug(),
+							getCourseTitle(),
+							{ srt: result.srt, blockCount: result.blockCount || 0 }
+						);
+					}
+					sendResponse(response || { ok: false, error: 'No response from background.' });
+				});
+			});
+			return true;
 		}
 
 		return false;

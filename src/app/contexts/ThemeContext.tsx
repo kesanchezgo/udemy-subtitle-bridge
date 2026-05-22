@@ -32,18 +32,18 @@ export const DARK = {
   border:      "rgba(255,255,255,0.06)",
 } as const;
 
-/** Paleta Light / Warm White — tokens de referencia */
+/** Paleta Light / Pure White — Udemy-style cool neutral */
 export const SEPIA = {
-  pageBg:      "#f8f7f6",
-  headerBg:    "#f0efed",
-  tabBarBg:    "#f2f1ef",
+  pageBg:      "#f7f9fa",
+  headerBg:    "#f3f4f6",
+  tabBarBg:    "#f1f3f5",
   cardBg:      "#ffffff",
-  barBg:       "#e8e7e5",
-  inputBg:     "#f2f1ef",
-  footerBg:    "#f2f1ef",
-  borderColor: "rgba(0,0,0,0.07)",
-  textPrimary: "#1a1918",
-  textMuted:   "#3d3a38",   // strengthened from #6e6b68 for better readability
+  barBg:       "#eceef1",
+  inputBg:     "#f1f3f5",
+  footerBg:    "#f1f3f5",
+  borderColor: "rgba(0,0,0,0.08)",
+  textPrimary: "#1c1d1f",
+  textMuted:   "#4b4d52",
 } as const;
 
 // ── CSS vars — clases Tailwind que referencian las variables de paleta ────────

@@ -264,10 +264,31 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 
 	if (type === 'USG_TRANSLATE_EN_SRT_AUTO') {
 		const srtText = String(message.srtText || '');
-		const lectureKey = String(message.lectureKey || '');
-		const courseSlug = String(message.courseSlug || '');
 
-		translateSrtWithCache(srtText, lectureKey, courseSlug)
+		translateSrtToSpanish(srtText)
+			.then((result) => sendResponse({ ok: true, ...result }))
+			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
+
+		return true;
+	}
+
+	if (type === 'USG_GENERATE_COURSE_OBJECTIVES') {
+		const courseName = String((message as { courseName?: unknown }).courseName || '');
+		const description = String((message as { description?: unknown }).description || '');
+
+		generateObjectivesViaGemini(courseName, description)
+			.then((result) => sendResponse({ ok: true, ...result }))
+			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
+
+		return true;
+	}
+
+	if (type === 'USG_REFINE_OBJECTIVE') {
+		const courseName = String((message as { courseName?: unknown }).courseName || '');
+		const description = String((message as { description?: unknown }).description || '');
+		const rawGoal = String((message as { rawGoal?: unknown }).rawGoal || '');
+
+		refineObjectiveViaGemini(courseName, description, rawGoal)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 
@@ -492,81 +513,9 @@ async function translateSrtWithGemini(blocks: SrtBlock[]) {
 	return normalizeTranslatedChunk(blocks, response);
 }
 
-// ── Translation Cache (chrome.storage.local, 7 days TTL) ──────────────────────
-
-const CACHE_PREFIX = 'usg_srt_cache_';
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-function getCacheKey(lectureKey: string): string {
-	return `${CACHE_PREFIX}${lectureKey}`;
-}
-
-async function getCachedTranslation(lectureKey: string): Promise<{ srt: string; blockCount: number } | null> {
-	if (!lectureKey || !chromeApi?.storage?.local) return null;
-
-	return new Promise((resolve) => {
-		chromeApi.storage.local.get([getCacheKey(lectureKey)], (result: Record<string, unknown>) => {
-			const entry = result[getCacheKey(lectureKey)] as {
-				srt?: string;
-				blockCount?: number;
-				timestamp?: number;
-			} | undefined;
-
-			if (!entry || !entry.srt || !entry.timestamp) {
-				resolve(null);
-				return;
-			}
-
-			// Check TTL
-			if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-				// Expired — remove it
-				chromeApi.storage.local.remove([getCacheKey(lectureKey)]);
-				resolve(null);
-				return;
-			}
-
-			resolve({ srt: entry.srt, blockCount: entry.blockCount || 0 });
-		});
-	});
-}
-
-async function setCachedTranslation(lectureKey: string, srt: string, blockCount: number): Promise<void> {
-	if (!lectureKey || !chromeApi?.storage?.local) return;
-
-	return new Promise((resolve) => {
-		chromeApi.storage.local.set({
-			[getCacheKey(lectureKey)]: {
-				srt,
-				blockCount,
-				timestamp: Date.now()
-			}
-		}, () => resolve());
-	});
-}
-
-async function translateSrtWithCache(
-	sourceSrt: string,
-	lectureKey: string,
-	_courseSlug: string
-): Promise<{ srt: string; blockCount: number; chunkCount: number; cached?: boolean }> {
-	// 1. Check cache first
-	if (lectureKey) {
-		const cached = await getCachedTranslation(lectureKey);
-		if (cached) {
-			return { ...cached, chunkCount: 1, cached: true };
-		}
-	}
-
-	// 2. No cache — translate
-	const result = await translateSrtToSpanish(sourceSrt);
-
-	// 3. Save to cache
-	if (lectureKey && result.srt) {
-		void setCachedTranslation(lectureKey, result.srt, result.blockCount);
-	}
-
-	return result;
-}
+// ── Translation Cache MIGRATED to client-side cacheService ───────────────────
+// The background no longer caches translations. The sidebar (cacheService)
+// handles all caching with TTL configurable by the user.
 
 async function translateSrtToSpanish(sourceSrt: string) {
 	const blocks = parseSrtBlocks(sourceSrt);
@@ -781,4 +730,166 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 		},
 		raw: cleaned
 	};
+}
+
+
+// ─── Course-objective generation via background (Gemini fallback chain) ─────
+// Mirrors the translation chain: try Local AI (8010) → Gemini key 1 → key 2.
+// Mock fallback is handled by the caller (objectivesService / localAI client).
+
+export interface GeneratedObjective {
+	id: string;
+	icon: string;
+	title: string;
+	sub: string;
+}
+
+function buildObjectivesPrompt(courseName: string, description: string): string {
+	return [
+		'Eres un asesor pedagógico para estudiantes de Udemy.',
+		'Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.',
+		'Devuelve ESTRICTAMENTE un array JSON sin texto extra, con esta forma:',
+		'[{"id":"slug","icon":"🚀","title":"Texto corto","sub":"clarificador"}, ...]',
+		'Reglas: id en minúsculas-con-guiones; icon es UN solo emoji; title máx 35 chars; sub máx 40 chars.',
+		'Los 4 objetivos deben cubrir ángulos distintos (ej: entrevista, certificación, proyecto real, dominio profundo).',
+		'',
+		`Curso: ${courseName}`,
+		`Descripción: ${description || '(sin descripción)'}`,
+		'Genera los 4 objetivos.'
+	].join('\n');
+}
+
+function buildRefinePrompt(courseName: string, description: string, rawGoal: string): string {
+	return [
+		'Eres un coach de aprendizaje. Reescribe el objetivo del estudiante en una frase clara,',
+		'específica y orientada a acción, considerando el contexto del curso.',
+		'Devuelve SOLO la frase reescrita, sin comillas ni explicaciones, máximo 90 caracteres.',
+		'',
+		`Curso: ${courseName}`,
+		`Descripción: ${description || '(sin descripción)'}`,
+		`Objetivo del estudiante: "${rawGoal.trim()}"`,
+		'Reescríbelo:'
+	].join('\n');
+}
+
+function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
+	const attempts: string[] = [];
+	attempts.push(raw.trim());
+	attempts.push(raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim());
+	const match = raw.match(/\[[\s\S]*\]/);
+	if (match) attempts.push(match[0]);
+
+	for (const candidate of attempts) {
+		try {
+			const arr = JSON.parse(candidate);
+			if (!Array.isArray(arr) || arr.length === 0) continue;
+			const cleaned: GeneratedObjective[] = arr
+				.slice(0, 4)
+				.map((o: { id?: string; icon?: string; title?: string; sub?: string }, i: number) => ({
+					id: (o.id ?? o.title ?? `obj-${i}`).toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40),
+					icon: (o.icon ?? '🎯').toString().slice(0, 4),
+					title: (o.title ?? 'Objetivo').toString().slice(0, 60),
+					sub: (o.sub ?? '').toString().slice(0, 60)
+				}));
+			if (cleaned.length >= 3) return cleaned;
+		} catch { /* try next */ }
+	}
+	return null;
+}
+
+async function requestLocalText(prompt: string, temperature: number, maxTokens: number): Promise<string> {
+	let lastError: Error | null = null;
+	for (const endpoint of LOCAL_AI_CHAT_ENDPOINTS) {
+		try {
+			const response = await fetch(endpoint, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'local-model',
+					messages: [{ role: 'user', content: prompt }],
+					temperature,
+					max_tokens: maxTokens,
+					stream: false
+				})
+			});
+			const responseText = await response.text();
+			if (!response.ok) {
+				throw new Error(`Local AI HTTP ${response.status}: ${responseText.slice(0, 220)}`);
+			}
+			const text = extractOpenAiText(JSON.parse(responseText));
+			if (!text) throw new Error('Local AI returned empty content.');
+			return text;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+		}
+	}
+	throw lastError || new Error('Local AI request failed.');
+}
+
+async function generateObjectivesViaGemini(
+	courseName: string,
+	description: string
+): Promise<{ objectives: GeneratedObjective[]; isMock: boolean; source: 'local' | 'gemini' | 'mock' }> {
+	const prompt = buildObjectivesPrompt(courseName, description);
+
+	// Try Local AI first
+	try {
+		if (await checkLocalAiHealth()) {
+			const text = await requestLocalText(prompt, 0.5, 600);
+			const parsed = parseObjectivesJSON(text);
+			if (parsed) return { objectives: parsed, isMock: false, source: 'local' };
+		}
+	} catch (_localError) {
+		// Fall through to Gemini
+	}
+
+	// Try Gemini (already iterates over keys)
+	try {
+		await initGeminiKeys();
+		if (getGeminiApiKeys().length > 0) {
+			const text = await requestGeminiText(prompt, 0.5, 600);
+			const parsed = parseObjectivesJSON(text);
+			if (parsed) return { objectives: parsed, isMock: false, source: 'gemini' };
+		}
+	} catch (_geminiError) {
+		// Fall through to mock
+	}
+
+	// No mock here — let the client supply one. We just signal isMock=true.
+	return { objectives: [], isMock: true, source: 'mock' };
+}
+
+async function refineObjectiveViaGemini(
+	courseName: string,
+	description: string,
+	rawGoal: string
+): Promise<{ refined: string; isMock: boolean; source: 'local' | 'gemini' | 'mock' }> {
+	if (!rawGoal.trim()) return { refined: '', isMock: false, source: 'mock' };
+
+	const prompt = buildRefinePrompt(courseName, description, rawGoal);
+
+	// Try Local AI first
+	try {
+		if (await checkLocalAiHealth()) {
+			const text = await requestLocalText(prompt, 0.4, 200);
+			const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
+			if (cleaned) return { refined: cleaned, isMock: false, source: 'local' };
+		}
+	} catch (_localError) {
+		// Fall through to Gemini
+	}
+
+	// Try Gemini
+	try {
+		await initGeminiKeys();
+		if (getGeminiApiKeys().length > 0) {
+			const text = await requestGeminiText(prompt, 0.4, 200);
+			const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
+			if (cleaned) return { refined: cleaned, isMock: false, source: 'gemini' };
+		}
+	} catch (_geminiError) {
+		// Fall through
+	}
+
+	return { refined: '', isMock: true, source: 'mock' };
 }

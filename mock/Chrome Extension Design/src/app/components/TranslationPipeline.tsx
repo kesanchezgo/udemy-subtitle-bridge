@@ -484,10 +484,10 @@ export function TranslationPipeline({
                   key="srt-output"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="bg-[#07080a] border border-white/6 rounded-lg overflow-hidden"
+                  className="bg-[var(--usb-bg-4)] border border-[var(--usb-border)] rounded-lg overflow-hidden"
                 >
-                  <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/5">
-                    <span className="text-white/20 text-[8px] font-mono uppercase tracking-widest">subtitulos_es.srt</span>
+                  <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[var(--usb-border)]">
+                    <span className="text-[var(--usb-fg-lo)] text-[8px] font-mono uppercase tracking-widest">subtitulos_es.srt</span>
                     {isStreaming && (
                       <motion.span
                         className="w-1 h-3 bg-violet-400 rounded-sm"
@@ -497,7 +497,7 @@ export function TranslationPipeline({
                     )}
                   </div>
                   <div
-                    className="px-2.5 py-2 overflow-y-auto"
+                    className="px-2.5 py-2 overflow-y-auto custom-scrollbar-thin"
                     style={{ maxHeight: isDone ? "9rem" : "7rem" }}
                   >
                     {srtLines.map((line, i) => (
@@ -517,7 +517,7 @@ export function TranslationPipeline({
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ delay: 0.4 }}
-                        className="text-white/18 text-[9px] font-mono"
+                        className="text-[var(--usb-fg-dim)] text-[9px] font-mono"
                       >
                         {TOTAL_BLOCKS} bloques · {streamedSrt.split(" ").length} tokens
                       </motion.p>
@@ -525,19 +525,19 @@ export function TranslationPipeline({
                   )}
                 </motion.div>
               ) : isBuilding || isSending ? (
-                <div className="bg-[#07080a] border border-white/6 rounded-lg p-2.5 space-y-1.5">
+                <div className="bg-[var(--usb-bg-4)] border border-[var(--usb-border)] rounded-lg p-2.5 space-y-1.5">
                   {[55, 40, 65].map((w, i) => (
                     <motion.div
                       key={i}
                       animate={{ opacity: [0.06, 0.18, 0.06] }}
                       transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.18 }}
-                      className="h-2 rounded bg-white/10"
+                      className="h-2 rounded bg-[var(--usb-fg-dim)]"
                       style={{ width: `${w}%` }}
                     />
                   ))}
                 </div>
               ) : (
-                <p className="text-white/20 text-[11px] italic">Pendiente…</p>
+                <p className="text-[var(--usb-fg-lo)] text-[11px] italic">Pendiente…</p>
               )}
             </AnimatePresence>
           </div>

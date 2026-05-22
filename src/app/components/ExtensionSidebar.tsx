@@ -12,6 +12,7 @@ import { Slider } from "./ui/slider";
 import { StudyAgentTab } from "./StudyAgentTab";
 import { TranslationPipeline } from "./TranslationPipeline";
 import { ApiKeysPanel } from "./ApiKeysPanel";
+import { CacheSettingsPanel } from "./CacheSettingsPanel";
 import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge } from "../services/contentBridge";
@@ -158,6 +159,9 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   // ── Captions state ────────────────────────────────────────────────────────
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
   const [pasteSrt, setPasteSrt]           = useState("");
+
+  // ── Cache config (persisted) ──────────────────────────────────────────────
+  const [cacheTtlDays, setCacheTtlDays] = usePersistedState<number>("cache_ttl_days", 7);
   const [srtApplied, setSrtApplied]       = useState(false);
   const [applyingCopy, setApplyingCopy]   = useState(false);
   const [currentLine, setCurrentLine]     = useState(2);
@@ -826,6 +830,9 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   )}
                 </AnimatePresence>
               </div>
+
+              {/* Cache settings */}
+              <CacheSettingsPanel ttlDays={cacheTtlDays} onTtlChange={setCacheTtlDays} />
 
               <div className="h-2"/>
         </motion.div>
