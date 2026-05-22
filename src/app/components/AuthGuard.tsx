@@ -167,7 +167,7 @@ export function AuthGuard({
   const [isGuest,   setIsGuest]   = useState(false);
   const [loading,   setLoading]   = useState(true);
 
-  const { t, isSepia } = useDockTheme();
+  const { t } = useDockTheme();
 
   const [tab,            setTab]            = useState<'login' | 'signup'>('login');
   const [email,          setEmail]          = useState('');
@@ -297,7 +297,7 @@ export function AuthGuard({
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className={`flex-1 flex items-center justify-center ${t("bg-[#1a1b1d]", "bg-[#f8f7f6]")}`}>
+      <div className={`flex-1 flex items-center justify-center ${t("bg-[#1a1b1d]", "bg-[#f7f9fa]")}`}>
         <Loader2 className="animate-spin text-violet-500" size={20} />
       </div>
     );
@@ -308,9 +308,7 @@ export function AuthGuard({
 
   // ── Auth screen — fills the extension sidebar panel completely ────────────
   return (
-    <div className={`flex flex-col h-full w-full overflow-y-auto ${t("bg-[#0f1012]", "bg-[#f8f7f6]")}`}
-      style={{ scrollbarWidth: 'thin', scrollbarColor: isSepia ? 'rgba(0,0,0,0.12) transparent' : 'rgba(255,255,255,0.1) transparent' }}
-    >
+    <div className={`flex flex-col h-full w-full overflow-y-auto custom-scrollbar ${t("bg-[#0f1012]", "bg-[#f7f9fa]")}`}>
       {/* Brand header */}
       <div className="flex flex-col items-center pt-7 pb-3 px-5">
         <div className="w-11 h-11 rounded-2xl bg-violet-600/15 border border-violet-500/20 flex items-center justify-center mb-3 shadow-[0_0_28px_rgba(139,92,246,0.18)]">
@@ -453,10 +451,10 @@ export function AuthGuard({
               </button>
             </div>
             <button type="submit" disabled={authLoading}
-              className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 text-white rounded-lg py-2 text-[12px] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-[0_0_18px_rgba(139,92,246,0.22)]"
-              style={{ fontWeight: 600 }}>
-              {authLoading ? <Loader2 size={13} className="animate-spin" /> : <ArrowRight size={13} />}
+              className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 text-white text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-900/25 active:scale-[0.98] disabled:opacity-50">
+              {authLoading ? <Loader2 size={13} className="animate-spin" /> : (tab === 'login' ? <LogIn size={13}/> : <UserPlus size={13}/>)}
               {tab === 'login' ? 'Iniciar sesión' : 'Crear cuenta gratis'}
+              {!authLoading && <ArrowRight size={13}/>}
             </button>
           </form>
         </div>
