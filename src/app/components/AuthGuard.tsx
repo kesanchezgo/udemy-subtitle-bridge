@@ -11,9 +11,19 @@ import { AppLogo } from './AppLogo';
 import { toast } from 'sonner';
 import { celebrate } from './CelebrationOverlay';
 import { useDockTheme } from '../contexts/ThemeContext';
+import {
+  historyService,
+  cloudKeyForLecture,
+  CLOUD_HISTORY_PREFIX,
+  CLOUD_HISTORY_LEGACY_BUNDLE_KEY,
+  type LectureHistoryRecord,
+} from '../services/historyService';
 
 const GUEST_KEY  = 'subtitle_bridge_guest_mode';
 const USB_PREFIX = 'usb_';
+// Max items per /migrate POST. Edge functions have a request size cap and
+// individual study records with AI feedback can be several KB each.
+const MIGRATE_CHUNK_SIZE = 30;
 
 function isNetworkSignupFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -32,9 +42,29 @@ async function reverseSyncFromCloud(session: Session): Promise<number> {
     const data = await res.json();
     if (!res.ok || !data.success) return 0;
     const items: Array<{ key: string; value: unknown }> = data.items ?? [];
+
+    // Collect history records (per-lecture keys + legacy bundle) and import in one batch.
+    const historyRecords: LectureHistoryRecord[] = [];
     for (const { key, value } of items) {
-      if (value !== null && value !== undefined) {
-        localStorage.setItem(`${USB_PREFIX}${key}`, JSON.stringify(value));
+      if (value === null || value === undefined) continue;
+
+      if (key === CLOUD_HISTORY_LEGACY_BUNDLE_KEY) {
+        const arr = Array.isArray(value) ? (value as LectureHistoryRecord[]) : [];
+        historyRecords.push(...arr);
+        continue;
+      }
+      if (key.startsWith(CLOUD_HISTORY_PREFIX)) {
+        historyRecords.push(value as LectureHistoryRecord);
+        continue;
+      }
+      localStorage.setItem(`${USB_PREFIX}${key}`, JSON.stringify(value));
+    }
+
+    if (historyRecords.length > 0) {
+      try {
+        await historyService.importAll(historyRecords);
+      } catch (e) {
+        console.error('[AuthGuard] history import failed', e);
       }
     }
     localStorage.setItem(doneKey, 'true');
@@ -69,27 +99,55 @@ async function migrateLocalDataToCloud(session: Session) {
 
   if (items.length === 0) { localStorage.setItem(doneKey, 'true'); return; }
 
+  // Attach persistent study history — one row per lecture (server stores each key
+  // separately in kv_store, so this naturally avoids a single oversized payload).
   try {
-    const res = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/migrate`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ items }),
-      }
-    );
-    const data = await res.json();
-    if (res.ok && data.success) {
-      localStorage.setItem(doneKey, 'true');
-      celebrate({
-        type: 'cloud_synced',
-        title: `${items.length} elemento${items.length !== 1 ? 's' : ''} en la nube`,
-        subtitle: 'Tu configuración local ya está respaldada ☁️',
-        icon: '☁️',
-      });
+    const records = await historyService.exportAll();
+    for (const rec of records) {
+      items.push({ key: cloudKeyForLecture(rec.courseId, rec.lectureId), value: rec });
     }
-  } catch (err) {
-    console.error('[AuthGuard] Upload error:', err);
+  } catch (e) {
+    console.error('[AuthGuard] history export failed', e);
+  }
+
+  // POST in chunks so a user with hundreds of lectures doesn't trip the edge function size limit.
+  const chunks: Array<typeof items> = [];
+  for (let i = 0; i < items.length; i += MIGRATE_CHUNK_SIZE) {
+    chunks.push(items.slice(i, i + MIGRATE_CHUNK_SIZE));
+  }
+
+  let uploaded = 0;
+  for (const chunk of chunks) {
+    try {
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/migrate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ items: chunk }),
+        }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        uploaded += chunk.length;
+      } else {
+        console.error('[AuthGuard] Upload chunk failed', data);
+        return; // bail without marking done so next session retries
+      }
+    } catch (err) {
+      console.error('[AuthGuard] Upload error:', err);
+      return;
+    }
+  }
+
+  localStorage.setItem(doneKey, 'true');
+  if (uploaded > 0) {
+    celebrate({
+      type: 'cloud_synced',
+      title: `${uploaded} elemento${uploaded !== 1 ? 's' : ''} en la nube`,
+      subtitle: 'Tu configuración local ya está respaldada ☁️',
+      icon: '☁️',
+    });
   }
 }
 

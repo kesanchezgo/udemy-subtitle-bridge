@@ -4,11 +4,15 @@ import {
   CheckCircle2, Circle, RotateCcw, X, Zap, FlipHorizontal,
   ChevronLeft, ChevronRight, Info, FileDown, FolderPlus,
   FolderSync, Send, Loader2, Wifi, WifiOff, Star, BookOpen,
-  Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward
+  Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating } from "../services/localAI";
 import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
+import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard } from "../services/historyService";
+import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
+import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
+import { HistoryPanel } from "./HistoryPanel";
 import { projectId } from "../../../utils/supabase/info";
 import { usePersistedState } from "../hooks/usePersistedState";
 import confetti from "canvas-confetti";
@@ -50,13 +54,6 @@ interface StudyContent {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const PRESET_OBJECTIVES = [
-  { id: "spring-senisenior", icon: "🚀", title: "Entrevista Spring Boot", sub: "Semi-Senior", color: "from-violet-600/20 to-violet-600/5", border: "border-violet-500/30", accent: "text-violet-300" },
-  { id: "java-cert",         icon: "🏆", title: "Certificación Java SE",  sub: "Oracle OCP",  color: "from-amber-600/20 to-amber-600/5",  border: "border-amber-500/30",  accent: "text-amber-300"  },
-  { id: "personal-project",  icon: "🛠️", title: "Proyecto Personal",      sub: "App real",   color: "from-emerald-600/20 to-emerald-600/5", border: "border-emerald-500/30", accent: "text-emerald-300" },
-  { id: "fullstack",         icon: "⚡", title: "Full Stack Dev",          sub: "Java + React", color: "from-sky-600/20 to-sky-600/5",    border: "border-sky-500/30",    accent: "text-sky-300"    },
-];
-
 const CONFIDENCE = [
   { id: "confused" as ConfidenceLevel,  emoji: "😕", label: "Confuso",       desc: "No quedó claro",    ring: "ring-red-500/40",     bg: "bg-red-500/10",     border: "border-red-500/25",     label_c: "text-red-400"     },
   { id: "partial"  as ConfidenceLevel,  emoji: "🤔", label: "Más o menos",  desc: "Algunos gaps",      ring: "ring-amber-500/40",   bg: "bg-amber-500/10",   border: "border-amber-500/25",   label_c: "text-amber-400"   },
@@ -450,11 +447,12 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
         <span className="text-white/30 bg-white/5 px-2 py-0.5 rounded-full border border-white/5 shadow-inner">
           {idx+1} de {cards.length}
         </span>
-        <motion.span 
+        <motion.span
           key={card.type}
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className={`${meta.color} flex items-center gap-1.5 bg-white/5 px-2 py-0.5 rounded-full border border-[${meta.accent}22] shadow-[0_0_10px_${meta.accent}15]`}
+          className={`${meta.color} flex items-center gap-1.5 bg-white/5 px-2 py-0.5 rounded-full border`}
+          style={{ borderColor: `${meta.accent}38`, boxShadow: `0 0 10px ${meta.accent}26` }}
         >
           <span className="drop-shadow-md">{meta.icon}</span> {meta.label}
         </motion.span>
@@ -471,7 +469,7 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
             <div className="absolute inset-0 rounded-xl pointer-events-none bg-gradient-to-tr from-transparent via-white/[0.03] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
           {/* Back */}
-          <div className="absolute inset-0 bg-gradient-to-b from-[#121214] to-[#0a0a0c] rounded-xl p-4 overflow-auto shadow-[0_8px_30px_rgba(0,0,0,0.6)]"
+          <div className="absolute inset-0 bg-gradient-to-b from-[#121214] to-[#0a0a0c] rounded-xl p-4 overflow-auto custom-scrollbar-thin shadow-[0_8px_30px_rgba(0,0,0,0.6)]"
             style={{ backfaceVisibility:"hidden", transform:"rotateY(180deg)", borderWidth:1, borderStyle:"solid", borderColor: meta.accent+"66", boxShadow: `inset 0 0 40px ${meta.accent}10, 0 8px 30px rgba(0,0,0,0.6)` }}>
             <p className="text-white/80 text-[12px] leading-relaxed">{strip(card.back)}</p>
             <div className="absolute inset-0 pointer-events-none rounded-xl" style={{ boxShadow: `inset 0 1px 0 ${meta.accent}33` }}/>
@@ -860,10 +858,23 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   const [selectedObj, setSelectedObj] = usePersistedState("agent_selected_obj", "spring-senisenior");
   const [customObj, setCustomObj]     = usePersistedState<string>("agent_custom_obj", "");
   const [refinedObj, setRefinedObj]   = useState("");
+  // Track the source text used for the current refinement so we can detect edits.
+  const [refinedFromText, setRefinedFromText] = useState("");
   const [isRefining, setIsRefining]   = useState(false);
   const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "Java In-Depth - Udemy");
+  const [courseDescription, setCourseDescription] = usePersistedState<string>("agent_course_description", "");
   const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "02 - JVM y Tipos de Datos");
   const [genStep, setGenStep]         = useState(0);
+
+  // ── Dynamic AI-generated objectives (per course) ─────────────────────────
+  const [dynamicObjectives, setDynamicObjectives] = useState<GeneratedObjective[] | null>(null);
+  const [objectivesLoading, setObjectivesLoading] = useState(false);
+  const [objectivesMock, setObjectivesMock]       = useState(false);
+  const [lastUsedObjectiveId, setLastUsedObjectiveId] = useState<string | null>(null);
+  const [objectivesExpanded, setObjectivesExpanded]   = useState(false);
+  // Bumped on every regenerate so the grid remounts even if the AI returns identical ids.
+  const [objectivesRegenCount, setObjectivesRegenCount] = useState(0);
+  const objectivesAutoGenRef = useRef<string>(""); // track which courseId we already auto-generated
 
   const [content, setContent]                       = useState<StudyContent | null>(null);
   const [confidence, setConfidence]                 = useState<ConfidenceLevel | null>(null);
@@ -891,6 +902,10 @@ export function StudyAgentTab({ session }: { session?: Session }) {
 
   // ── Session timing ────────────────────────────────────────────────────────
   const sessionStartRef = useRef<number>(Date.now());
+
+  // ── History drawer ────────────────────────────────────────────────────────
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const rehydratedKeyRef = useRef<string>("");
 
   // Scroll refs
   const scrollRef      = useRef<HTMLDivElement>(null);
@@ -1029,7 +1044,18 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     "Creando tarjetas Anki optimizadas…",
   ];
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    // Warn if the user has already studied this lecture (non-blocking).
+    try {
+      const already = await historyService.hasStudied(courseName, lessonName);
+      if (already) {
+        toast.info("Ya estudiaste esta lección antes", {
+          description: "Puedes repetirla, pero ya está en tu historial.",
+          icon: <Repeat2 className="text-amber-400" size={18} />,
+        });
+      }
+    } catch {}
+
     setPhase("generating"); setGenStep(0);
     sessionStartRef.current = Date.now();
     const iv = setInterval(() => setGenStep(p => p >= GEN_STEPS.length - 1 ? p : p + 1), 400);
@@ -1038,7 +1064,16 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       const newContent = generateContent(selectedObj, customObj, courseName, lessonName);
       setContent(newContent);
       setPhase("result");
-      
+
+      // Persist initial history record (paso 1 + paso 2)
+      historyService.upsertLecture({
+        courseName,
+        lectureName: lessonName,
+        objective: customObj || selectedObj,
+        keyConcepts: newContent.keyConcepts,
+        status: "in_progress",
+      }).catch(err => console.error("[history] upsert on generate", err));
+
       // Auto-save Anki cards to Supabase if logged in
       if (session?.user && newContent.ankiCards.length > 0) {
         fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/anki?userId=${session.user.id}`, {
@@ -1056,14 +1091,195 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     }, 2200);
   };
 
-  const handleRefine = () => {
+  // Rebuild in-memory session state from a persisted history record.
+  const rehydrateFromRecord = useCallback((rec: import("../services/historyService").LectureHistoryRecord) => {
+    // generateContent is deterministic on (objective, course, lesson)
+    const obj = rec.objective || customObj || selectedObj;
+    const rebuilt = generateContent(obj, obj, rec.courseName, rec.lectureName);
+    setContent(rebuilt);
+
+    if (rec.confidence) setConfidence(rec.confidence);
+
+    // Replay user's answers + AI feedback for each question
+    const answers: Record<number, string> = {};
+    const feedbacks: Record<number, FeedbackState> = {};
+    rec.questions.forEach((q, i) => {
+      answers[i] = q.answer ?? "";
+      if (q.feedback || q.rating) {
+        feedbacks[i] = {
+          status: "done",
+          content: q.feedback ?? "",
+          rating: (q.rating ?? "unknown") as AIRating,
+        };
+      }
+    });
+    setQuestionAnswers(answers);
+    setQuestionFeedbacks(feedbacks);
+
+    if (rec.codeChallenge) {
+      setAppAnswer(rec.codeChallenge.answer ?? "");
+      if (rec.codeChallenge.feedback || rec.codeChallenge.rating) {
+        setAppFeedback({
+          status: "done",
+          content: rec.codeChallenge.feedback ?? "",
+          rating: (rec.codeChallenge.rating ?? "unknown") as AIRating,
+        });
+      }
+    }
+
+    const done = rec.status === "completed";
+    setQuestionsComplete(done || rec.questions.some(q => q.rating === "correct" || q.rating === "excellent"));
+    setSessionComplete(done);
+    if (rec.ankiCards && rec.ankiCards.length > 0) setAnkiExported(true);
+    setFocusStep(done ? 4 : (rec.codeChallenge ? 3 : (rec.confidence ? 2 : 1)));
+    setPhase("result");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customObj, selectedObj]);
+
+  // Load cached objectives + last-used objective whenever the course changes.
+  useEffect(() => {
+    if (!courseName.trim()) {
+      setDynamicObjectives(null);
+      setLastUsedObjectiveId(null);
+      return;
+    }
+    let cancelled = false;
+    const courseId = slugify(courseName);
+
+    (async () => {
+      const [cache, lectures] = await Promise.all([
+        objectivesService.get(courseName),
+        historyService.getCourseLectures(courseId),
+      ]);
+      if (cancelled) return;
+
+      if (cache) {
+        setDynamicObjectives(cache.objectives);
+        setObjectivesMock(cache.isMock);
+      } else {
+        setDynamicObjectives(null);
+      }
+
+      // Most recent objective used in this course (lectures are already sorted desc).
+      // Only consider it a "last used objective" if it matches a known objective id —
+      // free-text customObj values shouldn't trigger hero mode.
+      const lastObjRaw = lectures.find(l => l.objective)?.objective ?? null;
+      const objs = cache?.objectives ?? [];
+      const lastId = lastObjRaw && objs.some(o => o.id === lastObjRaw) ? lastObjRaw : null;
+      setLastUsedObjectiveId(lastId);
+      // Hero mode = collapsed by default when there's a prior selection.
+      setObjectivesExpanded(!lastId);
+    })();
+
+    return () => { cancelled = true; };
+  }, [courseName]);
+
+  // Auto-generate objectives the FIRST time we see a new course (once per courseId).
+  useEffect(() => {
+    if (phase !== "objective") return;
+    if (!courseName.trim()) return;
+    if (dynamicObjectives) return;        // already have something
+    if (objectivesLoading) return;
+    const courseId = slugify(courseName);
+    if (objectivesAutoGenRef.current === courseId) return;
+
+    // Debounce so we don't fire on every keystroke while user is typing the name.
+    const t = setTimeout(async () => {
+      objectivesAutoGenRef.current = courseId;
+      setObjectivesLoading(true);
+      try {
+        const entry = await objectivesService.getOrGenerate(courseName, courseDescription);
+        setDynamicObjectives(entry.objectives);
+        setObjectivesMock(entry.isMock);
+        setObjectivesExpanded(!lastUsedObjectiveId);
+        if (entry.isMock) {
+          toast.info("Objetivos generados localmente", {
+            description: "El servidor de IA no respondió — usando plantillas. Puedes regenerar luego.",
+            icon: <Sparkles className="text-amber-400" size={18} />,
+          });
+        }
+      } catch (err) {
+        console.error("[objectives] auto-gen failed", err);
+      } finally {
+        setObjectivesLoading(false);
+      }
+    }, 700);
+
+    return () => clearTimeout(t);
+  }, [phase, courseName, courseDescription, dynamicObjectives, objectivesLoading, lastUsedObjectiveId]);
+
+  // Keep `selectedObj` consistent with the current dynamic objectives.
+  // If the persisted id doesn't exist in the freshly-loaded set (e.g. user switched
+  // courses, or objectives were regenerated), fall back to the last-used id or the
+  // first available — but don't overwrite a custom free-text objective.
+  useEffect(() => {
+    if (!dynamicObjectives || dynamicObjectives.length === 0) return;
+    if (selectedObj === "custom" && customObj.trim()) return;
+    if (dynamicObjectives.some(o => o.id === selectedObj)) return;
+    const next = (lastUsedObjectiveId && dynamicObjectives.find(o => o.id === lastUsedObjectiveId))
+      ? lastUsedObjectiveId
+      : dynamicObjectives[0].id;
+    setSelectedObj(next);
+  }, [dynamicObjectives, lastUsedObjectiveId, selectedObj, customObj, setSelectedObj]);
+
+  const handleRegenerateObjectives = async () => {
+    if (objectivesLoading) return;
+    setObjectivesLoading(true);
+    try {
+      const entry = await objectivesService.regenerate(courseName, courseDescription);
+      setDynamicObjectives(entry.objectives);
+      setObjectivesMock(entry.isMock);
+      setObjectivesExpanded(true);
+      setObjectivesRegenCount(c => c + 1);
+      toast.success("Objetivos regenerados", {
+        icon: <Sparkles className="text-violet-400" size={18} />,
+      });
+    } catch (err) {
+      console.error("[objectives] regenerate failed", err);
+      toast.error("No se pudieron regenerar los objetivos");
+    } finally {
+      setObjectivesLoading(false);
+    }
+  };
+
+  // Auto-rehydrate when entering the objective phase with a course+lesson that has history.
+  useEffect(() => {
+    if (phase !== "objective") return;
+    if (!courseName || !lessonName) return;
+    const cid = slugify(courseName);
+    const lid = slugify(lessonName);
+    const key = `${cid}::${lid}`;
+    if (rehydratedKeyRef.current === key) return; // already attempted for this pair
+
+    historyService.getLecture(cid, lid).then(rec => {
+      if (!rec) return;
+      rehydratedKeyRef.current = key;
+      rehydrateFromRecord(rec);
+      toast.info(
+        rec.status === "completed" ? "Sesión recuperada del historial" : "Continuando donde lo dejaste",
+        {
+          description: rec.status === "completed" ? "Esta lección ya estaba completa." : "Tus respuestas anteriores se restauraron.",
+          icon: <History className="text-violet-400" size={18} />,
+        }
+      );
+    }).catch(err => console.error("[history] rehydrate", err));
+  }, [phase, courseName, lessonName, rehydrateFromRecord]);
+
+  const handleRefine = async () => {
     if (!customObj.trim()) return;
     setIsRefining(true);
-    setTimeout(() => {
-      const lo = customObj.toLowerCase();
-      setRefinedObj(lo.includes("spring") ? "Aprobar entrevista Spring Boot semi-senior: IoC, DI, JPA, REST, testing" : lo.includes("cert") ? "Aprobar Oracle Certified Professional Java SE Developer" : `Dominar "${customObj}" para aplicarlo en producción`);
+    const sourceText = customObj;
+    try {
+      const { refined } = await refineCustomObjective(courseName, courseDescription, sourceText);
+      setRefinedObj(refined);
+      setRefinedFromText(sourceText);
+    } catch (err) {
+      console.error("[objectives] refine failed", err);
+      setRefinedObj(`Dominar "${sourceText}" para aplicarlo en producción`);
+      setRefinedFromText(sourceText);
+    } finally {
       setIsRefining(false);
-    }, 1200);
+    }
   };
 
   const handleReset = () => {
@@ -1076,12 +1292,20 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     setApkgStatus("idle"); setApkgProgress("");
     setFocusStep(0); setFocusDir(1);
     sessionStartRef.current = Date.now();
+    // Mark the current lecture as already-handled so rehydration doesn't auto-reload it.
+    // Switching to a different course/lecture produces a new key and rehydrates normally.
+    rehydratedKeyRef.current = `${slugify(courseName)}::${slugify(lessonName)}`;
     toast("Sesión reiniciada", { icon: <RotateCcw className="text-violet-400" size={18} /> });
   };
 
   // BUG FIX: reset question state when confidence changes
   const handleConfidenceChange = (c: ConfidenceLevel) => {
     setConfidence(c);
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      confidence: c,
+    }).catch(err => console.error("[history] upsert confidence", err));
     setCurrentQIdx(0);
     setQuestionsComplete(false);
     setQuestionAnswers({});          // ← was missing
@@ -1102,6 +1326,26 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   };
 
   const visibleQuestions = content && confidence ? content.questions.filter(q => QUESTIONS_FOR[confidence].includes(q.difficulty)) : [];
+
+  const persistQuestionProgress = (idx: number, fb: FeedbackState) => {
+    const q = visibleQuestions[idx];
+    if (!q) return;
+    const attempts: QuestionAttempt[] = visibleQuestions.map((vq, i) => {
+      const f = i === idx ? fb : questionFeedbacks[i];
+      return {
+        prompt: vq.q,
+        answer: questionAnswers[i] ?? "",
+        rating: f?.rating,
+        feedback: f?.content,
+        answeredAt: i === idx ? Date.now() : undefined,
+      };
+    });
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      questions: attempts,
+    }).catch(err => console.error("[history] upsert question", err));
+  };
 
   const handleEvalQuestion = async (idx: number) => {
     if (!content || !visibleQuestions[idx]) return;
@@ -1126,6 +1370,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       const fallback = await evaluateActiveAnswer(q.q, q.answer, userAns, q.bloom);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
+      persistQuestionProgress(idx, fb);
       // No auto-advance on fallback path either
       setTimeout(() => scrollToBottom(), 120);
       return;
@@ -1133,6 +1378,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
 
     const fb: FeedbackState = { status: "done", content: res.content, rating: res.rating, isMock: res.isMock };
     setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
+    persistQuestionProgress(idx, fb);
     
     if (res.rating === "correct" || res.rating === "excellent") {
       const praises = [
@@ -1188,6 +1434,11 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setAppFeedback(fb);
+      historyService.upsertLecture({
+        courseName,
+        lectureName: lessonName,
+        codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating: fb.rating, feedback: fb.content, answeredAt: Date.now() },
+      }).catch(err => console.error("[history] upsert code", err));
       if (fallback.success && (fallback.rating === "correct" || fallback.rating === "excellent")) {
         confetti({ particleCount: 70, spread: 80, origin: { y: 0.7 }, colors: ["#8b5cf6", "#10b981", "#38bdf8", "#fcd34d"] });
       }
@@ -1196,6 +1447,11 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     }
 
     setAppFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating: res.rating, feedback: res.content, answeredAt: Date.now() },
+    }).catch(err => console.error("[history] upsert code", err));
     
     if (res.rating === "correct" || res.rating === "excellent") {
       celebrate({ type: "export_done", title: "¡Código brillante!", subtitle: "Tu solución es correcta. Sesión completada con éxito.", icon: <Flame className="text-orange-400" /> });
@@ -1245,7 +1501,23 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     }
     setExportedCourses(prev => new Set([...prev, courseName]));
     setAnkiExported(true);
+    persistAnkiAndComplete();
     celebrate({ type: "export_done", title: "¡Tarjetas exportadas!", subtitle: "Archivo TXT listo para importar en Anki", icon: <Download className="text-emerald-400" /> });
+  };
+
+  const persistAnkiAndComplete = () => {
+    if (!content) return;
+    const cards: StoredAnkiCard[] = content.ankiCards.map(c => ({
+      front: c.front, back: c.back, tags: c.tags, type: c.type,
+    }));
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      ankiCards: cards,
+      ankiCardsCount: cards.length,
+      status: "completed",
+    }).then(() => historyService.markCompleted(slugify(courseName), slugify(lessonName)))
+      .catch(err => console.error("[history] complete", err));
   };
 
   const handleExportApkg = async () => {
@@ -1256,6 +1528,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       await exportApkgFile(content.ankiCards, courseName, lessonName, setApkgProgress);
       setApkgStatus("done");
       setAnkiExported(true);
+      persistAnkiAndComplete();
       celebrate({ type: "anki_export", title: "¡Paquete Anki listo!", subtitle: "Ábrelo en Anki Desktop para importar tus tarjetas", icon: <Package className="text-violet-400" /> });
       setTimeout(() => setApkgStatus("idle"), 4000);
     } catch (err) {
@@ -1376,7 +1649,72 @@ export function StudyAgentTab({ session }: { session?: Session }) {
 
   // ── Render ────────────────────────────────────────��─────────────────────────
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
+
+      {/* ── Floating Historial FAB (bottom-right, visible in every phase) ── */}
+      <motion.button
+        onClick={() => setHistoryOpen(true)}
+        title="Ver historial de estudio"
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        className="absolute bottom-3 right-3 z-30 w-10 h-10 flex items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-violet-700 hover:from-violet-500 hover:to-violet-600 border border-violet-400/30 shadow-lg shadow-violet-900/40 text-white transition-colors"
+      >
+        <History size={15} />
+      </motion.button>
+
+      {/* ── History drawer ── */}
+      <AnimatePresence>
+        {historyOpen && (
+          <>
+            <motion.div
+              key="hist-backdrop"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setHistoryOpen(false)}
+              className="absolute inset-0 z-40 bg-black/45 backdrop-blur-[2px]"
+            />
+            <motion.div
+              key="hist-drawer"
+              initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="absolute inset-y-0 right-0 z-50 w-[88%] max-w-[360px] bg-[#0f0f12] border-l border-white/8 shadow-2xl flex flex-col"
+            >
+              <div className="flex items-center justify-between px-3.5 py-3 border-b border-white/6 shrink-0">
+                <div className="flex items-center gap-2">
+                  <History size={13} className="text-violet-400" />
+                  <span className="text-white/80 text-[12px]" style={{ fontWeight: 600 }}>Historial de estudio</span>
+                </div>
+                <button
+                  onClick={() => setHistoryOpen(false)}
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-white/40 hover:text-white hover:bg-white/8 transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+                <HistoryPanel
+                  hideToggle
+                  defaultOpen
+                  onOpenLecture={(rec) => {
+                    setCourseName(rec.courseName);
+                    setLessonName(rec.lectureName);
+                    setHistoryOpen(false);
+                    // Force re-trigger of rehydration even if same slug pair
+                    rehydratedKeyRef.current = "";
+                    // If we're not in objective phase, reset visible state first
+                    // then the useEffect will pick up the new lecture.
+                    if (phase !== "objective") {
+                      setPhase("objective");
+                      setContent(null);
+                    }
+                  }}
+                />
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence mode="wait">
 
         {/* ══ OBJECTIVE ══ */}
@@ -1385,58 +1723,235 @@ export function StudyAgentTab({ session }: { session?: Session }) {
             className="flex-1 overflow-y-auto custom-scrollbar p-3.5 space-y-4">
 
             {/* Hero header */}
-            <div className="bg-gradient-to-br from-violet-600/12 to-violet-600/3 border border-violet-500/15 rounded-xl p-3.5">
+            <div className="bg-white/[0.03] border border-white/8 rounded-xl p-3.5">
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-6 h-6 rounded-lg bg-violet-600/25 border border-violet-500/30 flex items-center justify-center">
+                <div className="w-6 h-6 rounded-lg bg-violet-500/12 flex items-center justify-center">
                   <Brain size={13} className="text-violet-400"/>
                 </div>
-                <span className="text-white/70 text-[11px]" style={{ fontWeight: 600 }}>Tutor IA · Study Agent</span>
+                <span className="text-white/85 text-[11px]" style={{ fontWeight: 600 }}>Tutor IA · Study Agent</span>
               </div>
-              <p className="text-white/30 text-[10px] leading-relaxed">5–8 min por video. Preguntas adaptadas a tu nivel. Retención garantizada con Anki.</p>
+              <p className="text-white/55 text-[10px] leading-relaxed">5–8 min por video. Preguntas adaptadas a tu nivel. Retención garantizada con Anki.</p>
             </div>
 
-            {/* Objectives */}
+            {/* Objectives — AI-generated per course, with fold-don't-hide disclosure */}
             <div>
-              <p className="text-white/30 text-[10px] uppercase tracking-wider mb-2 flex items-center gap-1"><Target size={9}/>¿Para qué estudias esto?</p>
-              <div className="grid grid-cols-2 gap-2">
-                {PRESET_OBJECTIVES.map(obj => {
-                  const active = selectedObj === obj.id;
-                  return (
-                    <button key={obj.id} onClick={() => { setSelectedObj(obj.id); setCustomObj(""); setRefinedObj(""); }}
-                      className={`relative text-left p-3 rounded-xl border transition-all overflow-hidden ${active ? `bg-gradient-to-br ${obj.color} ${obj.border}` : "bg-white/3 border-white/7 hover:bg-white/5 hover:border-white/12"}`}>
-                      {active && <div className="absolute top-2 right-2"><CheckCircle2 size={10} className={obj.accent}/></div>}
-                      <span className="text-[12px] block mb-1.5 drop-shadow-md">{obj.icon}</span>
-                      <p className={`text-[11px] leading-tight ${active ? "text-white/85" : "text-white/60"}`} style={{ fontWeight: 600 }}>{obj.title}</p>
-                      <p className={`text-[9px] mt-0.5 ${active ? obj.accent : "text-white/28"}`}>{obj.sub}</p>
-                    </button>
-                  );
-                })}
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-white/30 text-[10px] uppercase tracking-wider flex items-center gap-1"><Target size={9}/>¿Para qué estudias esto?</p>
+                {dynamicObjectives && (
+                  <button onClick={handleRegenerateObjectives} disabled={objectivesLoading}
+                    className="text-white/30 hover:text-violet-300 disabled:text-violet-400 disabled:cursor-wait text-[10px] flex items-center gap-1 transition-colors">
+                    {objectivesLoading
+                      ? <><Loader2 size={9} className="animate-spin"/>Regenerando…</>
+                      : <><Sparkles size={9}/>Regenerar</>}
+                  </button>
+                )}
               </div>
+
+              {objectivesLoading && !dynamicObjectives && (
+                <div className="grid grid-cols-2 gap-2">
+                  {[0,1,2,3].map(i => (
+                    <div key={i} className="h-[68px] rounded-xl bg-white/3 border border-white/5 animate-pulse"/>
+                  ))}
+                </div>
+              )}
+
+              {!objectivesLoading && !dynamicObjectives && !courseName.trim() && (
+                <div className="rounded-xl bg-white/3 border border-dashed border-white/10 p-3 text-center">
+                  <p className="text-white/35 text-[11px]">Escribe el nombre del curso abajo para generar objetivos a medida.</p>
+                </div>
+              )}
+
+              {dynamicObjectives && (() => {
+                const objs = dynamicObjectives;
+                const hero = lastUsedObjectiveId ? objs.find(o => o.id === lastUsedObjectiveId) : null;
+                const showHero = hero && !objectivesExpanded;
+
+                if (showHero) {
+                  const active = selectedObj === hero.id;
+                  return (
+                    <div className="space-y-2">
+                      <button onClick={() => { setSelectedObj(hero.id); setCustomObj(""); setRefinedObj(""); }}
+                        className={`relative w-full text-left p-3.5 rounded-xl border transition-all overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/4 border-white/10 hover:bg-white/6"}`}>
+                        <div className="flex items-start gap-2.5">
+                          <span className="text-[18px] drop-shadow-md">{hero.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <p className="text-white/85 text-[12px] leading-tight" style={{ fontWeight: 600 }}>{hero.title}</p>
+                              {active && <CheckCircle2 size={10} className="text-violet-300 shrink-0"/>}
+                            </div>
+                            <p className="text-violet-300/70 text-[10px]">{hero.sub}</p>
+                            <p className="text-white/30 text-[9px] mt-1.5 flex items-center gap-1"><History size={8}/>Tu enfoque actual en este curso</p>
+                          </div>
+                        </div>
+                      </button>
+                      <button onClick={() => setObjectivesExpanded(true)}
+                        className="w-full h-7 rounded-lg bg-white/3 border border-white/7 text-white/45 hover:text-white/70 hover:bg-white/5 text-[10px] flex items-center justify-center gap-1 transition-all">
+                        Cambiar enfoque <ChevronDown size={10}/>
+                      </button>
+                    </div>
+                  );
+                }
+
+                const gridKey = `${objectivesRegenCount}-${objs.map(o => o.id).join("|")}`;
+                return (
+                  <div className="space-y-2">
+                    <div className="relative overflow-hidden rounded-xl">
+                      {/* Sweep shimmer that crosses the grid on every regenerate */}
+                      <AnimatePresence>
+                        {objectivesLoading && objectivesRegenCount > 0 && (
+                          <motion.div key={`sweep-${objectivesRegenCount}`}
+                            initial={{ left: "-40%", opacity: 0 }}
+                            animate={{ left: "100%", opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.9, ease: "easeInOut" }}
+                            className="pointer-events-none absolute inset-y-0 w-1/3 z-10 bg-gradient-to-r from-transparent via-violet-400/30 to-transparent blur-md"/>
+                        )}
+                      </AnimatePresence>
+
+                      <AnimatePresence mode="wait">
+                        <motion.div key={gridKey}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="grid grid-cols-2 gap-2">
+                          {objs.map((obj, i) => {
+                            const active = selectedObj === obj.id;
+                            return (
+                              <motion.button key={obj.id}
+                                initial={{ opacity: 0, y: 12, scale: 0.92 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: -8, scale: 0.94 }}
+                                transition={{
+                                  duration: 0.45,
+                                  delay: i * 0.08,
+                                  ease: [0.22, 1, 0.36, 1],
+                                }}
+                                onClick={() => { setSelectedObj(obj.id); setCustomObj(""); setRefinedObj(""); }}
+                                className={`relative text-left p-3 rounded-xl border transition-colors overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/3 border-white/7 hover:bg-white/5 hover:border-white/12"}`}>
+                                {/* Per-card reveal flash on regenerate */}
+                                <motion.span
+                                  aria-hidden
+                                  initial={{ opacity: 0.6, scaleX: 0 }}
+                                  animate={{ opacity: 0, scaleX: 1 }}
+                                  transition={{ duration: 0.55, delay: i * 0.08 + 0.05, ease: "easeOut" }}
+                                  className="pointer-events-none absolute inset-0 origin-left bg-gradient-to-r from-violet-500/25 via-violet-400/10 to-transparent"/>
+                                {active && <div className="absolute top-2 right-2 z-10"><CheckCircle2 size={10} className="text-violet-300"/></div>}
+                                <motion.span
+                                  initial={{ rotate: -18, scale: 0.6, opacity: 0 }}
+                                  animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                                  transition={{ delay: i * 0.08 + 0.12, type: "spring", stiffness: 260, damping: 16 }}
+                                  className="relative text-[12px] block mb-1.5 drop-shadow-md">{obj.icon}</motion.span>
+                                <motion.p
+                                  initial={{ opacity: 0, x: -4 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ duration: 0.3, delay: i * 0.08 + 0.18 }}
+                                  className={`relative text-[11px] leading-tight ${active ? "text-white/85" : "text-white/60"}`} style={{ fontWeight: 600 }}>{obj.title}</motion.p>
+                                <motion.p
+                                  initial={{ opacity: 0, x: -4 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ duration: 0.3, delay: i * 0.08 + 0.24 }}
+                                  className={`relative text-[9px] mt-0.5 ${active ? "text-violet-300" : "text-white/28"}`}>{obj.sub}</motion.p>
+                              </motion.button>
+                            );
+                          })}
+                        </motion.div>
+                      </AnimatePresence>
+                    </div>
+                    {objectivesMock && (
+                      <p className="text-amber-300/60 text-[9px] flex items-center gap-1"><Sparkles size={8}/>Generados localmente (IA offline). Regenera cuando vuelva.</p>
+                    )}
+                    {hero && objectivesExpanded && (
+                      <button onClick={() => setObjectivesExpanded(false)}
+                        className="w-full h-6 rounded-lg text-white/35 hover:text-white/60 text-[10px] flex items-center justify-center gap-1 transition-colors">
+                        <ChevronDown size={10} className="rotate-180"/> Volver al enfoque actual
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
+
 
             {/* Custom objective */}
-            <div className="space-y-2">
-              <p className="text-white/25 text-[10px] flex items-center gap-1"><Edit3 size={9}/>O escribe tu propio objetivo:</p>
-              <textarea value={customObj}
-                onChange={e => { setCustomObj(e.target.value); if (e.target.value.trim()) setSelectedObj("custom"); else setSelectedObj("spring-senisenior"); setRefinedObj(""); }}
-                placeholder="Ej: Conseguir trabajo en fintech como Java dev en 3 meses…"
-                className="w-full h-[44px] text-[11px] rounded-lg bg-black/25 border border-white/8 text-white/65 placeholder:text-white/16 p-2.5 resize-none outline-none focus:border-violet-500/30 transition-colors leading-relaxed"/>
-              <AnimatePresence>
-                {customObj.trim() && !refinedObj && (
-                  <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    onClick={handleRefine} disabled={isRefining}
-                    className="w-full h-7 rounded-lg bg-white/4 border border-white/8 text-white/40 hover:text-white/65 hover:bg-white/6 text-[11px] flex items-center justify-center gap-1.5 transition-all">
-                    {isRefining ? <><Loader2 size={10} className="animate-spin"/>Refinando…</> : <><Sparkles size={10} className="text-violet-400"/>Refinar con IA</>}
-                  </motion.button>
-                )}
-                {refinedObj && (
-                  <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="bg-violet-500/8 border border-violet-500/18 rounded-lg p-2.5 flex gap-2 items-start">
-                    <p className="text-violet-300/70 text-[11px] leading-relaxed flex-1">{refinedObj}</p>
-                    <button onClick={() => setRefinedObj("")} className="text-white/25 hover:text-white/50 shrink-0 mt-0.5"><X size={10}/></button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+            {(() => {
+              const isCustomActive = selectedObj === "custom" && customObj.trim().length > 0;
+              const textChangedSinceRefine = refinedObj && customObj.trim() !== refinedFromText.trim();
+              const fallbackId = dynamicObjectives?.[0]?.id ?? lastUsedObjectiveId ?? "spring-senisenior";
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-white/25 text-[10px] flex items-center gap-1"><Edit3 size={9}/>O escribe tu propio objetivo:</p>
+                    {isCustomActive && (
+                      <motion.span initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+                        className="text-violet-300 text-[9px] flex items-center gap-1 bg-violet-500/15 border border-violet-500/25 rounded-full px-1.5 py-0.5">
+                        <CheckCircle2 size={8}/>Activo
+                      </motion.span>
+                    )}
+                  </div>
+                  <textarea value={customObj}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setCustomObj(v);
+                      if (v.trim()) setSelectedObj("custom");
+                      else { setSelectedObj(fallbackId); setRefinedObj(""); setRefinedFromText(""); }
+                    }}
+                    placeholder="Ej: Conseguir trabajo en fintech como Java dev en 3 meses…"
+                    className={`w-full h-[44px] text-[11px] rounded-lg bg-black/25 border ${isCustomActive ? "border-violet-500/35" : "border-white/8"} text-white/65 placeholder:text-white/16 p-2.5 resize-none outline-none focus:border-violet-500/30 transition-colors leading-relaxed`}/>
+
+                  <AnimatePresence mode="wait">
+                    {/* No refined version yet → primary CTA */}
+                    {customObj.trim() && !refinedObj && (
+                      <motion.button key="refine-cta" initial={{ opacity: 0, y: -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                        onClick={handleRefine} disabled={isRefining}
+                        className="w-full h-7 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-300/80 hover:text-violet-200 hover:bg-violet-500/15 disabled:cursor-wait text-[11px] flex items-center justify-center gap-1.5 transition-all">
+                        {isRefining ? <><Loader2 size={10} className="animate-spin"/>Refinando con IA…</> : <><Sparkles size={10}/>Refinar con IA</>}
+                      </motion.button>
+                    )}
+
+                    {/* Refined card */}
+                    {refinedObj && (
+                      <motion.div key="refined-card" initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}
+                        className="space-y-1.5">
+                        <div className={`relative rounded-lg p-2.5 border transition-all ${isCustomActive ? "bg-violet-500/12 border-violet-500/30" : "bg-violet-500/6 border-violet-500/15"}`}>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <Sparkles size={9} className="text-violet-300"/>
+                            <span className="text-violet-300/80 text-[9px] uppercase tracking-wider" style={{ fontWeight: 600 }}>Objetivo refinado</span>
+                            {isCustomActive && <CheckCircle2 size={9} className="text-violet-300 ml-auto"/>}
+                          </div>
+                          <p className="text-white/80 text-[11px] leading-relaxed">{refinedObj}</p>
+                          <p className="text-white/30 text-[9px] mt-1.5 italic line-clamp-1">Basado en: "{refinedFromText}"</p>
+                          <button onClick={() => { setRefinedObj(""); setRefinedFromText(""); }}
+                            className="absolute top-1.5 right-1.5 text-white/25 hover:text-white/60 transition-colors" title="Descartar refinamiento">
+                            <X size={10}/>
+                          </button>
+                        </div>
+
+                        <div className="flex gap-1.5">
+                          {textChangedSinceRefine ? (
+                            <button onClick={handleRefine} disabled={isRefining}
+                              className="flex-1 h-7 rounded-lg bg-violet-500/10 border border-violet-500/25 text-violet-200 hover:bg-violet-500/15 disabled:cursor-wait text-[10px] flex items-center justify-center gap-1 transition-all">
+                              {isRefining ? <><Loader2 size={9} className="animate-spin"/>Refinando…</> : <><Sparkles size={9}/>Refinar texto nuevo</>}
+                            </button>
+                          ) : (
+                            <button onClick={handleRefine} disabled={isRefining}
+                              className="flex-1 h-7 rounded-lg bg-white/4 border border-white/10 text-white/55 hover:text-white/80 hover:bg-white/6 disabled:cursor-wait text-[10px] flex items-center justify-center gap-1 transition-all"
+                              title="Pídele a la IA otra versión del mismo texto">
+                              {isRefining ? <><Loader2 size={9} className="animate-spin"/>Generando…</> : <><RotateCcw size={9}/>Otra variante</>}
+                            </button>
+                          )}
+                          <button onClick={() => { setCustomObj(refinedObj); setRefinedFromText(refinedObj); setSelectedObj("custom"); }}
+                            className="flex-1 h-7 rounded-lg bg-white/4 border border-white/10 text-white/55 hover:text-white/80 hover:bg-white/6 text-[10px] flex items-center justify-center gap-1 transition-all"
+                            title="Reemplaza tu texto por la versión refinada">
+                            <Wand2 size={9}/>Usar como mi texto
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })()}
 
             {/* Course info */}
             <div className="space-y-1.5">
@@ -1445,6 +1960,9 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                 className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-white/7 text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
                 className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-white/7 text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
+              <textarea value={courseDescription} onChange={e => setCourseDescription(e.target.value)}
+                placeholder="Descripción breve del curso (ayuda a la IA a generar mejores objetivos)"
+                className="w-full h-[52px] text-[11px] rounded-lg bg-black/25 border border-white/7 text-white/60 placeholder:text-white/18 p-2.5 resize-none outline-none focus:border-violet-500/25 transition-colors leading-relaxed custom-scrollbar-thin"/>
             </div>
 
             {/* Transcript indicator */}
@@ -1518,7 +2036,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                 {sessionComplete && !allStepsComplete && (
                   <motion.div initial={{ opacity: 0, scale: 0.95, y: -6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -6 }}
                     transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                    className="bg-gradient-to-r from-emerald-600/15 to-violet-600/15 border border-emerald-500/20 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden">
+                    className="bg-emerald-500/8 border border-emerald-500/22 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden">
                     <motion.div 
                       className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent skew-x-12"
                       animate={{ x: ["-100%", "200%"] }}
@@ -1739,7 +2257,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                           exit={{ opacity: 0, height: 0 }}
                           className="overflow-hidden"
                         >
-                          <div className="mx-3 mb-3 bg-gradient-to-r from-emerald-600/15 to-emerald-600/5 border border-emerald-500/20 rounded-xl overflow-hidden relative">
+                          <div className="mx-3 mb-3 bg-emerald-500/8 border border-emerald-500/22 rounded-xl overflow-hidden relative">
                             <motion.div
                               className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-400/8 to-transparent skew-x-12 pointer-events-none"
                               animate={{ x: ["-100%", "200%"] }}
@@ -2084,7 +2602,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                           initial={{ opacity: 0, y: 6 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: 0.15 }}
-                          className="relative overflow-hidden rounded-xl border border-amber-500/18 bg-gradient-to-br from-amber-500/6 to-transparent"
+                          className="relative overflow-hidden rounded-xl border border-amber-500/22 bg-amber-500/6"
                         >
                           <motion.div
                             className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-400/4 to-transparent skew-x-12 pointer-events-none"
@@ -2150,7 +2668,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ type: "spring", stiffness: 340, damping: 28 }}
-                  className="bg-gradient-to-r from-emerald-600/10 via-violet-600/10 to-emerald-600/10 border border-white/8 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden"
+                  className="bg-white/[0.04] border border-white/10 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden"
                 >
                   <motion.div
                     className="absolute inset-0 bg-gradient-to-r from-transparent via-white/3 to-transparent skew-x-12"
@@ -2203,7 +2721,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
               )}
 
               {showApply && focusStep === 4 && (
-                <div className="relative overflow-hidden rounded-xl border border-violet-500/18 bg-gradient-to-br from-violet-500/8 to-violet-500/3">
+                <div className="relative overflow-hidden rounded-xl border border-violet-500/22 bg-violet-500/6">
                   <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5 border-b border-violet-500/10">
                     <ArrowRight size={10} className="text-violet-400 shrink-0"/>
                     <span className="text-violet-400/70 text-[9px] uppercase tracking-widest" style={{ fontWeight: 700 }}>Próximo paso concreto</span>

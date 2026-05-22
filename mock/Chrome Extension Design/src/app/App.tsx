@@ -532,10 +532,69 @@ export default function App() {
       </div>
 
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+        /* ── Base scrollbar (dock-wide) ─────────────────────────────────────
+           Auto-hide style: invisible at rest, fades in when hovering the
+           scrollable container. Violet tint matches the brand accent. */
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: transparent transparent;
+          transition: scrollbar-color 0.25s ease;
+        }
+        .custom-scrollbar:hover,
+        .custom-scrollbar:focus-within {
+          scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: transparent;
+          border: 2px solid transparent;
+          background-clip: padding-box;
+          border-radius: 999px;
+          transition: background-color 0.2s ease;
+        }
+        .custom-scrollbar:hover::-webkit-scrollbar-thumb,
+        .custom-scrollbar:focus-within::-webkit-scrollbar-thumb {
+          background-color: rgba(139, 92, 246, 0.35);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(139, 92, 246, 0.55) !important;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:active {
+          background-color: rgba(139, 92, 246, 0.75) !important;
+        }
+        .custom-scrollbar::-webkit-scrollbar-corner {
+          background: transparent;
+        }
+
+        /* ── Compact variant for tight surfaces (textareas, mini-lists) ── */
+        .custom-scrollbar-thin {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(139, 92, 246, 0.25) transparent;
+        }
+        .custom-scrollbar-thin::-webkit-scrollbar {
+          width: 5px;
+          height: 5px;
+        }
+        .custom-scrollbar-thin::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar-thin::-webkit-scrollbar-thumb {
+          background-color: rgba(139, 92, 246, 0.25);
+          border-radius: 999px;
+          transition: background-color 0.2s ease;
+        }
+        .custom-scrollbar-thin:hover::-webkit-scrollbar-thumb {
+          background-color: rgba(139, 92, 246, 0.45);
+        }
+        .custom-scrollbar-thin::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(139, 92, 246, 0.65) !important;
+        }
       `}</style>
     </div>
   );

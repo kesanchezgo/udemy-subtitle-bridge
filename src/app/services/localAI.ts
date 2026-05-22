@@ -788,3 +788,143 @@ function buildTranslateMessages(en: string): AIMessage[] {
     { role: "user", content: en.trim() },
   ];
 }
+
+
+// ─── Course-objective generation ─────────────────────────────────────────────
+// Produces 4 learning-goal cards tailored to a specific course (name + description).
+// Falls back through the same chain as translation/evaluations:
+//   Local AI (8010) → Gemini Key 1 → Gemini Key 2 → deterministic mocks.
+// All routing is handled by callLocalAI() so this stays a single call site.
+
+export interface GeneratedObjective {
+  id: string;       // stable slug
+  icon: string;     // single emoji
+  title: string;    // short, action-oriented
+  sub: string;      // one-line clarifier
+}
+
+function mockObjectivesFor(courseName: string, description: string): GeneratedObjective[] {
+  const blob = `${courseName} ${description}`.toLowerCase();
+  const isSpring = /spring|boot|backend|api|rest/.test(blob);
+  const isReact = /react|frontend|ui|next/.test(blob);
+  const isAws = /aws|cloud|devops|kubernetes/.test(blob);
+
+  if (isSpring) return [
+    { id: "spring-interview", icon: "🚀", title: "Entrevista Spring Boot", sub: "Semi-senior backend" },
+    { id: "cert-java",        icon: "🏆", title: "Certificación Java SE",  sub: "Oracle OCP" },
+    { id: "build-api",        icon: "🛠️", title: "Construir una API real",  sub: "Proyecto en producción" },
+    { id: "deep-jvm",         icon: "🧠", title: "Dominar la JVM",           sub: "Memoria y rendimiento" },
+  ];
+  if (isReact) return [
+    { id: "frontend-job",     icon: "🚀", title: "Conseguir empleo frontend", sub: "React semi-senior" },
+    { id: "personal-app",     icon: "🛠️", title: "Lanzar app personal",       sub: "Side project real" },
+    { id: "deep-hooks",       icon: "🧠", title: "Dominar React Hooks",       sub: "Patrones avanzados" },
+    { id: "fullstack",        icon: "⚡", title: "Full Stack",                sub: "Frontend + backend" },
+  ];
+  if (isAws) return [
+    { id: "cert-aws",         icon: "🏆", title: "Certificación AWS",         sub: "Cloud Practitioner / SAA" },
+    { id: "devops-prod",      icon: "🛠️", title: "DevOps en producción",      sub: "Pipelines reales" },
+    { id: "cost-opt",         icon: "💰", title: "Optimizar costos cloud",    sub: "FinOps básico" },
+    { id: "deep-arch",        icon: "🧠", title: "Arquitectura cloud",        sub: "Well-Architected Framework" },
+  ];
+  // Generic fallback
+  return [
+    { id: "deep-understand",  icon: "🧠", title: "Entender a fondo",          sub: "Dominar conceptos clave" },
+    { id: "apply-real",       icon: "🛠️", title: "Aplicar en proyecto real",  sub: "Llevarlo a producción" },
+    { id: "job-interview",    icon: "🚀", title: "Aprobar entrevista",        sub: "Posición técnica" },
+    { id: "cert-prep",        icon: "🏆", title: "Preparar certificación",    sub: "Validar conocimientos" },
+  ];
+}
+
+function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
+  // Try direct parse, then strip code fences, then extract first JSON array.
+  const attempts: string[] = [];
+  attempts.push(raw.trim());
+  attempts.push(raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim());
+  const match = raw.match(/\[[\s\S]*\]/);
+  if (match) attempts.push(match[0]);
+
+  for (const candidate of attempts) {
+    try {
+      const arr = JSON.parse(candidate);
+      if (!Array.isArray(arr) || arr.length === 0) continue;
+      const cleaned: GeneratedObjective[] = arr
+        .slice(0, 4)
+        .map((o: { id?: string; icon?: string; title?: string; sub?: string }, i: number) => ({
+          id: (o.id ?? o.title ?? `obj-${i}`).toString().toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40),
+          icon: (o.icon ?? "🎯").toString().slice(0, 4),
+          title: (o.title ?? "Objetivo").toString().slice(0, 60),
+          sub: (o.sub ?? "").toString().slice(0, 60),
+        }));
+      if (cleaned.length >= 3) return cleaned;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+export async function generateCourseObjectives(
+  courseName: string,
+  description: string,
+): Promise<{ objectives: GeneratedObjective[]; isMock: boolean }> {
+  const sys = [
+    "Eres un asesor pedagógico para estudiantes de Udemy.",
+    "Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.",
+    "Devuelve ESTRICTAMENTE un array JSON sin texto extra, con esta forma:",
+    `[{"id":"slug","icon":"🚀","title":"Texto corto","sub":"clarificador"}, ...]`,
+    "Reglas: id en minúsculas-con-guiones; icon es UN solo emoji; title máx 35 chars; sub máx 40 chars.",
+    "Los 4 objetivos deben cubrir ángulos distintos (ej: entrevista, certificación, proyecto real, dominio profundo).",
+  ].join(" ");
+
+  const userMsg = `Curso: ${courseName}\nDescripción: ${description || "(sin descripción)"}\nGenera los 4 objetivos.`;
+  const res = await callLocalAI(
+    [{ role: "system", content: sys }, { role: "user", content: userMsg }],
+    400,
+    0.5,
+    "gen-objectives",
+  );
+
+  if (res.success && !res.isMock && res.content) {
+    const parsed = parseObjectivesJSON(res.content);
+    if (parsed) return { objectives: parsed, isMock: false };
+  }
+  return { objectives: mockObjectivesFor(courseName, description), isMock: true };
+}
+
+export async function refineCustomObjective(
+  courseName: string,
+  description: string,
+  rawGoal: string,
+): Promise<{ refined: string; isMock: boolean }> {
+  if (!rawGoal.trim()) return { refined: "", isMock: false };
+
+  const sys = [
+    "Eres un coach de aprendizaje. Reescribe el objetivo del estudiante en una frase clara,",
+    "específica y orientada a acción, considerando el contexto del curso.",
+    "Devuelve SOLO la frase reescrita, sin comillas ni explicaciones, máximo 90 caracteres.",
+  ].join(" ");
+
+  const userMsg = [
+    `Curso: ${courseName}`,
+    `Descripción: ${description || "(sin descripción)"}`,
+    `Objetivo del estudiante: "${rawGoal.trim()}"`,
+    "Reescríbelo:",
+  ].join("\n");
+
+  const res = await callLocalAI(
+    [{ role: "system", content: sys }, { role: "user", content: userMsg }],
+    120,
+    0.4,
+    "refine-objective",
+  );
+
+  if (res.success && !res.isMock && res.content) {
+    return { refined: res.content.replace(/^["']|["']$/g, "").trim().slice(0, 120), isMock: false };
+  }
+  // Mock fallback — light heuristic improvement
+  const lo = rawGoal.toLowerCase();
+  const refined =
+    lo.includes("entrevista") ? `Aprobar entrevista de ${courseName.split(/[\s-]/)[0] || "tecnología"} aplicando ${rawGoal}` :
+    lo.includes("cert")       ? `Aprobar certificación cubriendo: ${rawGoal}` :
+    `Dominar "${rawGoal}" para aplicarlo en proyectos reales de ${courseName || "este curso"}`;
+  return { refined: refined.slice(0, 120), isMock: true };
+}
