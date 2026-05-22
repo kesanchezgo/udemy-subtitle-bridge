@@ -97,13 +97,19 @@ const QUESTIONS_FOR: Record<ConfidenceLevel, ConfidenceLevel[]> = {
 function humanizeObjectivesError(error: string | null | undefined): string {
   if (!error) return "El servidor de IA local y Gemini no respondieron — usando plantillas. Configura tu API key o reintenta.";
   const msg = error.toLowerCase();
-  if (msg.includes("no gemini api keys")) return "No has configurado tu API key de Gemini. Ábrela en ⚙️ → API keys e inténtalo de nuevo.";
+  if (msg.includes("cortada a mitad") || msg.includes("max_tokens") || msg.includes("max tokens") || msg.includes("límite de tokens")) {
+    return "La IA fue cortada a mitad de respuesta por el límite de tokens. Pulsa Regenerar — el siguiente intento usará más tokens.";
+  }
+  if (msg.includes("saturado") || msg.includes("503") || msg.includes("unavailable") || msg.includes("overloaded") || msg.includes("high demand")) {
+    return "Gemini está saturado por alta demanda. Espera 1-2 minutos y vuelve a pulsar Regenerar.";
+  }
   if (msg.includes("rate") && msg.includes("limit")) return "Gemini está limitando peticiones. Espera unos segundos y vuelve a intentarlo.";
-  if (msg.includes("quota")) return "Tu cuota de Gemini se agotó por hoy. Añade otra clave o espera al reset.";
-  if (msg.includes("api key") || msg.includes("api_key") || msg.includes("invalid") && msg.includes("key")) return "La API key de Gemini parece inválida. Verifícala en ⚙️ → API keys.";
+  if (msg.includes("quota") || msg.includes("resource_exhausted")) return "Tu cuota de Gemini se agotó por hoy. Añade otra clave o espera al reset.";
+  if (msg.includes("no gemini api keys")) return "No has configurado tu API key de Gemini. Ábrela en ⚙️ → API keys e inténtalo de nuevo.";
+  if (msg.includes("api key") || msg.includes("api_key") || (msg.includes("invalid") && msg.includes("key"))) return "La API key de Gemini parece inválida. Verifícala en ⚙️ → API keys.";
   if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red al hablar con la IA. Revisa tu conexión y reintenta.";
   if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página de Udemy.";
-  if (msg.includes("parse") || msg.includes("json")) return "La IA respondió pero el formato no era válido. Pulsa Regenerar para reintentar.";
+  if (msg.includes("parse") || msg.includes("json") || msg.includes("formato no era válido")) return "La IA respondió pero el formato no era válido. Pulsa Regenerar para reintentar.";
   return error.length > 140 ? `${error.slice(0, 140)}…` : error;
 }
 
