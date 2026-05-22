@@ -99,7 +99,7 @@ const TYPE_CFG: Record<CelebrationType, {
 function Sparkle({ x, y, delay, size = 3 }: { x: number; y: number; delay: number; size?: number }) {
   return (
     <motion.div
-      className="absolute rounded-full bg-white pointer-events-none"
+      className="absolute rounded-full bg-white pointer-events-none usb-sparkle"
       style={{ left: `${x}%`, top: `${y}%`, width: size, height: size }}
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: [0, 1.8, 0], opacity: [0, 0.9, 0], y: [-0, -18, -36] }}
