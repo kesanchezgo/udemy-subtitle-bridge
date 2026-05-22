@@ -97,8 +97,6 @@ async function migrateLocalDataToCloud(session: Session) {
     }
   }
 
-  if (items.length === 0) { localStorage.setItem(doneKey, 'true'); return; }
-
   // Attach persistent study history — one row per lecture (server stores each key
   // separately in kv_store, so this naturally avoids a single oversized payload).
   try {
@@ -109,6 +107,8 @@ async function migrateLocalDataToCloud(session: Session) {
   } catch (e) {
     console.error('[AuthGuard] history export failed', e);
   }
+
+  if (items.length === 0) { localStorage.setItem(doneKey, 'true'); return; }
 
   // POST in chunks so a user with hundreds of lectures doesn't trip the edge function size limit.
   const chunks: Array<typeof items> = [];
