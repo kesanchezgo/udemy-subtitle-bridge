@@ -102,44 +102,116 @@ function extractGeminiText(data: unknown): string {
     .trim();
 }
 
+// ─── Gemini error classification (shared between callGeminiAI/streamGeminiAI)
+type GeminiErrorClass = "rate_limit" | "overloaded" | "server_error" | "invalid_key" | "bad_request" | "unknown";
+
+function classifyGeminiError(status: number, body: string): { class: GeminiErrorClass; transient: boolean } {
+  const lower = body.toLowerCase();
+  if (status === 429 || lower.includes("resource_exhausted") || lower.includes("quota")) {
+    return { class: "rate_limit", transient: true };
+  }
+  if (status === 503 || lower.includes("unavailable") || lower.includes("overloaded") || lower.includes("high demand")) {
+    return { class: "overloaded", transient: true };
+  }
+  if (status >= 500 && status < 600) {
+    return { class: "server_error", transient: true };
+  }
+  if (status === 401 || status === 403 || lower.includes("api key not valid") || lower.includes("permission_denied")) {
+    return { class: "invalid_key", transient: false };
+  }
+  if (status === 400) {
+    return { class: "bad_request", transient: false };
+  }
+  return { class: "unknown", transient: false };
+}
+
+function humanizeGeminiErrorClass(cls: GeminiErrorClass): string {
+  switch (cls) {
+    case "rate_limit":   return "Gemini está limitando las peticiones (cuota alcanzada). Espera unos segundos y reintenta.";
+    case "overloaded":   return "Gemini está saturado por alta demanda (HTTP 503). Reintenta en 1-2 minutos.";
+    case "server_error": return "Error temporal en los servidores de Gemini. Reintenta en unos segundos.";
+    case "invalid_key":  return "La API key de Gemini no es válida o no tiene permisos. Verifícala en ⚙️ → API keys.";
+    case "bad_request":  return "Gemini rechazó la petición (formato del prompt). Revisa los logs.";
+    case "unknown":      return "Error desconocido al hablar con Gemini.";
+  }
+}
+
+function suggestRetryDelayMsClient(cls: GeminiErrorClass, round: number): number {
+  if (cls === "overloaded")   return Math.min(30000, 8000 * (round + 1));
+  if (cls === "rate_limit")   return Math.min(60000, 15000 * (round + 1));
+  if (cls === "server_error") return Math.min(15000, 4000 * (round + 1));
+  return 5000;
+}
+
+const sleepMs = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+
+interface ClientRetryNotice {
+  round: number;
+  totalRounds: number;
+  waitMs: number;
+  errorClass: GeminiErrorClass;
+  reason: string;
+}
+
 async function callGeminiAI(
   messages: AIMessage[],
   maxTokens: number,
   temperature: number,
+  onRetry?: (notice: ClientRetryNotice) => void,
 ): Promise<AIResponse | null> {
   const apiKeys = await ensureGeminiKeysLoaded();
   if (!apiKeys.length) return null;
 
   const model = getGeminiModel();
+  const MAX_RETRY_ROUNDS = 3;
   let lastError = "";
+  let lastErrorClass: GeminiErrorClass = "unknown";
 
-  for (const apiKey of apiKeys) {
-    try {
-      const res = await fetch(buildGeminiGenerateContentUrl(model, apiKey), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildGeminiPayload(messages, maxTokens, temperature)),
-      });
+  for (let round = 0; round < MAX_RETRY_ROUNDS; round++) {
+    let allTransient = true;
 
-      const responseText = await res.text();
-      if (!res.ok) {
-        lastError = `Gemini HTTP ${res.status}: ${responseText.slice(0, 220)}`;
-        continue;
+    for (const apiKey of apiKeys) {
+      try {
+        const res = await fetch(buildGeminiGenerateContentUrl(model, apiKey), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildGeminiPayload(messages, maxTokens, temperature)),
+        });
+
+        const responseText = await res.text();
+        if (!res.ok) {
+          const cls = classifyGeminiError(res.status, responseText);
+          lastErrorClass = cls.class;
+          lastError = `Gemini HTTP ${res.status} (${cls.class}): ${responseText.slice(0, 220)}`;
+          if (!cls.transient) allTransient = false;
+          continue;
+        }
+
+        const content = extractGeminiText(JSON.parse(responseText));
+        if (content) {
+          return { success: true, content, rating: parseRating(content) };
+        }
+
+        lastError = "Gemini returned empty content.";
+        lastErrorClass = "unknown";
+        allTransient = false;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        lastErrorClass = "server_error";
       }
-
-      const content = extractGeminiText(JSON.parse(responseText));
-      if (content) {
-        return { success: true, content, rating: parseRating(content) };
-      }
-
-      lastError = "Gemini returned empty content.";
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
     }
+
+    if (!allTransient || round === MAX_RETRY_ROUNDS - 1) break;
+    const waitMs = suggestRetryDelayMsClient(lastErrorClass, round);
+    const reason = humanizeGeminiErrorClass(lastErrorClass);
+    console.warn(`[Subtitle Bridge] Gemini transient error (${lastErrorClass}). Backing off ${waitMs}ms (retry ${round + 2}/${MAX_RETRY_ROUNDS})…`);
+    try { onRetry?.({ round: round + 2, totalRounds: MAX_RETRY_ROUNDS, waitMs, errorClass: lastErrorClass, reason }); } catch { /* swallow */ }
+    await sleepMs(waitMs);
   }
 
-  console.warn("[Subtitle Bridge] Gemini fallback failed:", lastError);
-  return null;
+  const reason = humanizeGeminiErrorClass(lastErrorClass);
+  console.warn(`[Subtitle Bridge] Gemini fallback failed: ${reason}`, { detail: lastError });
+  return { success: false, content: "", rating: "unknown", error: reason } as AIResponse;
 }
 
 async function streamGeminiAI(
@@ -154,76 +226,95 @@ async function streamGeminiAI(
   if (!apiKeys.length) return null;
 
   const model = getGeminiModel();
+  const MAX_RETRY_ROUNDS = 2; // streaming retries are heavier; cap at 2
   let lastError = "";
+  let lastErrorClass: GeminiErrorClass = "unknown";
 
-  for (const apiKey of apiKeys) {
-    let accumulated = "";
-    let reqId: string | null = null;
+  for (let round = 0; round < MAX_RETRY_ROUNDS; round++) {
+    let allTransient = true;
 
-    try {
-      reqId = `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
-      debugStore.startRequest(reqId, `${debugContext}:gemini`);
+    for (const apiKey of apiKeys) {
+      let accumulated = "";
+      let reqId: string | null = null;
 
-      const res = await fetch(buildGeminiStreamContentUrl(model, apiKey), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal,
-        body: JSON.stringify(buildGeminiPayload(messages, maxTokens, temperature)),
-      });
+      try {
+        reqId = `gemini-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+        debugStore.startRequest(reqId, `${debugContext}:gemini`);
 
-      const responseText = !res.ok ? await res.text().catch(() => "") : "";
-      if (!res.ok) {
-        throw new Error(`Gemini HTTP ${res.status}: ${responseText.slice(0, 220)}`);
-      }
-      if (!res.body) throw new Error("Gemini returned no response body.");
+        const res = await fetch(buildGeminiStreamContentUrl(model, apiKey), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal,
+          body: JSON.stringify(buildGeminiPayload(messages, maxTokens, temperature)),
+        });
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+        const responseText = !res.ok ? await res.text().catch(() => "") : "";
+        if (!res.ok) {
+          const cls = classifyGeminiError(res.status, responseText);
+          lastErrorClass = cls.class;
+          lastError = `Gemini HTTP ${res.status} (${cls.class}): ${responseText.slice(0, 220)}`;
+          if (!cls.transient) allTransient = false;
+          if (reqId) debugStore.endRequest(reqId, false);
+          continue;
+        }
+        if (!res.body) throw new Error("Gemini returned no response body.");
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-          const payload = trimmed.slice(6);
-          if (payload === "[DONE]") break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
 
-          try {
-            const token = extractGeminiText(JSON.parse(payload));
-            if (!token) continue;
-            accumulated += token;
-            onToken(token, accumulated);
-            debugStore.addToken(reqId, token, accumulated);
-          } catch {
-            // Ignore malformed SSE chunks and continue streaming.
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data: ")) continue;
+            const payload = trimmed.slice(6);
+            if (payload === "[DONE]") break;
+
+            try {
+              const token = extractGeminiText(JSON.parse(payload));
+              if (!token) continue;
+              accumulated += token;
+              onToken(token, accumulated);
+              debugStore.addToken(reqId, token, accumulated);
+            } catch {
+              // Ignore malformed SSE chunks and continue streaming.
+            }
           }
         }
-      }
 
-      debugStore.endRequest(reqId, true);
-      return { success: true, content: accumulated };
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        if (reqId) debugStore.endRequest(reqId, accumulated.length > 0, true);
-        return { success: accumulated.length > 0, content: accumulated };
-      }
+        debugStore.endRequest(reqId, true);
+        return { success: true, content: accumulated };
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          if (reqId) debugStore.endRequest(reqId, accumulated.length > 0, true);
+          return { success: accumulated.length > 0, content: accumulated };
+        }
 
-      lastError = err instanceof Error ? err.message : String(err);
-      if (reqId) debugStore.endRequest(reqId, false);
-      if (accumulated.trim()) return { success: true, content: accumulated };
+        lastError = err instanceof Error ? err.message : String(err);
+        lastErrorClass = "server_error"; // network failure → transient
+        if (reqId) debugStore.endRequest(reqId, false);
+        // If we already streamed something useful, return it immediately.
+        if (accumulated.trim()) return { success: true, content: accumulated };
+      }
     }
+
+    if (!allTransient || round === MAX_RETRY_ROUNDS - 1) break;
+    const waitMs = suggestRetryDelayMsClient(lastErrorClass, round);
+    console.warn(`[Subtitle Bridge] Gemini stream transient error (${lastErrorClass}). Backing off ${waitMs}ms (retry ${round + 2}/${MAX_RETRY_ROUNDS})…`);
+    await sleepMs(waitMs);
   }
 
-  console.warn("[Subtitle Bridge] Gemini streaming fallback failed:", lastError);
-  return null;
+  const reason = humanizeGeminiErrorClass(lastErrorClass);
+  console.warn(`[Subtitle Bridge] Gemini streaming fallback failed: ${reason}`, { detail: lastError });
+  return { success: false, content: "", error: reason };
 }
 
 // ─── Mock response pools (offline / no AI server) ────────────────────────────

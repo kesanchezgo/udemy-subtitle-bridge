@@ -21,6 +21,7 @@ import { AppLogo } from "./AppLogo";
 import { Session } from "@supabase/supabase-js";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { initGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
+import { toast } from "sonner";
 
 interface ExtensionSidebarProps {
   isOpen: boolean;
@@ -320,6 +321,20 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   // ── PING content script on mount ─────────────────────────────────────────
   useEffect(() => {
     const unsub = contentBridge.onMessageFromContent((msg) => {
+      if (msg.type === "USG_GEMINI_RETRY_NOTICE") {
+        const payload = msg as unknown as { round?: number; totalRounds?: number; waitMs?: number; reason?: string; purpose?: string };
+        const seconds = Math.max(1, Math.round((payload.waitMs ?? 5000) / 1000));
+        const purposeLabel = payload.purpose === "objectives" ? "objetivos"
+          : payload.purpose === "refine" ? "objetivo personalizado"
+          : "traducción";
+        const round = payload.round ?? 2;
+        const total = payload.totalRounds ?? 3;
+        toast.warning(`Reintentando ${purposeLabel} (${round}/${total})`, {
+          description: `${payload.reason ?? "Gemini está saturado"} Esperando ${seconds}s antes de reintentar…`,
+          duration: payload.waitMs ?? 5000,
+          id: `gemini-retry-${payload.purpose}`, // dedupe by purpose
+        });
+      }
       if (msg.type === "PONG") {
         setContentScriptConnected(true);
         applyLectureContext(msg.payload);
