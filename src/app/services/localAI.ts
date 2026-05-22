@@ -884,16 +884,29 @@ function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
   return null;
 }
 
+/** Source of the generated objectives — used to show clear status to the user. */
+export type ObjectivesSource = "gemini" | "local" | "mock" | "cache";
+
+export interface GenerateObjectivesResult {
+  objectives: GeneratedObjective[];
+  isMock: boolean;
+  /** Where the objectives came from: gemini API, local 8010 server, or heuristic mock. */
+  source: ObjectivesSource;
+  /** Diagnostic error from the failed AI attempt, if any (only set when isMock=true). */
+  error?: string;
+}
+
 export async function generateCourseObjectives(
   courseName: string,
   description: string,
-): Promise<{ objectives: GeneratedObjective[]; isMock: boolean }> {
+): Promise<GenerateObjectivesResult> {
   // Try background first (uses local AI 8010 → Gemini key chain with smart distribution)
   const bgResult = await sendToBackground<{
     ok?: boolean;
     objectives?: GeneratedObjective[];
     isMock?: boolean;
-    source?: string;
+    source?: ObjectivesSource;
+    error?: string;
   }>({
     type: "USG_GENERATE_COURSE_OBJECTIVES",
     courseName,
@@ -902,7 +915,11 @@ export async function generateCourseObjectives(
   });
 
   if (bgResult?.ok && Array.isArray(bgResult.objectives) && bgResult.objectives.length >= 3 && !bgResult.isMock) {
-    return { objectives: bgResult.objectives, isMock: false };
+    return {
+      objectives: bgResult.objectives,
+      isMock: false,
+      source: bgResult.source ?? "gemini",
+    };
   }
 
   // Direct Gemini fallback (only reached if background is unavailable, e.g. browser preview).
@@ -925,9 +942,20 @@ export async function generateCourseObjectives(
 
   if (res.success && !res.isMock && res.content) {
     const parsed = parseObjectivesJSON(res.content);
-    if (parsed) return { objectives: parsed, isMock: false };
+    if (parsed) return { objectives: parsed, isMock: false, source: "local" };
   }
-  return { objectives: mockObjectivesFor(courseName, description), isMock: true };
+
+  // Surface the underlying error so the UI can show a useful message.
+  const error = bgResult?.error
+    || (!bgResult?.ok ? "No se pudo conectar con el background de la extensión." : undefined)
+    || (res.error || (res.isMock ? "El servidor de IA local no está disponible y no hay claves de Gemini configuradas." : undefined));
+
+  return {
+    objectives: mockObjectivesFor(courseName, description),
+    isMock: true,
+    source: "mock",
+    error,
+  };
 }
 
 export async function refineCustomObjective(

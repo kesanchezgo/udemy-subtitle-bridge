@@ -6,7 +6,7 @@
 // Namespace: "usb_objectives_" — distinct from cache (usb_cache_) and history
 // (usb_history_). Never expires, never synced to Supabase (regenerable).
 
-import { generateCourseObjectives, type GeneratedObjective } from "./localAI";
+import { generateCourseObjectives, type GeneratedObjective, type ObjectivesSource } from "./localAI";
 import { slugify } from "./historyService";
 
 const PREFIX = "usb_objectives_";
@@ -52,6 +52,10 @@ export interface ObjectivesCacheEntry {
   objectives: GeneratedObjective[];
   generatedAt: number;
   isMock: boolean;
+  /** Where the objectives came from (gemini/local/mock). Defaults to "cache" when re-read. */
+  source?: ObjectivesSource;
+  /** Diagnostic error captured at generation time when isMock=true. */
+  error?: string;
 }
 
 function key(courseId: string): string {
@@ -79,7 +83,7 @@ export const objectivesService = {
   /** Force a fresh AI call and overwrite the cache. */
   async regenerate(courseName: string, description: string): Promise<ObjectivesCacheEntry> {
     const courseId = slugify(courseName);
-    const { objectives, isMock } = await generateCourseObjectives(courseName, description);
+    const { objectives, isMock, source, error } = await generateCourseObjectives(courseName, description);
     const entry: ObjectivesCacheEntry = {
       courseId,
       courseName,
@@ -87,6 +91,8 @@ export const objectivesService = {
       objectives,
       generatedAt: Date.now(),
       isMock,
+      source,
+      error,
     };
     await sSet(key(courseId), entry);
     return entry;

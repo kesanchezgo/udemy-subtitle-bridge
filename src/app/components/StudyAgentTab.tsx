@@ -94,6 +94,19 @@ const QUESTIONS_FOR: Record<ConfidenceLevel, ConfidenceLevel[]> = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+function humanizeObjectivesError(error: string | null | undefined): string {
+  if (!error) return "El servidor de IA local y Gemini no respondieron — usando plantillas. Configura tu API key o reintenta.";
+  const msg = error.toLowerCase();
+  if (msg.includes("no gemini api keys")) return "No has configurado tu API key de Gemini. Ábrela en ⚙️ → API keys e inténtalo de nuevo.";
+  if (msg.includes("rate") && msg.includes("limit")) return "Gemini está limitando peticiones. Espera unos segundos y vuelve a intentarlo.";
+  if (msg.includes("quota")) return "Tu cuota de Gemini se agotó por hoy. Añade otra clave o espera al reset.";
+  if (msg.includes("api key") || msg.includes("api_key") || msg.includes("invalid") && msg.includes("key")) return "La API key de Gemini parece inválida. Verifícala en ⚙️ → API keys.";
+  if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red al hablar con la IA. Revisa tu conexión y reintenta.";
+  if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página de Udemy.";
+  if (msg.includes("parse") || msg.includes("json")) return "La IA respondió pero el formato no era válido. Pulsa Regenerar para reintentar.";
+  return error.length > 140 ? `${error.slice(0, 140)}…` : error;
+}
+
 function BLOOM_STYLE(l: string) {
   return ({
     recordar:   "bg-slate-500/10 border-slate-500/20 text-slate-400",
@@ -870,6 +883,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   const [dynamicObjectives, setDynamicObjectives] = useState<GeneratedObjective[] | null>(null);
   const [objectivesLoading, setObjectivesLoading] = useState(false);
   const [objectivesMock, setObjectivesMock]       = useState(false);
+  const [objectivesError, setObjectivesError]     = useState<string | null>(null);
   const [lastUsedObjectiveId, setLastUsedObjectiveId] = useState<string | null>(null);
   const [objectivesExpanded, setObjectivesExpanded]   = useState(false);
   // Bumped on every regenerate so the grid remounts even if the AI returns identical ids.
@@ -1156,8 +1170,10 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       if (cache) {
         setDynamicObjectives(cache.objectives);
         setObjectivesMock(cache.isMock);
+        setObjectivesError(cache.isMock ? (cache.error ?? null) : null);
       } else {
         setDynamicObjectives(null);
+        setObjectivesError(null);
       }
 
       // Most recent objective used in this course (lectures are already sorted desc).
@@ -1191,11 +1207,14 @@ export function StudyAgentTab({ session }: { session?: Session }) {
         const entry = await objectivesService.getOrGenerate(courseName, courseDescription);
         setDynamicObjectives(entry.objectives);
         setObjectivesMock(entry.isMock);
+        setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
         setObjectivesExpanded(!lastUsedObjectiveId);
         if (entry.isMock) {
-          toast.info("Objetivos generados localmente", {
-            description: "El servidor de IA no respondió — usando plantillas. Puedes regenerar luego.",
+          const reason = humanizeObjectivesError(entry.error);
+          toast.warning("Objetivos provisionales (sin IA)", {
+            description: reason,
             icon: <Sparkles className="text-amber-400" size={18} />,
+            duration: 6000,
           });
         }
       } catch (err) {
@@ -1229,11 +1248,22 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       const entry = await objectivesService.regenerate(courseName, courseDescription);
       setDynamicObjectives(entry.objectives);
       setObjectivesMock(entry.isMock);
+      setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
       setObjectivesExpanded(true);
       setObjectivesRegenCount(c => c + 1);
-      toast.success("Objetivos regenerados", {
-        icon: <Sparkles className="text-violet-400" size={18} />,
-      });
+      if (entry.isMock) {
+        const reason = humanizeObjectivesError(entry.error);
+        toast.warning("Objetivos provisionales (sin IA)", {
+          description: reason,
+          icon: <Sparkles className="text-amber-400" size={18} />,
+          duration: 6000,
+        });
+      } else {
+        const sourceLabel = entry.source === "gemini" ? "Gemini" : entry.source === "local" ? "IA local" : "IA";
+        toast.success(`Objetivos generados con ${sourceLabel}`, {
+          icon: <Sparkles className="text-violet-400" size={18} />,
+        });
+      }
     } catch (err) {
       console.error("[objectives] regenerate failed", err);
       toast.error("No se pudieron regenerar los objetivos");
@@ -1859,7 +1889,17 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                       </AnimatePresence>
                     </div>
                     {objectivesMock && (
-                      <p className="text-amber-300/60 text-[9px] flex items-center gap-1"><Sparkles size={8}/>Generados localmente (IA offline). Regenera cuando vuelva.</p>
+                      <div className="rounded-lg bg-amber-500/8 border border-amber-500/22 px-2.5 py-1.5 flex items-start gap-1.5">
+                        <Sparkles size={10} className="text-amber-400 mt-px shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-amber-300/80 text-[10px] leading-snug">
+                            {humanizeObjectivesError(objectivesError)}
+                          </p>
+                          <p className="text-amber-300/40 text-[9px] mt-0.5">
+                            Estos objetivos son plantillas heurísticas, no IA real.
+                          </p>
+                        </div>
+                      </div>
                     )}
                     {hero && objectivesExpanded && (
                       <button onClick={() => setObjectivesExpanded(false)}
