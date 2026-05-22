@@ -718,12 +718,15 @@ async function requestGeminiText(
 
 				const parsed = JSON.parse(responseText);
 				const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+				const finishReason = parsed?.candidates?.[0]?.finishReason;
 				if (!text) {
-					const finishReason = parsed?.candidates?.[0]?.finishReason;
 					lastError = new Error(`Gemini returned empty content (finishReason: ${finishReason ?? 'unknown'}).`);
 					lastErrorClass = 'unknown';
 					allTransient = false;
 					continue;
+				}
+				if (finishReason === 'MAX_TOKENS') {
+					console.warn(`[USG][gemini] ⚠️ Response was truncated by MAX_TOKENS (got ${text.length} chars). Caller should increase maxOutputTokens.`);
 				}
 
 				return String(text);
@@ -948,6 +951,14 @@ function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
 		if (repaired !== candidate) attempts.push(repaired);
 	}
 
+	// RECOVERY for truncated responses: if a candidate starts with "[" but
+	// doesn't end cleanly with "]", try to recover the complete objects
+	// before the truncation point.
+	for (const candidate of [...attempts]) {
+		const repaired = recoverTruncatedJsonArray(candidate);
+		if (repaired && repaired !== candidate) attempts.push(repaired);
+	}
+
 	for (const candidate of attempts) {
 		try {
 			const arr = JSON.parse(candidate);
@@ -963,6 +974,43 @@ function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
 				.filter((o) => o.title && o.title !== 'Objetivo');
 			if (cleaned.length >= 3) return cleaned;
 		} catch { /* try next */ }
+	}
+	return null;
+}
+
+/**
+ * Try to recover a truncated JSON array by walking from the start, tracking
+ * brace depth, and cutting at the last balanced object boundary. Returns the
+ * recovered string wrapped in [...] or null if recovery is impossible.
+ */
+function recoverTruncatedJsonArray(input: string): string | null {
+	const text = input.trim();
+	if (!text.startsWith('[')) return null;
+
+	let depth = 0;
+	let inString = false;
+	let escapeNext = false;
+	let lastValidObjectEnd = -1; // index of the last "}" that closed at depth=1
+
+	for (let i = 1; i < text.length; i++) {
+		const ch = text[i];
+
+		if (escapeNext) { escapeNext = false; continue; }
+		if (ch === '\\' && inString) { escapeNext = true; continue; }
+		if (ch === '"') { inString = !inString; continue; }
+		if (inString) continue;
+
+		if (ch === '{') depth++;
+		else if (ch === '}') {
+			depth--;
+			if (depth === 0) lastValidObjectEnd = i;
+		} else if (ch === '[') depth++;
+		else if (ch === ']' && depth === 0) return text.slice(0, i + 1);
+	}
+
+	if (lastValidObjectEnd > 0) {
+		const recovered = text.slice(0, lastValidObjectEnd + 1) + ']';
+		return recovered;
 	}
 	return null;
 }
@@ -1047,12 +1095,13 @@ async function generateObjectivesViaGemini(
 		const keyCount = getGeminiApiKeys().length;
 		console.log(`[USG][objectives] Gemini keys configured: ${keyCount}`);
 		if (keyCount > 0) {
-			const text = await requestGeminiText(prompt, 0.5, 600, 'objectives', (notice) => {
+			const text = await requestGeminiText(prompt, 0.5, 1500, 'objectives', (notice) => {
 				console.warn(`[USG][objectives] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
 				broadcastRetryNotice('objectives', notice);
 			});
 			rawResponse = text;
-			console.log('[USG][objectives] 🤖 Gemini raw response:', text);
+			console.log('[USG][objectives] 🤖 Gemini raw response (full):');
+			console.log(text);
 			console.log('[USG][objectives] response length:', text.length, 'chars');
 			const parsed = parseObjectivesJSON(text);
 			if (parsed) {
@@ -1060,10 +1109,14 @@ async function generateObjectivesViaGemini(
 				console.groupEnd();
 				return { objectives: parsed, isMock: false, source: 'gemini' };
 			}
-			// If parse failed, surface the raw text in the error for debugging.
+			// Detect a truncated response (response body looks unfinished).
+			const looksTruncated = !/\]\s*$/.test(text.trim()) || text.split('"id"').length < 4;
 			console.error('[USG][objectives] ❌ Failed to parse Gemini response as JSON');
-			console.error('[USG][objectives] Full raw response:', text);
-			geminiError = `Failed to parse objectives JSON. Raw response (first 240 chars): ${text.slice(0, 240)}`;
+			console.error('[USG][objectives] Looks truncated?', looksTruncated);
+			console.error('[USG][objectives] Last 80 chars:', JSON.stringify(text.slice(-80)));
+			geminiError = looksTruncated
+				? `La IA fue cortada a mitad de respuesta (probablemente por el límite de tokens). Reintenta o reduce el prompt.`
+				: `Failed to parse objectives JSON. Raw response (first 240 chars): ${text.slice(0, 240)}`;
 		} else {
 			geminiError = 'No Gemini API keys configured.';
 			console.warn('[USG][objectives] ⚠️ ' + geminiError);
