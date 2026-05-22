@@ -679,6 +679,94 @@ export const THEME_CSS = `
 ════════════════════════════════════════════════════════════════ */
 .usb-dock.dock-sepia [data-usb-sparkle],
 .usb-dock.dock-sepia .usb-sparkle { background-color: #a435f0 !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   §23. Custom scrollbars (mock 1:1 — App.tsx)
+   Auto-hide style: invisible at rest, fades in on hover. Violet tint
+   matches the brand accent and works in both dark and light themes.
+   Scoped under .usb-dock so we never touch the host page's scrollbars.
+════════════════════════════════════════════════════════════════ */
+.usb-dock .custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+.usb-dock .custom-scrollbar:hover,
+.usb-dock .custom-scrollbar:focus-within {
+  scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
+}
+.usb-dock .custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.usb-dock .custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.usb-dock .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+  transition: background-color 0.2s ease;
+}
+.usb-dock .custom-scrollbar:hover::-webkit-scrollbar-thumb,
+.usb-dock .custom-scrollbar:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgba(139, 92, 246, 0.35);
+}
+.usb-dock .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(139, 92, 246, 0.55) !important;
+}
+.usb-dock .custom-scrollbar::-webkit-scrollbar-thumb:active {
+  background-color: rgba(139, 92, 246, 0.75) !important;
+}
+.usb-dock .custom-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Compact variant for tight surfaces (textareas, mini-lists) */
+.usb-dock .custom-scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 92, 246, 0.25) transparent;
+}
+.usb-dock .custom-scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.usb-dock .custom-scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.usb-dock .custom-scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: rgba(139, 92, 246, 0.25);
+  border-radius: 999px;
+  transition: background-color 0.2s ease;
+}
+.usb-dock .custom-scrollbar-thin:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(139, 92, 246, 0.45);
+}
+.usb-dock .custom-scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(139, 92, 246, 0.65) !important;
+}
+
+/* Default scrollbar fallback for anything inside the dock that
+   uses a generic overflow-y-auto without an explicit class. The
+   thumb stays subtle and adapts to the active theme via vars. */
+.usb-dock ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.usb-dock ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.usb-dock ::-webkit-scrollbar-thumb {
+  background-color: var(--usb-scrollbar);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.usb-dock ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(139, 92, 246, 0.45);
+}
+.usb-dock { scrollbar-width: thin; scrollbar-color: var(--usb-scrollbar) transparent; }
 `;
 
 /** @deprecated Use THEME_CSS — kept for backward-compat */
