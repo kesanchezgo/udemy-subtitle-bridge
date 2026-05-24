@@ -269,6 +269,37 @@ function normalizeCourseText(text: string, maxChars: number): string {
 	return clean.length > maxChars ? clean.slice(0, maxChars - 1).trimEnd() + '…' : clean;
 }
 
+function removeLowSignalCourseSections(text: string): string {
+	let clean = normalizeCourseText(text, 9000);
+	const testimonialMarkers = [
+		'What Our Students are Saying:',
+		'What Our Students are Saying',
+		'What students are saying:',
+		'What students are saying'
+	];
+	const nextSectionMarkers = [
+		"What you'll learn",
+		'What you’ll learn',
+		'Requirements',
+		'Who this course is for',
+		'Course content',
+		'Course Content'
+	];
+
+	for (const marker of testimonialMarkers) {
+		const start = clean.indexOf(marker);
+		if (start < 0) continue;
+		const nextStarts = nextSectionMarkers
+			.map((nextMarker) => clean.indexOf(nextMarker, start + marker.length))
+			.filter((idx) => idx > start);
+		const end = nextStarts.length > 0 ? Math.min(...nextStarts) : clean.length;
+		clean = `${clean.slice(0, start).trim()} ${clean.slice(end).trim()}`.trim();
+		break;
+	}
+
+	return clean.replace(/\s+/g, ' ').trim();
+}
+
 function readMetaDescription(): string {
 	const meta = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
 	const tagline = meta?.content ? normalizeCourseText(meta.content, 700) : '';
@@ -317,13 +348,13 @@ function getCourseAIContext(): string {
 	for (const sel of fullSelectors) {
 		const el = document.querySelector(sel);
 		if (!el) continue;
-		const text = normalizeCourseText((el as HTMLElement).innerText || el.textContent || '', 6000);
+		const text = normalizeCourseText(removeLowSignalCourseSections((el as HTMLElement).innerText || el.textContent || ''), 4200);
 		if (!text || text.length < 60 || seen.has(text)) continue;
 		seen.add(text);
 		parts.push(`Contexto detallado de Udemy: ${text}`);
 	}
 
-	return normalizeCourseText(parts.join('\n\n'), 7000) || tagline;
+	return normalizeCourseText(parts.join('\n\n'), 5000) || tagline;
 }
 
 function getLectureTitle() {

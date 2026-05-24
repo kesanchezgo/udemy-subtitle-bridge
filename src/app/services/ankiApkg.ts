@@ -6,10 +6,27 @@ export interface AnkiCardData {
   front: string;
   back: string;
   tags: string[];
+  guid?: string;
 }
 
 function fieldsJoin(front: string, back: string) {
-  return `${front}\x1f${back}`;
+  return `${front.replace(/\x1f/g, ' ')}\x1f${back.replace(/\x1f/g, ' ')}`;
+}
+
+function stableGuid(input: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `usb${hash.toString(36)}`;
+}
+
+function sanitizeTags(tags: string[]) {
+  return tags
+    .map((tag) => String(tag || '').trim().replace(/\s+/g, '-').replace(/[,\t\r\n]+/g, '-'))
+    .filter(Boolean)
+    .join(' ');
 }
 
 function buildDeckJson(deckId: number, deckName: string) {
@@ -196,7 +213,7 @@ export async function buildAnkiApkg(
     const card = cards[index];
     const noteId = nowSec * 1000 + index;
     const cardId = nowSec * 1000 + index + 100_000;
-    const tags = Array.isArray(card.tags) ? card.tags.filter(Boolean).join(' ') : '';
+    const tags = Array.isArray(card.tags) ? sanitizeTags(card.tags) : '';
     const front = String(card.front || '');
     const back = String(card.back || '');
     const fields = fieldsJoin(front, back);
@@ -208,7 +225,7 @@ export async function buildAnkiApkg(
       `INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         noteId,
-        `${noteId}${index}`,
+        card.guid?.trim() || stableGuid(`${deckName}|${front}|${index}`),
         modelId,
         Math.floor(Date.now() / 1000),
         0,

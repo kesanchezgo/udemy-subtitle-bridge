@@ -907,35 +907,105 @@ async function requestGeminiText(
 	throw err;
 }
 
+function extractJsonParsePosition(error: unknown): number | null {
+	const message = error instanceof Error ? error.message : String(error || '');
+	const match = message.match(/position\s+(\d+)/i);
+	if (!match) return null;
+	const position = Number(match[1]);
+	return Number.isFinite(position) ? position : null;
+}
+
+function jsonParseErrorContext(text: string, error: unknown): string {
+	const position = extractJsonParsePosition(error);
+	if (position == null) {
+		return error instanceof Error ? error.message : String(error || 'unknown parse error');
+	}
+	const start = Math.max(0, position - 180);
+	const end = Math.min(text.length, position + 180);
+	return `${error instanceof Error ? error.message : String(error)} | around: ${JSON.stringify(text.slice(start, end))}`;
+}
+
+function escapeControlCharsInsideJsonStrings(input: string): string {
+	let out = '';
+	let inString = false;
+	let escaped = false;
+
+	for (const ch of input) {
+		if (escaped) {
+			out += ch;
+			escaped = false;
+			continue;
+		}
+		if (ch === '\\' && inString) {
+			out += ch;
+			escaped = true;
+			continue;
+		}
+		if (ch === '"') {
+			out += ch;
+			inString = !inString;
+			continue;
+		}
+		if (inString) {
+			if (ch === '\n') { out += '\\n'; continue; }
+			if (ch === '\r') { out += '\\n'; continue; }
+			if (ch === '\t') { out += '\\t'; continue; }
+			if (ch.charCodeAt(0) < 0x20) { out += ' '; continue; }
+		}
+		out += ch;
+	}
+
+	return out;
+}
+
+function repairLikelyJson(candidate: string): string {
+	return escapeControlCharsInsideJsonStrings(candidate)
+		.replace(/[\u201C\u201D]/g, '"')
+		.replace(/[\u2018\u2019]/g, "'")
+		.replace(/,\s*([}\]])/g, '$1');
+}
+
+function tryParseJsonCandidate(candidate: string, label: string): unknown {
+	try {
+		return JSON.parse(candidate);
+	} catch (rawError) {
+		const repaired = repairLikelyJson(candidate);
+		if (repaired !== candidate) {
+			try {
+				const parsed = JSON.parse(repaired);
+				console.info(`[USG][study] JSON parse recovered after repair (${label}).`);
+				return parsed;
+			} catch (repairError) {
+				console.warn(`[USG][study] JSON parse failed (${label}):`, jsonParseErrorContext(candidate, rawError));
+				console.warn(`[USG][study] JSON repair failed (${label}):`, jsonParseErrorContext(repaired, repairError));
+				return null;
+			}
+		}
+		console.warn(`[USG][study] JSON parse failed (${label}):`, jsonParseErrorContext(candidate, rawError));
+		return null;
+	}
+}
+
 function safeJsonParse(text: string): unknown {
 	try {
 		return JSON.parse(text);
 	} catch (_error) {
 		const jsonMatch = text.match(/```json\s*([\s\S]*?)```/);
 		if (jsonMatch?.[1]) {
-			try {
-				return JSON.parse(jsonMatch[1].trim());
-			} catch (_innerError) {
-				// Return null below.
-			}
+			const parsed = tryParseJsonCandidate(jsonMatch[1].trim(), 'fenced-json');
+			if (parsed) return parsed;
 		}
 		const objectStart = text.indexOf('{');
 		const objectEnd = text.lastIndexOf('}');
 		if (objectStart >= 0 && objectEnd > objectStart) {
-			try {
-				return JSON.parse(text.slice(objectStart, objectEnd + 1));
-			} catch (_innerError) {
-				// Return null below.
-			}
+			const parsed = tryParseJsonCandidate(text.slice(objectStart, objectEnd + 1), 'object-extract');
+			if (parsed) return parsed;
 		}
 		const arrayStart = text.indexOf('[');
 		const arrayEnd = text.lastIndexOf(']');
 		if (arrayStart >= 0 && arrayEnd > arrayStart) {
-			try {
-				return JSON.parse(text.slice(arrayStart, arrayEnd + 1));
-			} catch (_innerError) {
-				// Return null below.
-			}
+			const parsed = tryParseJsonCandidate(text.slice(arrayStart, arrayEnd + 1), 'array-extract');
+			if (parsed) return parsed;
 		}
 		return null;
 	}
@@ -1025,7 +1095,7 @@ function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata) {
 		'    "challenge": "código con bug o ejercicio",',
 		'    "solution": "solución explicada"',
 		'  },',
-		'  "interviewQ": { "q": "pregunta de entrevista", "idealAnswer": "respuesta ideal" },',
+		'  "interviewQ": { "q": "pregunta oral/de cierre", "idealAnswer": "estructura ideal de respuesta" },',
 		'  "nextAction": "siguiente paso recomendado",',
 		'  "ankiCards": [',
 		'    { "id": "card-001", "type": "concepto|aplicacion|codigo|entrevista|comparacion|proceso", "front": "HTML simple", "back": "HTML simple", "tags": ["tag1", "tag2"] }',
@@ -1043,7 +1113,9 @@ function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata) {
 		'- El front debe ser una pregunta clara o un prompt de recuperación activa. El back debe responder con precisión y suficiente contexto para repasar dentro de semanas.',
 		'- Usa type="aplicacion" para casos, decisiones, ejercicios de transferencia, práctica profesional o uso real que no sea código.',
 		'- Usa type="codigo" solo si la lección realmente enseña código, comandos, APIs o sintaxis. Usa type="entrevista" solo si aporta valor para explicar el tema oralmente o para el objetivo del estudiante, y nunca para rellenar cantidad.',
-		'- interviewQ puede ser null si la lección/curso/objetivo no justifican una pregunta oral o profesional. Si el objetivo es entrevista pero la lección no contiene material entrevistable, genera una pregunta oral sobre lo que sí aparece en la transcripción, no sobre temas externos.',
+		'- interviewQ representa una práctica oral/de cierre para consolidar la lección. Puede ser null si no aporta valor.',
+		'- Hazla de entrevista SOLO si el objetivo del estudiante, el curso o la lección lo justifican claramente. Si no, formula una explicación en voz alta, reflexión guiada o pregunta de transferencia del dominio.',
+		'- Si el objetivo es entrevista pero la lección no contiene material entrevistable, genera una pregunta oral sobre lo que sí aparece en la transcripción, no sobre temas externos.',
 		'- Las tags deben ser cortas, sin espacios, y reflejar curso/tema/tipo. No inventes tags genéricas si hay términos específicos en la transcripción.',
 		'- application.isCode debe ser true solo si la lección realmente requiere código.',
 		'- Si no es código, challenge debe ser un caso práctico, análisis, decisión o ejercicio aplicable.',
