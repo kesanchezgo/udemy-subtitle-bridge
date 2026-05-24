@@ -381,6 +381,34 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
   };
 }
 
+function getOralPracticeMeta(content: StudyContent, objective: string) {
+  const text = `${objective} ${content.interviewQ?.q ?? ""}`.toLowerCase();
+  const isInterview = /\b(entrevista|interview|technical interview|hiring|recruiter|rrhh)\b/.test(text);
+  const isProfessional = /\b(profesional|trabajo|laboral|senior|ingeniero|empresa|producci[oó]n|cliente)\b/.test(text);
+
+  if (isInterview) {
+    return {
+      title: "Pregunta de entrevista",
+      subtitle: "Practica tu respuesta en voz alta",
+      answerLabel: "Estructura de respuesta ideal",
+    };
+  }
+
+  if (isProfessional) {
+    return {
+      title: "Explicación profesional",
+      subtitle: "Practica cómo lo dirías en contexto real",
+      answerLabel: "Estructura sugerida",
+    };
+  }
+
+  return {
+    title: "Explícalo en voz alta",
+    subtitle: "Consolida la idea con tus palabras",
+    answerLabel: "Estructura sugerida",
+  };
+}
+
 function humanizeObjectivesError(error: string | null | undefined): string {
   if (!error) return "El servidor de IA local y Gemini no respondieron. Configura tu API key o reintenta.";
   const msg = error.toLowerCase();
@@ -862,13 +890,26 @@ function buildCardFront(card: AnkiCard): string {
 function buildCardBack(card: AnkiCard): string {
   return `<div class="answer">${toPrism(card.back)}</div>`;
 }
-const FRONT_TEMPLATE = `<div class="header-bar">
-  <div class="header-dot red"></div>
-  <div class="header-dot yellow"></div>
-  <div class="header-dot green"></div>
-  <div class="context-pill">{{Tags}}</div>
-</div>
-<div id="qa">{{Front}}</div>
+function normalizeAnkiTag(tag: string): string {
+  return String(tag || "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[,\t\r\n]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+function toAnkiImportField(html: string): string {
+  return String(html || "").replace(/\t/g, "  ").replace(/\r?\n/g, "<br>");
+}
+function stableAnkiGuid(course: string, lesson: string, card: AnkiCard, index: number): string {
+  const source = `${course}|${lesson}|${card.id || index}|${card.front}`;
+  let hash = 2166136261;
+  for (let i = 0; i < source.length; i += 1) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `usb${hash.toString(36)}`;
+}
+const FRONT_TEMPLATE = `{{Front}}
 <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
@@ -887,8 +928,7 @@ const BACK_TEMPLATE = `<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-properties.min.js"></script>
 {{FrontSide}}
 <hr id="answer">
-<div class="answer">{{Back}}</div>
-{{#ImageBack}}<div class="image-container">{{ImageBack}}</div>{{/ImageBack}}
+{{Back}}
 <script>
   document.querySelectorAll('.answer code').forEach(el=>{el.innerHTML=el.innerHTML.replace(/<br\\s*\\/?>/gi,'\\n');});
   setTimeout(function(){if(window.Prism)window.Prism.highlightAll();},50);
@@ -934,66 +974,68 @@ ul>li::marker,ol>li::marker{color:#a78bfa;font-weight:600}
 @media screen and (max-width:768px){.card{padding:15px;font-size:15px;border-radius:14px}#qa{font-size:18px}pre{font-size:.82em!important}p>code,li>code{word-break:break-word}table{font-size:.83em}}`;
 
 function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
-  let out = `#separator:Tab\n#html:true\n#deck:${course}::${lesson}\n#notetype:Basic\n\n`;
-  cards.forEach(c => { out += `${buildCardFront(c).replace(/\t/g,"  ")}\t${buildCardBack(c).replace(/\t/g,"  ")}\t${c.tags.join(" ")}\n`; });
+  let out = [
+    "#separator:Tab",
+    "#html:true",
+    `#deck:${course}::${lesson}`,
+    "#notetype:Basic",
+    "#columns:Front\tBack\tTags",
+    "#tags column:3",
+    "",
+    "",
+  ].join("\n");
+  cards.forEach(c => {
+    const tags = c.tags.map(normalizeAnkiTag).filter(Boolean).join(" ");
+    out += `${toAnkiImportField(buildCardFront(c))}\t${toAnkiImportField(buildCardBack(c))}\t${tags}\n`;
+  });
   return out;
 }
 function buildTemplateGuide(course: string, lesson: string): string {
   const safe = lesson.replace(/[^a-z0-9]/gi,"_");
-  return `╔══════════════════════════════════════════════════════════════════════╗
-  SUBTITLE BRIDGE — PLANTILLA ANKI  (setup único, hazlo UNA sola vez)
-  Curso: ${course}
-╚═════════════════════════════════════��════════════════════════════════╝
+  return `SUBTITLE BRIDGE - PLANTILLA ANKI
+Setup unico para importacion TXT manual
+Curso: ${course}
 
-Recibiste 3 archivos. Esto es exactamente qué hacer con cada uno:
+Recibiste 3 archivos para la ruta .txt. Si usas .apkg, no necesitas este setup.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 📄 ARCHIVO 1 — ${safe}_tarjetas.txt  → Las tarjetas en sí
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1. En Anki: Archivo → Importar
+ARCHIVO 1 - ${safe}_tarjetas.txt - Tarjetas
+  1. En Anki: Archivo -> Importar
   2. Selecciona el archivo "_tarjetas.txt"
-  3. Configura: Separador = Tabulador | HTML = activado
-  4. Deck destino = ${course}::${lesson}
-  5. Clic en "Importar"
+  3. Verifica: Separador = Tabulador | HTML = activado
+  4. Verifica columnas: Front, Back, Tags
+  5. Deck destino = ${course}::${lesson}
+  6. Clic en "Importar"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━���━━━━━━━━━━━━━━━━━━━━━━━
- �� ARCHIVO 2 — anki-card-styles.css  → Estilo visual
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARCHIVO 2 - anki-card-styles.css - Estilo visual
   1. Abre "anki-card-styles.css" con cualquier editor de texto
-  2. Selecciona todo (Ctrl+A) y cópialo
-  3. En Anki: Herramientas → Tipos de notas → Basic → Styling
+  2. Selecciona todo (Ctrl+A) y copialo
+  3. En Anki: Herramientas -> Tipos de notas -> Basic -> Styling
   4. Selecciona todo el texto del editor (Ctrl+A) y pega el CSS
   5. Clic en "Guardar"
-  ⚠ Sin este paso las tarjetas se verán sin el diseño visual
+  Sin este paso las tarjetas se veran sin el diseno visual.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 📋 ARCHIVO 3 — PLANTILLA-ANKI.txt (este archivo) → Plantillas
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1. En Anki: Herramientas → Tipos de notas → Basic → Tarjetas
-  2. Pestaña "Plantilla del anverso (Front)":
-     Selecciona todo → pega el bloque FRONT al final de este archivo
-  3. Pestaña "Plantilla del reverso (Back)":
-     Selecciona todo → pega el bloque BACK al final de este archivo
+ARCHIVO 3 - PLANTILLA-ANKI.txt - Plantillas
+  1. En Anki: Herramientas -> Tipos de notas -> Basic -> Tarjetas
+  2. Pestana "Plantilla del anverso (Front)":
+     selecciona todo -> pega el bloque FRONT al final de este archivo.
+  3. Pestana "Plantilla del reverso (Back)":
+     selecciona todo -> pega el bloque BACK al final de este archivo.
   4. Clic en "Guardar"
-  ⚠ Sin este paso el resaltado de código (Prism.js) no funcionará
+  Sin este paso el resaltado de codigo (Prism.js) no funcionara.
 
-  ✅ Listo. Las exportaciones futuras solo incluyen el archivo de tarjetas.
+Listo. Las exportaciones TXT futuras solo necesitan el archivo de tarjetas.
 
-══════════════════════════════════════════════════════════════════════
-
-▼▼▼ PLANTILLA FRONT — copiar todo hasta "FIN FRONT" ▼▼▼
+PLANTILLA FRONT - copiar todo hasta "FIN FRONT"
 
 ${FRONT_TEMPLATE}
 
-▲▲▲ FIN FRONT ▲▲▲
+FIN FRONT
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-▼▼▼ PLANTILLA BACK — copiar todo hasta "FIN BACK" ▼▼▼
+PLANTILLA BACK - copiar todo hasta "FIN BACK"
 
 ${BACK_TEMPLATE}
 
-▲▲▲ FIN BACK ▲▲▲
+FIN BACK
 `;
 }
 function downloadFile(content: string, name: string, mime = "text/plain;charset=utf-8") {
@@ -1012,7 +1054,12 @@ async function exportApkgFile(
   const safe = lessonName.replace(/[^a-z0-9]/gi, "_");
   const deckName = `${courseName}::${lessonName}`;
   const data = await buildAnkiApkg(
-    cards.map(c => ({ front: buildCardFront(c), back: buildCardBack(c), tags: c.tags })),
+    cards.map((c, i) => ({
+      front: buildCardFront(c),
+      back: buildCardBack(c),
+      tags: c.tags.map(normalizeAnkiTag).filter(Boolean),
+      guid: stableAnkiGuid(courseName, lessonName, c, i),
+    })),
     deckName,
     ANKI_CSS,
     FRONT_TEMPLATE,
@@ -3499,6 +3546,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 const correctCount = Object.values(questionFeedbacks).filter(f => f?.rating === "correct" || f?.rating === "excellent").length;
                 const totalQ = visibleQuestions.length;
                 const elapsedMin = Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60000));
+                const oralPracticeMeta = getOralPracticeMeta(content, activeSessionObjective || getActiveObjectiveText());
                 return (
               <div className="space-y-2.5">
                 {/* Session achievement summary */}
@@ -3532,8 +3580,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       <Star size={11} className="text-sky-400"/>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sky-300/90 text-[11px]" style={{ fontWeight: 600 }}>Pregunta de entrevista</p>
-                      <p className="text-white/25 text-[9px]">Practica tu respuesta en voz alta</p>
+                      <p className="text-sky-300/90 text-[11px]" style={{ fontWeight: 600 }}>{oralPracticeMeta.title}</p>
+                      <p className="text-white/25 text-[9px]">{oralPracticeMeta.subtitle}</p>
                     </div>
                   </div>
                   <div className="px-3.5 py-3 space-y-2.5">
@@ -3544,7 +3592,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           ? "bg-sky-500/8 border-sky-500/20 text-sky-300/80"
                           : "border-white/7 text-white/28 hover:text-white/50 hover:border-white/14"
                       }`}>
-                      <span className="text-[10px] flex-1">Estructura de respuesta ideal</span>
+                      <span className="text-[10px] flex-1">{oralPracticeMeta.answerLabel}</span>
                       <ChevronDown size={9} className={`shrink-0 transition-transform text-white/30 ${showInterviewAnswer ? "rotate-180" : ""}`}/>
                     </button>
                     <AnimatePresence>
@@ -3592,7 +3640,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         <div className="bg-amber-500/7 border border-amber-500/16 rounded-xl p-2.5 space-y-2">
                           <div className="flex items-center gap-1.5">
                             <FolderPlus size={11} className="text-amber-400 shrink-0"/>
-                            <p className="text-amber-300/80 text-[11px]" style={{ fontWeight: 500 }}>Primera exportación — se descargan 3 archivos</p>
+                            <p className="text-amber-300/80 text-[11px]" style={{ fontWeight: 500 }}>TXT manual — primera vez descarga 3 archivos</p>
                           </div>
                           <div className="space-y-1.5 pl-1 border-t border-amber-500/10 pt-1.5">
                             {[
@@ -3649,8 +3697,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
                       {/* apkg description */}
                       <p className="text-white/20 text-[9px] leading-relaxed px-0.5">
-                        <span className="text-violet-400/60">.apkg</span> = importación directa con doble clic (no requiere configuración).
-                        <span className="text-white/15"> .txt</span> = exportación manual + CSS + plantilla.
+                        <span className="text-violet-400/60">.apkg</span> = importación directa con doble clic (incluye diseño).
+                        <span className="text-white/15"> .txt</span> = importación manual + CSS + plantilla.
                       </p>
 
                       <button onClick={() => setShowAnkiGuide(v => !v)}
