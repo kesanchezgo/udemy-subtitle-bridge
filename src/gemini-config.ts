@@ -14,7 +14,11 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 type GeminiGlobal = typeof globalThis & {
   USB_GEMINI_API_KEYS?: string[];
   USB_GEMINI_MODEL?: string;
+  USB_GEMINI_KEY_ROTATION?: Record<string, number>;
+  USB_GEMINI_KEY_COOLDOWNS?: Record<string, number>;
 };
+
+export type GeminiPurpose = 'translation' | 'objectives' | 'refine' | 'study' | 'evaluation' | 'general';
 
 type GeminiKeyValidationStatus = 'valid' | 'rate-limited' | 'invalid' | 'error';
 
@@ -54,6 +58,56 @@ export function normalizeGeminiKeys(apiKeys: string[]): string[] {
   return normalized;
 }
 
+function keyFingerprint(apiKey: string): string {
+  const key = String(apiKey || '').trim();
+  if (key.length <= 10) return key;
+  return `${key.slice(0, 6)}…${key.slice(-4)}`;
+}
+
+/**
+ * Return all configured keys in round-robin order for the given purpose.
+ * Each purpose keeps its own cursor so translation, objectives, study
+ * generation and evaluations don't always start from the same key.
+ */
+export function selectGeminiKeysForPurpose(
+  apiKeys: string[],
+  purpose: GeminiPurpose = 'general'
+): string[] {
+  const keys = normalizeGeminiKeys(apiKeys);
+  if (keys.length <= 1) return keys;
+
+  const g = globalThis as GeminiGlobal;
+  const now = Date.now();
+  const cooldowns = g.USB_GEMINI_KEY_COOLDOWNS ?? {};
+  const available = keys.filter((key) => (cooldowns[key] ?? 0) <= now);
+  const pool = available.length > 0 ? available : keys;
+  const cursors = g.USB_GEMINI_KEY_ROTATION ?? {};
+  const current = Math.max(0, Math.floor(cursors[purpose] ?? 0));
+  const start = current % pool.length;
+  cursors[purpose] = current + 1;
+  g.USB_GEMINI_KEY_ROTATION = cursors;
+
+  return pool.slice(start).concat(pool.slice(0, start));
+}
+
+export function markGeminiKeyCooldown(apiKey: string, waitMs: number, reason?: string): void {
+  const key = String(apiKey || '').trim();
+  if (!key || waitMs <= 0) return;
+  const g = globalThis as GeminiGlobal;
+  const cooldowns = g.USB_GEMINI_KEY_COOLDOWNS ?? {};
+  const until = Date.now() + waitMs;
+  cooldowns[key] = Math.max(cooldowns[key] ?? 0, until);
+  g.USB_GEMINI_KEY_COOLDOWNS = cooldowns;
+  console.warn(`[USG][gemini] key cooldown ${keyFingerprint(key)} for ${Math.ceil(waitMs / 1000)}s${reason ? ` (${reason})` : ''}`);
+}
+
+export function getGeminiKeyCooldownMs(apiKey: string): number {
+  const key = String(apiKey || '').trim();
+  if (!key) return 0;
+  const g = globalThis as GeminiGlobal;
+  return Math.max(0, (g.USB_GEMINI_KEY_COOLDOWNS?.[key] ?? 0) - Date.now());
+}
+
 export function buildGeminiGenerateContentUrl(model: string, apiKey?: string): string {
   const baseUrl = `${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent`;
   const normalizedKey = String(apiKey || '').trim();
@@ -77,21 +131,25 @@ export async function initGeminiKeys(): Promise<void> {
   }
 
   return new Promise<void>((resolve) => {
-    storage.get([STORAGE_KEY, STORAGE_MODEL_KEY], (result) => {
-      const g = globalThis as GeminiGlobal;
+    try {
+      storage.get([STORAGE_KEY, STORAGE_MODEL_KEY], (result) => {
+        const g = globalThis as GeminiGlobal;
 
-      const keys = result[STORAGE_KEY];
-      g.USB_GEMINI_API_KEYS = Array.isArray(keys)
-        ? normalizeGeminiKeys(keys.map(String))
-        : [];
+        const keys = result[STORAGE_KEY];
+        g.USB_GEMINI_API_KEYS = Array.isArray(keys)
+          ? normalizeGeminiKeys(keys.map(String))
+          : [];
 
-      const model = result[STORAGE_MODEL_KEY];
-      if (typeof model === 'string' && model.trim()) {
-        g.USB_GEMINI_MODEL = model.trim();
-      }
+        const model = result[STORAGE_MODEL_KEY];
+        if (typeof model === 'string' && model.trim()) {
+          g.USB_GEMINI_MODEL = model.trim();
+        }
 
+        resolve();
+      });
+    } catch (_error) {
       resolve();
-    });
+    }
   });
 }
 
@@ -121,7 +179,11 @@ export async function saveGeminiKeys(
     if (model) {
       data[STORAGE_MODEL_KEY] = model.trim();
     }
-    storage.set(data, () => resolve());
+    try {
+      storage.set(data, () => resolve());
+    } catch (_error) {
+      resolve();
+    }
   });
 }
 

@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Session } from '@supabase/supabase-js';
+import sonnerStylesheet from 'sonner/dist/styles.css?inline';
 import dockStylesheet from './app/styles/index.css?inline';
 import { THEME_CSS } from './app/styles/sepia-overrides';
 import { InPageDock } from './app/components/InPageDock';
@@ -260,13 +261,28 @@ function getCourseTitle() {
 	return slug ? slug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
 }
 
-// ── Course description capture ─────────────────────────────────────────────
-// Two sources, in order of preference:
-//   1. The full description block (only present when Overview tab is loaded).
-//   2. The <meta name="description"> tagline (always present in <head>).
-// The full block is HTML, so we strip tags and collapse whitespace.
+// ── Course description/context capture ─────────────────────────────────────
+// The visible sidebar keeps Udemy's concise meta tagline. The hidden AI context
+// can use the richer Overview block when it is loaded.
+function normalizeCourseText(text: string, maxChars: number): string {
+	const clean = cleanMetadataText(text).replace(/\s+/g, ' ').trim();
+	return clean.length > maxChars ? clean.slice(0, maxChars - 1).trimEnd() + '…' : clean;
+}
+
+function readMetaDescription(): string {
+	const meta = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
+	const tagline = meta?.content ? normalizeCourseText(meta.content, 700) : '';
+	if (tagline && tagline.length >= 20) return tagline;
+
+	const og = document.querySelector('meta[property="og:description"]') as HTMLMetaElement | null;
+	const ogText = og?.content ? normalizeCourseText(og.content, 700) : '';
+	return ogText || '';
+}
+
 function getCourseDescription(): string {
-	// Prefer the full description block when available
+	const tagline = readMetaDescription();
+	if (tagline) return tagline;
+
 	const fullSelectors = [
 		'[data-purpose="safely-set-inner-html:course-taking:course-description"]',
 		'[data-purpose="course-description"] [data-purpose^="safely-set-inner-html"]',
@@ -280,22 +296,34 @@ function getCourseDescription(): string {
 			.replace(/\s+/g, ' ')
 			.trim();
 		if (text && text.length >= 60) {
-			// Cap at 3000 chars to keep prompts within reasonable size
-			return text.length > 3000 ? text.slice(0, 2997) + '…' : text;
+			return normalizeCourseText(text, 700);
 		}
 	}
 
-	// Fall back to the meta tagline
-	const meta = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
-	const tagline = meta?.content ? cleanMetadataText(meta.content) : '';
-	if (tagline && tagline.length >= 20) {
-		return tagline;
+	return '';
+}
+
+function getCourseAIContext(): string {
+	const parts: string[] = [];
+	const tagline = readMetaDescription();
+	if (tagline) parts.push(`Resumen: ${tagline}`);
+
+	const fullSelectors = [
+		'[data-purpose="course-description"]',
+		'[data-purpose="safely-set-inner-html:course-taking:course-description"]',
+		'[data-purpose="course-description"] [data-purpose^="safely-set-inner-html"]'
+	];
+	const seen = new Set<string>();
+	for (const sel of fullSelectors) {
+		const el = document.querySelector(sel);
+		if (!el) continue;
+		const text = normalizeCourseText((el as HTMLElement).innerText || el.textContent || '', 6000);
+		if (!text || text.length < 60 || seen.has(text)) continue;
+		seen.add(text);
+		parts.push(`Contexto detallado de Udemy: ${text}`);
 	}
 
-	// Last resort: og:description
-	const og = document.querySelector('meta[property="og:description"]') as HTMLMetaElement | null;
-	const ogText = og?.content ? cleanMetadataText(og.content) : '';
-	return ogText || '';
+	return normalizeCourseText(parts.join('\n\n'), 7000) || tagline;
 }
 
 function getLectureTitle() {
@@ -1554,9 +1582,10 @@ function initInPageDock() {
 	applyDockViewportFrame();
 
 	const shadow = host.attachShadow({ mode: 'open' });
+	installDockInteractionGuards(shadow);
 
 	const stylesheet = document.createElement('style');
-	stylesheet.textContent = dockStylesheet;
+	stylesheet.textContent = `${sonnerStylesheet}\n${dockStylesheet}`;
 
 	// Theme tokens/overrides must live inside Shadow DOM; injecting them in document.head
 	// does not affect closed shadow content and causes visual drift vs local popup mode.
@@ -1693,6 +1722,23 @@ function initInPageDock() {
 	window.requestAnimationFrame(() => {
 		host.style.transform = 'translateX(0)';
 		host.style.opacity = '1';
+	});
+}
+
+function installDockInteractionGuards(shadow: ShadowRoot) {
+	const stopAtDockBoundary = (event: Event) => {
+		event.stopPropagation();
+	};
+
+	// Udemy owns page-level shortcuts such as Space for play/pause. Events that
+	// originate inside the dock must stay inside the dock so typing and scrolling
+	// in Study/Captions/Settings never controls the video behind it.
+	(['keydown', 'keypress', 'keyup'] as const).forEach((type) => {
+		shadow.addEventListener(type, stopAtDockBoundary);
+	});
+
+	(['wheel', 'touchmove'] as const).forEach((type) => {
+		shadow.addEventListener(type, stopAtDockBoundary, { passive: true });
 	});
 }
 
@@ -1846,6 +1892,7 @@ function buildLectureContextPayload() {
 		courseSlug: getCourseSlug(),
 		courseTitle: getCourseTitle(),
 		courseDescription: getCourseDescription(),
+		courseContext: getCourseAIContext(),
 		lectureTitle: getLectureTitle(),
 		cueCount: bestCueCount,
 		hasEnglish: bestCueCount > 0,

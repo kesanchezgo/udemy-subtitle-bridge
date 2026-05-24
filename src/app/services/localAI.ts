@@ -6,7 +6,10 @@ import {
   buildGeminiGenerateContentUrl,
   buildGeminiStreamContentUrl,
   initGeminiKeys,
+  markGeminiKeyCooldown,
   normalizeGeminiKeys,
+  selectGeminiKeysForPurpose,
+  type GeminiPurpose,
 } from "../../gemini-config";
 
 const LOCAL_AI_URL = "http://127.0.0.1:8010";
@@ -33,6 +36,25 @@ export interface AIResponse {
   rating: AIRating;
   error?: string;
   isMock?: boolean;
+}
+
+export interface StudyAIContext {
+  courseName?: string;
+  courseDescription?: string;
+  lessonName?: string;
+  objective?: string;
+  techContext?: string;
+}
+
+function formatStudyContext(ctx?: StudyAIContext): string {
+  if (!ctx) return "Contexto del curso: no especificado.";
+  return [
+    `Curso: ${ctx.courseName?.trim() || "No especificado"}`,
+    `Lección: ${ctx.lessonName?.trim() || "No especificada"}`,
+    `Objetivo del estudiante: ${ctx.objective?.trim() || "No especificado"}`,
+    ctx.courseDescription?.trim() ? `Descripción del curso: ${ctx.courseDescription.trim().slice(0, 1200)}` : "",
+    ctx.techContext?.trim() ? `Contexto técnico/temático detectado: ${ctx.techContext.trim().slice(0, 600)}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function getGeminiApiKeys(): string[] {
@@ -143,7 +165,21 @@ function suggestRetryDelayMsClient(cls: GeminiErrorClass, round: number): number
   return 5000;
 }
 
+function suggestKeyCooldownMsClient(cls: GeminiErrorClass, round: number): number {
+  if (cls === "rate_limit" || cls === "overloaded" || cls === "server_error") {
+    return suggestRetryDelayMsClient(cls, round);
+  }
+  return 0;
+}
+
 const sleepMs = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+
+function purposeFromDebugContext(debugContext: string): GeminiPurpose {
+  if (debugContext === "translate") return "translation";
+  if (debugContext === "gen-objectives" || debugContext === "refine-objective") return "objectives";
+  if (debugContext === "eval-question" || debugContext === "eval-code" || debugContext === "feynman") return "evaluation";
+  return "general";
+}
 
 interface ClientRetryNotice {
   round: number;
@@ -157,9 +193,10 @@ async function callGeminiAI(
   messages: AIMessage[],
   maxTokens: number,
   temperature: number,
+  purpose: GeminiPurpose = "general",
   onRetry?: (notice: ClientRetryNotice) => void,
 ): Promise<AIResponse | null> {
-  const apiKeys = await ensureGeminiKeysLoaded();
+  const apiKeys = selectGeminiKeysForPurpose(await ensureGeminiKeysLoaded(), purpose);
   if (!apiKeys.length) return null;
 
   const model = getGeminiModel();
@@ -183,6 +220,7 @@ async function callGeminiAI(
           const cls = classifyGeminiError(res.status, responseText);
           lastErrorClass = cls.class;
           lastError = `Gemini HTTP ${res.status} (${cls.class}): ${responseText.slice(0, 220)}`;
+          markGeminiKeyCooldown(apiKey, suggestKeyCooldownMsClient(cls.class, round), cls.class);
           if (!cls.transient) allTransient = false;
           continue;
         }
@@ -221,8 +259,9 @@ async function streamGeminiAI(
   onToken: (token: string, accumulated: string) => void,
   signal?: AbortSignal,
   debugContext = "unknown",
+  purpose: GeminiPurpose = "general",
 ): Promise<{ success: boolean; content: string; error?: string } | null> {
-  const apiKeys = await ensureGeminiKeysLoaded();
+  const apiKeys = selectGeminiKeysForPurpose(await ensureGeminiKeysLoaded(), purpose);
   if (!apiKeys.length) return null;
 
   const model = getGeminiModel();
@@ -253,6 +292,7 @@ async function streamGeminiAI(
           const cls = classifyGeminiError(res.status, responseText);
           lastErrorClass = cls.class;
           lastError = `Gemini HTTP ${res.status} (${cls.class}): ${responseText.slice(0, 220)}`;
+          markGeminiKeyCooldown(apiKey, suggestKeyCooldownMsClient(cls.class, round), cls.class);
           if (!cls.transient) allTransient = false;
           if (reqId) debugStore.endRequest(reqId, false);
           continue;
@@ -405,14 +445,30 @@ function isLocalConnectionError(message: string): boolean {
   );
 }
 
+function isExtensionRuntime(): boolean {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { id?: string; sendMessage?: unknown } };
+  }).chrome;
+  return Boolean(chromeApi?.runtime?.id && typeof chromeApi.runtime.sendMessage === "function");
+}
+
 async function fallbackNonStreamingAI(
   messages: AIMessage[],
   maxTokens: number,
   temperature: number,
   debugContext: string,
 ): Promise<AIResponse> {
-  const gemini = await callGeminiAI(messages, maxTokens, temperature);
+  const gemini = await callGeminiAI(messages, maxTokens, temperature, purposeFromDebugContext(debugContext));
   if (gemini?.success) return gemini;
+
+  if (isExtensionRuntime()) {
+    return {
+      success: false,
+      content: "",
+      rating: "unknown",
+      error: "No hay IA disponible. Inicia la IA local o configura una API key de Gemini.",
+    };
+  }
 
   if (debugContext === "translate") {
     const userMessages = messages
@@ -489,23 +545,28 @@ async function callLocalAI(
 // ─── Rating parser ────────────────────────────────────────────────────────────
 function parseRating(content: string): AIRating {
   const upper = content.toUpperCase();
+  const firstLine = upper.split(/\r?\n/).find(line => line.trim())?.trim() ?? "";
   if (
     upper.includes("[EXCELENTE]") ||
+    /^\[?\s*EXCELENTE\s*\]?(\s*[-:—]|$)/.test(firstLine) ||
     upper.includes("COMPRENSIÓN: EXCELENTE") ||
     upper.includes("COMPRENSION: EXCELENTE")
   ) return "excellent";
   if (
     upper.includes("[CORRECTO]") ||
+    /^\[?\s*CORRECTO\s*\]?(\s*[-:—]|$)/.test(firstLine) ||
     upper.includes("COMPRENSION: PROFUNDA") ||
     upper.includes("COMPRENSIÓN: PROFUNDA")
   ) return "correct";
   if (
     upper.includes("[PARCIAL]") ||
+    /^\[?\s*PARCIAL\s*\]?(\s*[-:—]|$)/.test(firstLine) ||
     upper.includes("COMPRENSION: SOLIDA") ||
     upper.includes("COMPRENSIÓN: SÓLIDA")
   ) return "partial";
   if (
     upper.includes("[INCORRECTO]") ||
+    /^\[?\s*INCORRECTO\s*\]?(\s*[-:—]|$)/.test(firstLine) ||
     upper.includes("COMPRENSION: BASICA") ||
     upper.includes("COMPRENSIÓN: BÁSICA")
   ) return "wrong";
@@ -627,12 +688,21 @@ export async function streamLocalAI(
         onToken,
         signal,
         debugContext,
+        purposeFromDebugContext(debugContext),
       );
       if (gemini?.success) return gemini;
     }
 
-    // ── Offline mock fallback — stream a realistic response token by token ────
+    // ── Offline mock fallback — preview/dev only ─────────────────────────────
     if (isNetwork) {
+      if (isExtensionRuntime()) {
+        return {
+          success: false,
+          content: accumulated,
+          error: "No hay IA disponible. Inicia la IA local o configura una API key de Gemini.",
+        };
+      }
+
       const mockContent =
         debugContext === "eval-code"
           ? MOCK_CODE_RESPONSES[_mockCodeIdx++ % MOCK_CODE_RESPONSES.length]
@@ -682,7 +752,8 @@ export async function streamLocalAI(
 export async function evaluateFeynman(
   topic: string,
   modelAnswer: string,
-  studentAnswer: string
+  studentAnswer: string,
+  context?: StudyAIContext,
 ): Promise<AIResponse> {
   if (!studentAnswer.trim())
     return { success: false, content: "", rating: "unknown", error: "Escribe tu explicacion primero." };
@@ -691,14 +762,16 @@ export async function evaluateFeynman(
     {
       role: "system",
       content:
-        "Eres un experto en ensenanza de programacion con 15 anos de experiencia en Java y Spring Boot.\n" +
+        "Eres un experto en ensenanza y evaluación formativa para cursos online.\n" +
         "Evaluas si el estudiante realmente entendio el concepto usando la Tecnica Feynman.\n" +
+        "Adapta el feedback al tema real del curso, la leccion y el objetivo del estudiante.\n" +
         "Se especifico, pedagogico y motivador. Responde SIEMPRE en espanol.\n" +
         "NO repitas la respuesta modelo al estudiante directamente.",
     },
     {
       role: "user",
       content:
+        `${formatStudyContext(context)}\n\n` +
         `Evalua la explicacion Feynman del estudiante sobre: "${topic}"\n\n` +
         `RESPUESTA MODELO (referencia interna, no la copies textualmente):\n${modelAnswer}\n\n` +
         `EXPLICACION DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
@@ -711,7 +784,7 @@ export async function evaluateFeynman(
     },
   ];
 
-  return callLocalAI(messages, 450);
+  return callLocalAI(messages, 450, 0.3, "feynman");
 }
 
 // ─── Active question evaluation — message builder ─────────────────────────────
@@ -719,19 +792,22 @@ function buildEvalQuestionMessages(
   question: string,
   expectedAnswer: string,
   studentAnswer: string,
-  bloomLevel: string
+  bloomLevel: string,
+  context?: StudyAIContext,
 ): AIMessage[] {
   return [
     {
       role: "system",
       content:
-        `Eres un profesor senior de programacion Java/Spring Boot evaluando respuestas de estudiantes.\n` +
+        `Eres un profesor senior evaluando respuestas de estudiantes en un curso online.\n` +
         `El objetivo cognitivo de esta pregunta es nivel "${bloomLevel}" segun la Taxonomia de Bloom.\n` +
+        `Evalua usando el tema real del curso y de la leccion; no asumas Java, Spring ni programacion si el curso no trata de eso.\n` +
         `Se preciso, constructivo y directo. Responde SIEMPRE en espanol.`,
     },
     {
       role: "user",
       content:
+        `${formatStudyContext(context)}\n\n` +
         `PREGUNTA (nivel ${bloomLevel}): ${question}\n\n` +
         `RESPUESTA ESPERADA (referencia interna):\n${expectedAnswer}\n\n` +
         `RESPUESTA DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
@@ -749,13 +825,14 @@ export async function evaluateActiveAnswer(
   question: string,
   expectedAnswer: string,
   studentAnswer: string,
-  bloomLevel: string
+  bloomLevel: string,
+  context?: StudyAIContext,
 ): Promise<AIResponse> {
   if (!studentAnswer.trim())
     return { success: false, content: "", rating: "unknown", error: "Escribe tu respuesta primero." };
 
-  const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel);
-  return callLocalAI(messages, 380);
+  const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
+  return callLocalAI(messages, 380, 0.3, "eval-question");
 }
 
 // ─── Active question evaluation — STREAMING ──────────────────────────────────
@@ -764,12 +841,13 @@ export async function evaluateActiveAnswerStream(
   expectedAnswer: string,
   studentAnswer: string,
   bloomLevel: string,
-  onToken: (token: string, accumulated: string) => void
+  onToken: (token: string, accumulated: string) => void,
+  context?: StudyAIContext,
 ): Promise<{ success: boolean; content: string; rating: AIRating; isMock?: boolean }> {
   if (!studentAnswer.trim())
     return { success: false, content: "", rating: "unknown" };
 
-  const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel);
+  const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
   const result   = await streamLocalAI(messages, 380, 0.3, onToken, undefined, "eval-question");
   return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }
@@ -778,23 +856,26 @@ export async function evaluateActiveAnswerStream(
 function buildCodeReviewMessages(
   challengeTitle: string,
   expectedSolution: string,
-  studentCode: string
+  studentCode: string,
+  context?: StudyAIContext,
 ): AIMessage[] {
   return [
     {
       role: "system",
       content:
-        "Eres un dev senior Java/Spring Boot haciendo code review educativo.\n" +
+        "Eres un mentor senior haciendo revisión educativa de ejercicios prácticos.\n" +
+        "Si el desafío es código, adapta el review al lenguaje, framework y dominio del curso; si no es código, evalúa la solución práctica con el mismo rigor.\n" +
         "Tu objetivo es que el estudiante entienda sus errores y mejore.\n" +
-        "Se especifico con el codigo, usa snippets concretos cuando sea necesario. Responde en espanol.",
+        "Se especifico, usa ejemplos concretos cuando sea necesario. Responde en espanol.",
     },
     {
       role: "user",
       content:
+        `${formatStudyContext(context)}\n\n` +
         `DESAFIO: ${challengeTitle}\n\n` +
         `SOLUCION DE REFERENCIA:\n${expectedSolution}\n\n` +
-        `CODIGO DEL ESTUDIANTE:\n${studentCode}\n\n` +
-        "Code review educativo con este formato EXACTO:\n" +
+        `RESPUESTA DEL ESTUDIANTE:\n${studentCode}\n\n` +
+        "Revision educativa con este formato EXACTO:\n" +
         "[CORRECTO|PARCIAL|INCORRECTO]\n" +
         "DIAGNOSTICO: [1 frase que resume la calidad de la solucion]\n" +
         "BIEN: [que hizo correctamente, 1-2 puntos concretos]\n" +
@@ -808,12 +889,13 @@ function buildCodeReviewMessages(
 export async function evaluateCodeSolution(
   challengeTitle: string,
   expectedSolution: string,
-  studentCode: string
+  studentCode: string,
+  context?: StudyAIContext,
 ): Promise<AIResponse> {
   if (!studentCode.trim())
     return { success: false, content: "", rating: "unknown", error: "Escribe tu solucion primero." };
 
-  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode);
+  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context);
   return callLocalAI(messages, 500, 0.2);
 }
 
@@ -822,12 +904,13 @@ export async function evaluateCodeSolutionStream(
   challengeTitle: string,
   expectedSolution: string,
   studentCode: string,
-  onToken: (token: string, accumulated: string) => void
+  onToken: (token: string, accumulated: string) => void,
+  context?: StudyAIContext,
 ): Promise<{ success: boolean; content: string; rating: AIRating; isMock?: boolean }> {
   if (!studentCode.trim())
     return { success: false, content: "", rating: "unknown" };
 
-  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode);
+  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context);
   const result   = await streamLocalAI(messages, 500, 0.2, onToken, undefined, "eval-code");
   return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }
@@ -871,9 +954,9 @@ function buildTranslateMessages(en: string): AIMessage[] {
     {
       role: "system",
       content:
-        "Eres un traductor tecnico especializado en cursos de programacion en ingles. " +
-        "Traduce el texto al espanol de forma natural y precisa conservando los terminos " +
-        "tecnicos en ingles cuando sea mas claro (p.ej. JVM, heap, thread, etc.). " +
+        "Eres un traductor especializado en cursos online de Udemy en ingles. " +
+        "Traduce el texto al espanol de forma natural y precisa conservando terminos " +
+        "tecnicos, nombres propios, comandos, marcas y APIs en ingles cuando sea mas claro. " +
         "Responde UNICAMENTE con la traduccion, sin comillas ni explicaciones.",
     },
     { role: "user", content: en.trim() },
@@ -1031,7 +1114,11 @@ export async function generateCourseObjectives(
     "Devuelve ESTRICTAMENTE un array JSON sin texto extra, con esta forma:",
     `[{"id":"slug","icon":"🚀","title":"Texto corto","sub":"clarificador"}, ...]`,
     "Reglas: id en minúsculas-con-guiones; icon es UN solo emoji; title máx 35 chars; sub máx 40 chars.",
-    "Los 4 objetivos deben cubrir ángulos distintos (ej: entrevista, certificación, proyecto real, dominio profundo).",
+    "Los 4 objetivos deben salir del curso y su descripción, no de plantillas fijas.",
+    "Cubre 4 motivaciones naturalmente distintas para ESTE curso: aplicación práctica, dominio conceptual, meta profesional, creación/producción, evaluación/certificación, entrevista, portafolio, mejora personal u otra que encaje.",
+    "NO fuerces entrevista, certificación o proyecto si el curso no lo justifica.",
+    "Si el curso no es técnico o no es de código, adapta los objetivos al dominio real del curso.",
+    "Usa solo los datos proporcionados. No inventes detalles externos del curso.",
   ].join(" ");
 
   const userMsg = `Curso: ${courseName}\nDescripción: ${description || "(sin descripción)"}\nGenera los 4 objetivos.`;
@@ -1053,7 +1140,7 @@ export async function generateCourseObjectives(
     || (res.error || (res.isMock ? "El servidor de IA local no está disponible y no hay claves de Gemini configuradas." : undefined));
 
   return {
-    objectives: mockObjectivesFor(courseName, description),
+    objectives: isExtensionRuntime() ? [] : mockObjectivesFor(courseName, description),
     isMock: true,
     source: "mock",
     error,
@@ -1086,16 +1173,19 @@ export async function refineCustomObjective(
 
   // Direct fallback via callLocalAI (browser preview path).
   const sys = [
-    "Eres un coach de aprendizaje. Reescribe el objetivo del estudiante en una frase clara,",
-    "específica y orientada a acción, considerando el contexto del curso.",
-    "Devuelve SOLO la frase reescrita, sin comillas ni explicaciones, máximo 90 caracteres.",
+    "Eres un coach pedagógico para estudiantes de Udemy.",
+    "Convierte el objetivo libre del estudiante en un objetivo de aprendizaje personalizado y de alta calidad.",
+    "Debe mantener la intención original del estudiante y adaptarse al curso real.",
+    "Criterios: resultado observable, acción concreta, contexto del curso, tono motivador y profesional.",
+    "No fuerces entrevista, certificación, proyecto o código si no encaja con el objetivo o el curso.",
+    "Devuelve SOLO una frase, sin comillas ni explicaciones, máximo 95 caracteres.",
   ].join(" ");
 
   const userMsg = [
     `Curso: ${courseName}`,
     `Descripción: ${description || "(sin descripción)"}`,
     `Objetivo del estudiante: "${rawGoal.trim()}"`,
-    "Reescríbelo:",
+    "Objetivo refinado:",
   ].join("\n");
 
   const res = await callLocalAI(
@@ -1108,7 +1198,12 @@ export async function refineCustomObjective(
   if (res.success && !res.isMock && res.content) {
     return { refined: res.content.replace(/^["']|["']$/g, "").trim().slice(0, 120), isMock: false };
   }
-  // Mock fallback — light heuristic improvement
+
+  if (isExtensionRuntime()) {
+    return { refined: "", isMock: true };
+  }
+
+  // Preview/dev fallback — light heuristic improvement
   const lo = rawGoal.toLowerCase();
   const refined =
     lo.includes("entrevista") ? `Aprobar entrevista de ${courseName.split(/[\s-]/)[0] || "tecnología"} aplicando ${rawGoal}` :

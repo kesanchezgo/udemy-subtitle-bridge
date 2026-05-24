@@ -57,6 +57,18 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
     load();
   }, [expanded, load]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    return historyService.onChanged(() => {
+      void load();
+      if (openCourse) {
+        void historyService.getCourseLectures(openCourse).then((recs) => {
+          setLecturesByCourse(prev => ({ ...prev, [openCourse]: recs }));
+        });
+      }
+    });
+  }, [expanded, load, openCourse]);
+
   const toggleCourse = async (courseId: string) => {
     if (openCourse === courseId) {
       setOpenCourse(null);

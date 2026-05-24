@@ -17,6 +17,15 @@ function getChromeLocal(): { get: Function; set: Function; remove: Function } | 
   return chromeApi?.storage?.local;
 }
 
+function getChromeStorageOnChanged():
+  | { addListener: Function; removeListener: Function }
+  | undefined {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { storage?: { onChanged?: { addListener: Function; removeListener: Function } } };
+  }).chrome;
+  return chromeApi?.storage?.onChanged;
+}
+
 // ─── Low-level storage helpers (mirror cacheService) ──────────────────────────
 
 async function sGet(key: string): Promise<unknown> {
@@ -89,10 +98,31 @@ export interface CodeChallengeAttempt {
 }
 
 export interface StoredAnkiCard {
+  id?: string;
   front: string;
   back: string;
   tags?: string[];
-  type?: string;            // concepto | codigo | entrevista | comparacion | proceso
+  type?: string;            // concepto | aplicacion | codigo | entrevista | comparacion | proceso
+}
+
+export interface StoredStudyQuestion {
+  q: string;
+  bloom: string;
+  difficulty: ConfidenceLevel;
+  hint: string;
+  answer: string;
+  conceptRefs?: number[];
+}
+
+export interface StoredStudyContent {
+  relevance: { score: number; reason: string };
+  keyConcepts: string[];
+  quickWin: string;
+  questions: StoredStudyQuestion[];
+  application: { setup: string; challenge: string; solution: string; isCode: boolean };
+  interviewQ: { q: string; idealAnswer: string } | null;
+  nextAction: string;
+  ankiCards: StoredAnkiCard[];
 }
 
 export interface LectureHistoryRecord {
@@ -101,7 +131,13 @@ export interface LectureHistoryRecord {
   lectureId: string;
   lectureName: string;
   objective?: string;                // paso 1 — "Mi nivel"
+  objectiveId?: string;              // id estable del objetivo IA seleccionado
+  studyContent?: StoredStudyContent;  // snapshot completo generado por IA
   confidence?: ConfidenceLevel;      // paso 3 — "¿Lo sé?"
+  checkedConceptIndexes?: number[];  // paso 2 — conceptos que el estudiante dice entender
+  conceptsAcknowledged?: boolean;    // permite continuar incluso con 0 conceptos marcados
+  questionsComplete?: boolean;       // paso 3 desbloqueado aunque no haya respuestas correctas
+  focusStep?: number;                // último paso visible 0..4 para reanudar
   keyConcepts?: string[];            // snapshot de StudyContent.keyConcepts
   questions: QuestionAttempt[];      // paso 3
   codeChallenge?: CodeChallengeAttempt; // paso 4 — "Practícalo"
@@ -111,6 +147,8 @@ export interface LectureHistoryRecord {
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
+  /** Tombstone used to sync deletes/resets across devices without resurrecting old cloud data. */
+  deletedAt?: number;
   /** Monotonic edit counter — survives clock skew. Higher wins on merge. */
   version: number;
 }
@@ -166,6 +204,42 @@ export const CLOUD_HISTORY_LEGACY_BUNDLE_KEY = "__history__";
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 export const historyService = {
+  hasProgress(rec: LectureHistoryRecord | null | undefined): boolean {
+    if (!rec) return false;
+    if (rec.deletedAt) return false;
+    return Boolean(
+      rec.studyContent ||
+      rec.confidence ||
+      rec.questions?.length ||
+      rec.codeChallenge ||
+      rec.ankiCards?.length ||
+      rec.ankiCardsCount > 0 ||
+      rec.status === "completed"
+    );
+  },
+
+  onChanged(callback: (records: LectureHistoryRecord[]) => void): () => void {
+    const onChanged = getChromeStorageOnChanged();
+    if (!onChanged) return () => {};
+
+    const listener = (
+      changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+      areaName: string
+    ) => {
+      if (areaName !== "local") return;
+      const records = Object.entries(changes)
+        .filter(([key]) => key.startsWith(HISTORY_PREFIX))
+        .map(([, change]) => change.newValue as LectureHistoryRecord | undefined)
+        .filter((rec): rec is LectureHistoryRecord => Boolean(rec?.courseId && rec?.lectureId));
+      if (records.length > 0) {
+        callback(records);
+      }
+    };
+
+    onChanged.addListener(listener);
+    return () => onChanged.removeListener(listener);
+  },
+
   /** Read a single lecture record. */
   async getLecture(courseId: string, lectureId: string): Promise<LectureHistoryRecord | null> {
     const rec = (await sGet(lectureKey(courseId, lectureId))) as LectureHistoryRecord | undefined;
@@ -175,34 +249,48 @@ export const historyService = {
   /** Create or merge-update a lecture record. Returns the persisted record. */
   async upsertLecture(
     partial: Partial<LectureHistoryRecord> &
-      Pick<LectureHistoryRecord, "courseName" | "lectureName">
+      Pick<LectureHistoryRecord, "courseName" | "lectureName"> & { clearProgress?: boolean }
   ): Promise<LectureHistoryRecord> {
     const courseId = partial.courseId ?? slugify(partial.courseName);
     const lectureId = partial.lectureId ?? slugify(partial.lectureName);
     const now = Date.now();
 
     const prev = await this.getLecture(courseId, lectureId);
+    const clearProgress = Boolean(partial.clearProgress);
+    const impliesQuestionsComplete =
+      Boolean(partial.codeChallenge) ||
+      Boolean(partial.ankiCards?.length) ||
+      partial.status === "completed";
     const merged: LectureHistoryRecord = {
       courseId,
       lectureId,
       courseName: partial.courseName,
       lectureName: partial.lectureName,
       objective:    partial.objective    ?? prev?.objective,
-      confidence:   partial.confidence   ?? prev?.confidence,
-      keyConcepts:  partial.keyConcepts  ?? prev?.keyConcepts,
-      questions:    partial.questions    ?? prev?.questions    ?? [],
-      codeChallenge: partial.codeChallenge ?? prev?.codeChallenge,
-      ankiCards:    partial.ankiCards    ?? prev?.ankiCards,
+      objectiveId:  partial.objectiveId  ?? prev?.objectiveId,
+      studyContent: partial.studyContent ?? (clearProgress ? undefined : prev?.studyContent),
+      confidence:   partial.confidence   ?? (clearProgress ? undefined : prev?.confidence),
+      checkedConceptIndexes: partial.checkedConceptIndexes ?? (clearProgress ? [] : prev?.checkedConceptIndexes),
+      conceptsAcknowledged: partial.conceptsAcknowledged ?? (impliesQuestionsComplete ? true : clearProgress ? false : prev?.conceptsAcknowledged),
+      questionsComplete: partial.questionsComplete ?? (impliesQuestionsComplete ? true : clearProgress ? false : prev?.questionsComplete),
+      focusStep: partial.focusStep ?? (clearProgress ? 0 : prev?.focusStep),
+      keyConcepts:  partial.keyConcepts  ?? (clearProgress ? undefined : prev?.keyConcepts),
+      questions:    partial.questions    ?? (clearProgress ? [] : prev?.questions)    ?? [],
+      codeChallenge: partial.codeChallenge ?? (clearProgress ? undefined : prev?.codeChallenge),
+      ankiCards:    partial.ankiCards    ?? (clearProgress ? undefined : prev?.ankiCards),
       ankiCardsCount: partial.ankiCardsCount
         ?? partial.ankiCards?.length
-        ?? prev?.ankiCardsCount
+        ?? (clearProgress ? 0 : prev?.ankiCardsCount)
         ?? 0,
-      status:       partial.status       ?? prev?.status       ?? "in_progress",
-      startedAt:    prev?.startedAt      ?? now,
+      status:       partial.status       ?? (clearProgress ? "in_progress" : prev?.status)       ?? "in_progress",
+      startedAt:    clearProgress ? now : (prev?.startedAt ?? now),
       updatedAt:    now,
       completedAt:  partial.status === "completed"
         ? (prev?.completedAt ?? now)
-        : prev?.completedAt,
+        : clearProgress
+          ? undefined
+          : prev?.completedAt,
+      deletedAt: clearProgress ? undefined : prev?.deletedAt,
       version:      (prev?.version ?? 0) + 1,
     };
 
@@ -238,12 +326,12 @@ export const historyService = {
   /** Lectures within a single course, newest-first. */
   async getCourseLectures(courseId: string): Promise<LectureHistoryRecord[]> {
     const all = await this.listLectures();
-    return all.filter((l) => l.courseId === courseId);
+    return all.filter((l) => l.courseId === courseId && this.hasProgress(l));
   },
 
   /** Course-level summaries derived from lecture records. */
   async listCourses(): Promise<CourseHistorySummary[]> {
-    const lectures = await this.listLectures();
+    const lectures = (await this.listLectures()).filter((l) => this.hasProgress(l));
     const map = new Map<string, CourseHistorySummary>();
 
     for (const l of lectures) {
@@ -273,12 +361,34 @@ export const historyService = {
   /** Has this lecture already been studied? */
   async hasStudied(courseName: string, lectureName: string): Promise<boolean> {
     const rec = await this.getLecture(slugify(courseName), slugify(lectureName));
-    return !!rec;
+    return this.hasProgress(rec);
   },
 
   /** Delete one lecture record. */
   async deleteLecture(courseId: string, lectureId: string): Promise<void> {
-    await sRemove(lectureKey(courseId, lectureId));
+    const prev = await this.getLecture(courseId, lectureId);
+    if (!prev) return;
+    const now = Date.now();
+    const tombstone: LectureHistoryRecord = {
+      courseId,
+      lectureId,
+      courseName: prev.courseName,
+      lectureName: prev.lectureName,
+      objective: prev.objective,
+      objectiveId: prev.objectiveId,
+      checkedConceptIndexes: [],
+      conceptsAcknowledged: false,
+      questionsComplete: false,
+      focusStep: 0,
+      questions: [],
+      ankiCardsCount: 0,
+      status: "in_progress",
+      startedAt: prev.startedAt ?? now,
+      updatedAt: now,
+      deletedAt: now,
+      version: (prev.version ?? 0) + 1,
+    };
+    await sSet(lectureKey(courseId, lectureId), tombstone);
   },
 
   /** Delete every lecture of a course. */
@@ -287,7 +397,9 @@ export const historyService = {
     let n = 0;
     for (const k of keys) {
       if (!k.startsWith(`lecture::${courseId}::`)) continue;
-      await sRemove(k);
+      const [, , lectureId] = k.split("::");
+      if (!lectureId) continue;
+      await this.deleteLecture(courseId, lectureId);
       n++;
     }
     return n;
@@ -295,7 +407,7 @@ export const historyService = {
 
   /** Aggregate stats for the settings UI. */
   async getStats(): Promise<HistoryStats> {
-    const lectures = await this.listLectures();
+    const lectures = (await this.listLectures()).filter((l) => this.hasProgress(l));
     const courses = new Set(lectures.map((l) => l.courseId));
     const bytes = lectures.reduce((acc, l) => acc + JSON.stringify(l).length, 0);
     return {
@@ -310,7 +422,12 @@ export const historyService = {
   /** Wipe ALL history. Destructive — only call from an explicit user action. */
   async clearAll(): Promise<void> {
     const keys = await getAllKeys();
-    for (const k of keys) await sRemove(k);
+    for (const k of keys) {
+      if (!k.startsWith("lecture::")) continue;
+      const [, courseId, lectureId] = k.split("::");
+      if (!courseId || !lectureId) continue;
+      await this.deleteLecture(courseId, lectureId);
+    }
   },
 
   /** Export the full namespace for Supabase sync / backup. */

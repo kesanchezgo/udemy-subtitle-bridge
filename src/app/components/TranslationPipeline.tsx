@@ -1,6 +1,6 @@
 // ─── TranslationPipeline — SRT Batch Mode ─────────────────────────────────────
 // Captura la transcripción .srt completa del video y la traduce de una vez.
-// Fallback: IA Local (8010) → Gemini Key 1 → Gemini Key 2 → Mock
+// Fallback: IA Local (8010) → Gemini keys en rotación → Mock
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -66,7 +66,7 @@ en refactorizar el código mal diseñado.
 En gran medida, esto tiene que ver con la forma en que nos enseñan a programar.`;
 
 // ── Refined translation prompt ─────────────────────────────────────────────────
-const TRANSLATION_PROMPT = `Actúa como un traductor técnico experto especializado en desarrollo de software. Tu tarea es traducir subtítulos en formato .srt de inglés a español.
+const TRANSLATION_PROMPT = `Actúa como un traductor experto especializado en cursos online de Udemy. Tu tarea es traducir subtítulos en formato .srt de inglés a español.
 
 Es CRÍTICO que respetes estas reglas exactamente. Romper cualquiera corromperá el archivo:
 
@@ -80,7 +80,7 @@ Es CRÍTICO que respetes estas reglas exactamente. Romper cualquiera corromperá
 
 3. SIN ETIQUETAS NI METADATOS: Devuelve ÚNICAMENTE el SRT en texto plano. Sin \`\`\`srt, sin etiquetas XML, sin comentarios, sin saludos ni despedidas.
 
-4. TÉRMINOS TÉCNICOS EN INGLÉS: Mantén sin traducir: Spring Boot, Spring Cloud, JVM, JPA, REST API, microservices, endpoints, multi-threading, streams, arrays, interfaces, annotations, beans, dependency injection, Hibernate, Maven, Gradle, Docker, Kubernetes, CI/CD, y todo nombre de tecnología o framework.
+4. TÉRMINOS ESPECIALIZADOS EN INGLÉS: Mantén sin traducir nombres propios, marcas, herramientas, comandos, APIs, librerías, frameworks y términos del dominio cuando traducirlos reduzca precisión.
 
 5. ESPAÑOL NATURAL: Usa español latino neutro, fluido y técnicamente preciso. Evita calcos del inglés.
 
@@ -156,12 +156,11 @@ async function streamWords(text: string, onUpdate: (acc: string) => void, signal
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type BatchPhase = "idle" | "building" | "sending" | "streaming" | "done";
-type ModelSource = "local" | "gemini_k1" | "gemini_k2" | "mock";
+type ModelSource = "local" | "gemini" | "mock";
 
 interface TranslationPipelineProps {
   autoTranslate: boolean;
-  apiKey1?: string;
-  apiKey2?: string;
+  apiKeys?: string[];
   localConnected?: boolean;
   capturedLineCount?: number;
   lectureKey?: string;
@@ -170,8 +169,7 @@ interface TranslationPipelineProps {
 // ─────────────────────────────────────────────────────────────────────────────
 export function TranslationPipeline({
   autoTranslate,
-  apiKey1 = "",
-  apiKey2 = "",
+  apiKeys = [],
   localConnected = false,
   capturedLineCount = 0,
   lectureKey = "",
@@ -193,12 +191,10 @@ export function TranslationPipeline({
   const lastRequestedCountRef = useRef(0);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const apiKey1Ref   = useRef(apiKey1);
-  const apiKey2Ref   = useRef(apiKey2);
+  const apiKeysRef   = useRef(apiKeys);
   const localRef     = useRef(localConnected);
 
-  useEffect(() => { apiKey1Ref.current = apiKey1; }, [apiKey1]);
-  useEffect(() => { apiKey2Ref.current = apiKey2; }, [apiKey2]);
+  useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { localRef.current = localConnected; }, [localConnected]);
 
   // Lock totalBlocks to the count at the time the pipeline first runs
@@ -210,8 +206,7 @@ export function TranslationPipeline({
 
   const pickModel = (): ModelSource => {
     if (localRef.current)   return "local";
-    if (apiKey1Ref.current) return "gemini_k1";
-    if (apiKey2Ref.current) return "gemini_k2";
+    if (apiKeysRef.current.some(Boolean)) return "gemini";
     return "mock";
   };
 
@@ -463,8 +458,7 @@ export function TranslationPipeline({
 
   const MODEL_LABEL: Record<ModelSource, string> = {
     local:      "IA Local · 8010",
-    gemini_k1:  "Gemini Flash · Key 1",
-    gemini_k2:  "Gemini Flash · Key 2",
+    gemini:     `Gemini Flash · ${apiKeys.filter(Boolean).length} keys`,
     mock:       "Mock · sin conexión",
   };
 
@@ -595,7 +589,7 @@ export function TranslationPipeline({
 
             {(isSending || isStreaming) && (
               <span className="text-[9px] text-violet-400/55 shrink-0 flex items-center gap-1">
-                {apiKey1 ? <><Key size={7} />Gemini</> : <><Database size={7} />Local</>}
+                {localRef.current ? <><Database size={7} />Local</> : apiKeys.some(Boolean) ? <><Key size={7} />Gemini</> : <><WifiOff size={7} />Mock</>}
               </span>
             )}
 

@@ -12,7 +12,8 @@ type ChromeApi = typeof globalThis & {
       sendMessage: (tabId: number, message: BridgeMessage) => void;
     };
     runtime?: {
-      sendMessage: (message: BridgeMessage) => void;
+      sendMessage: (message: BridgeMessage, callback?: (response?: unknown) => void) => void;
+      lastError?: unknown;
       onMessage?: {
         addListener: (listener: (...args: unknown[]) => unknown) => void;
         removeListener: (listener: (...args: unknown[]) => unknown) => void;
@@ -64,6 +65,20 @@ function canUseTabsMessaging(): boolean {
 function canUseRuntimeMessaging(): boolean {
   const chromeApi = getChromeApi();
   return typeof chromeApi?.runtime?.sendMessage === "function";
+}
+
+function safeRuntimeSendMessage(message: BridgeMessage): void {
+  const chromeApi = getChromeApi();
+  if (typeof chromeApi?.runtime?.sendMessage !== "function") return;
+  try {
+    chromeApi.runtime.sendMessage(message, () => {
+      // Accessing lastError consumes benign errors such as extension reloads.
+      void (chromeApi.runtime as { lastError?: unknown }).lastError;
+    });
+  } catch (_error) {
+    // The Udemy page can keep an old content script alive after reloading the
+    // extension. Ignore that stale context; the user can reload the tab.
+  }
 }
 
 function addRuntimeListener(
@@ -128,15 +143,13 @@ export const contentBridge = {
       window.dispatchEvent(new CustomEvent(USB_TO_SIDEBAR_EVENT, { detail: message }));
       // Mirror to runtime as best effort (for popup/background listeners).
       if (canUseRuntimeMessaging()) {
-        const chromeApi = getChromeApi();
-        chromeApi?.runtime?.sendMessage(message);
+        safeRuntimeSendMessage(message);
       }
       return;
     }
 
     if (canUseRuntimeMessaging()) {
-      const chromeApi = getChromeApi();
-      chromeApi?.runtime?.sendMessage(message);
+      safeRuntimeSendMessage(message);
       return;
     }
     if (hasWindowContext()) {
