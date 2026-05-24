@@ -76,7 +76,7 @@ export const objectivesService = {
    */
   async getOrGenerate(courseName: string, description: string): Promise<ObjectivesCacheEntry> {
     const existing = await this.get(courseName);
-    if (existing) return existing;
+    if (existing && !existing.isMock) return existing;
     return this.regenerate(courseName, description);
   },
 

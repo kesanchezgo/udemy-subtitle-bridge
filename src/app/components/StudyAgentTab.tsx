@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Target, Sparkles, Wand2, Check, Edit3, ArrowRight, Brain,
   CheckCircle2, Circle, RotateCcw, X, Zap, FlipHorizontal,
@@ -7,14 +7,17 @@ import {
   Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating } from "../services/localAI";
+import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
 import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
-import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard } from "../services/historyService";
+import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
 import { HistoryPanel } from "./HistoryPanel";
 import { projectId } from "../../../utils/supabase/info";
 import { usePersistedState } from "../hooks/usePersistedState";
+import { contentBridge, type BridgeMessage } from "../services/contentBridge";
+import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
+import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
 import confetti from "canvas-confetti";
 import { toast } from "sonner";
 import { celebrate } from "./CelebrationOverlay";
@@ -24,7 +27,7 @@ import { Session } from "@supabase/supabase-js";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Phase = "objective" | "generating" | "result";
 type ConfidenceLevel = "confused" | "partial" | "clear" | "mastered";
-type CardType = "concepto" | "codigo" | "entrevista" | "comparacion" | "proceso";
+type CardType = "concepto" | "aplicacion" | "codigo" | "entrevista" | "comparacion" | "proceso";
 
 interface FeedbackState {
   status: "idle" | "loading" | "streaming" | "done" | "error";
@@ -46,12 +49,36 @@ interface StudyContent {
   relevance: { score: number; reason: string };
   keyConcepts: string[];
   quickWin: string;
-  questions: { q: string; bloom: string; difficulty: ConfidenceLevel; hint: string; answer: string }[];
+  questions: { q: string; bloom: string; difficulty: ConfidenceLevel; hint: string; answer: string; conceptRefs?: number[] }[];
   application: { setup: string; challenge: string; solution: string; isCode: boolean };
   interviewQ: { q: string; idealAnswer: string } | null;
   nextAction: string;
   ankiCards: AnkiCard[];
 }
+
+type StudyTranscriptResult = {
+  ok?: boolean;
+  transcriptText?: string;
+  text?: string;
+  source?: string;
+  cueCount?: number;
+  transcriptTruncated?: boolean;
+  truncated?: boolean;
+  lectureKey?: string;
+  courseSlug?: string;
+  courseTitle?: string;
+  lectureTitle?: string;
+  error?: string;
+};
+
+type LearningPanelResponse = {
+  ok?: boolean;
+  source?: string;
+  payload?: unknown;
+  raw?: string;
+  error?: string;
+  debug?: unknown;
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CONFIDENCE = [
@@ -80,6 +107,7 @@ const COACH_BUBBLE: Record<ConfidenceLevel, { emoji: string; title: string; tip:
 
 const CARD_META: Record<CardType, { label: string; icon: string; color: string; accent: string }> = {
   concepto:    { label: "Concepto",    icon: "🎯", color: "text-violet-400",  accent: "#a78bfa" },
+  aplicacion:  { label: "Aplicación",  icon: "🧩", color: "text-emerald-400", accent: "#34d399" },
   codigo:      { label: "Código",      icon: "💻", color: "text-emerald-400", accent: "#86efac" },
   entrevista:  { label: "Entrevista",  icon: "💼", color: "text-sky-400",     accent: "#93c5fd" },
   comparacion: { label: "Comparación", icon: "🔄", color: "text-amber-400",   accent: "#fcd34d" },
@@ -94,8 +122,267 @@ const QUESTIONS_FOR: Record<ConfidenceLevel, ConfidenceLevel[]> = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+function sendRuntimeMessage<T>(message: unknown): Promise<T | null> {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void; lastError?: { message?: string } } };
+  }).chrome;
+  if (!chromeApi?.runtime?.sendMessage) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    try {
+      chromeApi.runtime?.sendMessage?.(message, (response) => {
+        if (chromeApi.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve((response ?? null) as T | null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function isExtensionRuntime(): boolean {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { id?: string; sendMessage?: unknown } };
+  }).chrome;
+  return Boolean(chromeApi?.runtime?.id && typeof chromeApi.runtime.sendMessage === "function");
+}
+
+function fingerprintKey(apiKey: string): string {
+  const key = String(apiKey || "").trim();
+  if (!key) return "(empty)";
+  if (key.length <= 10) return "short-key";
+  return `${key.slice(0, 6)}…${key.slice(-4)}`;
+}
+
+function describeGeminiKeys(keys: string[]): string {
+  const normalized = normalizeGeminiKeys(keys);
+  return `${normalized.length} key(s) [${normalized.map(fingerprintKey).join(", ")}]`;
+}
+
+async function resolveGeminiKeysForStudy(propKeys: string[]): Promise<string[]> {
+  await initGeminiKeys().catch(() => undefined);
+  const memoryKeys = (globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] }).USB_GEMINI_API_KEYS;
+  const visibleKeys: Record<string, unknown> = await chromeStorage
+    .get(["gemini_api_keys", "gemini_api_key_1", "gemini_api_key_2"])
+    .catch(() => ({} as Record<string, unknown>));
+  const syncedArray = Array.isArray(visibleKeys.gemini_api_keys)
+    ? normalizeGeminiKeys((visibleKeys.gemini_api_keys as unknown[]).map(String))
+    : [];
+  const legacy = normalizeGeminiKeys([
+    typeof visibleKeys.gemini_api_key_1 === "string" ? visibleKeys.gemini_api_key_1 : "",
+    typeof visibleKeys.gemini_api_key_2 === "string" ? visibleKeys.gemini_api_key_2 : "",
+  ]);
+  const resolved = normalizeGeminiKeys([
+    ...propKeys,
+    ...(Array.isArray(memoryKeys) ? memoryKeys : []),
+    ...syncedArray,
+    ...legacy,
+  ]);
+
+  console.info("[USG][study][client] resolved Gemini keys:", {
+    prop: describeGeminiKeys(propKeys),
+    memory: describeGeminiKeys(Array.isArray(memoryKeys) ? memoryKeys : []),
+    syncArray: describeGeminiKeys(syncedArray),
+    legacy: describeGeminiKeys(legacy),
+    resolved: describeGeminiKeys(resolved),
+  });
+
+  if (resolved.length > 0) {
+    setGeminiKeysSync(resolved);
+    await saveGeminiKeys(resolved).catch(() => undefined);
+  }
+
+  return resolved;
+}
+
+async function requestStudyTranscript(maxChars = 22000): Promise<StudyTranscriptResult> {
+  const runtimeResult = await sendRuntimeMessage<StudyTranscriptResult>({
+    type: "USG_GET_STUDY_TRANSCRIPT",
+    maxChars,
+  });
+  if (runtimeResult?.ok && runtimeResult.transcriptText) return runtimeResult;
+
+  return new Promise<StudyTranscriptResult>((resolve) => {
+    let done = false;
+    const cleanup = contentBridge.onMessageFromContent((message: BridgeMessage) => {
+      if (message.type !== "TRANSCRIPT_RESULT") return;
+      done = true;
+      cleanup();
+      const payload = (message.payload ?? {}) as StudyTranscriptResult;
+      resolve({
+        ok: Boolean(payload.text || payload.transcriptText),
+        transcriptText: payload.transcriptText ?? payload.text,
+        ...payload,
+      });
+    });
+
+    void contentBridge.sendToContent({ type: "GET_TRANSCRIPT", payload: { maxChars } });
+    window.setTimeout(() => {
+      if (done) return;
+      cleanup();
+      resolve(runtimeResult ?? { ok: false, error: "No se pudo leer la transcripción de la lección." });
+    }, 5000);
+  });
+}
+
+function clampScore(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 70;
+}
+
+function asText(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeDifficulty(value: unknown, fallback: ConfidenceLevel): ConfidenceLevel {
+  const v = String(value || "").toLowerCase();
+  return (["confused", "partial", "clear", "mastered"] as ConfidenceLevel[]).includes(v as ConfidenceLevel)
+    ? v as ConfidenceLevel
+    : fallback;
+}
+
+function normalizeCardType(value: unknown, fallback: CardType): CardType {
+  const v = String(value || "").toLowerCase();
+  return (["concepto", "aplicacion", "codigo", "entrevista", "comparacion", "proceso"] as CardType[]).includes(v as CardType)
+    ? v as CardType
+    : fallback;
+}
+
+function normalizeConceptRefs(value: unknown, fallback: number[], maxConcepts: number): number[] {
+  if (maxConcepts <= 0) return [];
+  const raw = Array.isArray(value) ? value : [];
+  const refs = raw
+    .map((item) => Number(item))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n < maxConcepts);
+  const unique = Array.from(new Set(refs));
+  return unique.length > 0 ? unique.slice(0, 3) : fallback.filter((n) => n >= 0 && n < maxConcepts).slice(0, 3);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function validDifficulty(value: unknown): boolean {
+  return (["confused", "partial", "clear", "mastered"] as string[]).includes(String(value || "").toLowerCase());
+}
+
+function validateStudyPayload(payload: unknown): string[] {
+  const issues: string[] = [];
+  const raw = isRecord(payload) ? payload : {};
+  const relevance = isRecord(raw.relevance) ? raw.relevance : null;
+  if (!relevance || !Number.isFinite(Number(relevance.score))) issues.push("relevance.score");
+
+  const keyConcepts = Array.isArray(raw.keyConcepts) ? raw.keyConcepts.map(v => asText(v)).filter(Boolean) : [];
+  if (keyConcepts.length < 4) issues.push("keyConcepts[4]");
+
+  const questions = Array.isArray(raw.questions) ? raw.questions : [];
+  if (questions.length < 4) issues.push("questions[4]");
+  questions.slice(0, 4).forEach((item, i) => {
+    const q = isRecord(item) ? item : {};
+    if (!asText(q.q)) issues.push(`questions[${i}].q`);
+    if (!asText(q.bloom ?? q.bloomLevel)) issues.push(`questions[${i}].bloom`);
+    if (!validDifficulty(q.difficulty)) issues.push(`questions[${i}].difficulty`);
+    if (!asText(q.hint)) issues.push(`questions[${i}].hint`);
+    if (!asText(q.answer)) issues.push(`questions[${i}].answer`);
+  });
+
+  const app = isRecord(raw.application) ? raw.application : {};
+  if (!asText(app.setup)) issues.push("application.setup");
+  if (!asText(app.challenge)) issues.push("application.challenge");
+  if (!asText(app.solution)) issues.push("application.solution");
+  if (typeof app.isCode !== "boolean") issues.push("application.isCode");
+
+  if (!asText(raw.quickWin)) issues.push("quickWin");
+  if (!asText(raw.nextAction)) issues.push("nextAction");
+
+  const cards = Array.isArray(raw.ankiCards) ? raw.ankiCards : [];
+  if (cards.length < 3) issues.push("ankiCards[3]");
+  cards.slice(0, Math.min(cards.length, 8)).forEach((item, i) => {
+    const card = isRecord(item) ? item : {};
+    if (!asText(card.front)) issues.push(`ankiCards[${i}].front`);
+    if (!asText(card.back)) issues.push(`ankiCards[${i}].back`);
+    if (!asText(card.type)) issues.push(`ankiCards[${i}].type`);
+  });
+
+  return issues;
+}
+
+function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyContent {
+  const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const relevance = (raw.relevance && typeof raw.relevance === "object" ? raw.relevance : {}) as Record<string, unknown>;
+  const fallbackQuestions = fallback.questions;
+  const questionDifficulties: ConfidenceLevel[] = ["confused", "partial", "clear", "mastered"];
+  const keyConcepts = Array.isArray(raw.keyConcepts)
+    ? raw.keyConcepts.map((v) => asText(v)).filter(Boolean).slice(0, 4)
+    : fallback.keyConcepts;
+  const questions = Array.isArray(raw.questions)
+    ? raw.questions.slice(0, 4).map((item, i) => {
+        const q = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+        const fb = fallbackQuestions[i] ?? fallbackQuestions[0];
+        return {
+          q: asText(q.q, fb.q),
+          bloom: asText(q.bloom ?? q.bloomLevel, fb.bloom),
+          difficulty: normalizeDifficulty(q.difficulty, questionDifficulties[i] ?? fb.difficulty),
+          hint: asText(q.hint, fb.hint),
+          answer: asText(q.answer, fb.answer),
+          conceptRefs: normalizeConceptRefs(q.conceptRefs ?? q.concepts, fb.conceptRefs ?? [i % Math.max(1, keyConcepts.length)], keyConcepts.length),
+        };
+      })
+    : [];
+
+  const app = (raw.application && typeof raw.application === "object" ? raw.application : {}) as Record<string, unknown>;
+  const cards = Array.isArray(raw.ankiCards)
+    ? raw.ankiCards.slice(0, 8).map((item, i) => {
+        const card = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+        const fb = fallback.ankiCards[i % Math.max(1, fallback.ankiCards.length)];
+        const tagsRaw = card.tags;
+        const tags = Array.isArray(tagsRaw)
+          ? tagsRaw.map(String).filter(Boolean).slice(0, 8)
+          : typeof card.tag === "string"
+            ? [card.tag]
+            : fb.tags;
+        return {
+          id: asText(card.id, `card-${String(i + 1).padStart(3, "0")}`),
+          type: normalizeCardType(card.type, fb.type),
+          front: asText(card.front, fb.front),
+          back: asText(card.back, fb.back),
+          tags,
+        };
+      })
+    : [];
+
+  return {
+    relevance: {
+      score: clampScore(relevance.score ?? fallback.relevance.score),
+      reason: asText(relevance.reason, fallback.relevance.reason),
+    },
+    keyConcepts,
+    quickWin: asText(raw.quickWin, fallback.quickWin),
+    questions: questions.length >= 4 ? questions : fallback.questions,
+    application: {
+      isCode: typeof app.isCode === "boolean" ? app.isCode : fallback.application.isCode,
+      setup: asText(app.setup, fallback.application.setup),
+      challenge: asText(app.challenge, fallback.application.challenge),
+      solution: asText(app.solution, fallback.application.solution),
+    },
+    interviewQ: raw.interviewQ === null
+      ? null
+      : raw.interviewQ && typeof raw.interviewQ === "object"
+        ? {
+            q: asText((raw.interviewQ as Record<string, unknown>).q, fallback.interviewQ?.q ?? ""),
+            idealAnswer: asText((raw.interviewQ as Record<string, unknown>).idealAnswer, fallback.interviewQ?.idealAnswer ?? ""),
+          }
+        : fallback.interviewQ,
+    nextAction: asText(raw.nextAction, fallback.nextAction),
+    ankiCards: cards.length >= 3 ? cards : fallback.ankiCards,
+  };
+}
+
 function humanizeObjectivesError(error: string | null | undefined): string {
-  if (!error) return "El servidor de IA local y Gemini no respondieron — usando plantillas. Configura tu API key o reintenta.";
+  if (!error) return "El servidor de IA local y Gemini no respondieron. Configura tu API key o reintenta.";
   const msg = error.toLowerCase();
   if (msg.includes("cortada a mitad") || msg.includes("max_tokens") || msg.includes("max tokens") || msg.includes("límite de tokens")) {
     return "La IA fue cortada a mitad de respuesta por el límite de tokens. Pulsa Regenerar — el siguiente intento usará más tokens.";
@@ -218,7 +505,7 @@ function AIAnalyzingLoader() {
             ))}
           </div>
         </div>
-        <span className="text-white/14 text-[9px] font-mono tracking-wider shrink-0">IA local</span>
+        <span className="text-white/14 text-[9px] font-mono tracking-wider shrink-0">IA</span>
       </div>
     </motion.div>
   );
@@ -384,7 +671,7 @@ function AIFeedback({
             )}
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
-            <span className="text-white/14 text-[8px] font-mono tracking-wider uppercase">IA local</span>
+            <span className="text-white/14 text-[8px] font-mono tracking-wider uppercase">IA</span>
             {fb.isMock && (
               <span className="flex items-center gap-0.5 bg-amber-500/8 border border-amber-500/18 rounded px-1.5 py-0.5 text-[7px] text-amber-400/60">
                 <WifiOff size={6} />demo
@@ -737,7 +1024,48 @@ async function exportApkgFile(
 
 // ─── Mock content ────────────────────────────────────────────��────────────────
 function generateContent(objectiveId: string, custom: string, course: string, lesson: string): StudyContent {
-  const isSp = objectiveId.includes("spring") || custom.toLowerCase().includes("spring");
+  const blob = `${objectiveId} ${custom} ${course} ${lesson}`.toLowerCase();
+  const isJavaLike = /java|spring|jvm|boot|backend|programaci[oó]n|programming|code|software/.test(blob);
+  const genericTags = [course.toLowerCase().replace(/[^a-z0-9]+/g,"-"), lesson.toLowerCase().replace(/[^a-z0-9]+/g,"-"), "study-agent"].filter(Boolean);
+  if (!isJavaLike) {
+    const topic = lesson || course || "esta lección";
+    const objective = custom || objectiveId || "aplicar lo aprendido";
+    return {
+      relevance: { score: 74, reason: `Esta lección aporta contexto práctico para ${objective}. Úsala para convertir conceptos en acciones observables.` },
+      keyConcepts: [
+        `Idea central de "${topic}": identifica qué problema resuelve y cuándo aplicarla.`,
+        "Criterios de decisión: distingue cuándo una respuesta es suficiente y cuándo necesita más evidencia.",
+        "Aplicación práctica: transforma la explicación de la lección en un ejemplo o caso real propio.",
+      ],
+      quickWin: "Resume la lección en 3 bullets: concepto, ejemplo y error común a evitar.",
+      questions: [
+        { difficulty: "confused" as ConfidenceLevel, bloom: "comprender", conceptRefs: [0], q: `¿Cuál es la idea principal de "${topic}" y por qué importa?`, hint: "Piensa en el problema que intenta resolver la lección.", answer: "La respuesta debe nombrar la idea central, explicar su utilidad y conectarla con un ejemplo simple del curso." },
+        { difficulty: "partial" as ConfidenceLevel, bloom: "aplicar", conceptRefs: [2], q: "Describe una situación real donde aplicarías este concepto.", hint: "Usa un caso concreto: antes, acción y resultado esperado.", answer: "Una buena respuesta plantea un caso específico, aplica el concepto paso a paso y explica qué mejora o evita." },
+        { difficulty: "clear" as ConfidenceLevel, bloom: "analizar", conceptRefs: [1, 2], q: "¿Qué error común podría cometer alguien al aplicar esta lección?", hint: "Busca una confusión, exceso, omisión o mal criterio de uso.", answer: "Debe identificar un error plausible, explicar por qué ocurre y proponer una forma de detectarlo o corregirlo." },
+        { difficulty: "mastered" as ConfidenceLevel, bloom: "evaluar", conceptRefs: [1, 2], q: "Compara dos formas de aplicar esta idea y decide cuál usarías.", hint: "Define criterios: precisión, costo, riesgo, tiempo o impacto.", answer: "La respuesta debe comparar alternativas con criterios claros y justificar una decisión según el objetivo del curso." },
+      ],
+      application: {
+        isCode: false,
+        setup: "Caso práctico basado en la lección actual:",
+        challenge: `Diseña una mini-aplicación de "${topic}" para tu contexto real. Incluye: objetivo, pasos, criterio de éxito y riesgo principal.`,
+        solution: "Una solución sólida define un objetivo medible, 3-5 pasos accionables, un criterio de validación y una forma de manejar el riesgo principal.",
+      },
+      interviewQ: {
+        q: `¿Cómo explicarías "${topic}" a alguien que está empezando?`,
+        idealAnswer: "Primero daría una definición simple, luego un ejemplo concreto, después un contraejemplo y cerraría con cuándo conviene aplicarlo.",
+      },
+      nextAction: "Convierte esta lección en una acción pequeña que puedas completar hoy y valida el resultado.",
+      ankiCards: [
+        { id:"g1", type:"concepto" as CardType, front:`¿Cuál es la idea central de "${topic}"?`, back:"La idea central debe explicar qué problema resuelve, cuándo se usa y qué resultado permite conseguir.", tags: genericTags },
+        { id:"g2", type:"comparacion" as CardType, front:"¿Cómo decidir si estás aplicando bien un concepto?", back:"Define un criterio observable: resultado esperado, evidencia, límite de uso y error común a evitar.", tags: genericTags },
+        { id:"g3", type:"proceso" as CardType, front:"Proceso para estudiar una lección de Udemy", back:"1. Resume la idea. 2. Crea un ejemplo propio. 3. Detecta un error común. 4. Aplica en un caso real. 5. Repasa con una tarjeta.", tags: genericTags },
+        { id:"g4", type:"entrevista" as CardType, front:`Explica "${topic}" en 60 segundos.`, back:"Usa esta estructura: definición simple, ejemplo, contraejemplo y cuándo aplicarlo.", tags: genericTags },
+        { id:"g5", type:"concepto" as CardType, front:"¿Qué hace que una respuesta sea de nivel avanzado?", back:"No solo define: compara, justifica decisiones, reconoce límites y adapta el concepto al contexto.", tags: genericTags },
+      ],
+    };
+  }
+
+  const isSp = objectiveId.includes("spring") || custom.toLowerCase().includes("spring") || course.toLowerCase().includes("spring");
   const isInterview = objectiveId.includes("spring") || objectiveId.includes("cert");
   const tags = [course.toLowerCase().replace(/[^a-z0-9]+/g,"-"), lesson.toLowerCase().replace(/[^a-z0-9]+/g,"-"), isSp ? "spring-boot" : "java"];
   return {
@@ -753,10 +1081,10 @@ function generateContent(objectiveId: string, custom: string, course: string, le
     ],
     quickWin: isSp ? "Abre tu último PR y busca cualquier if con == comparando Strings. Cámbialo a .equals() ahora mismo." : "En tu próximo snippet Java, usa int en lugar de Integer cuando el valor no puede ser null.",
     questions: [
-      { difficulty: "confused" as ConfidenceLevel, bloom: "comprender", q: isSp ? "¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada." : "¿Cuál es la diferencia entre compilar y ejecutar un programa Java? ¿Qué produce cada paso?", hint: isSp ? "Piensa: ¿dónde viven los objetos de Spring en memoria? ¿Qué pasa si ese espacio se llena?" : "Hay dos herramientas separadas: javac y java. ¿Qué hace cada una y qué archivo produce?", answer: isSp ? "La JVM es el motor de ejecución de Java. Spring Boot arranca dentro de la JVM: crea el ApplicationContext en el heap, escanea beans y levanta Tomcat. Si el heap se llena de objetos sin liberar → OutOfMemoryError → app caída." : "Compilar (javac): convierte .java → bytecode (.class). Detecta errores de sintaxis y tipos. Ejecutar (java): la JVM carga el .class, el JIT lo optimiza a código máquina del SO y lo corre. El bytecode es portátil; el código máquina no." },
-      { difficulty: "partial" as ConfidenceLevel, bloom: "aplicar", q: isSp ? "@Value(\"${app.timeout}\") private int timeout; — la propiedad no existe en application.properties. ¿Qué pasa y cómo lo corriges?" : "¿En qué situación concreta preferirías usar Integer en vez de int? Da al menos 2 ejemplos reales.", hint: isSp ? "int no puede ser null. ¿Qué hace Spring cuando intenta asignarle null a un primitivo al arrancar?" : "Piensa en colecciones como ArrayList<> o métodos que devuelven null si no encuentran nada.", answer: isSp ? "Con int: Spring lanza BeanCreationException al arrancar (no puede asignar null a primitivo). Bueno, falla rápido. Con Integer: asigna null silenciosamente y el NPE aparece más tarde. Fix: @Value(\"${app.timeout:30}\") para int con default." : "Usas Integer cuando: (1) el valor puede ser null (campo opcional de BD), (2) necesitas usarlo en List<Integer> o Map<String,Integer>, (3) el tipo retorno de un método que puede no encontrar el valor. Usas int cuando el valor siempre existe (velocidad 5x)." },
-      { difficulty: "clear" as ConfidenceLevel, bloom: "analizar", q: isSp ? "¿Por qué este método siempre retorna false en producción?\n\n@Value(\"${app.role}\") private String role;\npublic boolean check(String r) { return r == role; }" : "El GC libera objetos automáticamente, pero sigues teniendo un memory leak. ¿Cómo es posible? Da un ejemplo.", hint: isSp ? "Piensa: ¿dónde vive el String que inyecta @Value vs. el String Pool de la JVM?" : "El GC solo libera objetos SIN referencias activas. Memory leak = referencia activa que nadie limpia.", answer: isSp ? "@Value inyecta el String desde el heap (no del String Pool). == compara referencias de memoria, no valores. role y r apuntan a objetos distintos en el heap aunque el texto sea igual → false siempre. Fix: return role.equals(r);" : "El GC no puede liberar objetos con referencias activas aunque nunca los uses. Ejemplo: List estática que acumula objetos en cada request sin limpiarla. La List mantiene referencias → GC no puede actuar → heap crece → OutOfMemoryError." },
-      { difficulty: "mastered" as ConfidenceLevel, bloom: "evaluar", q: isSp ? "@Service singleton con private int count = 0 y trackLogin() { count++; }. Tu app tiene 50 usuarios concurrentes. Identifica el bug y corrígelo correctamente." : "Integer.valueOf(200) == Integer.valueOf(200) es false. ¿Por qué? ¿Qué rango sí daría true? ¿Qué implica para código de producción?", hint: isSp ? "Bean singleton = una instancia compartida entre TODOS los threads. ¿Qué pasa con count++ cuando 2 threads la ejecutan al mismo tiempo?" : "La JVM tiene una optimización de cache para ciertos valores Integer frecuentes.", answer: isSp ? "Race condition: count++ no es atómica. Con 50 threads simultáneos, varios leen el mismo valor, lo incrementan y el resultado es incorrecto. Fix correcto: private final AtomicInteger count = new AtomicInteger(0); y count.incrementAndGet();" : "La JVM cachea Integer.valueOf() para -128 a 127 (spec Java). Fuera de ese rango, cada autoboxing crea un nuevo objeto en el heap → == compara referencias distintas → false. Implicación: NUNCA uses == para comparar Integer. Siempre .equals() o desempaqueta a int primero." },
+      { difficulty: "confused" as ConfidenceLevel, bloom: "comprender", conceptRefs: [0], q: isSp ? "¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada." : "¿Cuál es la diferencia entre compilar y ejecutar un programa Java? ¿Qué produce cada paso?", hint: isSp ? "Piensa: ¿dónde viven los objetos de Spring en memoria? ¿Qué pasa si ese espacio se llena?" : "Hay dos herramientas separadas: javac y java. ¿Qué hace cada una y qué archivo produce?", answer: isSp ? "La JVM es el motor de ejecución de Java. Spring Boot arranca dentro de la JVM: crea el ApplicationContext en el heap, escanea beans y levanta Tomcat. Si el heap se llena de objetos sin liberar → OutOfMemoryError → app caída." : "Compilar (javac): convierte .java → bytecode (.class). Detecta errores de sintaxis y tipos. Ejecutar (java): la JVM carga el .class, el JIT lo optimiza a código máquina del SO y lo corre. El bytecode es portátil; el código máquina no." },
+      { difficulty: "partial" as ConfidenceLevel, bloom: "aplicar", conceptRefs: [1], q: isSp ? "@Value(\"${app.timeout}\") private int timeout; — la propiedad no existe en application.properties. ¿Qué pasa y cómo lo corriges?" : "¿En qué situación concreta preferirías usar Integer en vez de int? Da al menos 2 ejemplos reales.", hint: isSp ? "int no puede ser null. ¿Qué hace Spring cuando intenta asignarle null a un primitivo al arrancar?" : "Piensa en colecciones como ArrayList<> o métodos que devuelven null si no encuentran nada.", answer: isSp ? "Con int: Spring lanza BeanCreationException al arrancar (no puede asignar null a primitivo). Bueno, falla rápido. Con Integer: asigna null silenciosamente y el NPE aparece más tarde. Fix: @Value(\"${app.timeout:30}\") para int con default." : "Usas Integer cuando: (1) el valor puede ser null (campo opcional de BD), (2) necesitas usarlo en List<Integer> o Map<String,Integer>, (3) el tipo retorno de un método que puede no encontrar el valor. Usas int cuando el valor siempre existe (velocidad 5x)." },
+      { difficulty: "clear" as ConfidenceLevel, bloom: "analizar", conceptRefs: [2], q: isSp ? "¿Por qué este método siempre retorna false en producción?\n\n@Value(\"${app.role}\") private String role;\npublic boolean check(String r) { return r == role; }" : "El GC libera objetos automáticamente, pero sigues teniendo un memory leak. ¿Cómo es posible? Da un ejemplo.", hint: isSp ? "Piensa: ¿dónde vive el String que inyecta @Value vs. el String Pool de la JVM?" : "El GC solo libera objetos SIN referencias activas. Memory leak = referencia activa que nadie limpia.", answer: isSp ? "@Value inyecta el String desde el heap (no del String Pool). == compara referencias de memoria, no valores. role y r apuntan a objetos distintos en el heap aunque el texto sea igual → false siempre. Fix: return role.equals(r);" : "El GC no puede liberar objetos con referencias activas aunque nunca los uses. Ejemplo: List estática que acumula objetos en cada request sin limpiarla. La List mantiene referencias → GC no puede actuar → heap crece → OutOfMemoryError." },
+      { difficulty: "mastered" as ConfidenceLevel, bloom: "evaluar", conceptRefs: [0, 1, 2], q: isSp ? "@Service singleton con private int count = 0 y trackLogin() { count++; }. Tu app tiene 50 usuarios concurrentes. Identifica el bug y corrígelo correctamente." : "Integer.valueOf(200) == Integer.valueOf(200) es false. ¿Por qué? ¿Qué rango sí daría true? ¿Qué implica para código de producción?", hint: isSp ? "Bean singleton = una instancia compartida entre TODOS los threads. ¿Qué pasa con count++ cuando 2 threads la ejecutan al mismo tiempo?" : "La JVM tiene una optimización de cache para ciertos valores Integer frecuentes.", answer: isSp ? "Race condition: count++ no es atómica. Con 50 threads simultáneos, varios leen el mismo valor, lo incrementan y el resultado es incorrecto. Fix correcto: private final AtomicInteger count = new AtomicInteger(0); y count.incrementAndGet();" : "La JVM cachea Integer.valueOf() para -128 a 127 (spec Java). Fuera de ese rango, cada autoboxing crea un nuevo objeto en el heap → == compara referencias distintas → false. Implicación: NUNCA uses == para comparar Integer. Siempre .equals() o desempaqueta a int primero." },
     ],
     application: {
       isCode: true,
@@ -809,7 +1137,7 @@ function VerifyDoneReview({
         <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-emerald-300/90 text-[11px]" style={{ fontWeight: 600 }}>
-            Verificación completada · {correctCount}/{total} correctas
+            Verificación revisada · {correctCount}/{total} correctas
           </p>
           <p className="text-white/28 text-[9px] mt-0.5">Toca cada pregunta para revisar tu respuesta y el feedback.</p>
         </div>
@@ -871,7 +1199,7 @@ function VerifyDoneReview({
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export function StudyAgentTab({ session }: { session?: Session }) {
+export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; apiKeys?: string[] }) {
   const [phase, setPhase]             = useState<Phase>("objective");
   // Persisted: objective, course and lesson survive tab reloads
   const [selectedObj, setSelectedObj] = usePersistedState("agent_selected_obj", "spring-senisenior");
@@ -882,8 +1210,12 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   const [isRefining, setIsRefining]   = useState(false);
   const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "Java In-Depth - Udemy");
   const [courseDescription, setCourseDescription] = usePersistedState<string>("agent_course_description", "");
+  const [courseAIContext, setCourseAIContext] = useState("");
+  const [courseAIContextTitle, setCourseAIContextTitle] = useState("");
+  const [courseAIContextSlug, setCourseAIContextSlug] = useState("");
   const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "02 - JVM y Tipos de Datos");
   const [genStep, setGenStep]         = useState(0);
+  const selectedObjRef = useRef(selectedObj);
 
   // ── Dynamic AI-generated objectives (per course) ─────────────────────────
   const [dynamicObjectives, setDynamicObjectives] = useState<GeneratedObjective[] | null>(null);
@@ -897,8 +1229,10 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   const objectivesAutoGenRef = useRef<string>(""); // track which courseId we already auto-generated
 
   const [content, setContent]                       = useState<StudyContent | null>(null);
+  const [activeSessionObjective, setActiveSessionObjective] = useState<string | null>(null);
   const [confidence, setConfidence]                 = useState<ConfidenceLevel | null>(null);
   const [conceptsChecked, setConceptsChecked]       = useState<Record<number, boolean>>({});
+  const [conceptsAcknowledged, setConceptsAcknowledged] = useState(false);
   const [appAnswer, setAppAnswer]                   = useState("");
   const [appFeedback, setAppFeedback]               = useState<FeedbackState>(IDLE_FB);
   const [showAppSolution, setShowAppSolution]       = useState(false);
@@ -926,6 +1260,41 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   // ── History drawer ────────────────────────────────────────────────────────
   const [historyOpen, setHistoryOpen] = useState(false);
   const rehydratedKeyRef = useRef<string>("");
+  const activeStudyKeyRef = useRef<string>("");
+
+  useEffect(() => {
+    selectedObjRef.current = selectedObj;
+  }, [selectedObj]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void chromeLocalStorage.get(["agent_course_context", "agent_course_context_slug", "agent_course_context_title"]).then((items) => {
+      if (cancelled) return;
+      const value = typeof items.agent_course_context === "string" ? items.agent_course_context : "";
+      const slug = typeof items.agent_course_context_slug === "string" ? items.agent_course_context_slug : "";
+      const title = typeof items.agent_course_context_title === "string" ? items.agent_course_context_title : "";
+      setCourseAIContext(value);
+      setCourseAIContextSlug(slug);
+      setCourseAIContextTitle(title);
+    });
+
+    const unsubscribe = chromeLocalStorage.onChange((changes) => {
+      if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context")) {
+        setCourseAIContext(typeof changes.agent_course_context === "string" ? changes.agent_course_context : "");
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context_slug")) {
+        setCourseAIContextSlug(typeof changes.agent_course_context_slug === "string" ? changes.agent_course_context_slug : "");
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context_title")) {
+        setCourseAIContextTitle(typeof changes.agent_course_context_title === "string" ? changes.agent_course_context_title : "");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
 
   // Scroll refs
   const scrollRef      = useRef<HTMLDivElement>(null);
@@ -947,6 +1316,61 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       }
     }, 150);
   }, []);
+
+  const resetStudySessionState = useCallback(() => {
+    setContent(null);
+    setActiveSessionObjective(null);
+    setConfidence(null);
+    setConceptsChecked({});
+    setConceptsAcknowledged(false);
+    setAppAnswer("");
+    setAppFeedback(IDLE_FB);
+    setShowAppSolution(false);
+    setQuestionAnswers({});
+    setQuestionFeedbacks({});
+    setCurrentQIdx(0);
+    setQuestionsComplete(false);
+    setSessionComplete(false);
+    setAnkiExported(false);
+    setShowAnkiGuide(false);
+    setShowHint(false);
+    setShowModelAnswer(false);
+    setShowInterviewAnswer(false);
+    setApkgStatus("idle");
+    setApkgProgress("");
+    setFocusStep(0);
+    setFocusDir(1);
+    sessionStartRef.current = Date.now();
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, []);
+
+  useEffect(() => {
+    if (!courseName.trim() || !lessonName.trim()) return;
+    const key = `${slugify(courseName)}::${slugify(lessonName)}`;
+    if (!activeStudyKeyRef.current) {
+      activeStudyKeyRef.current = key;
+      return;
+    }
+    if (activeStudyKeyRef.current === key) return;
+
+    activeStudyKeyRef.current = key;
+    rehydratedKeyRef.current = "";
+    const hasActiveSession = phase !== "objective" || Boolean(content) || Boolean(confidence) || questionsComplete || sessionComplete || ankiExported;
+    if (hasActiveSession) {
+      resetStudySessionState();
+      setPhase("objective");
+    }
+  }, [
+    courseName,
+    lessonName,
+    phase,
+    content,
+    confidence,
+    questionsComplete,
+    sessionComplete,
+    ankiExported,
+    resetStudySessionState,
+  ]);
 
   // Sound helpers
   const playSound = useCallback((type: "pop" | "success" | "chord") => {
@@ -1064,6 +1488,48 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     "Creando tarjetas Anki optimizadas…",
   ];
 
+  const getActiveObjectiveText = useCallback(() => {
+    if (selectedObj === "custom" && customObj.trim()) return customObj.trim();
+    const found = dynamicObjectives?.find(o => o.id === selectedObj);
+    if (found) return `${found.title}${found.sub ? ` — ${found.sub}` : ""}`;
+    return customObj.trim() || selectedObj;
+  }, [customObj, dynamicObjectives, selectedObj]);
+
+  const getActiveObjectiveId = useCallback(() => {
+    if (selectedObj === "custom" && customObj.trim()) return "custom";
+    if (dynamicObjectives?.some(o => o.id === selectedObj)) return selectedObj;
+    return selectedObj || "custom";
+  }, [customObj, dynamicObjectives, selectedObj]);
+
+  const effectiveCourseDescription = useMemo(() => {
+    const visible = courseDescription.trim();
+    const rawHidden = courseAIContext.trim();
+    const currentCourseId = slugify(courseName);
+    const contextIds = [courseAIContextTitle, courseAIContextSlug].map(slugify).filter(Boolean);
+    const hiddenMatchesIdentity = contextIds.some((contextId) =>
+      contextId === currentCourseId
+      || contextId.includes(currentCourseId)
+      || currentCourseId.includes(contextId)
+    );
+    const visibleFingerprint = visible.slice(0, 80);
+    const hiddenMatchesVisibleDescription = visibleFingerprint.length >= 30 && rawHidden.includes(visibleFingerprint);
+    const hidden = hiddenMatchesIdentity || hiddenMatchesVisibleDescription ? rawHidden : "";
+    if (!hidden) return visible;
+    if (!visible) return hidden;
+    const combined = hidden.includes(visible) || visible.includes(hidden)
+      ? (hidden.length >= visible.length ? hidden : visible)
+      : `${visible}\n\nContexto Udemy ampliado:\n${hidden}`;
+    return combined.length > 8000 ? `${combined.slice(0, 7999).trimEnd()}…` : combined;
+  }, [courseName, courseDescription, courseAIContext, courseAIContextSlug, courseAIContextTitle]);
+
+  const getStudyAIContext = useCallback((currentContent?: StudyContent | null): StudyAIContext => ({
+    courseName,
+    courseDescription: effectiveCourseDescription,
+    lessonName,
+    objective: activeSessionObjective || getActiveObjectiveText(),
+    techContext: currentContent?.keyConcepts?.join(" | "),
+  }), [courseName, effectiveCourseDescription, lessonName, activeSessionObjective, getActiveObjectiveText]);
+
   const handleGenerate = async () => {
     // Warn if the user has already studied this lecture (non-blocking).
     try {
@@ -1078,19 +1544,100 @@ export function StudyAgentTab({ session }: { session?: Session }) {
 
     setPhase("generating"); setGenStep(0);
     sessionStartRef.current = Date.now();
-    const iv = setInterval(() => setGenStep(p => p >= GEN_STEPS.length - 1 ? p : p + 1), 400);
-    setTimeout(() => {
+    const sessionObjective = getActiveObjectiveText();
+    const iv = setInterval(() => setGenStep(p => p >= GEN_STEPS.length - 1 ? p : p + 1), 650);
+    try {
+      const fallbackContent = generateContent(selectedObj, customObj, courseName, lessonName);
+      const resolvedGeminiKeys = await resolveGeminiKeysForStudy(apiKeys);
+      const transcript = await requestStudyTranscript(22000);
+      let newContent = fallbackContent;
+      let usedFallback = false;
+      let generationError = "";
+
+      if (transcript.ok && transcript.transcriptText?.trim()) {
+        if (resolvedGeminiKeys.length > 0) {
+          const syncResponse = await sendRuntimeMessage<{ ok?: boolean; source?: string; keyCount?: number; error?: string }>({
+            type: "USG_SYNC_GEMINI_KEYS",
+            apiKeys: resolvedGeminiKeys,
+          });
+          console.info("[USG][study][client] background key sync response:", syncResponse);
+        }
+        console.info("[USG][study][client] sending learning panel request:", {
+          apiKeys: describeGeminiKeys(resolvedGeminiKeys),
+          transcriptChars: transcript.transcriptText.length,
+          courseName,
+          lessonName,
+        });
+        const aiResult = await sendRuntimeMessage<LearningPanelResponse>({
+          type: "USG_GENERATE_LEARNING_PANEL",
+          apiKeys: resolvedGeminiKeys,
+          transcriptText: transcript.transcriptText,
+          cueCount: transcript.cueCount,
+          transcriptTruncated: Boolean(transcript.transcriptTruncated ?? transcript.truncated),
+          lectureKey: transcript.lectureKey || slugify(lessonName),
+          courseSlug: transcript.courseSlug || slugify(courseName),
+          lectureId: transcript.lectureKey || slugify(lessonName),
+          courseName,
+          courseDescription: effectiveCourseDescription,
+          lessonName,
+          objective: sessionObjective,
+        });
+        if (aiResult?.ok && aiResult.payload) {
+          const payloadIssues = validateStudyPayload(aiResult.payload);
+          if (payloadIssues.length > 0) {
+            console.warn("[USG][study][client] invalid learning panel payload:", payloadIssues, aiResult.payload);
+            generationError = `Gemini respondió, pero faltan campos requeridos en la sesión: ${payloadIssues.slice(0, 5).join(", ")}.`;
+          } else {
+          newContent = normalizeStudyContent(aiResult.payload, fallbackContent);
+          }
+        } else if (aiResult?.error) {
+          generationError = aiResult.error;
+          console.warn("[study] AI panel failed:", aiResult.error, aiResult.debug);
+          const debug = aiResult.debug as { promptPreview?: unknown; rawResponse?: unknown; rawResponseLength?: unknown } | undefined;
+          if (typeof debug?.promptPreview === "string") {
+            console.info("[USG][study][client] prompt sent to Gemini (preview):", debug.promptPreview);
+          }
+          if (typeof debug?.rawResponse === "string") {
+            console.info("[USG][study][client] raw Gemini response:", debug.rawResponse);
+            console.info("[USG][study][client] raw Gemini response length:", debug.rawResponseLength);
+          }
+        } else {
+          generationError = "No hubo respuesta del motor de IA. Configura Gemini o inicia la IA local y reintenta.";
+        }
+      } else {
+        generationError = transcript.error || "No hay transcripción disponible para esta lección.";
+        console.warn("[study] transcript unavailable:", transcript.error);
+      }
+
+      if (generationError) {
+        if (isExtensionRuntime()) {
+          clearInterval(iv);
+          setPhase("objective");
+          toast.error("No se pudo generar la sesión", {
+            description: generationError.length > 140 ? `${generationError.slice(0, 140)}…` : generationError,
+            icon: <WifiOff className="text-amber-400" size={18} />,
+            duration: 7000,
+          });
+          return;
+        }
+        usedFallback = true;
+      }
+
       clearInterval(iv);
-      const newContent = generateContent(selectedObj, customObj, courseName, lessonName);
       setContent(newContent);
+      setActiveSessionObjective(sessionObjective);
       setPhase("result");
 
       // Persist initial history record (paso 1 + paso 2)
       historyService.upsertLecture({
         courseName,
         lectureName: lessonName,
-        objective: customObj || selectedObj,
+        objective: sessionObjective,
+        objectiveId: getActiveObjectiveId(),
+        studyContent: newContent as StoredStudyContent,
         keyConcepts: newContent.keyConcepts,
+        clearProgress: true,
+        focusStep: 0,
         status: "in_progress",
       }).catch(err => console.error("[history] upsert on generate", err));
 
@@ -1104,11 +1651,34 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       }
 
       toast("¡Material de estudio listo!", {
-        description: "Analizamos el video y preparamos tu plan de dominio.",
+        description: usedFallback
+          ? "Usamos una plantilla local porque no se pudo completar la generación con IA."
+          : "Analizamos la lección y preparamos tu plan de dominio.",
         icon: <Rocket className="text-violet-400" size={18} />
       });
       scrollToBottom();
-    }, 2200);
+    } catch (error) {
+      console.error("[study] generate session failed", error);
+      clearInterval(iv);
+      if (isExtensionRuntime()) {
+        setPhase("objective");
+        const message = error instanceof Error ? error.message : String(error);
+        toast.error("No se pudo generar la sesión", {
+          description: message.length > 140 ? `${message.slice(0, 140)}…` : message,
+          icon: <WifiOff className="text-amber-400" size={18} />,
+          duration: 7000,
+        });
+        return;
+      }
+      const newContent = generateContent(selectedObj, customObj, courseName, lessonName);
+      setContent(newContent);
+      setActiveSessionObjective(sessionObjective);
+      setPhase("result");
+      toast.warning("Sesión provisional", {
+        description: "No se pudo generar con IA; usamos una plantilla local para no bloquearte.",
+        icon: <WifiOff className="text-amber-400" size={18} />,
+      });
+    }
   };
 
   // Rebuild in-memory session state from a persisted history record.
@@ -1116,7 +1686,9 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     // generateContent is deterministic on (objective, course, lesson)
     const obj = rec.objective || customObj || selectedObj;
     const rebuilt = generateContent(obj, obj, rec.courseName, rec.lectureName);
-    setContent(rebuilt);
+    const restored = rec.studyContent ? normalizeStudyContent(rec.studyContent, rebuilt) : rebuilt;
+    setContent(restored);
+    setActiveSessionObjective(rec.objective || null);
 
     if (rec.confidence) setConfidence(rec.confidence);
 
@@ -1136,6 +1708,10 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     setQuestionAnswers(answers);
     setQuestionFeedbacks(feedbacks);
 
+    const checkedConceptIndexes = Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : [];
+    setConceptsChecked(Object.fromEntries(checkedConceptIndexes.map((idx) => [idx, true])));
+    setConceptsAcknowledged(Boolean(rec.conceptsAcknowledged));
+
     if (rec.codeChallenge) {
       setAppAnswer(rec.codeChallenge.answer ?? "");
       if (rec.codeChallenge.feedback || rec.codeChallenge.rating) {
@@ -1147,11 +1723,33 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       }
     }
 
-    const done = rec.status === "completed";
-    setQuestionsComplete(done || rec.questions.some(q => q.rating === "correct" || q.rating === "excellent"));
+    const hasCodeChallenge = Boolean(rec.codeChallenge);
+    const hasAnkiExport = Boolean(rec.ankiCards && rec.ankiCards.length > 0);
+    const done = rec.status === "completed" || hasAnkiExport;
+    const restoredQuestionsComplete =
+      done ||
+      hasCodeChallenge ||
+      Boolean(rec.questionsComplete) ||
+      rec.questions.some(q => q.rating === "correct" || q.rating === "excellent");
+    setQuestionsComplete(restoredQuestionsComplete);
     setSessionComplete(done);
-    if (rec.ankiCards && rec.ankiCards.length > 0) setAnkiExported(true);
-    setFocusStep(done ? 4 : (rec.codeChallenge ? 3 : (rec.confidence ? 2 : 1)));
+    if (hasAnkiExport) setAnkiExported(true);
+    const restoredStep = typeof rec.focusStep === "number"
+      ? Math.max(0, Math.min(4, Math.round(rec.focusStep)))
+      : done
+        ? 4
+        : rec.codeChallenge
+          ? 3
+          : restoredQuestionsComplete
+            ? 3
+            : rec.questions.length > 0
+              ? 2
+              : rec.conceptsAcknowledged
+                ? 2
+                : rec.confidence
+                  ? 1
+                  : 0;
+    setFocusStep(restoredStep);
     setPhase("result");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customObj, selectedObj]);
@@ -1173,28 +1771,39 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       ]);
       if (cancelled) return;
 
-      if (cache) {
+      if (cache && !cache.isMock) {
         setDynamicObjectives(cache.objectives);
-        setObjectivesMock(cache.isMock);
-        setObjectivesError(cache.isMock ? (cache.error ?? null) : null);
+        setObjectivesMock(false);
+        setObjectivesError(null);
+      } else if (cache?.isMock) {
+        setDynamicObjectives(null);
+        setObjectivesMock(true);
+        setObjectivesError(cache.error ?? null);
       } else {
         setDynamicObjectives(null);
+        setObjectivesMock(false);
         setObjectivesError(null);
       }
 
       // Most recent objective used in this course (lectures are already sorted desc).
-      // Only consider it a "last used objective" if it matches a known objective id —
-      // free-text customObj values shouldn't trigger hero mode.
-      const lastObjRaw = lectures.find(l => l.objective)?.objective ?? null;
-      const objs = cache?.objectives ?? [];
-      const lastId = lastObjRaw && objs.some(o => o.id === lastObjRaw) ? lastObjRaw : null;
-      setLastUsedObjectiveId(lastId);
+      // Prefer objectiveId from newer records; fall back to matching old records by text.
+      const lastLectureWithObjective = lectures.find(l => l.objectiveId || l.objective);
+      const objs = cache && !cache.isMock ? cache.objectives : [];
+      const lastObjRaw = lastLectureWithObjective?.objectiveId ?? lastLectureWithObjective?.objective ?? null;
+      const lastId = lastObjRaw
+        ? (objs.find(o => o.id === lastObjRaw || `${o.title}${o.sub ? ` — ${o.sub}` : ""}` === lastObjRaw)?.id ?? null)
+        : null;
+      const persistedSelectedObj = selectedObjRef.current;
+      const persistedId = objs.some(o => o.id === persistedSelectedObj) ? persistedSelectedObj : null;
+      const currentId = persistedId ?? lastId;
+      setLastUsedObjectiveId(currentId);
+      if (currentId) setSelectedObj(currentId);
       // Hero mode = collapsed by default when there's a prior selection.
-      setObjectivesExpanded(!lastId);
+      setObjectivesExpanded(!currentId);
     })();
 
     return () => { cancelled = true; };
-  }, [courseName]);
+  }, [courseName, setSelectedObj]);
 
   // Auto-generate objectives the FIRST time we see a new course (once per courseId).
   useEffect(() => {
@@ -1210,14 +1819,14 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       objectivesAutoGenRef.current = courseId;
       setObjectivesLoading(true);
       try {
-        const entry = await objectivesService.getOrGenerate(courseName, courseDescription);
-        setDynamicObjectives(entry.objectives);
+        const entry = await objectivesService.getOrGenerate(courseName, effectiveCourseDescription);
+        setDynamicObjectives(entry.isMock ? null : entry.objectives);
         setObjectivesMock(entry.isMock);
         setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
         setObjectivesExpanded(!lastUsedObjectiveId);
         if (entry.isMock) {
           const reason = humanizeObjectivesError(entry.error);
-          toast.warning("Objetivos provisionales (sin IA)", {
+          toast.warning("Objetivos pendientes de IA", {
             description: reason,
             icon: <Sparkles className="text-amber-400" size={18} />,
             duration: 6000,
@@ -1231,7 +1840,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     }, 700);
 
     return () => clearTimeout(t);
-  }, [phase, courseName, courseDescription, dynamicObjectives, objectivesLoading, lastUsedObjectiveId]);
+  }, [phase, courseName, effectiveCourseDescription, dynamicObjectives, objectivesLoading, lastUsedObjectiveId]);
 
   // Keep `selectedObj` consistent with the current dynamic objectives.
   // If the persisted id doesn't exist in the freshly-loaded set (e.g. user switched
@@ -1251,15 +1860,15 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     if (objectivesLoading) return;
     setObjectivesLoading(true);
     try {
-      const entry = await objectivesService.regenerate(courseName, courseDescription);
-      setDynamicObjectives(entry.objectives);
+      const entry = await objectivesService.regenerate(courseName, effectiveCourseDescription);
+      setDynamicObjectives(entry.isMock ? null : entry.objectives);
       setObjectivesMock(entry.isMock);
       setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
       setObjectivesExpanded(true);
       setObjectivesRegenCount(c => c + 1);
       if (entry.isMock) {
         const reason = humanizeObjectivesError(entry.error);
-        toast.warning("Objetivos provisionales (sin IA)", {
+        toast.warning("Objetivos pendientes de IA", {
           description: reason,
           icon: <Sparkles className="text-amber-400" size={18} />,
           duration: 6000,
@@ -1289,6 +1898,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
 
     historyService.getLecture(cid, lid).then(rec => {
       if (!rec) return;
+      if (!historyService.hasProgress(rec)) return;
       rehydratedKeyRef.current = key;
       rehydrateFromRecord(rec);
       toast.info(
@@ -1306,13 +1916,19 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     setIsRefining(true);
     const sourceText = customObj;
     try {
-      const { refined } = await refineCustomObjective(courseName, courseDescription, sourceText);
+      const { refined, isMock } = await refineCustomObjective(courseName, effectiveCourseDescription, sourceText);
+      if (!refined.trim() || isMock) {
+        toast.warning("No se pudo refinar con IA", {
+          description: "Revisa tus API keys o intenta otra vez en unos segundos.",
+          icon: <Sparkles className="text-amber-400" size={18} />,
+        });
+        return;
+      }
       setRefinedObj(refined);
       setRefinedFromText(sourceText);
     } catch (err) {
       console.error("[objectives] refine failed", err);
-      setRefinedObj(`Dominar "${sourceText}" para aplicarlo en producción`);
-      setRefinedFromText(sourceText);
+      toast.error("No se pudo refinar el objetivo");
     } finally {
       setIsRefining(false);
     }
@@ -1320,7 +1936,9 @@ export function StudyAgentTab({ session }: { session?: Session }) {
 
   const handleReset = () => {
     setPhase("objective"); setContent(null); setConfidence(null);
+    setActiveSessionObjective(null);
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
+    setConceptsAcknowledged(false);
     setShowAppSolution(false); setQuestionAnswers({}); setQuestionFeedbacks({});
     setCurrentQIdx(0); setQuestionsComplete(false); setSessionComplete(false);
     setAnkiExported(false); setShowAnkiGuide(false); setShowHint(false);
@@ -1331,6 +1949,15 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     // Mark the current lecture as already-handled so rehydration doesn't auto-reload it.
     // Switching to a different course/lecture produces a new key and rehydrates normally.
     rehydratedKeyRef.current = `${slugify(courseName)}::${slugify(lessonName)}`;
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      focusStep: 0,
+      questionsComplete: false,
+      conceptsAcknowledged: false,
+      checkedConceptIndexes: [],
+      clearProgress: true,
+    }).catch(err => console.error("[history] upsert reset", err));
     toast("Sesión reiniciada", { icon: <RotateCcw className="text-violet-400" size={18} /> });
   };
 
@@ -1341,12 +1968,16 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       courseName,
       lectureName: lessonName,
       confidence: c,
+      objectiveId: getActiveObjectiveId(),
+      objective: getActiveObjectiveText(),
+      focusStep: 1,
     }).catch(err => console.error("[history] upsert confidence", err));
     setCurrentQIdx(0);
     setQuestionsComplete(false);
     setQuestionAnswers({});          // ← was missing
     setQuestionFeedbacks({});        // ← was missing
     setShowHint(false);
+    setConceptsAcknowledged(false);
     toast.info("Adaptando las preguntas a tu nivel...", {
       icon: (
         <div className="p-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 shadow-[0_0_12px_rgba(59,130,246,0.2)]">
@@ -1361,7 +1992,58 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     setSessionComplete(false);
   };
 
-  const visibleQuestions = content && confidence ? content.questions.filter(q => QUESTIONS_FOR[confidence].includes(q.difficulty)) : [];
+  const handleConceptToggle = (idx: number) => {
+    if (questionsComplete) return;
+    setConceptsChecked(p => {
+      const next = { ...p, [idx]: !p[idx] };
+      const checkedConceptIndexes = Object.entries(next)
+        .filter(([, checked]) => checked)
+        .map(([key]) => Number(key))
+        .filter(Number.isFinite);
+      historyService.upsertLecture({
+        courseName,
+        lectureName: lessonName,
+        checkedConceptIndexes,
+        conceptsAcknowledged: false,
+        focusStep: 1,
+      }).catch(err => console.error("[history] upsert concepts", err));
+      return next;
+    });
+    setConceptsAcknowledged(false);
+    setCurrentQIdx(0);
+    setQuestionAnswers({});
+    setQuestionFeedbacks({});
+    setShowHint(false);
+    setShowModelAnswer(false);
+  };
+
+  const conceptSelectionSignature = useMemo(
+    () => Object.entries(conceptsChecked).filter(([, checked]) => checked).map(([idx]) => idx).sort().join(","),
+    [conceptsChecked],
+  );
+
+  const visibleQuestions = useMemo(() => {
+    if (!content || !confidence) return [];
+    const base = content.questions.filter(q => QUESTIONS_FOR[confidence].includes(q.difficulty));
+    const totalConcepts = content.keyConcepts.length;
+    if (totalConcepts <= 0 || base.length <= 1) return base;
+
+    const weakConcepts = new Set<number>();
+    for (let i = 0; i < totalConcepts; i += 1) {
+      if (!conceptsChecked[i]) weakConcepts.add(i);
+    }
+    if (weakConcepts.size === 0 || weakConcepts.size === totalConcepts) return base;
+
+    return [...base].sort((a, b) => {
+      const aRefs = a.conceptRefs ?? [];
+      const bRefs = b.conceptRefs ?? [];
+      const aWeak = aRefs.some(ref => weakConcepts.has(ref)) ? 1 : 0;
+      const bWeak = bRefs.some(ref => weakConcepts.has(ref)) ? 1 : 0;
+      return bWeak - aWeak;
+    });
+  // conceptSelectionSignature intentionally makes the dependency stable by checked indexes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, confidence, conceptSelectionSignature]);
 
   const persistQuestionProgress = (idx: number, fb: FeedbackState) => {
     const q = visibleQuestions[idx];
@@ -1380,6 +2062,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       courseName,
       lectureName: lessonName,
       questions: attempts,
+      focusStep: 2,
     }).catch(err => console.error("[history] upsert question", err));
   };
 
@@ -1389,6 +2072,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     if (!userAns.trim()) return;
     setQuestionFeedbacks(p => ({ ...p, [idx]: { status: "loading", content: "", rating: "unknown" } }));
     const q = visibleQuestions[idx];
+    const aiContext = getStudyAIContext(content);
 
     // Attempt streaming evaluation first
     const res = await evaluateActiveAnswerStream(
@@ -1398,12 +2082,13 @@ export function StudyAgentTab({ session }: { session?: Session }) {
           ...p,
           [idx]: { status: "streaming", content: accumulated, rating: "unknown", isMock: p[idx]?.isMock },
         }));
-      }
+      },
+      aiContext,
     );
 
     // If streaming failed or returned nothing, fall back to non-streaming
     if (!res.success || !res.content.trim()) {
-      const fallback = await evaluateActiveAnswer(q.q, q.answer, userAns, q.bloom);
+      const fallback = await evaluateActiveAnswer(q.q, q.answer, userAns, q.bloom, aiContext);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
       persistQuestionProgress(idx, fb);
@@ -1459,21 +2144,26 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     setAppFeedback({ status: "loading", content: "", rating: "unknown" });
 
     // Attempt streaming code review first
+    const aiContext = getStudyAIContext(content);
     const res = await evaluateCodeSolutionStream(
       content.application.setup, content.application.solution, appAnswer,
       (_, accumulated) => {
         setAppFeedback(prev => ({ status: "streaming", content: accumulated, rating: "unknown", isMock: prev.isMock }));
-      }
+      },
+      aiContext,
     );
 
     if (!res.success || !res.content.trim()) {
-      const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer);
+      const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer, aiContext);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setAppFeedback(fb);
       historyService.upsertLecture({
         courseName,
         lectureName: lessonName,
         codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating: fb.rating, feedback: fb.content, answeredAt: Date.now() },
+        questionsComplete: true,
+        conceptsAcknowledged: true,
+        focusStep: 3,
       }).catch(err => console.error("[history] upsert code", err));
       if (fallback.success && (fallback.rating === "correct" || fallback.rating === "excellent")) {
         confetti({ particleCount: 70, spread: 80, origin: { y: 0.7 }, colors: ["#8b5cf6", "#10b981", "#38bdf8", "#fcd34d"] });
@@ -1487,6 +2177,9 @@ export function StudyAgentTab({ session }: { session?: Session }) {
       courseName,
       lectureName: lessonName,
       codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating: res.rating, feedback: res.content, answeredAt: Date.now() },
+      questionsComplete: true,
+      conceptsAcknowledged: true,
+      focusStep: 3,
     }).catch(err => console.error("[history] upsert code", err));
     
     if (res.rating === "correct" || res.rating === "excellent") {
@@ -1523,6 +2216,12 @@ export function StudyAgentTab({ session }: { session?: Session }) {
     setQuestionsComplete(true); 
     setShowHint(false); 
     setShowModelAnswer(false); 
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      questionsComplete: true,
+      focusStep: 3,
+    }).catch(err => console.error("[history] upsert force complete", err));
     toast("Evaluación saltada", { icon: <FastForward className="text-violet-400" size={18} /> });
   };
 
@@ -1544,13 +2243,17 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   const persistAnkiAndComplete = () => {
     if (!content) return;
     const cards: StoredAnkiCard[] = content.ankiCards.map(c => ({
-      front: c.front, back: c.back, tags: c.tags, type: c.type,
+      id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
     }));
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
+      studyContent: content as StoredStudyContent,
       ankiCards: cards,
       ankiCardsCount: cards.length,
+      questionsComplete: true,
+      conceptsAcknowledged: true,
+      focusStep: 4,
       status: "completed",
     }).then(() => historyService.markCompleted(slugify(courseName), slugify(lessonName)))
       .catch(err => console.error("[history] complete", err));
@@ -1601,15 +2304,40 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   const goToStep = (target: number) => {
     if (target < 0 || target > 4) return;
     if (!stepUnlocked[target as 0|1|2|3|4]) return;
+    if (focusStep === 1 && target === 2) setConceptsAcknowledged(true);
     // Reset scroll ANTES del re-render — evita que AnimatePresence empuje hacia abajo
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setFocusDir(target > focusStep ? 1 : -1);
     setFocusStep(target);
+    if (content) {
+      historyService.upsertLecture({
+        courseName,
+        lectureName: lessonName,
+        focusStep: target,
+        conceptsAcknowledged: focusStep === 1 && target === 2 ? true : undefined,
+      }).catch(err => console.error("[history] upsert focus step", err));
+    }
+  };
+
+  const handleGoVerify = () => {
+    const checkedConceptIndexes = Object.entries(conceptsChecked)
+      .filter(([, checked]) => checked)
+      .map(([key]) => Number(key))
+      .filter(Number.isFinite);
+    setConceptsAcknowledged(true);
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      checkedConceptIndexes,
+      conceptsAcknowledged: true,
+      focusStep: 2,
+    }).catch(err => console.error("[history] upsert concept acknowledgement", err));
+    goToStep(2);
   };
 
   // BUG FIX: once questionsComplete, conceptsDone is locked true (prevents unmark on back-nav)
   const conceptsMarkedCount = Object.values(conceptsChecked).filter(Boolean).length;
-  const conceptsDone = questionsComplete || conceptsMarkedCount >= 2;
+  const conceptsDone = questionsComplete || conceptsAcknowledged || conceptsMarkedCount >= 2;
 
   // Stepper state
   const steps = [
@@ -1621,6 +2349,10 @@ export function StudyAgentTab({ session }: { session?: Session }) {
   ];
 
   const allStepsComplete = steps.every(s => s.done);
+  const hasUsableObjective = Boolean(
+    customObj.trim() ||
+    (dynamicObjectives?.some(o => o.id === selectedObj) && !objectivesMock)
+  );
 
   // Trigger confetti and toast when all steps complete
   useEffect(() => {
@@ -1773,7 +2505,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider flex items-center gap-1"><Target size={9}/>¿Para qué estudias esto?</p>
-                {dynamicObjectives && (
+                {(dynamicObjectives || objectivesMock || objectivesError) && (
                   <button onClick={handleRegenerateObjectives} disabled={objectivesLoading}
                     className="text-white/30 hover:text-violet-300 disabled:text-violet-400 disabled:cursor-wait text-[10px] flex items-center gap-1 transition-colors">
                     {objectivesLoading
@@ -1797,9 +2529,30 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                 </div>
               )}
 
+              {!objectivesLoading && !dynamicObjectives && courseName.trim() && (objectivesMock || objectivesError) && (
+                <div className="rounded-xl bg-amber-500/8 border border-amber-500/22 p-3 flex items-start gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                    <Sparkles size={13} className="text-amber-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-amber-300/85 text-[11px] leading-snug" style={{ fontWeight: 600 }}>
+                      Objetivos pendientes de IA real
+                    </p>
+                    <p className="text-amber-300/55 text-[10px] mt-0.5 leading-relaxed">
+                      {humanizeObjectivesError(objectivesError)}
+                    </p>
+                    <button onClick={handleRegenerateObjectives}
+                      className="mt-2 h-7 px-2.5 rounded-lg bg-amber-500/10 border border-amber-500/22 text-amber-200 hover:bg-amber-500/15 text-[10px] flex items-center gap-1.5 transition-all">
+                      <Sparkles size={10}/>Regenerar con IA
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {dynamicObjectives && (() => {
                 const objs = dynamicObjectives;
-                const hero = lastUsedObjectiveId ? objs.find(o => o.id === lastUsedObjectiveId) : null;
+                const heroId = lastUsedObjectiveId ?? (objs.some(o => o.id === selectedObj) ? selectedObj : null);
+                const hero = heroId ? objs.find(o => o.id === heroId) : null;
                 const showHero = hero && !objectivesExpanded;
 
                 if (showHero) {
@@ -2019,8 +2772,8 @@ export function StudyAgentTab({ session }: { session?: Session }) {
             </div>
 
             {/* Generate CTA */}
-            <button onClick={handleGenerate}
-              className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 text-white text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-900/25 active:scale-[0.98]">
+            <button onClick={handleGenerate} disabled={!hasUsableObjective}
+              className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 disabled:from-white/8 disabled:to-white/8 disabled:text-white/25 disabled:shadow-none disabled:cursor-not-allowed text-white text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-900/25 active:scale-[0.98]">
               <Wand2 size={13}/>Generar sesión de aprendizaje
               <ArrowRight size={13}/>
             </button>
@@ -2041,7 +2794,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
             </div>
             <div className="text-center">
               <p className="text-white/75 text-sm" style={{ fontWeight: 600 }}>Preparando tu sesión…</p>
-              <p className="text-white/25 text-[11px] mt-0.5">IA local · calibrado a tu objetivo</p>
+              <p className="text-white/25 text-[11px] mt-0.5">IA · calibrado a tu objetivo</p>
             </div>
             <div className="w-full space-y-2">
               {GEN_STEPS.map((s, i) => (
@@ -2240,7 +2993,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                   {/* Intro */}
                   <div className="flex items-start gap-2 px-1 pb-1">
                     <span className="text-[13px] shrink-0 mt-0.5">📌</span>
-                    <p className="text-white/35 text-[11px] leading-relaxed">Marca solo los que realmente entendiste. Sin presión — es para calibrar, no para calificar.</p>
+                    <p className="text-white/35 text-[11px] leading-relaxed">Marca solo los que realmente entendiste. Usaremos eso para priorizar tus preguntas.</p>
                   </div>
 
                   <div className="bg-[#131315] border border-white/7 rounded-xl overflow-hidden">
@@ -2266,7 +3019,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                       {content.keyConcepts.map((c, i) => (
                         <motion.button
                           key={i}
-                          onClick={() => !isLocked && setConceptsChecked(p => ({ ...p, [i]: !p[i] }))}
+                          onClick={() => !isLocked && handleConceptToggle(i)}
                           whileHover={isLocked ? {} : { x: 2 }}
                           whileTap={isLocked ? {} : { scale: 0.98 }}
                           className={`w-full flex items-start gap-2.5 text-left rounded-lg px-2 py-1.5 transition-all group ${
@@ -2294,32 +3047,48 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                       ))}
                     </div>
 
-                    {/* "¡Listo para continuar!" CTA */}
+                    {/* "Verificar mi comprensión" CTA */}
                     <AnimatePresence>
-                      {isReady && (
+                      {!isLocked && (
                         <motion.div
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: "auto" }}
                           exit={{ opacity: 0, height: 0 }}
                           className="overflow-hidden"
                         >
-                          <div className="mx-3 mb-3 bg-emerald-500/8 border border-emerald-500/22 rounded-xl overflow-hidden relative">
+                          <div className={`mx-3 mb-3 rounded-xl overflow-hidden relative ${
+                            isReady
+                              ? "bg-emerald-500/8 border border-emerald-500/22"
+                              : "bg-violet-500/7 border border-violet-500/18"
+                          }`}>
                             <motion.div
-                              className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-400/8 to-transparent skew-x-12 pointer-events-none"
+                              className={`absolute inset-0 bg-gradient-to-r from-transparent ${isReady ? "via-emerald-400/8" : "via-violet-400/8"} to-transparent skew-x-12 pointer-events-none`}
                               animate={{ x: ["-100%", "200%"] }}
                               transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
                             />
                             <div className="flex items-center gap-2.5 p-2.5 relative z-10">
-                              <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 0.6, delay: 0.2 }} className="text-[16px] shrink-0">✅</motion.span>
+                              <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 0.6, delay: 0.2 }} className="text-[16px] shrink-0">
+                                {isReady ? "✅" : checkedCount === 0 ? "🧭" : "🎯"}
+                              </motion.span>
                               <div className="flex-1 min-w-0">
-                                <p className="text-emerald-300/90 text-[11px]" style={{ fontWeight: 600 }}>¡Base sólida!</p>
-                                <p className="text-white/35 text-[10px]">Confirma tu comprensión con preguntas reales.</p>
+                                <p className={`${isReady ? "text-emerald-300/90" : "text-violet-300/90"} text-[11px]`} style={{ fontWeight: 600 }}>
+                                  {isReady ? "¡Base sólida!" : checkedCount === 0 ? "Empecemos desde lo esencial" : "Buen punto de partida"}
+                                </p>
+                                <p className="text-white/35 text-[10px]">
+                                  {isReady
+                                    ? "Confirma tu comprensión con preguntas reales."
+                                    : checkedCount === 0
+                                      ? "No marcar nada también calibra: iremos a lo más básico."
+                                      : "Usaremos lo no marcado para priorizar tus preguntas."}
+                                </p>
                               </div>
                             </div>
                             {/* CTA inline — no más scroll para buscar el botón */}
                             <button
-                              onClick={() => goToStep(2)}
-                              className="relative z-10 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 transition-colors py-2 text-white text-[10px]"
+                              onClick={handleGoVerify}
+                              className={`relative z-10 w-full flex items-center justify-center gap-2 transition-colors py-2 text-white text-[10px] ${
+                                isReady ? "bg-emerald-600 hover:bg-emerald-500" : "bg-violet-600 hover:bg-violet-500"
+                              }`}
                               style={{ fontWeight: 600 }}
                             >
                               Verificar mi comprensión <ArrowRight size={11} />
@@ -2408,7 +3177,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                           <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>¡Comprensión verificada!</p>
                           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none animate-[spin_15s_linear_infinite]" />
                           <div className="text-4xl drop-shadow-[0_0_15px_rgba(52,211,153,0.3)] relative z-10 animate-[bounce_2s_ease-in-out_infinite] mt-2">🚀</div>
-                          <p className="text-white/40 text-[10px] relative z-10 pt-1">La IA confirmó que captaste los conceptos clave. Continúa con el desafío práctico.</p>
+                          <p className="text-white/40 text-[10px] relative z-10 pt-1">La IA confirmó que captaste los conceptos clave. Continúa con la práctica.</p>
                         </motion.div>
                       ) : (
                         <>
@@ -2550,7 +3319,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                           {/* Escape hatch — always visible, not a trap */}
                           {!questionsComplete && (
                             <button onClick={handleForceComplete} className="mt-1 w-full text-[9px] text-white/15 hover:text-white/38 transition-colors py-1 flex items-center justify-center gap-1">
-                              <FastForward size={8}/>Saltar al desafío práctico
+                              <FastForward size={8}/>Saltar a la práctica
                             </button>
                           )}
                         </>
@@ -2568,12 +3337,21 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                   {/* Intro motivational */}
                   <div className="flex items-start gap-2 px-1 pb-1">
                     <span className="text-[13px] shrink-0 mt-0.5">🛠️</span>
-                    <p className="text-white/35 text-[11px] leading-relaxed">El código imperfecto que escribas ahora vale más que la solución perfecta que copiaste. Intenta, equivócate, aprende.</p>
+                    <p className="text-white/35 text-[11px] leading-relaxed">
+                      {content.application.isCode
+                        ? "El código imperfecto que escribas ahora vale más que la solución perfecta que copiaste. Intenta, equivócate, aprende."
+                        : "Una respuesta imperfecta aplicada ahora vale más que una idea perfecta que no practicaste. Intenta, equivócate, aprende."}
+                    </p>
                   </div>
 
                   <div ref={applyRef} className="bg-[#131315] border border-white/7 rounded-xl overflow-hidden">
                     <div className="px-3.5 pt-3.5 pb-2">
-                      <StepHeader n={4} label="Escribe código real" subLabel="desafío práctico" status={appFeedback.status === "done" ? "done" : "active"}/>
+                      <StepHeader
+                        n={4}
+                        label={content.application.isCode ? "Escribe código real" : "Aplica lo aprendido"}
+                        subLabel={content.application.isCode ? "desafío práctico" : "ejercicio práctico"}
+                        status={appFeedback.status === "done" ? "done" : "active"}
+                      />
                     </div>
 
                     {/* Setup context */}
@@ -2582,8 +3360,11 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                       <p className="text-white/50 text-[11px] leading-relaxed">{content.application.setup}</p>
                     </div>
 
-                    {/* Code block */}
-                    <pre className="mx-3.5 mb-3 bg-black/50 border border-white/6 rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
+                    {content.application.isCode ? (
+                      <pre className="mx-3.5 mb-3 bg-black/50 border border-white/6 rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
+                    ) : (
+                      <div className="mx-3.5 mb-3 bg-black/35 border border-white/6 rounded-xl p-3 text-[11px] text-white/68 overflow-x-auto leading-relaxed shadow-inner whitespace-pre-wrap">{content.application.challenge}</div>
+                    )}
 
                     <div className="px-3.5 pb-3.5 space-y-2.5">
                       <div className="flex items-center gap-1.5 mb-0.5">
@@ -2595,7 +3376,9 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                       <div className="relative">
                         <textarea value={appAnswer} onChange={e => setAppAnswer(e.target.value)}
                           placeholder={content.application.isCode ? "// Tu solución aquí…" : "Tu respuesta aquí…"}
-                          className={`w-full h-[90px] text-[11px] rounded-xl bg-black/40 border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed font-mono shadow-inner text-emerald-300/80 placeholder:text-white/14 ${
+                          className={`w-full h-[90px] text-[11px] rounded-xl bg-black/40 border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-white/14 ${
+                            content.application.isCode ? "font-mono text-emerald-300/80" : "text-white/72"
+                          } ${
                             appFeedback.status === "done" && (appFeedback.rating === "correct" || appFeedback.rating === "excellent")
                               ? "border-emerald-500/30 shadow-[0_0_14px_rgba(16,185,129,0.06)]"
                               : appFeedback.status === "done" && appFeedback.rating === "partial"
@@ -2636,7 +3419,11 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                               <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-emerald-500/10">
                                 <span className="text-[9px] text-emerald-400/60 uppercase tracking-wider" style={{ fontWeight: 600 }}>Solución de referencia</span>
                               </div>
-                              <pre className="p-2.5 text-[10px] text-emerald-300/75 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap">{content.application.solution}</pre>
+                              {content.application.isCode ? (
+                                <pre className="p-2.5 text-[10px] text-emerald-300/75 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap">{content.application.solution}</pre>
+                              ) : (
+                                <div className="p-2.5 text-[11px] text-white/62 overflow-x-auto leading-relaxed whitespace-pre-wrap">{content.application.solution}</div>
+                              )}
                             </div>
                           </motion.div>
                         )}
@@ -2693,7 +3480,12 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                 </div>
                 ) : (
                   <div className="bg-[#131315] border border-white/5 rounded-xl p-3.5 opacity-35">
-                    <StepHeader n={4} label="Escribe código real" subLabel="desafío práctico" status="pending"/>
+                    <StepHeader
+                      n={4}
+                      label="Practícalo"
+                      subLabel={content.application.isCode ? "desafío práctico" : "ejercicio práctico"}
+                      status="pending"
+                    />
                     <div className="h-10 bg-white/3 rounded-lg flex items-center justify-center">
                       <Lock size={11} className="text-white/18 mr-1.5"/>
                       <span className="text-white/18 text-[10px]">Completa las preguntas primero</span>
@@ -2726,7 +3518,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                     <p className="text-white/80 text-[11px]" style={{ fontWeight: 600 }}>¡Llegaste al último paso!</p>
                     <div className="flex items-center gap-3 mt-1">
                       <span className="text-emerald-400/80 text-[10px] flex items-center gap-1"><Check size={8} strokeWidth={3}/>{Object.values(conceptsChecked).filter(Boolean).length} conceptos</span>
-                      {totalQ > 0 && <span className="text-violet-400/80 text-[10px] flex items-center gap-1"><Check size={8} strokeWidth={3}/>{correctCount}/{totalQ} preguntas</span>}
+                      {totalQ > 0 && <span className="text-violet-400/80 text-[10px] flex items-center gap-1"><Check size={8} strokeWidth={3}/>{correctCount}/{totalQ} correctas</span>}
                       <span className="text-white/25 text-[10px]">~{elapsedMin} min</span>
                     </div>
                   </div>
@@ -2791,7 +3583,7 @@ export function StudyAgentTab({ session }: { session?: Session }) {
                     </div>
                     <div className="p-3 space-y-3">
                       <p className="text-white/28 text-[11px] leading-relaxed">
-                        {showApply ? "Exporta ahora estas tarjetas. Anki las programa automáticamente para que las repases justo antes de olvidarlas — así el conocimiento dura meses." : "Disponible una vez que completes el desafío práctico."}
+                        {showApply ? "Exporta ahora estas tarjetas. Anki las programa automáticamente para que las repases justo antes de olvidarlas — así el conocimiento dura meses." : "Disponible una vez que completes la práctica."}
                       </p>
                       <AnkiFlipPreview cards={content.ankiCards}/>
 

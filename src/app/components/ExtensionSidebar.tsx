@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Settings, Download, Upload, RefreshCcw, CheckCircle2, AlertCircle,
   PlaySquare, Sparkles, Captions, Layers, GraduationCap, RotateCcw,
@@ -15,12 +15,12 @@ import { ApiKeysPanel } from "./ApiKeysPanel";
 import { CacheSettingsPanel } from "./CacheSettingsPanel";
 import { DevTab } from "./DevTab";
 import { usePersistedState } from "../hooks/usePersistedState";
-import { chromeStorage } from "../services/chromeStorage";
+import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { contentBridge } from "../services/contentBridge";
 import { AppLogo } from "./AppLogo";
 import { Session } from "@supabase/supabase-js";
 import { useDockTheme } from "../contexts/ThemeContext";
-import { initGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
+import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
 import { toast } from "sonner";
 
 interface ExtensionSidebarProps {
@@ -112,6 +112,24 @@ function checkLocalAiViaBackground(): Promise<boolean> {
   });
 }
 
+function syncGeminiKeysToBackground(keys: string[]): Promise<void> {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { sendMessage?: (message: unknown, callback?: (response: unknown) => void) => void } };
+  }).chrome;
+
+  if (!chromeApi?.runtime?.sendMessage) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    try {
+      chromeApi.runtime?.sendMessage?.({ type: "USG_SYNC_GEMINI_KEYS", apiKeys: keys }, () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, onSignOut }: ExtensionSidebarProps) {
   // ── Tab & Dev mode ────────────────────────────────────────────────────────
@@ -126,29 +144,55 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const { t } = useDockTheme();
 
   // ── API Keys (persisted) ──────────────────────────────────────────────────
-  const [apiKey1, setApiKey1] = usePersistedState("gemini_api_key_1", "");
-  const [apiKey2, setApiKey2] = usePersistedState("gemini_api_key_2", "");
+  const [apiKeys, setApiKeys] = useState<string[]>([]);
   const [showApiPanel, setShowApiPanel] = useState(false);
 
-  const handleSaveKeys = (k1: string, k2: string) => {
-    setApiKey1(k1);
-    setApiKey2(k2);
-    setGeminiKeysSync([k1, k2]);
-    void saveGeminiKeys([k1, k2]);
+  const handleSaveKeys = (keys: string[]) => {
+    const normalized = normalizeGeminiKeys(keys);
+    setApiKeys(normalized);
+    setGeminiKeysSync(normalized);
+    void chromeStorage.set({
+      gemini_api_keys: normalized,
+      gemini_api_key_1: normalized[0] ?? "",
+      gemini_api_key_2: normalized[1] ?? "",
+    });
+    void saveGeminiKeys(normalized);
+    void syncGeminiKeysToBackground(normalized);
   };
 
   useEffect(() => {
-    setGeminiKeysSync([apiKey1, apiKey2]);
-  }, [apiKey1, apiKey2]);
+    const normalized = normalizeGeminiKeys(apiKeys);
+    setGeminiKeysSync(normalized);
+  }, [apiKeys]);
 
   useEffect(() => {
     let alive = true;
 
-    void initGeminiKeys().then(() => {
-      const keys = (globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] }).USB_GEMINI_API_KEYS;
-      if (!alive || apiKey1 || apiKey2 || !Array.isArray(keys) || keys.length === 0) return;
-      setApiKey1(keys[0] ?? "");
-      setApiKey2(keys[1] ?? "");
+    void Promise.all([
+      initGeminiKeys(),
+      chromeStorage.get(["gemini_api_keys", "gemini_api_key_1", "gemini_api_key_2"]),
+    ]).then(([, visibleKeys]) => {
+      const storedKeys = (globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] }).USB_GEMINI_API_KEYS;
+      if (!alive) return;
+      const syncedArray = Array.isArray(visibleKeys.gemini_api_keys)
+        ? normalizeGeminiKeys((visibleKeys.gemini_api_keys as unknown[]).map(String))
+        : [];
+      const legacy = normalizeGeminiKeys([
+        typeof visibleKeys.gemini_api_key_1 === "string" ? visibleKeys.gemini_api_key_1 : "",
+        typeof visibleKeys.gemini_api_key_2 === "string" ? visibleKeys.gemini_api_key_2 : "",
+      ]);
+      const loaded = Array.isArray(storedKeys) ? normalizeGeminiKeys(storedKeys) : [];
+      const next = loaded.length > 0 ? loaded : syncedArray.length > 0 ? syncedArray : legacy;
+      if (next.length === 0) return;
+      setApiKeys(next);
+      setGeminiKeysSync(next);
+      void chromeStorage.set({
+        gemini_api_keys: next,
+        gemini_api_key_1: next[0] ?? "",
+        gemini_api_key_2: next[1] ?? "",
+      });
+      void saveGeminiKeys(next);
+      void syncGeminiKeysToBackground(next);
     });
 
     return () => {
@@ -201,8 +245,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const [, setContentScriptConnected] = useState(false);
   const [syncPulse, setSyncPulse]                           = useState(false);
 
-  // ── Local API status (mock — simulates checking port 8010) ───────────────
-  const [localConnected, setLocalConnected] = useState(true);
+  // ── Local API status via background health check ─────────────────────────
+  const [localConnected, setLocalConnected] = useState(false);
 
   useEffect(() => {
     showOverlayRef.current = showOverlay;
@@ -226,6 +270,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       hasEnglish?: unknown;
       courseTitle?: unknown;
       courseDescription?: unknown;
+      courseContext?: unknown;
       lectureTitle?: unknown;
     } | undefined;
     const lectureKey = typeof context?.lectureKey === "string" ? context.lectureKey : null;
@@ -260,6 +305,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     const courseSlug = typeof (context as { courseSlug?: unknown })?.courseSlug === "string" ? (context as { courseSlug?: string }).courseSlug?.trim() : "";
     const courseTitle = typeof context?.courseTitle === "string" ? context.courseTitle.trim() : "";
     const courseDescription = typeof context?.courseDescription === "string" ? context.courseDescription.trim() : "";
+    const courseContext = typeof context?.courseContext === "string" ? context.courseContext.trim() : "";
     const lectureTitle = typeof context?.lectureTitle === "string" ? context.lectureTitle.trim() : "";
     if (courseTitle || courseDescription || lectureTitle) {
       void chromeStorage.get(["agent_autofilled_course_slug"]).then((existing) => {
@@ -273,6 +319,26 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         if (lectureTitle) updates.agent_lesson_name = lectureTitle;
         if (Object.keys(updates).length > 0) {
           void chromeStorage.set(updates);
+        }
+      });
+    }
+    if (courseSlug) {
+      void chromeLocalStorage.get(["agent_course_context", "agent_course_context_slug"]).then((existing) => {
+        const previousContext = typeof existing.agent_course_context === "string" ? existing.agent_course_context : "";
+        const previousSlug = typeof existing.agent_course_context_slug === "string" ? existing.agent_course_context_slug : "";
+        const hasRicherContext = courseContext.length > previousContext.length + 160;
+        if (courseContext && (previousSlug !== courseSlug || hasRicherContext)) {
+          void chromeLocalStorage.set({
+            agent_course_context: courseContext,
+            agent_course_context_slug: courseSlug,
+            agent_course_context_title: courseTitle,
+          });
+        } else if (!courseContext && previousSlug && previousSlug !== courseSlug) {
+          void chromeLocalStorage.set({
+            agent_course_context: "",
+            agent_course_context_slug: courseSlug,
+            agent_course_context_title: courseTitle,
+          });
         }
       });
     }
@@ -326,6 +392,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         const seconds = Math.max(1, Math.round((payload.waitMs ?? 5000) / 1000));
         const purposeLabel = payload.purpose === "objectives" ? "objetivos"
           : payload.purpose === "refine" ? "objetivo personalizado"
+          : payload.purpose === "study" ? "sesión de estudio"
+          : payload.purpose === "evaluation" ? "evaluación"
           : "traducción";
         const round = payload.round ?? 2;
         const total = payload.totalRounds ?? 3;
@@ -546,7 +614,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   };
 
   // ── Derived state ─────────────────────────────────────────────────────────
-  const hasKeys    = !!(apiKey1 || apiKey2);
+  const configuredGeminiKeys = useMemo(() => normalizeGeminiKeys(apiKeys), [apiKeys]);
+  const hasKeys    = configuredGeminiKeys.length > 0;
   const preview_en = liveEn || MOCK_LINES[currentLine]?.en || "";
   const preview_es = liveEs || MOCK_LINES[currentLine]?.es || "";
   const preview_ts = liveTs !== "--:--" ? liveTs : (MOCK_LINES[currentLine]?.ts ?? "--:--");
@@ -722,8 +791,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       <ApiKeysPanel
         isOpen={showApiPanel}
         onClose={() => setShowApiPanel(false)}
-        apiKey1={apiKey1}
-        apiKey2={apiKey2}
+        apiKeys={configuredGeminiKeys}
         localConnected={localConnected}
         onSave={handleSaveKeys}
       />
@@ -766,7 +834,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           transition={{ duration: 0.14 }}
           className={`absolute inset-0 flex flex-col ${activeTab === "study" ? "pointer-events-auto z-10" : "pointer-events-none z-0"}`}
         >
-          <StudyAgentTab session={session} />
+          <StudyAgentTab session={session} apiKeys={configuredGeminiKeys} />
         </motion.div>
 
         {/* ════════ CAPTIONS ════════ */}
@@ -801,7 +869,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   <StatusRow label="IA local (8010)"          status={localConnected ? "Conectada" : "Sin conexión"}         ok={localConnected} pulse={localConnected}/>
                   <StatusRow label="Traducción activa"        status={autoTranslate ? "En curso" : "Pausada"}                ok={autoTranslate}/>
                   {hasKeys && (
-                    <StatusRow label="Gemini fallback"        status={apiKey1 ? "Key 1 configurada" : "Key 2 configurada"}   ok={true}  pulse/>
+                    <StatusRow label="Gemini fallback"        status={`${configuredGeminiKeys.length} keys en rotación`}   ok={true}  pulse/>
                   )}
                 </div>
               </Card>
@@ -824,8 +892,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
               {/* Pipeline */}
               <TranslationPipeline
                 autoTranslate={autoTranslate}
-                apiKey1={apiKey1}
-                apiKey2={apiKey2}
+                apiKeys={configuredGeminiKeys}
                 localConnected={localConnected}
                 capturedLineCount={capturedLineCount}
                 lectureKey={currentLectureKey}

@@ -24,16 +24,68 @@ const USB_PREFIX = 'usb_';
 // Max items per /migrate POST. Edge functions have a request size cap and
 // individual study records with AI feedback can be several KB each.
 const MIGRATE_CHUNK_SIZE = 30;
+const HISTORY_SYNC_DEBOUNCE_MS = 1200;
 
 function isNetworkSignupFailure(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return err instanceof TypeError || /failed to fetch|networkerror|load failed|err_/i.test(message);
 }
 
+async function postMigrationItems(
+  session: Session,
+  items: Array<{ key: string; value: unknown }>
+): Promise<number | null> {
+  if (items.length === 0) return 0;
+
+  const chunks: Array<typeof items> = [];
+  for (let i = 0; i < items.length; i += MIGRATE_CHUNK_SIZE) {
+    chunks.push(items.slice(i, i + MIGRATE_CHUNK_SIZE));
+  }
+
+  let uploaded = 0;
+  for (const chunk of chunks) {
+    try {
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/migrate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ items: chunk }),
+        }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        uploaded += chunk.length;
+      } else {
+        console.error('[AuthGuard] Upload chunk failed', data);
+        return null;
+      }
+    } catch (err) {
+      console.error('[AuthGuard] Upload error:', err);
+      return null;
+    }
+  }
+
+  return uploaded;
+}
+
+async function syncHistoryToCloud(
+  session: Session,
+  records?: LectureHistoryRecord[]
+): Promise<number> {
+  const historyRecords = records ?? await historyService.exportAll();
+  const items = historyRecords.map((rec) => ({
+    key: cloudKeyForLecture(rec.courseId, rec.lectureId),
+    value: rec,
+  }));
+  const uploaded = await postMigrationItems(session, items);
+  return uploaded ?? 0;
+}
+
 // ─── Cloud → local (reverse sync) ────────────────────────────────────────────
 async function reverseSyncFromCloud(session: Session): Promise<number> {
   const doneKey = `subtitle_bridge_reverse_synced_${session.user.id}`;
-  if (localStorage.getItem(doneKey)) return 0;
+  const alreadyReported = localStorage.getItem(doneKey) === 'true';
   try {
     const res = await fetch(
       `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/migrate`,
@@ -68,7 +120,7 @@ async function reverseSyncFromCloud(session: Session): Promise<number> {
       }
     }
     localStorage.setItem(doneKey, 'true');
-    return items.length;
+    return alreadyReported ? 0 : items.length;
   } catch (err) {
     console.error('[AuthGuard] Reverse sync error:', err);
     return 0;
@@ -110,35 +162,8 @@ async function migrateLocalDataToCloud(session: Session) {
 
   if (items.length === 0) { localStorage.setItem(doneKey, 'true'); return; }
 
-  // POST in chunks so a user with hundreds of lectures doesn't trip the edge function size limit.
-  const chunks: Array<typeof items> = [];
-  for (let i = 0; i < items.length; i += MIGRATE_CHUNK_SIZE) {
-    chunks.push(items.slice(i, i + MIGRATE_CHUNK_SIZE));
-  }
-
-  let uploaded = 0;
-  for (const chunk of chunks) {
-    try {
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/migrate`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ items: chunk }),
-        }
-      );
-      const data = await res.json();
-      if (res.ok && data.success) {
-        uploaded += chunk.length;
-      } else {
-        console.error('[AuthGuard] Upload chunk failed', data);
-        return; // bail without marking done so next session retries
-      }
-    } catch (err) {
-      console.error('[AuthGuard] Upload error:', err);
-      return;
-    }
-  }
+  const uploaded = await postMigrationItems(session, items);
+  if (uploaded === null) return; // bail without marking done so next session retries
 
   localStorage.setItem(doneKey, 'true');
   if (uploaded > 0) {
@@ -189,6 +214,9 @@ export function AuthGuard({
       .then(async ({ data: { session: s } }) => {
         if (s) {
           const count = await reverseSyncFromCloud(s);
+          await syncHistoryToCloud(s).catch((err) => {
+            console.error('[AuthGuard] history startup sync failed', err);
+          });
           if (count > 0) celebrate({
             type: 'cloud_synced',
             title: `${count} elemento${count !== 1 ? 's' : ''} restaurado${count !== 1 ? 's' : ''}`,
@@ -231,6 +259,41 @@ export function AuthGuard({
     if (prevSessionRef.current === 'unset') { prevSessionRef.current = session; return; }
     if (!prevSessionRef.current && session) migrateLocalDataToCloud(session);
     prevSessionRef.current = session;
+  }, [session]);
+
+  // ── Continuous history sync ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pending = new Map<string, LectureHistoryRecord>();
+
+    const flush = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (pending.size === 0) return;
+      const records = Array.from(pending.values());
+      pending.clear();
+      syncHistoryToCloud(session, records).catch((err) => {
+        console.error('[AuthGuard] history live sync failed', err);
+      });
+    };
+
+    const unsubscribe = historyService.onChanged((records) => {
+      for (const rec of records) {
+        pending.set(`${rec.courseId}::${rec.lectureId}`, rec);
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, HISTORY_SYNC_DEBOUNCE_MS);
+    });
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+      flush();
+    };
   }, [session]);
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
