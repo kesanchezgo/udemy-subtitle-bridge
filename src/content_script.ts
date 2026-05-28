@@ -120,6 +120,8 @@ let capturedEnVtt: string | null = null;
 let capturedCues: CapturedCue[] = [];
 let importedEsCues: CapturedCue[] = [];
 let collectedLines: Array<{ text: string; ts: number }> = [];
+let lastImportedSubtitleAt = 0;
+let lastImportedSubtitleText = '';
 let dockWidth = DOCK_DEFAULT_WIDTH;
 let dockCollapsed = false;
 let dockEnabled = true;
@@ -127,6 +129,7 @@ let dockHideTimer: number | null = null;
 let dockViewportListenersAttached = false;
 let dockViewportFrame: number | null = null;
 let activeLectureKey: string | null = null;
+const IMPORTED_CUE_GAP_GRACE_MS = 450;
 
 function isDarkReaderActive() {
 	return document.documentElement.hasAttribute('data-darkreader-mode')
@@ -942,6 +945,7 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 		if (cached?.srt) {
 			importedEsCues = parseTimedTextIntoCues(cached.srt);
 			currentSubtitle = '';
+			resetImportedSubtitleBridge();
 			scanForSubtitleChanges();
 			void sendToSidebar({
 				type: 'PIPELINE_TRANSLATION_RESULT',
@@ -975,6 +979,7 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 			if (result.ok && typeof result.srt === 'string' && result.srt.trim()) {
 				importedEsCues = parseTimedTextIntoCues(result.srt);
 				currentSubtitle = '';
+				resetImportedSubtitleBridge();
 				scanForSubtitleChanges();
 				void writeCachedTranslation(
 					currentLectureKey,
@@ -1898,17 +1903,31 @@ function stopObserver() {
 	pendingSubtitleText = '';
 }
 
-function resetRuntimeState() {
-	capturedEnVtt = null;
-	capturedCues = [];
-	importedEsCues = [];
-	collectedLines = [];
-	currentSubtitle = '';
+function clearPendingSubtitleEmit() {
 	if (pendingSubtitleEmitTimer != null) {
 		window.clearTimeout(pendingSubtitleEmitTimer);
 		pendingSubtitleEmitTimer = null;
 	}
 	pendingSubtitleText = '';
+}
+
+function resetImportedSubtitleBridge() {
+	lastImportedSubtitleAt = 0;
+	lastImportedSubtitleText = '';
+}
+
+function clearImportedSubtitleState() {
+	importedEsCues = [];
+	resetImportedSubtitleBridge();
+}
+
+function resetRuntimeState() {
+	capturedEnVtt = null;
+	capturedCues = [];
+	clearImportedSubtitleState();
+	collectedLines = [];
+	currentSubtitle = '';
+	clearPendingSubtitleEmit();
 	updateOverlayText('');
 }
 
@@ -2460,11 +2479,9 @@ function detectSubtitleText(): SubtitleDetection | null {
 function scanForSubtitleChanges() {
 	const importedText = detectCueTextFromImportedEsCues();
 	if (importedText) {
-		if (pendingSubtitleEmitTimer != null) {
-			window.clearTimeout(pendingSubtitleEmitTimer);
-			pendingSubtitleEmitTimer = null;
-		}
-		pendingSubtitleText = '';
+		clearPendingSubtitleEmit();
+		lastImportedSubtitleAt = Date.now();
+		lastImportedSubtitleText = importedText;
 		if (importedText !== currentSubtitle) {
 			currentSubtitle = importedText;
 			updateOverlayText(importedText);
@@ -2482,14 +2499,25 @@ function scanForSubtitleChanges() {
 		return;
 	}
 
+	if (importedEsCues.length > 0 && currentConfig.autoTranslate) {
+		clearPendingSubtitleEmit();
+		const shouldBridgeTinyCueGap =
+			Boolean(lastImportedSubtitleText) &&
+			Date.now() - lastImportedSubtitleAt <= IMPORTED_CUE_GAP_GRACE_MS;
+		if (shouldBridgeTinyCueGap) {
+			return;
+		}
+		if (currentSubtitle) {
+			currentSubtitle = '';
+			updateOverlayText('');
+		}
+		return;
+	}
+
 	const detection = detectSubtitleText();
 	if (detection?.text) {
 		if (detection.timed) {
-			if (pendingSubtitleEmitTimer != null) {
-				window.clearTimeout(pendingSubtitleEmitTimer);
-				pendingSubtitleEmitTimer = null;
-			}
-			pendingSubtitleText = '';
+			clearPendingSubtitleEmit();
 			void emitSubtitleLine(detection.text);
 			return;
 		}
@@ -2653,13 +2681,17 @@ function setupChromeMessageHandler() {
 					: '';
 			const parsed = parseTimedTextIntoCues(srtText);
 			importedEsCues = parsed;
+			currentSubtitle = '';
+			resetImportedSubtitleBridge();
 			scanForSubtitleChanges();
 			sendResponse({ ok: true, importedCount: parsed.length, alreadyLoaded: false });
 			return false;
 		}
 
 		if (type === 'USG_CLEAR_IMPORTED_FOR_LECTURE') {
-			importedEsCues = [];
+			clearImportedSubtitleState();
+			currentSubtitle = '';
+			updateOverlayText('');
 			sendResponse({ ok: true });
 			return false;
 		}
@@ -2857,7 +2889,24 @@ function bootstrap() {
 		if (message.type === 'OVERLAY_TEXT_UPDATE') {
 			const payload = message.payload as { text?: string } | undefined;
 			if (payload && 'text' in payload) {
-				updateOverlayText(typeof payload.text === 'string' ? payload.text : '');
+				const nextText = typeof payload.text === 'string' ? payload.text : '';
+				if (importedEsCues.length > 0 && currentConfig.autoTranslate) {
+					const importedText = detectCueTextFromImportedEsCues();
+					if (importedText) {
+						clearPendingSubtitleEmit();
+						lastImportedSubtitleAt = Date.now();
+						lastImportedSubtitleText = importedText;
+						if (importedText !== currentSubtitle) {
+							currentSubtitle = importedText;
+							updateOverlayText(importedText);
+						}
+					} else if (!nextText) {
+						currentSubtitle = '';
+						updateOverlayText('');
+					}
+					return;
+				}
+				updateOverlayText(nextText);
 			}
 		}
 
@@ -2865,6 +2914,7 @@ function bootstrap() {
 			const payload = message.payload as { srtText?: string } | undefined;
 			importedEsCues = parseTimedTextIntoCues(payload?.srtText ?? '');
 			currentSubtitle = '';
+			resetImportedSubtitleBridge();
 			scanForSubtitleChanges();
 			void sendToSidebar({
 				type: 'IMPORT_ES_SRT_RESULT',
@@ -2874,8 +2924,9 @@ function bootstrap() {
 		}
 
 		if (message.type === 'CLEAR_IMPORTED_ES_SRT') {
-			importedEsCues = [];
+			clearImportedSubtitleState();
 			currentSubtitle = '';
+			updateOverlayText('');
 			return;
 		}
 
