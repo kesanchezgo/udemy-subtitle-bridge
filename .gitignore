@@ -27,6 +27,7 @@ debug-page-content.html
 test-final-dom.html
 test-output.log
 test-run.log
+artifacts/
 qa-*.png
 debug-*.png
 playwright-report/

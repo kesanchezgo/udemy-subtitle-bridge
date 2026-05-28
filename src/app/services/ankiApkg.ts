@@ -22,6 +22,15 @@ function stableGuid(input: string) {
   return `usb${hash.toString(36)}`;
 }
 
+function stableNumericId(input: string, offset: number) {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return offset + hash;
+}
+
 function sanitizeTags(tags: string[]) {
   return tags
     .map((tag) => String(tag || '').trim().replace(/\s+/g, '-').replace(/[,\t\r\n]+/g, '-'))
@@ -57,7 +66,7 @@ function buildModelJson(modelId: number, modelCss: string, frontTemplate: string
   return JSON.stringify({
     [String(modelId)]: {
       id: modelId,
-      name: 'SubtitleBridge',
+      name: 'Subtitle Bridge Basic',
       type: 0,
       mod: Math.floor(Date.now() / 1000),
       usn: 0,
@@ -86,6 +95,49 @@ function buildModelJson(modelId: number, modelCss: string, frontTemplate: string
       latexsvg: false,
       vers: [],
       tags: []
+    }
+  });
+}
+
+function buildDeckConfigJson() {
+  return JSON.stringify({
+    1: {
+      id: 1,
+      name: 'Default',
+      mod: Math.floor(Date.now() / 1000),
+      usn: 0,
+      maxTaken: 60,
+      autoplay: true,
+      timer: 0,
+      replayq: true,
+      new: {
+        bury: true,
+        delays: [1, 10],
+        initialFactor: 2500,
+        ints: [1, 4, 0],
+        order: 1,
+        perDay: 20
+      },
+      rev: {
+        bury: true,
+        ease4: 1.3,
+        fuzz: 0.05,
+        ivlFct: 1,
+        maxIvl: 36500,
+        perDay: 200
+      },
+      lapse: {
+        delays: [10],
+        leechAction: 0,
+        leechFails: 8,
+        minInt: 1,
+        mult: 0
+      },
+      dyn: false,
+      newMix: 0,
+      newPerDayMinimum: 0,
+      interdayLearningMix: 0,
+      reviewOrder: 0
     }
   });
 }
@@ -177,7 +229,7 @@ function createCollectionSchema(db: any, deckId: number, deckName: string, model
       JSON.stringify({}),
       buildModelJson(modelId, modelCss, frontTemplate, backTemplate),
       buildDeckJson(deckId, deckName),
-      JSON.stringify({ 1: { id: 1, name: 'Default', mod: Math.floor(now / 1000), usn: 0, maxTaken: 60, autoplay: true } }),
+      buildDeckConfigJson(),
       JSON.stringify({})
     ]
   );
@@ -203,8 +255,8 @@ export async function buildAnkiApkg(
   const SQL = await initSqlJs({ locateFile: () => sqlWasmUrl });
   const db = new SQL.Database();
 
-  const deckId = Date.now();
-  const modelId = deckId + 1;
+  const deckId = stableNumericId(deckName, 1_700_000_000_000);
+  const modelId = stableNumericId('Subtitle Bridge Basic', 1_800_000_000_000);
   const nowSec = Math.floor(Date.now() / 1000);
 
   createCollectionSchema(db, deckId, deckName, modelId, modelCss, frontTemplate, backTemplate);
@@ -231,7 +283,7 @@ export async function buildAnkiApkg(
         0,
         tags,
         fields,
-        0,
+        sfld,
         checksumField(sfld),
         0,
         ''

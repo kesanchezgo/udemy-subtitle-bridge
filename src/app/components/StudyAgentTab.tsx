@@ -113,6 +113,7 @@ const CARD_META: Record<CardType, { label: string; icon: string; color: string; 
   comparacion: { label: "Comparación", icon: "🔄", color: "text-amber-400",   accent: "#fcd34d" },
   proceso:     { label: "Proceso",     icon: "📋", color: "text-fuchsia-400", accent: "#e879f9" },
 };
+const ANKI_NOTE_TYPE = "Subtitle Bridge Basic";
 
 const QUESTIONS_FOR: Record<ConfidenceLevel, ConfidenceLevel[]> = {
   confused: ["confused"],
@@ -878,10 +879,12 @@ function ProgressStepper({ steps }: { steps: { label: string; done: boolean; act
 // ─── Anki builders ────────────────────────────────────────────────────────────
 function toPrism(html: string, lang = "java"): string {
   return html
-    .replace(/<pre[^>]*><code[^>]*>/gi, `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`)
-    .replace(/<\/code><\/pre>/gi, "</code></pre>")
-    .replace(/<pre[^>]*>/gi, `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`)
-    .replace(/<\/pre>/gi, "</code></pre>");
+    .replace(/<pre[^>]*>\s*<code[^>]*>/gi, "%%USB_PRE_CODE%%")
+    .replace(/<\/code>\s*<\/pre>/gi, "%%USB_END_PRE_CODE%%")
+    .replace(/<pre[^>]*>/gi, "%%USB_PRE_CODE%%")
+    .replace(/<\/pre>/gi, "%%USB_END_PRE_CODE%%")
+    .replace(/%%USB_PRE_CODE%%/g, `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`)
+    .replace(/%%USB_END_PRE_CODE%%/g, "</code></pre>");
 }
 function buildCardFront(card: AnkiCard): string {
   const m = CARD_META[card.type]; const a = m.accent;
@@ -934,41 +937,42 @@ const BACK_TEMPLATE = `<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/
   setTimeout(function(){if(window.Prism)window.Prism.highlightAll();},50);
 </script>`;
 const ANKI_CSS = `@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-.card{font-family:'Inter',-apple-system,sans-serif;font-size:17px;line-height:1.6;color:#d1d5db;background-color:#1e1e2e;text-align:left;padding:22px;border-radius:18px;box-shadow:0 12px 40px -10px rgba(0,0,0,.65);animation:fadeIn .25s ease-out}
-.card.nightMode,.nightMode .card{background-color:#1e1e2e;color:#d1d5db}
-.header-bar{display:flex;align-items:center;gap:7px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.06)}
+.card{--card-bg:#1e1e2e;--text:#d1d5db;--muted:#94a3b8;--answer:#e4e4e7;--accent:#a78bfa;--accent-soft:rgba(167,139,250,.08);--border:rgba(255,255,255,.07);--header-border:rgba(255,255,255,.06);--surface:rgba(255,255,255,.035);--surface-2:rgba(0,0,0,.2);--shadow:0 12px 40px -10px rgba(0,0,0,.65);--code-bg:#1a1b26;--code-head:#16171f;--code-border:#2d2e3f;--inline-bg:#2c2c3e;--inline-fg:#c4b5fd;--table-head:#2a2a3d;--table-cell:#c9cad4;--success:#a7f3d0;--success-border:#86efac;--warn:#fde68a;--warn-border:#fcd34d;--info:#bae6fd;--info-border:#93c5fd;font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI","Roboto",sans-serif;font-size:17px;line-height:1.6;color:var(--text);background-color:var(--card-bg);text-align:left;padding:22px;border-radius:18px;box-shadow:var(--shadow);animation:fadeIn .25s ease-out}
+@media (prefers-color-scheme:light){.card{--card-bg:#f7f9fa;--text:#2d2f31;--muted:#6a6f73;--answer:#1f2937;--accent:#6d28d9;--accent-soft:rgba(109,40,217,.08);--border:rgba(45,47,49,.12);--header-border:rgba(45,47,49,.12);--surface:rgba(255,255,255,.78);--surface-2:rgba(255,255,255,.7);--shadow:0 12px 36px -18px rgba(31,41,55,.35);--code-bg:#1f2937;--code-head:#111827;--code-border:#374151;--inline-bg:#ede9fe;--inline-fg:#5b21b6;--table-head:#ede9fe;--table-cell:#374151;--success:#065f46;--success-border:#10b981;--warn:#92400e;--warn-border:#f59e0b;--info:#075985;--info-border:#0ea5e9}}
+.card.nightMode,.nightMode .card,.night_mode .card{--card-bg:#1e1e2e;--text:#d1d5db;--muted:#94a3b8;--answer:#e4e4e7;--accent:#a78bfa;--accent-soft:rgba(167,139,250,.08);--border:rgba(255,255,255,.07);--header-border:rgba(255,255,255,.06);--surface:rgba(255,255,255,.035);--surface-2:rgba(0,0,0,.2);--shadow:0 12px 40px -10px rgba(0,0,0,.65);--code-bg:#1a1b26;--code-head:#16171f;--code-border:#2d2e3f;--inline-bg:#2c2c3e;--inline-fg:#c4b5fd;--table-head:#2a2a3d;--table-cell:#c9cad4;--success:#a7f3d0;--success-border:#86efac;--warn:#fde68a;--warn-border:#fcd34d;--info:#bae6fd;--info-border:#93c5fd;background-color:var(--card-bg);color:var(--text)}
+.header-bar{display:flex;align-items:center;gap:7px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--header-border)}
 .header-dot{width:11px;height:11px;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.25)}
 .header-dot.red{background:#ff5f56}.header-dot.yellow{background:#ffbd2e}.header-dot.green{background:#27c93f}
-.type-pill,.context-pill{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:.72em;font-weight:600;padding:3px 10px;border-radius:6px;text-transform:uppercase;letter-spacing:.4px;box-shadow:0 2px 6px rgba(0,0,0,.2)}
-#qa{font-family:'Poppins',sans-serif;font-weight:600;font-size:22px;text-align:center;color:#a78bfa;margin-bottom:18px;line-height:1.45;letter-spacing:-.4px;text-shadow:0 0 20px rgba(167,139,250,.12)}
-hr#answer{border:none;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,.25) 50%,transparent);margin:22px 0}
-.answer{font-family:'Inter',sans-serif;color:#e4e4e7;font-size:16px;line-height:1.75}
-pre{position:relative;background-color:#1a1b26!important;color:#f8f8f2;border-radius:10px;padding:0!important;font-size:.88em;font-family:"JetBrains Mono","Fira Code",monospace!important;display:block;overflow-x:auto;margin:14px 0 18px;box-shadow:0 6px 18px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.06)}
-pre::before{content:attr(data-lang);display:block;position:sticky;left:0;top:0;width:100%;background:#16171f;color:#a78bfa;font-family:'Poppins',sans-serif;font-size:.75em;font-weight:600;padding:7px 16px;border-radius:10px 10px 0 0;text-transform:uppercase;border-bottom:1px solid #2d2e3f;z-index:10;letter-spacing:.5px}
+.type-pill,.context-pill{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:.72em;font-weight:600;padding:3px 10px;border-radius:6px;text-transform:uppercase;letter-spacing:.4px;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+#qa{font-family:'Poppins',sans-serif;font-weight:600;font-size:22px;text-align:center;color:var(--accent);margin-bottom:18px;line-height:1.45;letter-spacing:-.4px;text-shadow:0 0 20px rgba(167,139,250,.12)}
+hr#answer{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--border) 50%,transparent);margin:22px 0}
+.answer{font-family:'Inter',sans-serif;color:var(--answer);font-size:16px;line-height:1.75}
+pre{position:relative;background-color:var(--code-bg)!important;color:#f8f8f2;border-radius:10px;padding:0!important;font-size:.88em;font-family:"JetBrains Mono","Fira Code",monospace!important;display:block;overflow-x:auto;margin:14px 0 18px;box-shadow:0 6px 18px rgba(0,0,0,.25);border:1px solid var(--code-border)}
+pre::before{content:attr(data-lang);display:block;position:sticky;left:0;top:0;width:100%;background:var(--code-head);color:#a78bfa;font-family:'Poppins',sans-serif;font-size:.75em;font-weight:600;padding:7px 16px;border-radius:10px 10px 0 0;text-transform:uppercase;border-bottom:1px solid var(--code-border);z-index:10;letter-spacing:.5px}
 pre>code{display:inline-block;min-width:100%;padding:14px 16px 16px;box-sizing:border-box}
-p>code,li>code,td>code{background-color:#2c2c3e;color:#c4b5fd;padding:2px 6px;border-radius:5px;font-size:.88em;font-family:"JetBrains Mono",monospace!important;border:1px solid rgba(196,181,253,.15)}
-table{border-collapse:collapse;width:100%;margin:12px 0;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.25)}
-th{background:#2a2a3d;color:#a78bfa;font-family:'Poppins',sans-serif;font-weight:600;font-size:.85em;padding:9px 14px;text-align:left;border-bottom:2px solid rgba(167,139,250,.2)}
-td{border:1px solid rgba(255,255,255,.06);padding:8px 14px;font-size:.9em;color:#c9cad4;background:rgba(255,255,255,.02)}
-tr:nth-child(even) td{background:rgba(255,255,255,.035)}
-blockquote{border-left:3px solid #a78bfa;background:rgba(167,139,250,.07);padding:10px 14px;margin:12px 0;border-radius:6px;font-style:italic;color:#c4b5fd}
-.tip-box{background:rgba(134,239,172,.07);border-left:3px solid #86efac;border-radius:6px;padding:10px 14px;margin:12px 0;color:#a7f3d0;font-size:.92em}
-.warning-box{background:rgba(252,211,77,.07);border-left:3px solid #fcd34d;border-radius:6px;padding:10px 14px;margin:12px 0;color:#fde68a;font-size:.92em}
-.concept-box{background:rgba(147,197,253,.07);border-left:3px solid #93c5fd;border-radius:6px;padding:10px 14px;margin:12px 0;color:#bae6fd;font-size:.92em}
-.interview-box{background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:8px;padding:12px 14px;margin:12px 0}
-.interview-box .label{color:#a78bfa;font-family:'Poppins',sans-serif;font-size:.78em;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-details{background:rgba(0,0,0,.2);border-radius:8px;padding:8px 12px;margin-top:14px;border:1px solid rgba(255,255,255,.05)}
-summary{cursor:pointer;font-weight:600;color:#c792ea;outline:none;font-family:'Poppins',sans-serif;font-size:.9em;list-style:none}
+p>code,li>code,td>code{background-color:var(--inline-bg);color:var(--inline-fg);padding:2px 6px;border-radius:5px;font-size:.88em;font-family:"JetBrains Mono",monospace!important;border:1px solid var(--border)}
+table{border-collapse:collapse;width:100%;margin:12px 0;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+th{background:var(--table-head);color:var(--accent);font-family:'Poppins',sans-serif;font-weight:600;font-size:.85em;padding:9px 14px;text-align:left;border-bottom:2px solid var(--border)}
+td{border:1px solid var(--border);padding:8px 14px;font-size:.9em;color:var(--table-cell);background:var(--surface)}
+tr:nth-child(even) td{background:var(--surface-2)}
+blockquote{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 14px;margin:12px 0;border-radius:6px;font-style:italic;color:var(--answer)}
+.tip-box{background:rgba(16,185,129,.08);border-left:3px solid var(--success-border);border-radius:6px;padding:10px 14px;margin:12px 0;color:var(--success);font-size:.92em}
+.warning-box{background:rgba(245,158,11,.09);border-left:3px solid var(--warn-border);border-radius:6px;padding:10px 14px;margin:12px 0;color:var(--warn);font-size:.92em}
+.concept-box{background:rgba(14,165,233,.08);border-left:3px solid var(--info-border);border-radius:6px;padding:10px 14px;margin:12px 0;color:var(--info);font-size:.92em}
+.interview-box{background:var(--accent-soft);border:1px solid rgba(167,139,250,.24);border-radius:8px;padding:12px 14px;margin:12px 0}
+.interview-box .label{color:var(--accent);font-family:'Poppins',sans-serif;font-size:.78em;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+details{background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-top:14px;border:1px solid var(--border)}
+summary{cursor:pointer;font-weight:600;color:var(--accent);outline:none;font-family:'Poppins',sans-serif;font-size:.9em;list-style:none}
 summary::after{content:" ↓";font-size:.8em;opacity:.6}
 details[open] summary::after{content:" ↑"}
-details[open] summary{margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:5px}
-mark{background:rgba(252,211,77,.2);color:#fde68a;padding:0 3px;border-radius:3px}
-b,strong{color:#c4b5fd}
-em{color:#94a3b8;font-style:italic}
+details[open] summary{margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:5px}
+mark{background:rgba(252,211,77,.24);color:var(--warn);padding:0 3px;border-radius:3px}
+b,strong{color:var(--accent)}
+em{color:var(--muted);font-style:italic}
 ul{padding-left:20px;margin:8px 0}
 li{margin-bottom:5px}
-ul>li::marker,ol>li::marker{color:#a78bfa;font-weight:600}
-.image-container{margin:18px auto;padding:12px;background:#1a1b26;border-radius:10px;text-align:center;border:1px solid rgba(255,255,255,.05)}
+ul>li::marker,ol>li::marker{color:var(--accent);font-weight:600}
+.image-container{margin:18px auto;padding:12px;background:var(--surface-2);border-radius:10px;text-align:center;border:1px solid var(--border)}
 .image-container img{max-width:100%;height:auto;border-radius:7px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 @media screen and (max-width:768px){.card{padding:15px;font-size:15px;border-radius:14px}#qa{font-size:18px}pre{font-size:.82em!important}p>code,li>code{word-break:break-word}table{font-size:.83em}}`;
@@ -978,7 +982,7 @@ function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string
     "#separator:Tab",
     "#html:true",
     `#deck:${course}::${lesson}`,
-    "#notetype:Basic",
+    `#notetype:${ANKI_NOTE_TYPE}`,
     "#columns:Front\tBack\tTags",
     "#tags column:3",
     "",
@@ -996,7 +1000,8 @@ function buildTemplateGuide(course: string, lesson: string): string {
 Setup unico para importacion TXT manual
 Curso: ${course}
 
-Recibiste 3 archivos para la ruta .txt. Si usas .apkg, no necesitas este setup.
+Ruta recomendada: importa el archivo .apkg desde Anki Desktop. Incluye mazo, diseno y tarjetas.
+Ruta manual TXT: usa estos 3 archivos solo si quieres importar texto con el tipo "${ANKI_NOTE_TYPE}".
 
 ARCHIVO 1 - ${safe}_tarjetas.txt - Tarjetas
   1. En Anki: Archivo -> Importar
@@ -1009,21 +1014,23 @@ ARCHIVO 1 - ${safe}_tarjetas.txt - Tarjetas
 ARCHIVO 2 - anki-card-styles.css - Estilo visual
   1. Abre "anki-card-styles.css" con cualquier editor de texto
   2. Selecciona todo (Ctrl+A) y copialo
-  3. En Anki: Herramientas -> Tipos de notas -> Basic -> Styling
+  3. En Anki: Herramientas -> Tipos de notas -> ${ANKI_NOTE_TYPE} -> Tarjetas/Cards -> Styling
   4. Selecciona todo el texto del editor (Ctrl+A) y pega el CSS
   5. Clic en "Guardar"
   Sin este paso las tarjetas se veran sin el diseno visual.
 
 ARCHIVO 3 - PLANTILLA-ANKI.txt - Plantillas
-  1. En Anki: Herramientas -> Tipos de notas -> Basic -> Tarjetas
-  2. Pestana "Plantilla del anverso (Front)":
+  1. Si no existe, crea un tipo nuevo clonando "Basic" y llamalo "${ANKI_NOTE_TYPE}".
+  2. En Anki: Herramientas -> Tipos de notas -> ${ANKI_NOTE_TYPE} -> Tarjetas
+  3. Pestana "Plantilla del anverso (Front)":
      selecciona todo -> pega el bloque FRONT al final de este archivo.
-  3. Pestana "Plantilla del reverso (Back)":
+  4. Pestana "Plantilla del reverso (Back)":
      selecciona todo -> pega el bloque BACK al final de este archivo.
-  4. Clic en "Guardar"
+  5. Clic en "Guardar"
   Sin este paso el resaltado de codigo (Prism.js) no funcionara.
 
-Listo. Las exportaciones TXT futuras solo necesitan el archivo de tarjetas.
+Listo. Las exportaciones TXT futuras de este curso solo necesitan el archivo de tarjetas.
+Si borras el estilo o la plantilla en Anki, puedes volver a descargar CSS + plantilla desde la extension.
 
 PLANTILLA FRONT - copiar todo hasta "FIN FRONT"
 
@@ -1283,7 +1290,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [appAnswer, setAppAnswer]                   = useState("");
   const [appFeedback, setAppFeedback]               = useState<FeedbackState>(IDLE_FB);
   const [showAppSolution, setShowAppSolution]       = useState(false);
-  const [exportedCourses, setExportedCourses]       = useState<Set<string>>(new Set());
+  const [txtSetupCourses, setTxtSetupCourses]       = useState<Set<string>>(new Set());
   const [ankiExported, setAnkiExported]             = useState(false);
   const [showAnkiGuide, setShowAnkiGuide]           = useState(false);
   const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -1335,6 +1342,30 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context_title")) {
         setCourseAIContextTitle(typeof changes.agent_course_context_title === "string" ? changes.agent_course_context_title : "");
       }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void chromeLocalStorage.get(["agent_anki_txt_setup_courses"]).then((items) => {
+      if (cancelled) return;
+      const raw = Array.isArray(items.agent_anki_txt_setup_courses)
+        ? items.agent_anki_txt_setup_courses.map(String)
+        : [];
+      setTxtSetupCourses(new Set(raw));
+    });
+
+    const unsubscribe = chromeLocalStorage.onChange((changes) => {
+      if (!Object.prototype.hasOwnProperty.call(changes, "agent_anki_txt_setup_courses")) return;
+      const raw = Array.isArray(changes.agent_anki_txt_setup_courses)
+        ? changes.agent_anki_txt_setup_courses.map(String)
+        : [];
+      setTxtSetupCourses(new Set(raw));
     });
 
     return () => {
@@ -2274,17 +2305,33 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
   const handleExport = () => {
     if (!content) return;
-    const isFirst = !exportedCourses.has(courseName);
+    const courseKey = slugify(courseName);
+    const isFirst = !txtSetupCourses.has(courseKey);
     const safe = (s: string) => s.replace(/[^a-z0-9]/gi, "_");
     downloadFile(buildAnkiTxt(content.ankiCards, courseName, lessonName), `${safe(lessonName)}_tarjetas.txt`);
     if (isFirst) {
       setTimeout(() => downloadFile(ANKI_CSS, "anki-card-styles.css", "text/css"), 300);
       setTimeout(() => downloadFile(buildTemplateGuide(courseName, lessonName), "PLANTILLA-ANKI.txt"), 600);
+      const next = Array.from(new Set([...txtSetupCourses, courseKey]));
+      setTxtSetupCourses(new Set(next));
+      void chromeLocalStorage.set({ agent_anki_txt_setup_courses: next });
     }
-    setExportedCourses(prev => new Set([...prev, courseName]));
     setAnkiExported(true);
     persistAnkiAndComplete();
     celebrate({ type: "export_done", title: "¡Tarjetas exportadas!", subtitle: "Archivo TXT listo para importar en Anki", icon: <Download className="text-emerald-400" /> });
+  };
+
+  const handleDownloadTxtSetup = () => {
+    const courseKey = slugify(courseName);
+    downloadFile(ANKI_CSS, "anki-card-styles.css", "text/css");
+    setTimeout(() => downloadFile(buildTemplateGuide(courseName, lessonName), "PLANTILLA-ANKI.txt"), 300);
+    const next = Array.from(new Set([...txtSetupCourses, courseKey]));
+    setTxtSetupCourses(new Set(next));
+    void chromeLocalStorage.set({ agent_anki_txt_setup_courses: next });
+    toast.success("Setup TXT descargado", {
+      description: `Usa CSS + plantilla si necesitas reparar o recrear ${ANKI_NOTE_TYPE}.`,
+      icon: <Download className="text-emerald-400" size={18} />,
+    });
   };
 
   const persistAnkiAndComplete = () => {
@@ -2332,7 +2379,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     }
   };
 
-  const isFirstExport = !exportedCourses.has(courseName);
+  const isFirstExport = !txtSetupCourses.has(slugify(courseName));
   // BUG FIX: only show apply if questionsComplete (not allQsAnswered with wrong ratings)
   const showApply = confidence !== null && questionsComplete;
 
@@ -3635,18 +3682,29 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       </p>
                       <AnkiFlipPreview cards={content.ankiCards}/>
 
+                      <div className="bg-violet-500/7 border border-violet-500/16 rounded-xl p-2.5">
+                        <div className="flex items-start gap-2">
+                          <Package size={12} className="text-violet-300 shrink-0 mt-0.5"/>
+                          <div>
+                            <p className="text-violet-200/85 text-[11px]" style={{ fontWeight: 600 }}>Recomendado: .apkg directo</p>
+                            <p className="text-white/32 text-[10px] leading-relaxed mt-0.5">Impórtalo desde Anki Desktop. Cada lección agrega sus tarjetas al mazo del curso con el diseño incluido.</p>
+                            <p className="text-white/24 text-[9px] leading-relaxed mt-1">Reimportar la misma lección usa IDs estables; revisa el resumen de Anki antes de confirmar.</p>
+                          </div>
+                        </div>
+                      </div>
+
                       {/* File info */}
                       {isFirstExport ? (
                         <div className="bg-amber-500/7 border border-amber-500/16 rounded-xl p-2.5 space-y-2">
                           <div className="flex items-center gap-1.5">
                             <FolderPlus size={11} className="text-amber-400 shrink-0"/>
-                            <p className="text-amber-300/80 text-[11px]" style={{ fontWeight: 500 }}>TXT manual — primera vez descarga 3 archivos</p>
+                            <p className="text-amber-300/80 text-[11px]" style={{ fontWeight: 500 }}>TXT manual — setup una vez por curso</p>
                           </div>
                           <div className="space-y-1.5 pl-1 border-t border-amber-500/10 pt-1.5">
                             {[
                               { icon:"📄", name:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, desc:"→ Archivo → Importar en Anki" },
-                              { icon:"🎨", name:"anki-card-styles.css",  desc:"→ Tipos de notas → Basic → Styling" },
-                              { icon:"📋", name:"PLANTILLA-ANKI.txt",    desc:"→ Tipos de notas → Basic → Tarjetas" },
+                              { icon:"🎨", name:"anki-card-styles.css",  desc:`→ Tipo ${ANKI_NOTE_TYPE} → Styling` },
+                              { icon:"📋", name:"PLANTILLA-ANKI.txt",    desc:`→ Tipo ${ANKI_NOTE_TYPE} → Tarjetas` },
                             ].map(f => (
                               <div key={f.name} className="flex items-start gap-1.5">
                                 <span className="text-[10px] shrink-0 mt-0.5">{f.icon}</span>
@@ -3659,8 +3717,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         <div className="flex items-center gap-2 bg-emerald-500/7 border border-emerald-500/16 rounded-xl p-2.5">
                           <FolderSync size={11} className="text-emerald-400 shrink-0"/>
                           <div>
-                            <p className="text-emerald-300/75 text-[11px]" style={{ fontWeight: 500 }}>Agregar al mazo existente — 1 archivo</p>
-                            <p className="text-white/25 text-[10px] mt-0.5 font-mono">{lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt <span className="font-sans">→ Archivo → Importar</span></p>
+                            <p className="text-emerald-300/75 text-[11px]" style={{ fontWeight: 500 }}>TXT manual — solo esta lección</p>
+                            <p className="text-white/25 text-[10px] mt-0.5 font-mono">{lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt <span className="font-sans">→ usa el setup ya creado</span></p>
                           </div>
                         </div>
                       )}
@@ -3697,9 +3755,15 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
                       {/* apkg description */}
                       <p className="text-white/20 text-[9px] leading-relaxed px-0.5">
-                        <span className="text-violet-400/60">.apkg</span> = importación directa con doble clic (incluye diseño).
-                        <span className="text-white/15"> .txt</span> = importación manual + CSS + plantilla.
+                        <span className="text-violet-400/60">.apkg</span> = importar desde Anki, sin configuración.
+                        <span className="text-white/15"> .txt</span> = importación manual con CSS + plantilla.
                       </p>
+                      {!isFirstExport && (
+                        <button onClick={handleDownloadTxtSetup}
+                          className="w-full h-7 rounded-lg bg-amber-500/7 border border-amber-500/14 text-amber-300/70 hover:text-amber-200 hover:bg-amber-500/10 text-[10px] flex items-center justify-center gap-1.5 transition-all">
+                          <FolderPlus size={10}/>Recuperar setup TXT
+                        </button>
+                      )}
 
                       <button onClick={() => setShowAnkiGuide(v => !v)}
                         className="w-full text-[10px] text-white/22 hover:text-white/45 flex items-center justify-center gap-1 transition-colors">
@@ -3711,11 +3775,11 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                             <div className="bg-black/25 border border-white/7 rounded-xl p-3 space-y-3">
                               {isFirstExport ? (
                                 <>
-                                  <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Setup inicial · solo una vez</p>
+                                  <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Guía TXT manual · solo si no usas .apkg</p>
                                   {[
-                                    { file:"anki-card-styles.css", color:"text-amber-300/60", steps:["Ábrelo con cualquier editor (Notepad, VS Code…)","Selecciona todo (Ctrl+A) y cópialo","En Anki: Herramientas → Tipos de notas → Basic → Styling","Selecciona todo, pega el CSS y guarda"] },
-                                    { file:"PLANTILLA-ANKI.txt",   color:"text-sky-300/60",   steps:["Ábrelo y ve al final del archivo","Herramientas → Tipos de notas → Basic → Tarjetas","Anverso: selecciona todo → pega el bloque FRONT","Reverso: selecciona todo → pega el bloque BACK → guarda"] },
-                                    { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-emerald-300/60", steps:["En Anki: Archivo → Importar → selecciona este archivo","Separador: Tabulador | HTML: activado","Clic en Importar"] },
+                                    { file:"anki-card-styles.css", color:"text-amber-300/60", steps:[`Crea o selecciona el tipo ${ANKI_NOTE_TYPE}`,"Ábrelo con cualquier editor (Notepad, VS Code…)","Selecciona todo (Ctrl+A) y cópialo","En Anki: Cards → Styling","Selecciona todo, pega el CSS y guarda"] },
+                                    { file:"PLANTILLA-ANKI.txt",   color:"text-sky-300/60",   steps:[`En ${ANKI_NOTE_TYPE} → Cards`,"Ábrelo y ve al final del archivo","Anverso: selecciona todo → pega el bloque FRONT","Reverso: selecciona todo → pega el bloque BACK → guarda"] },
+                                    { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-emerald-300/60", steps:["En Anki: Archivo → Importar → selecciona este archivo","Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar"] },
                                   ].map(({ file, color, steps }) => (
                                     <div key={file} className="space-y-1 pt-2 border-t border-white/5">
                                       <p className={`font-mono text-[10px] ${color}`}>{file}</p>
@@ -3725,10 +3789,14 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 </>
                               ) : (
                                 <>
-                                  <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Agregar tarjetas al mazo existente</p>
-                                  {["Archivo → Importar en Anki",`Selecciona "${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt"`,"Separador: Tabulador | HTML: activado","Clic en Importar — las tarjetas nuevas se añaden sin duplicar"].map((s,i) => (
+                                  <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>TXT manual · siguientes lecciones</p>
+                                  {["Archivo → Importar en Anki",`Selecciona "${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt"`,"Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar y revisa el resumen antes de confirmar"].map((s,i) => (
                                     <p key={i} className="text-white/28 text-[10px] leading-relaxed">{i+1}. {s}</p>
                                   ))}
+                                  <button onClick={handleDownloadTxtSetup}
+                                    className="w-full h-7 rounded-lg bg-amber-500/7 border border-amber-500/14 text-amber-300/70 hover:text-amber-200 hover:bg-amber-500/10 text-[10px] flex items-center justify-center gap-1.5 transition-all">
+                                    <FolderPlus size={10}/>Descargar CSS + plantilla otra vez
+                                  </button>
                                 </>
                               )}
                             </div>
