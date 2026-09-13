@@ -9,7 +9,7 @@ const classify = async (baseUrl, apiKey, model) => {
   try { new URL(baseUrl); } catch { return { status: 'bad_url' }; }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',

@@ -226,7 +226,10 @@ export async function validateProviderConfig(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 12000);
+  // Generous timeout: some local proxies/models take 10-15s to answer even a
+  // tiny prompt (cold start, queued inference). Too short a timeout would reject
+  // a working provider.
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 25000);
 
   try {
     const messages = [{ role: 'user' as const, content: 'Responde solo: ok' }];
