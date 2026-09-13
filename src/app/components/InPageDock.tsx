@@ -365,12 +365,11 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                     toastOptions={{
                       duration: 3000,
                       style: {
-                        background: "rgba(17,18,24,0.82)",
+                        background: "rgba(17,18,24,0.96)",
                         border: "1px solid rgba(255,255,255,0.08)",
                         color: "#fff",
                         borderRadius: "12px",
                         fontSize: "12px",
-                        backdropFilter: "blur(10px)",
                       },
                     }}
                   />

@@ -713,8 +713,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   return (
     <div className={`flex flex-col h-full w-full ${t("bg-[#1a1b1d]", "bg-[#f8f7f6]")}`}>
 
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div className={`px-4 py-3 border-b shrink-0 backdrop-blur-md sticky top-0 z-20 ${t("border-white/5 bg-[#121214]/80", "border-black/6 bg-[#f0efed]")}`}>
+      {/* ── Header ────────────────────────────────────────────────────────────
+           Solid background, no backdrop-filter: a blur layer here would force
+           GPU rasterization of the whole header subtree and soften its text. */}
+      <div className={`px-4 py-3 border-b shrink-0 sticky top-0 z-20 ${t("border-white/5 bg-[#121214]", "border-black/6 bg-[#f0efed]")}`}>
         <div className="flex items-center justify-between">
 
           {/* Left: Logo + title */}
@@ -921,8 +923,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   <StatusRow label="IA local (8010)"          status={localConnected ? "Conectada" : "Sin conexión"}         ok={localConnected} pulse={localConnected}/>
                   <StatusRow label="Traducción activa"        status={autoTranslate ? "En curso" : "Pausada"}                ok={autoTranslate}/>
                   <StatusRow label="Content script"           status={contentScriptConnected ? "Activo" : "Esperando…"}      ok={contentScriptConnected} pulse={contentScriptConnected}/>
-                  {activeBackend === "provider" && (
-                    <StatusRow label={PROVIDER_LABELS[providerConfig.kind]} status={`${providerConfig.model}`} ok={true} pulse/>
+                  {/* Only show the configured provider when it is not the bundled
+                      local server — that one already has its own row above. */}
+                  {activeBackend === "provider" && providerConfig.kind !== "local" && (
+                    <StatusRow label={providerLabel} status={`${providerConfig.model}`} ok={true} pulse/>
                   )}
                   {hasKeys && (
                     <StatusRow label="Gemini fallback"        status={`${configuredGeminiKeys.length} keys en rotación`}   ok={true}  pulse/>
@@ -1412,7 +1416,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 400, damping: 28 }}
-              className={`absolute bottom-full left-3 right-3 mb-2 backdrop-blur-sm border rounded-xl overflow-hidden shadow-2xl z-50 ${t("bg-[#0d0e0f]/95 border-white/10","bg-[#f8f7f6]/98 border-black/10")}`}
+              className={`absolute bottom-full left-3 right-3 mb-2 border rounded-xl overflow-hidden shadow-2xl z-50 ${t("bg-[#0d0e0f] border-white/10","bg-[#f8f7f6] border-black/10")}`}
             >
               <div className={`flex items-center justify-between px-3 py-2 border-b ${t("border-white/8","border-black/6")}`}>
                 <div className="flex items-center gap-1.5">
