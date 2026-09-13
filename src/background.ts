@@ -1,4 +1,5 @@
 import { buildGeminiGenerateContentUrl, initGeminiKeys, markGeminiKeyCooldown, normalizeGeminiKeys, saveGeminiKeys, selectGeminiKeysForPurpose, setGeminiKeysSync, type GeminiPurpose } from './gemini-config';
+import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
 
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -34,6 +35,7 @@ const chromeApi = (globalThis as typeof globalThis & { chrome?: any }).chrome;
 let localAiHealthCache: { checkedAt: number; ok: boolean } | null = null;
 
 void initGeminiKeys();
+void initAiProviderConfig();
 
 function getConfiguredContentScriptFiles(): string[] {
 	const manifest = chromeApi?.runtime?.getManifest?.();
@@ -213,6 +215,9 @@ chromeApi?.action?.onClicked?.addListener((tab: { id?: number }) => {
 chromeApi?.storage?.onChanged?.addListener((changes: Record<string, unknown>, areaName: string) => {
 	if (areaName === 'local' && ('usg_gemini_api_keys' in changes || 'usg_gemini_model' in changes)) {
 		void initGeminiKeys();
+	}
+	if (areaName === 'local' && AI_PROVIDER_STORAGE_KEY in changes) {
+		void initAiProviderConfig();
 	}
 });
 
@@ -561,6 +566,11 @@ async function translateSrtWithLocal(blocks: SrtBlock[]) {
 	return normalizeTranslatedChunk(blocks, response);
 }
 
+async function translateSrtWithProvider(blocks: SrtBlock[]) {
+	const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(blocks), 0.15, 32768);
+	return normalizeTranslatedChunk(blocks, response);
+}
+
 async function translateSrtWithGemini(blocks: SrtBlock[]) {
 	await initGeminiKeys();
 	if (getGeminiApiKeys().length === 0) {
@@ -578,7 +588,7 @@ async function translateSrtWithGemini(blocks: SrtBlock[]) {
 // The background no longer caches translations. The sidebar (cacheService)
 // handles all caching with TTL configurable by the user.
 
-async function translateSrtToSpanish(sourceSrt: string) {
+async function translateSrtToSpanish(sourceSrt: string): Promise<{ srt: string; blockCount: number; chunkCount: number; backend: 'local' | 'provider' | 'gemini' }> {
 	const blocks = parseSrtBlocks(sourceSrt);
 	if (!blocks.length) {
 		throw new Error('EN SRT is empty or invalid.');
@@ -587,19 +597,30 @@ async function translateSrtToSpanish(sourceSrt: string) {
 	let translatedBlocks: SrtBlock[];
 	let localError: unknown = null;
 	let usedLocal = false;
+	// Which backend produced the first pass, so the patch pass reuses it.
+	type TranslationBackend = 'local' | 'provider' | 'gemini';
+	let usedBackend: TranslationBackend = 'gemini';
 	try {
 		if (await checkLocalAiHealth()) {
 			translatedBlocks = await translateSrtWithLocal(blocks);
 			usedLocal = true;
+			usedBackend = 'local';
 		} else {
 			throw new Error('Local AI is not connected.');
 		}
 	} catch (error) {
 		localError = error;
+		// Try the user-configured provider before falling back to Gemini.
 		try {
-			translatedBlocks = await translateSrtWithGemini(blocks);
-		} catch (geminiError) {
-			throw new Error(`Batch SRT translation failed. Local: ${toErrorMessage(localError)} Gemini: ${toErrorMessage(geminiError)}`);
+			translatedBlocks = await translateSrtWithProvider(blocks);
+			usedBackend = 'provider';
+		} catch (providerError) {
+			try {
+				translatedBlocks = await translateSrtWithGemini(blocks);
+				usedBackend = 'gemini';
+			} catch (geminiError) {
+				throw new Error(`Batch SRT translation failed. Local: ${toErrorMessage(localError)} Provider: ${toErrorMessage(providerError)} Gemini: ${toErrorMessage(geminiError)}`);
+			}
 		}
 	}
 
@@ -621,9 +642,12 @@ async function translateSrtToSpanish(sourceSrt: string) {
 	// backend that produced the first pass so a local-only setup still patches.
 	if (missingBlocks.length > 0 && missingBlocks.length <= Math.ceil(blocks.length * 0.15)) {
 		try {
-			const patchBlocks = usedLocal
-				? await translateSrtWithLocal(missingBlocks)
-				: await translateSrtWithGemini(missingBlocks);
+			const patchBlocks =
+				usedBackend === 'local'
+					? await translateSrtWithLocal(missingBlocks)
+					: usedBackend === 'provider'
+						? await translateSrtWithProvider(missingBlocks)
+						: await translateSrtWithGemini(missingBlocks);
 			const patchMap = new Map(patchBlocks.map((b) => [b.index, b]));
 			translatedBlocks = translatedBlocks.map((block) => {
 				const patch = patchMap.get(block.index);
@@ -640,7 +664,8 @@ async function translateSrtToSpanish(sourceSrt: string) {
 	return {
 		srt: `${formatSrtBlocks(translatedBlocks)}\n`,
 		blockCount: translatedBlocks.length,
-		chunkCount: 1
+		chunkCount: 1,
+		backend: usedBackend
 	};
 }
 
@@ -1423,6 +1448,69 @@ async function requestLocalText(prompt: string, temperature: number, maxTokens: 
 	throw lastError || new Error('Local AI request failed.');
 }
 
+/** True when the configured provider can serve a request on its own. */
+function canServeWithConfiguredProvider(cfg: AiProviderConfig): boolean {
+	if (cfg.kind === 'local') return Boolean(cfg.baseUrl);
+	return Boolean(cfg.baseUrl && cfg.apiKey);
+}
+
+/**
+ * Non-streaming completion against the user-configured provider
+ * (OpenAI-compatible, Anthropic, or a custom local base URL). Throws when the
+ * provider is not configured, so callers can fall through to their own chain.
+ */
+async function requestConfiguredProviderText(
+	prompt: string,
+	temperature: number,
+	maxTokens: number,
+): Promise<string> {
+	await initAiProviderConfig().catch(() => undefined);
+	const cfg = getAiProviderConfig();
+	if (!canServeWithConfiguredProvider(cfg)) {
+		throw new Error(`Proveedor sin configurar (kind=${cfg.kind}, baseUrl=${cfg.baseUrl || 'vacío'}). Configúralo en ⚙ → Proveedor.`);
+	}
+
+	const messages = [{ role: 'user' as const, content: prompt }];
+	const body =
+		cfg.kind === 'anthropic'
+			? buildAnthropicBody(messages, maxTokens, temperature, cfg.model, false)
+			: buildOpenAiCompatibleBody(messages, maxTokens, temperature, cfg.model, false);
+
+	const requestUrl = buildProviderChatUrl(cfg, false);
+	console.info(`[USG][provider] kind=${cfg.kind} url=${requestUrl} model=${cfg.model}`);
+
+	let response: Response;
+	try {
+		response = await fetch(requestUrl, {
+			method: 'POST',
+			headers: buildProviderHeaders(cfg),
+			body: JSON.stringify(body),
+		});
+	} catch (networkError) {
+		const host = (() => {
+			try { return new URL(cfg.baseUrl).host; } catch { return cfg.baseUrl; }
+		})();
+		const needsLocalhostPermission = /^(127\.0\.0\.1|localhost)(:|$)/.test(host);
+		throw new Error(
+			`No se pudo contactar el proveedor ${cfg.kind} (${cfg.baseUrl}). ` +
+			(needsLocalhostPermission
+				? `Chrome bloquea ${host} porque la extensión se instaló antes de declarar ese permiso. ` +
+				  'Solución: en chrome://extensions quita la extensión y vuelve a cargarla desde dist/ (Quitar → Cargar descomprimida). Si ya lo hiciste, verifica que el servidor esté escuchando en ese puerto.'
+				: 'Verifica que el servidor esté corriendo y que el permiso del host esté concedido en chrome://extensions → Detalles de la extensión.') +
+			` (${toErrorMessage(networkError)})`
+		);
+	}
+
+	const responseText = await response.text();
+	if (!response.ok) {
+		throw new Error(`Provider ${cfg.kind} HTTP ${response.status}: ${responseText.slice(0, 220)}`);
+	}
+
+	const text = extractProviderText(JSON.parse(responseText), cfg.kind);
+	if (!text) throw new Error('El proveedor devolvió contenido vacío.');
+	return text;
+}
+
 function broadcastRetryNotice(purpose: GeminiPurpose, notice: { round: number; totalRounds: number; waitMs: number; errorClass: string; reason: string }) {
 	try {
 		chromeApi?.runtime?.sendMessage?.({
@@ -1463,6 +1551,21 @@ async function generateObjectivesViaGemini(
 		}
 	} catch (localError) {
 		console.warn('[USG][objectives] Local AI error:', localError);
+	}
+
+	// Try the user-configured provider (OpenAI-compatible / Anthropic).
+	try {
+		console.log('[USG][objectives] trying configured provider…');
+		const text = await requestConfiguredProviderText(prompt, 0.5, 1500);
+		const parsed = parseObjectivesJSON(text);
+		if (parsed) {
+			console.log('[USG][objectives] ✅ Provider parsed successfully', parsed);
+			console.groupEnd();
+			return { objectives: parsed, isMock: false, source: 'local' };
+		}
+		console.warn('[USG][objectives] ⚠️ Provider response could not be parsed as JSON array.');
+	} catch (providerError) {
+		console.warn('[USG][objectives] provider error:', providerError);
 	}
 
 	// Try Gemini using the 'objectives' key preference (reverses order so it

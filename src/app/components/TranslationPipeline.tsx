@@ -1,6 +1,6 @@
 // ─── TranslationPipeline — SRT Batch Mode ─────────────────────────────────────
 // Captura la transcripción .srt completa del video y la traduce de una vez.
-// Fallback: IA Local (8010) → Gemini keys en rotación → Mock
+// Fallback: IA Local (8010) → proveedor configurado → Gemini → Mock
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { debugStore } from "../services/debugStore";
 import { contentBridge } from "../services/contentBridge";
+import { PROVIDER_LABELS, type AiProviderConfig } from "../services/ai-providers";
 
 // ── Real SRT blocks (first 5 from actual course file) ─────────────────────────
 const MOCK_SRT_BLOCKS = [
@@ -156,7 +157,7 @@ async function streamWords(text: string, onUpdate: (acc: string) => void, signal
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type BatchPhase = "idle" | "building" | "sending" | "streaming" | "done";
-type ModelSource = "local" | "gemini" | "mock";
+type ModelSource = "local" | "provider" | "gemini" | "mock";
 
 interface TranslationPipelineProps {
   autoTranslate: boolean;
@@ -164,6 +165,7 @@ interface TranslationPipelineProps {
   localConnected?: boolean;
   capturedLineCount?: number;
   lectureKey?: string;
+  providerConfig?: AiProviderConfig;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +175,7 @@ export function TranslationPipeline({
   localConnected = false,
   capturedLineCount = 0,
   lectureKey = "",
+  providerConfig,
 }: TranslationPipelineProps) {
 
   const [phase, setPhase]               = useState<BatchPhase>("idle");
@@ -181,6 +184,7 @@ export function TranslationPipeline({
   const [streamedSrt, setStreamedSrt]   = useState("");
   const [latencyMs, setLatencyMs]       = useState<number | null>(null);
   const [modelUsed, setModelUsed]       = useState<ModelSource>("local");
+  const [actualBackend, setActualBackend] = useState<"local" | "provider" | "gemini" | "mock" | null>(null);
   const [runCount, setRunCount]         = useState(0);
   const [showPrompt, setShowPrompt]     = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
@@ -194,9 +198,11 @@ export function TranslationPipeline({
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const apiKeysRef   = useRef(apiKeys);
   const localRef     = useRef(localConnected);
+  const providerRef  = useRef(providerConfig);
 
   useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { localRef.current = localConnected; }, [localConnected]);
+  useEffect(() => { providerRef.current = providerConfig; }, [providerConfig]);
 
   // Track the real cue total as it streams in. It only ever grows, so the
   // header keeps up with late-arriving cues instead of freezing on the first
@@ -216,7 +222,12 @@ export function TranslationPipeline({
   useEffect(() => { totalBlocksRef.current = totalBlocks; }, [totalBlocks]);
 
   const pickModel = (): ModelSource => {
-    if (localRef.current)   return "local";
+    if (localRef.current) return "local";
+    const cfg = providerRef.current;
+    const providerReady = cfg
+      ? (cfg.kind === "local" ? Boolean(cfg.baseUrl) : Boolean(cfg.baseUrl && cfg.apiKey))
+      : false;
+    if (providerReady) return "provider";
     if (apiKeysRef.current.some(Boolean)) return "gemini";
     return "mock";
   };
@@ -324,9 +335,18 @@ export function TranslationPipeline({
         sourceCueCount?: unknown;
         error?: unknown;
         lectureKey?: unknown;
+        backend?: unknown;
       } | undefined;
       const payloadLectureKey = typeof payload?.lectureKey === "string" ? payload.lectureKey : "";
       if (lectureKey && payloadLectureKey && payloadLectureKey !== lectureKey) return;
+
+      // Reflect the backend the background actually used.
+      const reportedBackend = typeof payload?.backend === "string" ? payload.backend : "";
+      if (reportedBackend === "local" || reportedBackend === "provider" || reportedBackend === "gemini" || reportedBackend === "mock") {
+        setActualBackend(reportedBackend);
+      } else {
+        setActualBackend(null);
+      }
 
       const ok = Boolean(payload?.ok);
       const translatedSrt = typeof payload?.srt === "string" ? payload.srt : "";
@@ -472,9 +492,20 @@ export function TranslationPipeline({
 
   const MODEL_LABEL: Record<ModelSource, string> = {
     local:      "IA Local · 8010",
+    provider:   providerConfig ? PROVIDER_LABELS[providerConfig.kind] : "Proveedor",
     gemini:     `Gemini Flash · ${apiKeys.filter(Boolean).length} keys`,
     mock:       "Mock · sin conexión",
   };
+
+  // Prefer the backend the background actually used for the last run over the
+  // locally-guessed one, so the badge never claims "Gemini" when the configured
+  // provider did the work (or vice versa).
+  const effectiveModelLabel = actualBackend
+    ? actualBackend === "local" ? "IA Local · 8010"
+      : actualBackend === "gemini" ? `Gemini Flash · ${apiKeys.filter(Boolean).length} keys`
+        : actualBackend === "provider" ? (providerConfig ? PROVIDER_LABELS[providerConfig.kind] : "Proveedor")
+          : MODEL_LABEL[modelUsed]
+    : MODEL_LABEL[modelUsed];
 
   // Parse streamed SRT into lines for rendering
   const srtLines = streamedSrt.split("\n");
@@ -597,7 +628,7 @@ export function TranslationPipeline({
             <span className={`text-[10px] tracking-wide flex-1 transition-colors ${isSending || isStreaming ? "text-violet-300" : "text-white/20"}`} style={{ fontWeight: 600 }}>
               {isSending   ? (errorMessage || `Enviando payload .srt · ${payloadKb}KB…`) :
                isStreaming ? "Generando traducción SRT…" :
-               isDone      ? MODEL_LABEL[modelUsed] :
+               isDone      ? effectiveModelLabel :
                "Modelo IA"}
             </span>
 

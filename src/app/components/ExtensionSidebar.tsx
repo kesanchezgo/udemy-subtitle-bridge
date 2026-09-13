@@ -21,6 +21,16 @@ import { AppLogo } from "./AppLogo";
 import { Session } from "@supabase/supabase-js";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
+import {
+  DEFAULT_BASE_URLS,
+  DEFAULT_MODELS,
+  PROVIDER_LABELS,
+  getAiProviderConfig,
+  initAiProviderConfig,
+  saveAiProviderConfig,
+  setAiProviderConfigSync,
+  type AiProviderConfig,
+} from "../services/ai-providers";
 import { toast } from "sonner";
 
 interface ExtensionSidebarProps {
@@ -146,6 +156,13 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   // ── API Keys (persisted) ──────────────────────────────────────────────────
   const [apiKeys, setApiKeys] = useState<string[]>([]);
   const [showApiPanel, setShowApiPanel] = useState(false);
+  const [providerConfig, setProviderConfig] = useState<AiProviderConfig>(() => getAiProviderConfig());
+
+  const handleSaveProvider = (config: AiProviderConfig) => {
+    const saved = setAiProviderConfigSync(config);
+    setProviderConfig(saved);
+    void saveAiProviderConfig(saved).catch(() => undefined);
+  };
 
   const handleSaveKeys = (keys: string[]) => {
     const normalized = normalizeGeminiKeys(keys);
@@ -164,6 +181,14 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     const normalized = normalizeGeminiKeys(apiKeys);
     setGeminiKeysSync(normalized);
   }, [apiKeys]);
+
+  useEffect(() => {
+    let alive = true;
+    void initAiProviderConfig().then((config) => {
+      if (alive) setProviderConfig(config);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -627,14 +652,30 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const preview_es = liveEs || MOCK_LINES[currentLine]?.es || "";
   const preview_ts = liveTs !== "--:--" ? liveTs : (MOCK_LINES[currentLine]?.ts ?? "--:--");
 
-  // Which backend is active? Local takes priority over Gemini
-  const activeBackend: "local" | "gemini" | "mock" =
-    localConnected ? "local" : hasKeys ? "gemini" : "mock";
+  // Which backend is active? Priority mirrors the background chain:
+  // local > configured provider > Gemini > mock.
+  const providerReady = providerConfig.kind === "local"
+    ? Boolean(providerConfig.baseUrl)
+    : Boolean(providerConfig.baseUrl && providerConfig.apiKey);
+  const activeBackend: "local" | "provider" | "gemini" | "mock" =
+    localConnected ? "local" : providerReady ? "provider" : hasKeys ? "gemini" : "mock";
+
+  // Label describes the provider by its actual endpoint, not just its kind tag,
+  // so a mis-tagged config (e.g. kind=gemini pointing at a local proxy) still
+  // reads correctly instead of claiming "Gemini".
+  const providerLabel = (() => {
+    const url = (providerConfig.baseUrl || "").toLowerCase();
+    if (providerConfig.kind === "gemini" || url.includes("generativelanguage.googleapis.com")) return "Gemini";
+    if (providerConfig.kind === "anthropic" || url.includes("anthropic")) return "Anthropic";
+    if (/^https?:\/\/(127\.0\.0\.1|localhost)/.test(url)) return "Proveedor local";
+    return PROVIDER_LABELS[providerConfig.kind] || "Proveedor";
+  })();
 
   const BACKEND_LABELS = {
-    local:  "IA Local",
+    local: "IA Local",
+    provider: providerLabel,
     gemini: "Gemini",
-    mock:   "Mock",
+    mock: "Mock",
   };
 
   // Subtitle style for preview (scales down to fit the preview frame)
@@ -699,27 +740,29 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
               onClick={() => setShowApiPanel(v => !v)}
               title="Configurar motores de IA"
               className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] transition-all duration-300 border ${
-                activeBackend === "local" 
+                activeBackend === "local"
                   ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
-                  : activeBackend === "gemini"
+                  : activeBackend === "provider"
                     ? "bg-violet-500/10 border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
-                    : "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
+                    : activeBackend === "gemini"
+                      ? "bg-violet-500/10 border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
+                      : "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
               }`}
               style={{ fontWeight: 600 }}
             >
               <span className="relative flex h-1.5 w-1.5 shrink-0">
-                {(activeBackend === "local" || activeBackend === "gemini") && !showApiPanel && (
+                {(activeBackend === "local" || activeBackend === "provider" || activeBackend === "gemini") && !showApiPanel && (
                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${
                     activeBackend === "local" ? "bg-emerald-400" : "bg-violet-400"
                   }`}/>
                 )}
                 <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
-                  activeBackend === "local" ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" : 
-                  activeBackend === "gemini" ? "bg-violet-400 shadow-[0_0_5px_#a78bfa]" : "bg-amber-400"
+                  activeBackend === "local" ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" :
+                  activeBackend === "provider" || activeBackend === "gemini" ? "bg-violet-400 shadow-[0_0_5px_#a78bfa]" : "bg-amber-400"
                 }`}/>
               </span>
               {activeBackend === "local" && <Wifi size={10} />}
-              {activeBackend === "gemini" && <Cpu size={10} />}
+              {(activeBackend === "provider" || activeBackend === "gemini") && <Cpu size={10} />}
               {activeBackend === "mock" && <AlertCircle size={10} />}
               <span>{BACKEND_LABELS[activeBackend]}</span>
             </button>
@@ -801,6 +844,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         apiKeys={configuredGeminiKeys}
         localConnected={localConnected}
         onSave={handleSaveKeys}
+        providerConfig={providerConfig}
+        onSaveProvider={handleSaveProvider}
       />
 
       {/* ── Tab Nav ──────────────────────────────────────────────────────── */}
@@ -876,6 +921,9 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   <StatusRow label="IA local (8010)"          status={localConnected ? "Conectada" : "Sin conexión"}         ok={localConnected} pulse={localConnected}/>
                   <StatusRow label="Traducción activa"        status={autoTranslate ? "En curso" : "Pausada"}                ok={autoTranslate}/>
                   <StatusRow label="Content script"           status={contentScriptConnected ? "Activo" : "Esperando…"}      ok={contentScriptConnected} pulse={contentScriptConnected}/>
+                  {activeBackend === "provider" && (
+                    <StatusRow label={PROVIDER_LABELS[providerConfig.kind]} status={`${providerConfig.model}`} ok={true} pulse/>
+                  )}
                   {hasKeys && (
                     <StatusRow label="Gemini fallback"        status={`${configuredGeminiKeys.length} keys en rotación`}   ok={true}  pulse/>
                   )}
@@ -904,6 +952,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 localConnected={localConnected}
                 capturedLineCount={capturedLineCount}
                 lectureKey={currentLectureKey}
+                providerConfig={providerConfig}
               />
 
               {/* SRT management */}
@@ -1394,7 +1443,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 ))}
                 <div className={`pt-2 border-t space-y-1 ${t("border-white/5","border-black/6")}`}>
                   <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>⚙ Triple-click → Dev mode (telemetría SSE)</p>
-                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Badge de IA → Configurar Gemini API keys</p>
+                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Badge de IA → Configurar proveedor y API keys</p>
                   <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Overlay tab → arrastra ⠿ para posición libre</p>
                 </div>
               </div>
