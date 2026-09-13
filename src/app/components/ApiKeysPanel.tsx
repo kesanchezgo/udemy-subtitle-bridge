@@ -1,16 +1,23 @@
 // ─── ApiKeysPanel ─────────────────────────────────────────────────────────────
-// Panel colapsable que aparece bajo el header para configurar las
-// API keys de Gemini como fallback cuando la IA local no está disponible.
-// Orden de uso: IA Local (8010) → Gemini keys en rotación → Mock
+// Configuración de motores de IA: proveedor (OpenAI-compatible / Anthropic /
+// Gemini / local) + API keys de Gemini en rotación.
+//
+// Chain: IA Local (8010) → proveedor configurado → Gemini → mock
+//
+// Diseño: minimalista, jerarquía por peso/espaciado (no por bordes anidados) y
+// 100% basado en los tokens `--usb-*` del tema, de modo que el modo oscuro y el
+// sepia/claro salen del mismo marcado sin parches.
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Eye, EyeOff, CheckCircle2, X, Save, ChevronRight, Database, Plus, Trash2, AlertCircle, Cpu, Loader2 } from "lucide-react";
+import {
+  Eye, EyeOff, CheckCircle2, X, ChevronRight, Plus, Trash2, AlertCircle,
+  Cpu, Loader2, Zap,
+} from "lucide-react";
 import { normalizeGeminiKeys } from "../../gemini-config";
 import {
   DEFAULT_BASE_URLS,
   DEFAULT_MODELS,
-  PROVIDER_LABELS,
   validateProviderConfig,
   type AiProviderConfig,
   type AiProviderKind,
@@ -41,8 +48,6 @@ function inferProviderKind(rawUrl: string): AiProviderKind | null {
   if (!url) return null;
   if (url.includes("anthropic")) return "anthropic";
   if (url.includes("generativelanguage.googleapis") || url.includes("/v1beta")) return "gemini";
-  // Anything else that speaks /v1 or /chat/completions is OpenAI-compatible
-  // (OpenAI, DeepSeek, OpenRouter, Groq, LM Studio, Ollama, local proxies).
   if (url.includes("/v1") || url.includes("openai") || url.includes("deepseek") || url.includes("openrouter")) return "openai";
   return null;
 }
@@ -67,16 +72,13 @@ export function ApiKeysPanel({
   const externalSignature = apiKeys.join("\n");
   const externalProviderSignature = `${providerConfig.kind}|${providerConfig.baseUrl}|${providerConfig.apiKey}|${providerConfig.model}`;
 
-  // Sync external value changes (e.g. on first load from storage)
   useEffect(() => { setKeys(apiKeys.length ? apiKeys : [""]); }, [externalSignature]);
-  useEffect(() => { setProvider(providerConfig); }, [externalProviderSignature]);
+  useEffect(() => { setProvider(providerConfig); setValidation(null); }, [externalProviderSignature]);
 
   const updateProvider = (patch: Partial<AiProviderConfig>) => {
+    setValidation(null);
     setProvider((current) => {
       const next = { ...current, ...patch };
-      // Derive the kind from the base URL so a user can't end up with
-      // kind:"local" pointing at a remote proxy (or vice versa) and get a
-      // confusing error later. Explicit kind buttons still win when they match.
       if (patch.baseUrl !== undefined) {
         const inferred = inferProviderKind(next.baseUrl);
         if (inferred) next.kind = inferred;
@@ -86,11 +88,10 @@ export function ApiKeysPanel({
   };
 
   const changeProviderKind = (kind: AiProviderKind) => {
+    setValidation(null);
     setProvider((current) => ({
       ...current,
       kind,
-      // Only swap in a default base URL/model when the user hasn't customized
-      // them away from the previous kind's default.
       baseUrl:
         !current.baseUrl || current.baseUrl === DEFAULT_BASE_URLS[current.kind]
           ? DEFAULT_BASE_URLS[kind]
@@ -108,7 +109,7 @@ export function ApiKeysPanel({
     const result = await validateProviderConfig(provider);
     setValidating(false);
     setValidation(result);
-    if (result.status !== 'ok') return;
+    if (result.status !== "ok") return;
     onSaveProvider(provider);
     setProviderSaved(true);
     setTimeout(() => setProviderSaved(false), 2200);
@@ -140,9 +141,6 @@ export function ApiKeysPanel({
   };
 
   const activeCount = normalizeGeminiKeys(keys).length;
-  const providerReady = provider.kind === "local"
-    ? Boolean(provider.baseUrl)
-    : Boolean(provider.baseUrl && provider.apiKey);
   const updateKey = (idx: number, value: string) => {
     setKeys(current => current.map((key, i) => i === idx ? value : key));
   };
@@ -152,15 +150,23 @@ export function ApiKeysPanel({
     return next.length ? next : [""];
   });
 
-  // Fallback chain indicator
+  const providerReady = provider.kind === "local"
+    ? Boolean(provider.baseUrl)
+    : Boolean(provider.baseUrl && provider.apiKey);
+
   const chain: { label: string; active: boolean; color: string }[] = [
-    { label: "IA Local",  active: localConnected, color: localConnected ? "text-emerald-400" : "text-white/25" },
-    { label: PROVIDER_LABELS[providerConfig.kind], active: providerReady, color: providerReady ? "text-sky-400" : "text-white/25" },
-    { label: activeCount > 0 ? `${activeCount} Gemini` : "Gemini", active: activeCount > 0, color: activeCount > 0 ? "text-violet-400" : "text-white/25" },
+    { label: "Local", active: localConnected, color: localConnected ? "text-emerald-400" : "text-[var(--usb-fg-dim)]" },
+    { label: PROVIDER_KINDS_LABELS[provider.kind], active: providerReady, color: providerReady ? "text-violet-400" : "text-[var(--usb-fg-dim)]" },
+    { label: activeCount > 0 ? `Gemini ×${activeCount}` : "Gemini", active: activeCount > 0, color: activeCount > 0 ? "text-violet-400" : "text-[var(--usb-fg-dim)]" },
     productionRuntime
-      ? { label: "Sin mock", active: false, color: "text-white/25" }
-      : { label: "Mock", active: true, color: "text-amber-400/50" },
+      ? { label: "Sin mock", active: false, color: "text-[var(--usb-fg-dim)]" }
+      : { label: "Mock", active: true, color: "text-amber-500/60" },
   ];
+
+  // ── Shared field styling (token-based so both themes are correct) ───────────
+  const fieldClass =
+    "w-full h-9 bg-[var(--usb-input-bg)] border border-[var(--usb-border)] focus:border-violet-500/50 rounded-lg px-3 text-[11px] text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-placeholder)] outline-none transition-colors font-mono";
+  const labelClass = "text-[var(--usb-fg-lo)] text-[9px] uppercase tracking-wider";
 
   return (
     <AnimatePresence>
@@ -171,180 +177,177 @@ export function ApiKeysPanel({
           animate={{ opacity: 1, height: "auto" }}
           exit={{ opacity: 0, height: 0 }}
           transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-          className="overflow-hidden border-b border-white/6 bg-[#0c0c0f] shrink-0"
+          className="overflow-hidden border-b border-[var(--usb-border)] bg-[var(--usb-bg-5)] shrink-0"
         >
-          <div className="p-4 space-y-3">
+          <div className="px-4 pt-3.5 pb-4 space-y-4">
 
             {/* ── Header ── */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database size={11} className="text-violet-400" />
-                <span className="text-white/75 text-[11px]" style={{ fontWeight: 600 }}>
+              <div className="flex items-center gap-1.5">
+                <Cpu size={11} className="text-violet-400" />
+                <span className="text-[var(--usb-fg-hi)] text-[11px] tracking-tight" style={{ fontWeight: 600 }}>
                   Motores de IA
                 </span>
-                {activeCount > 0 && (
-                  <span className="text-[9px] bg-violet-500/15 border border-violet-500/25 text-violet-400 px-1.5 py-0.5 rounded-full">
-                    Gemini: {activeCount} {activeCount === 1 ? "key" : "keys"}
-                  </span>
-                )}
               </div>
               <button
                 onClick={onClose}
-                className="text-white/25 hover:text-white/60 transition-colors w-5 h-5 flex items-center justify-center rounded"
+                className="text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors w-5 h-5 flex items-center justify-center rounded"
+                aria-label="Cerrar"
               >
                 <X size={13} />
               </button>
             </div>
 
-            {/* ── Provider config (multi-provider) ── */}
-            <div className="rounded-xl border border-white/8 bg-white/3 overflow-hidden">
-              <div className="flex items-center justify-between px-3 py-2">
-                <div className="flex items-center gap-1.5">
-                  <Cpu size={10} className="text-violet-400" />
-                  <span className="text-white/70 text-[10px] uppercase tracking-wider" style={{ fontWeight: 600 }}>
-                    Proveedor
-                  </span>
-                </div>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
+            {/* ── Provider — flat section, hierarchy by weight not nested boxes ── */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className={labelClass} style={{ fontWeight: 600 }}>Proveedor</span>
+                <span className={`text-[9px] px-1.5 py-[3px] rounded-full ${
                   providerReady
-                    ? "bg-violet-500/12 border-violet-500/25 text-violet-300"
-                    : "bg-white/4 border-white/8 text-white/30"
+                    ? "bg-violet-500/12 text-violet-400"
+                    : "bg-[var(--usb-fg-dim)]/10 text-[var(--usb-fg-lo)]"
                 }`}>
                   {providerReady ? "activo" : "sin configurar"}
                 </span>
               </div>
 
-              <div className="px-3 pb-3 space-y-2.5">
-                {/* Kind selector — pills matching the sidebar segmented controls */}
-                <div className="flex gap-1 p-0.5 rounded-lg bg-black/25 border border-white/6">
-                  {PROVIDER_KINDS.map((kind) => (
-                    <button
-                      key={kind}
-                      onClick={() => changeProviderKind(kind)}
-                      className={`flex-1 h-7 rounded-md text-[10px] transition-all duration-200 ${
-                        provider.kind === kind
-                          ? "bg-violet-600 text-white shadow-[0_2px_8px_rgba(139,92,246,0.25)]"
-                          : "text-white/40 hover:text-white/70 hover:bg-white/5"
-                      }`}
-                      style={{ fontWeight: provider.kind === kind ? 600 : 400 }}
-                    >
-                      {PROVIDER_KINDS_LABELS[kind]}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Base URL */}
-                <div className="space-y-1">
-                  <label className="text-white/25 text-[9px] uppercase tracking-wider ml-0.5">Base URL</label>
-                  <input
-                    type="text"
-                    value={provider.baseUrl}
-                    onChange={(e) => updateProvider({ baseUrl: e.target.value })}
-                    placeholder={DEFAULT_BASE_URLS[provider.kind]}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full h-9 bg-black/30 border border-white/8 focus:border-violet-500/40 rounded-lg px-3 text-[11px] text-white/70 placeholder:text-white/20 outline-none transition-colors font-mono"
-                  />
-                </div>
-
-                {/* API key (hidden for the bundled local server) */}
-                {provider.kind !== "local" && (
-                  <div className="space-y-1">
-                    <label className="text-white/25 text-[9px] uppercase tracking-wider ml-0.5">API Key</label>
-                    <div className="relative flex items-center">
-                      <input
-                        type={providerKeyVisible ? "text" : "password"}
-                        value={provider.apiKey}
-                        onChange={(e) => updateProvider({ apiKey: e.target.value })}
-                        placeholder="sk-..."
-                        autoComplete="off"
-                        spellCheck={false}
-                        className="w-full h-9 bg-black/30 border border-white/8 focus:border-violet-500/40 rounded-lg px-3 pr-9 text-[11px] text-white/70 placeholder:text-white/20 outline-none transition-colors font-mono"
-                      />
-                      <button
-                        onClick={() => setProviderKeyVisible((v) => !v)}
-                        className="absolute right-2.5 text-white/25 hover:text-white/55 transition-colors"
-                      >
-                        {providerKeyVisible ? <EyeOff size={11} /> : <Eye size={11} />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Model */}
-                <div className="space-y-1">
-                  <label className="text-white/25 text-[9px] uppercase tracking-wider ml-0.5">Modelo</label>
-                  <input
-                    type="text"
-                    value={provider.model}
-                    onChange={(e) => updateProvider({ model: e.target.value })}
-                    placeholder={DEFAULT_MODELS[provider.kind]}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full h-9 bg-black/30 border border-white/8 focus:border-violet-500/40 rounded-lg px-3 text-[11px] text-white/70 placeholder:text-white/20 outline-none transition-colors font-mono"
-                  />
-                </div>
-
-                <button
-                  onClick={handleSaveProvider}
-                  disabled={validating}
-                  className={`w-full flex items-center justify-center gap-1.5 h-8 rounded-lg text-[11px] transition-all duration-300 ${
-                    validating
-                      ? "bg-violet-600/50 text-white/70 cursor-wait"
-                      : providerSaved
-                        ? "bg-emerald-600/25 border border-emerald-500/30 text-emerald-400"
-                        : "bg-violet-600 hover:bg-violet-500 text-white shadow-[0_2px_12px_rgba(139,92,246,0.3)]"
-                  }`}
-                  style={{ fontWeight: 600 }}
-                >
-                  {validating
-                    ? <><Loader2 size={11} className="animate-spin" />Probando conexión…</>
-                    : providerSaved
-                      ? <><CheckCircle2 size={11} />Proveedor guardado</>
-                      : <><Save size={11} />Probar y guardar</>}
-                </button>
-
-                {validation && (
-                  <p className={`text-[9px] leading-relaxed rounded-lg px-2 py-1.5 border ${
-                    validation.status === 'ok'
-                      ? "text-emerald-400/90 bg-emerald-500/8 border-emerald-500/20"
-                      : "text-amber-300/90 bg-amber-500/8 border-amber-500/20"
-                  }`}>
-                    {validation.status === 'ok' ? '✓ ' : '⚠ '}{validation.message}
-                  </p>
-                )}
+              {/* Segmented control — quiet, single pill */}
+              <div className="flex gap-0.5 p-0.5 rounded-[10px] bg-[var(--usb-input-bg)]">
+                {PROVIDER_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    onClick={() => changeProviderKind(kind)}
+                    className={`flex-1 h-7 rounded-lg text-[10px] transition-all duration-200 ${
+                      provider.kind === kind
+                        ? "bg-violet-600 text-white shadow-[0_1px_6px_rgba(139,92,246,0.35)]"
+                        : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-fg-dim)]/8"
+                    }`}
+                    style={{ fontWeight: provider.kind === kind ? 600 : 500 }}
+                  >
+                    {PROVIDER_KINDS_LABELS[kind]}
+                  </button>
+                ))}
               </div>
+
+              <div className="space-y-1">
+                <label className={labelClass}>Base URL</label>
+                <input
+                  type="text"
+                  value={provider.baseUrl}
+                  onChange={(e) => updateProvider({ baseUrl: e.target.value })}
+                  placeholder={DEFAULT_BASE_URLS[provider.kind]}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={fieldClass}
+                />
+              </div>
+
+              {provider.kind !== "local" && (
+                <div className="space-y-1">
+                  <label className={labelClass}>API Key</label>
+                  <div className="relative flex items-center">
+                    <input
+                      type={providerKeyVisible ? "text" : "password"}
+                      value={provider.apiKey}
+                      onChange={(e) => updateProvider({ apiKey: e.target.value })}
+                      placeholder="sk-..."
+                      autoComplete="off"
+                      spellCheck={false}
+                      className={`${fieldClass} pr-9`}
+                    />
+                    <button
+                      onClick={() => setProviderKeyVisible((v) => !v)}
+                      className="absolute right-2.5 text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors"
+                      aria-label={providerKeyVisible ? "Ocultar key" : "Mostrar key"}
+                    >
+                      {providerKeyVisible ? <EyeOff size={11} /> : <Eye size={11} />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <label className={labelClass}>Modelo</label>
+                <input
+                  type="text"
+                  value={provider.model}
+                  onChange={(e) => updateProvider({ model: e.target.value })}
+                  placeholder={DEFAULT_MODELS[provider.kind]}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={fieldClass}
+                />
+              </div>
+
+              <button
+                onClick={handleSaveProvider}
+                disabled={validating}
+                className={`w-full flex items-center justify-center gap-1.5 h-8 rounded-lg text-[11px] transition-all duration-200 ${
+                  validating
+                    ? "bg-violet-600/45 text-white/70 cursor-wait"
+                    : providerSaved
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : "bg-violet-600 hover:bg-violet-500 text-white"
+                }`}
+                style={{ fontWeight: 600 }}
+              >
+                {validating
+                  ? <><Loader2 size={11} className="animate-spin" />Probando conexión…</>
+                  : providerSaved
+                    ? <><CheckCircle2 size={11} />Proveedor guardado</>
+                    : <><Zap size={11} />Probar y guardar</>}
+              </button>
+
+              <AnimatePresence>
+                {validation && (
+                  <motion.p
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className={`text-[9px] leading-relaxed rounded-lg px-2.5 py-2 ${
+                      validation.status === "ok"
+                        ? "text-emerald-400/90 bg-emerald-500/8"
+                        : "text-amber-300/90 bg-amber-500/8"
+                    }`}
+                  >
+                    {validation.status === "ok" ? "✓ " : "⚠ "}{validation.message}
+                  </motion.p>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* ── Gemini keys ── */}
             <div className="space-y-2">
+              <span className={labelClass} style={{ fontWeight: 600 }}>Gemini keys (fallback)</span>
+
               {keys.map((key, idx) => {
                 const visible = Boolean(visibleKeys[idx]);
                 const active = Boolean(key.trim());
                 const duplicate = duplicateIndexes.has(idx);
                 return (
                   <div key={idx} className="space-y-1">
-                    <div className="relative flex items-center gap-1.5">
+                    <div className="relative flex items-center">
                       <input
                         type={visible ? "text" : "password"}
                         value={key}
                         onChange={e => updateKey(idx, e.target.value)}
-                        placeholder={`Gemini API Key ${idx + 1}${idx === 0 ? " (principal)" : ""}`}
+                        placeholder={`Key ${idx + 1}${idx === 0 ? " (principal)" : ""}`}
                         autoComplete="off"
                         spellCheck={false}
-                        className={`w-full h-9 bg-black/30 border rounded-lg px-3 pr-16 text-[11px] text-white/70 placeholder:text-white/20 outline-none transition-colors font-mono ${
-                          duplicate ? "border-amber-500/45 focus:border-amber-400/60" : "border-white/8 focus:border-violet-500/40"
+                        className={`${fieldClass} pr-16 ${
+                          duplicate ? "border-amber-500/50 focus:border-amber-400/60" : ""
                         }`}
                       />
                       <button
                         onClick={() => setVisibleKeys(current => ({ ...current, [idx]: !visible }))}
-                        className="absolute right-9 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/55 transition-colors"
+                        className="absolute right-9 text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors"
+                        aria-label={visible ? "Ocultar key" : "Mostrar key"}
                       >
                         {visible ? <EyeOff size={11} /> : <Eye size={11} />}
                       </button>
                       <button
                         onClick={() => removeKey(idx)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/20 hover:text-rose-300 transition-colors"
+                        className="absolute right-2.5 text-[var(--usb-fg-lo)] hover:text-rose-400 transition-colors"
                         title="Quitar key"
                       >
                         <Trash2 size={10} />
@@ -353,71 +356,69 @@ export function ApiKeysPanel({
                     <AnimatePresence>
                       {duplicate ? (
                         <motion.p
-                          initial={{ opacity: 0, y: -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                          className="text-amber-400/80 text-[9px] ml-1 flex items-center gap-1"
+                          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                          className="text-amber-400/80 text-[9px] ml-0.5 flex items-center gap-1"
                         >
                           <AlertCircle size={8} />Key duplicada
                         </motion.p>
                       ) : active && (
                         <motion.p
-                          initial={{ opacity: 0, y: -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                          className="text-emerald-400/75 text-[9px] ml-1 flex items-center gap-1"
+                          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                          className="text-emerald-400/70 text-[9px] ml-0.5 flex items-center gap-1"
                         >
-                          <CheckCircle2 size={8} />Key activa · rotación #{idx + 1}
+                          <CheckCircle2 size={8} />Activa · rotación #{idx + 1}
                         </motion.p>
                       )}
                     </AnimatePresence>
                   </div>
                 );
               })}
-              <button
-                onClick={addKey}
-                className="w-full h-8 rounded-lg border border-white/8 bg-white/3 hover:bg-white/6 text-white/45 hover:text-white/70 text-[10px] flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <Plus size={11} />Agregar otra key
-              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={addKey}
+                  className="flex-1 h-8 rounded-lg border border-dashed border-[var(--usb-border-mid)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-fg-dim)] text-[10px] flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus size={11} />Agregar key
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={hasDuplicates}
+                  className={`flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-[11px] transition-all duration-200 ${
+                    hasDuplicates
+                      ? "text-amber-300/70 cursor-not-allowed bg-amber-500/8"
+                      : saved
+                        ? "bg-emerald-500/15 text-emerald-400"
+                        : "bg-violet-600 hover:bg-violet-500 text-white"
+                  }`}
+                  style={{ fontWeight: 600 }}
+                >
+                  {hasDuplicates
+                    ? <><AlertCircle size={11} />Duplicadas</>
+                    : saved
+                      ? <><CheckCircle2 size={11} />Guardado</>
+                      : <><CheckCircle2 size={11} />Guardar keys</>}
+                </button>
+              </div>
             </div>
 
-            {/* ── Save button ── */}
-            <button
-              onClick={handleSave}
-              disabled={hasDuplicates}
-              className={`flex items-center gap-1.5 h-8 px-4 rounded-lg text-[11px] transition-all duration-300 ${
-                hasDuplicates
-                  ? "bg-amber-500/10 border border-amber-500/25 text-amber-300/70 cursor-not-allowed"
-                  : saved
-                  ? "bg-emerald-600/25 border border-emerald-500/30 text-emerald-400"
-                  : "bg-violet-600 hover:bg-violet-500 text-white shadow-[0_2px_12px_rgba(139,92,246,0.3)]"
-              }`}
-              style={{ fontWeight: 600 }}
-            >
-              {hasDuplicates
-                ? <><AlertCircle size={11} />Revisa duplicadas</>
-                : saved
-                ? <><CheckCircle2 size={11} />Guardado</>
-                : <><Save size={11} />Guardar keys</>
-              }
-            </button>
-
-            {/* ── Fallback chain ── */}
-            <div className="flex items-center gap-1.5">
+            {/* ── Chain ── */}
+            <div className="flex items-center gap-1.5 pt-0.5">
               {chain.map((step, i) => (
-                <React.Fragment key={step.label}>
+                <div key={step.label} className="flex items-center gap-1.5">
                   <span className={`text-[9px] ${step.color}`} style={{ fontWeight: step.active ? 600 : 400 }}>
                     {step.label}
                   </span>
                   {i < chain.length - 1 && (
-                    <ChevronRight size={8} className="text-white/15 shrink-0" />
+                    <ChevronRight size={8} className="text-[var(--usb-fg-dim)] shrink-0" />
                   )}
-                </React.Fragment>
+                </div>
               ))}
             </div>
 
-            {/* ── Info ── */}
-            <p className="text-white/18 text-[9px] leading-relaxed">
-              Guardado en chrome.storage.local · cadena: IA Local → proveedor → Gemini → mock. Clic triple en ⚙ para Dev mode.
+            <p className="text-[var(--usb-fg-dim)] text-[9px] leading-relaxed">
+              Guardado local · clic triple en ⚙ para Dev mode
             </p>
-
           </div>
         </motion.div>
       )}
