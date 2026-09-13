@@ -58,6 +58,11 @@ export interface ObjectivesCacheEntry {
   error?: string;
 }
 
+// How long a mocked (AI-less) objectives result stays valid before a new
+// generation attempt is allowed. Prevents a tight regenerate-on-every-mount
+// loop when the AI is offline.
+const MOCK_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
+
 function key(courseId: string): string {
   return `course::${courseId}`;
 }
@@ -77,6 +82,11 @@ export const objectivesService = {
   async getOrGenerate(courseName: string, description: string): Promise<ObjectivesCacheEntry> {
     const existing = await this.get(courseName);
     if (existing && !existing.isMock) return existing;
+    // A cached mock keeps serving for the cooldown window instead of triggering
+    // a new (likely failing) AI call on every mount while offline.
+    if (existing?.isMock && Date.now() - existing.generatedAt < MOCK_RETRY_COOLDOWN_MS) {
+      return existing;
+    }
     return this.regenerate(courseName, description);
   },
 

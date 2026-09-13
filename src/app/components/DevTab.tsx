@@ -233,7 +233,6 @@ export function DevTab() {
   }, [
     debugStore.requests.length,
     debugStore.requests[0]?.id,
-    debugStore.requests[0]?.status,
   ]);
 
   const stats = debugStore.getLatestStats();

@@ -406,15 +406,18 @@ function parseSrtBlocks(srtText: string): SrtBlock[] {
 	}
 
 	return normalized
-		.split(/\n\n+/)
-		.map((block) => block.split('\n').map((line) => line.trim()))
-		.filter((lines) => lines.length >= 3)
-		.map((lines) => ({
-			index: Number(lines[0]) || 0,
-			timeLine: lines[1],
-			text: lines.slice(2).join(' ').trim()
-		}))
-		.filter((block) => block.timeLine.includes('-->') && block.text.length > 0);
+		.split(/\n{2,}/)
+		.map((block) => {
+			const lines = block.split('\n').map((line) => line.trim());
+			// Preserve the cue's multi-line text layout: keep inner line breaks
+			// instead of collapsing the whole cue into a single line.
+			return {
+				index: Number(lines[0]) || 0,
+				timeLine: lines[1],
+				text: lines.slice(2).join('\n').trim()
+			};
+		})
+		.filter((block) => block.timeLine && block.timeLine.includes('-->') && block.text.length > 0);
 }
 
 function formatSrtBlocks(blocks: SrtBlock[]) {
@@ -529,8 +532,10 @@ function normalizeTranslatedChunk(originalBlocks: SrtBlock[], responseText: stri
 	}
 
 	const byIndex = new Map(parsed.map((block) => [block.index, block]));
-	return originalBlocks.map((original, fallbackIndex) => {
-		const translated = byIndex.get(original.index) || parsed[fallbackIndex];
+	return originalBlocks.map((original) => {
+		// Only trust an index-matched translation. A positional fallback could
+		// silently assign another cue's text, so missing blocks stay in EN.
+		const translated = byIndex.get(original.index);
 		const text = String(translated?.text || '').trim();
 		if (!text) {
 			// Use original EN text for missing blocks instead of failing
@@ -581,9 +586,11 @@ async function translateSrtToSpanish(sourceSrt: string) {
 
 	let translatedBlocks: SrtBlock[];
 	let localError: unknown = null;
+	let usedLocal = false;
 	try {
 		if (await checkLocalAiHealth()) {
 			translatedBlocks = await translateSrtWithLocal(blocks);
+			usedLocal = true;
 		} else {
 			throw new Error('Local AI is not connected.');
 		}
@@ -596,18 +603,27 @@ async function translateSrtToSpanish(sourceSrt: string) {
 		}
 	}
 
-	// Detect untranslated blocks (text identical to original EN)
+	// Detect untranslated blocks (text identical to original EN) by matching on
+	// the block index, not by position, so reordered model output stays correct.
+	const originalByIndex = new Map(blocks.map((block) => [block.index, block]));
 	const missingBlocks: SrtBlock[] = [];
-	for (let i = 0; i < translatedBlocks.length; i++) {
-		if (i < blocks.length && translatedBlocks[i].text === blocks[i].text) {
-			missingBlocks.push(blocks[i]);
+	const seenMissing = new Set<number>();
+	for (const translated of translatedBlocks) {
+		const original = originalByIndex.get(translated.index);
+		if (!original || seenMissing.has(original.index)) continue;
+		if (translated.text === original.text) {
+			missingBlocks.push(original);
+			seenMissing.add(original.index);
 		}
 	}
 
-	// If there are missing blocks, try a second pass just for those
+	// If there are missing blocks, try a second pass just for those, reusing the
+	// backend that produced the first pass so a local-only setup still patches.
 	if (missingBlocks.length > 0 && missingBlocks.length <= Math.ceil(blocks.length * 0.15)) {
 		try {
-			const patchBlocks = await translateSrtWithGemini(missingBlocks);
+			const patchBlocks = usedLocal
+				? await translateSrtWithLocal(missingBlocks)
+				: await translateSrtWithGemini(missingBlocks);
 			const patchMap = new Map(patchBlocks.map((b) => [b.index, b]));
 			translatedBlocks = translatedBlocks.map((block) => {
 				const patch = patchMap.get(block.index);

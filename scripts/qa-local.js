@@ -152,7 +152,9 @@ async function testStudy(page) {
   await page.getByRole('button', { name: 'Study', exact: true }).click();
   await ensureVisible(page.getByText('Tutor IA · Study Agent', { exact: true }), 'Study hero not found');
   await ensureVisible(page.getByText('¿PARA QUÉ ESTUDIAS ESTO?'), 'Study objective label not found');
-  await ensureVisible(page.getByText('Entrevista Spring Boot', { exact: true }), 'Study objective card not found');
+  // Default course is "Java In-Depth - Udemy", which maps to the generic
+  // objective set (no spring/react/aws keyword match).
+  await ensureVisible(page.getByText('Entender a fondo', { exact: true }), 'Study objective card not found');
   await ensureVisible(page.getByText('Transcripción', { exact: false }).first(), 'Study transcript status not found');
   await ensureVisible(page.getByRole('button', { name: /Generar sesión de aprendizaje/ }), 'Study generate CTA not found');
 }

@@ -436,12 +436,15 @@ function markLocalAiUnavailable(): void {
 }
 
 function isLocalConnectionError(message: string): boolean {
+  // Match only real transport failures. A bare "fetch" substring would also
+  // catch unrelated parse errors (e.g. "could not fetch body") and wrongly
+  // take the local AI offline for the cooldown window.
   return (
     message.includes("Failed to fetch") ||
-    message.includes("fetch") ||
     message.includes("NetworkError") ||
     message.includes("ECONNREFUSED") ||
-    message.includes("ERR_CONNECTION_REFUSED")
+    message.includes("ERR_CONNECTION_REFUSED") ||
+    message.includes("Network request failed")
   );
 }
 

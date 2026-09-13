@@ -27,8 +27,16 @@ const MIGRATE_CHUNK_SIZE = 30;
 const HISTORY_SYNC_DEBOUNCE_MS = 1200;
 
 function isNetworkSignupFailure(err: unknown): boolean {
+  // Only treat actual transport failures as a network error. Supabase surfaces
+  // logical failures as Error objects carrying a numeric `status` (or a
+  // `code` like "email_exists"); those must propagate, not be swallowed.
+  if (err instanceof TypeError) return true;
+  const status = (err as { status?: unknown } | null)?.status;
+  if (typeof status === "number" && status > 0) return false;
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && code.trim()) return false;
   const message = err instanceof Error ? err.message : String(err);
-  return err instanceof TypeError || /failed to fetch|networkerror|load failed|err_/i.test(message);
+  return /failed to fetch|networkerror|load failed|err_connection|err_name_not_resolved|err_internet_disconnected/i.test(message);
 }
 
 async function postMigrationItems(

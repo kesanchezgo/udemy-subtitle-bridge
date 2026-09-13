@@ -59,14 +59,26 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
 
   useEffect(() => {
     if (!expanded) return;
-    return historyService.onChanged(() => {
-      void load();
-      if (openCourse) {
-        void historyService.getCourseLectures(openCourse).then((recs) => {
-          setLecturesByCourse(prev => ({ ...prev, [openCourse]: recs }));
-        });
-      }
+    // historyService.onChanged fires once per changed key. During a study
+    // session several upserts land in quick succession, so coalesce the
+    // full refresh into a single trailing call.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = historyService.onChanged(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void load();
+        if (openCourse) {
+          void historyService.getCourseLectures(openCourse).then((recs) => {
+            setLecturesByCourse(prev => ({ ...prev, [openCourse]: recs }));
+          });
+        }
+      }, 350);
     });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
   }, [expanded, load, openCourse]);
 
   const toggleCourse = async (courseId: string) => {

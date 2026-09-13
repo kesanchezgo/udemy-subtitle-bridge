@@ -18,13 +18,20 @@ export function usePersistedState<T>(
   defaultValue: T
 ): [T, Setter<T>] {
   const [value, setValueRaw] = useState<T>(defaultValue);
-  // Track whether the current set was triggered by ourselves to avoid
-  // an extra re-render from the storage change event.
-  const selfSet = useRef(false);
+  // Counts in-flight self writes so the matching onChange events can be
+  // ignored. A plain boolean loses events when two sets happen back-to-back.
+  const pendingSelfSets = useRef(0);
+  // Once the user (or an external actor) has set a value, the async initial
+  // load must not clobber it with a stale stored value.
+  const touched = useRef(false);
 
   // ── Load persisted value on mount ─────────────────────────────────────────
   useEffect(() => {
+    touched.current = false;
+    pendingSelfSets.current = 0;
+
     chromeStorage.get([key]).then((data) => {
+      if (touched.current) return;
       if (data[key] !== undefined) {
         setValueRaw(data[key] as T);
       }
@@ -33,11 +40,12 @@ export function usePersistedState<T>(
     // ── Listen for changes driven by *other* components / extension views ───
     return chromeStorage.onChange((changes) => {
       if (key in changes) {
-        if (selfSet.current) {
+        if (pendingSelfSets.current > 0) {
           // This change was triggered by us — skip to avoid duplicate render
-          selfSet.current = false;
+          pendingSelfSets.current -= 1;
           return;
         }
+        touched.current = true;
         setValueRaw(changes[key] as T);
       }
     });
@@ -52,7 +60,8 @@ export function usePersistedState<T>(
           typeof newVal === "function"
             ? (newVal as (p: T) => T)(prev)
             : newVal;
-        selfSet.current = true;
+        touched.current = true;
+        pendingSelfSets.current += 1;
         chromeStorage.set({ [key]: resolved });
         return resolved;
       });

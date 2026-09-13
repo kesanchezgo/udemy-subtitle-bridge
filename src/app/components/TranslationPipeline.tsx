@@ -191,18 +191,29 @@ export function TranslationPipeline({
   const lastRequestedCountRef = useRef(0);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const apiKeysRef   = useRef(apiKeys);
   const localRef     = useRef(localConnected);
 
   useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { localRef.current = localConnected; }, [localConnected]);
 
-  // Lock totalBlocks to the count at the time the pipeline first runs
-  const initialCountRef = useRef(0);
-  if (capturedLineCount > 0 && initialCountRef.current === 0) {
-    initialCountRef.current = Math.max(1, Math.round(capturedLineCount));
-  }
-  const totalBlocks = initialCountRef.current > 0 ? initialCountRef.current : TOTAL_BLOCKS;
+  // Track the real cue total as it streams in. It only ever grows, so the
+  // header keeps up with late-arriving cues instead of freezing on the first
+  // partial count. Resets per lecture in the effect below.
+  const [capturedTotal, setCapturedTotal] = useState(0);
+  useEffect(() => {
+    if (capturedLineCount > 0) {
+      setCapturedTotal((prev) => Math.max(prev, Math.max(1, Math.round(capturedLineCount))));
+    }
+  }, [capturedLineCount]);
+  useEffect(() => { setCapturedTotal(0); }, [lectureKey]);
+
+  const totalBlocks = capturedTotal > 0 ? capturedTotal : TOTAL_BLOCKS;
+  // Read totalBlocks from a ref inside the message effect so it can stay
+  // subscribed for the whole lecture instead of re-subscribing on every cue.
+  const totalBlocksRef = useRef(totalBlocks);
+  useEffect(() => { totalBlocksRef.current = totalBlocks; }, [totalBlocks]);
 
   const pickModel = (): ModelSource => {
     if (localRef.current)   return "local";
@@ -241,7 +252,6 @@ export function TranslationPipeline({
     abortRef.current?.abort();
     if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
     retryCountRef.current = 0;
-    initialCountRef.current = 0;
     setPhase("idle");
     setBlockCount(0);
     setVisibleBlocks([]);
@@ -324,7 +334,7 @@ export function TranslationPipeline({
         ? Math.max(0, Math.round(payload.blockCount))
         : typeof payload?.sourceCueCount === "number" && Number.isFinite(payload.sourceCueCount)
           ? Math.max(0, Math.round(payload.sourceCueCount))
-          : totalBlocks;
+          : totalBlocksRef.current;
 
       if (!ok || !translatedSrt.trim()) {
         // Auto-retry once after 10s if we haven't retried yet
@@ -335,14 +345,17 @@ export function TranslationPipeline({
             : "Error en la traducción";
           setErrorMessage(`${errorDetail} — Reintentando en 10s…`);
           let countdown = 10;
+          if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); }
           const countdownInterval = setInterval(() => {
             countdown -= 1;
             if (countdown > 0) {
               setErrorMessage(`${errorDetail} — Reintentando en ${countdown}s…`);
             }
           }, 1000);
+          countdownIntervalRef.current = countdownInterval;
           retryTimerRef.current = setTimeout(() => {
             clearInterval(countdownInterval);
+            countdownIntervalRef.current = null;
             setErrorMessage("Reintentando traducción…");
             setPhase("sending");
             void contentBridge.sendToContent({ type: "RUN_PIPELINE_TRANSLATION", payload: { lectureKey } });
@@ -351,7 +364,7 @@ export function TranslationPipeline({
         }
         retryCountRef.current = 0;
         setPhase("idle");
-        setBlockCount(Math.min(count, totalBlocks));
+        setBlockCount(Math.min(count, totalBlocksRef.current));
         setErrorMessage(
           typeof payload?.error === "string" && payload.error.trim()
             ? payload.error.trim()
@@ -368,7 +381,7 @@ export function TranslationPipeline({
       const chosen = pickModel();
       const t0 = performance.now();
       setModelUsed(chosen);
-      setBlockCount(Math.min(count, totalBlocks));
+      setBlockCount(Math.min(count, totalBlocksRef.current));
       setStreamedSrt("");
       setErrorMessage("");
       setPhase("streaming");
@@ -396,8 +409,9 @@ export function TranslationPipeline({
       unsubscribe();
       if (sendingTimer) clearTimeout(sendingTimer);
       if (sendingInterval) clearInterval(sendingInterval);
+      if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
     };
-  }, [lectureKey, totalBlocks]);
+  }, [lectureKey]);
 
   // Auto-run after the captured SRT count settles.
   useEffect(() => {

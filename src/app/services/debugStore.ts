@@ -70,7 +70,9 @@ class DebugStore {
   addToken(id: string, token: string, accumulated: string): void {
     const req = this.requests.find((r) => r.id === id);
     if (!req) return;
-    if (req.status !== "streaming") req.status = "streaming";
+    // Late tokens can arrive after endRequest; never revive a closed request or
+    // it will report a stale totalMs/success while showing as streaming.
+    if (req.status !== "streaming") return;
     const prev   = req.tokens.length > 0 ? req.tokens[req.tokens.length - 1] : undefined;
     const prevTs = prev ? prev.timestamp : req.startTs;
     const now    = performance.now();
