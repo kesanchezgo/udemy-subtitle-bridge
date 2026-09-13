@@ -14,8 +14,14 @@
     "https://*.udemy.com/*",
     "https://*.supabase.co/*",
     "https://generativelanguage.googleapis.com/*",
-    "http://127.0.0.1:8010/*",
-    "http://localhost:8010/*"
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.deepseek.com/*",
+    "https://openrouter.ai/*",
+    "https://generativelanguage.googleapis.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://*/*"
   ],
   "action": {
     "default_title": "Mostrar/ocultar Subtitle Bridge"

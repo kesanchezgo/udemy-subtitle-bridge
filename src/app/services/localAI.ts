@@ -3,6 +3,17 @@
 // Used by Study Agent for real-time student response evaluation
 import { debugStore } from "./debugStore";
 import {
+  buildAnthropicBody,
+  buildOpenAiCompatibleBody,
+  buildProviderChatUrl,
+  buildProviderHeaders,
+  extractProviderStreamToken,
+  extractProviderText,
+  getAiProviderConfig,
+  initAiProviderConfig,
+  type OpenAiChatMessage,
+} from "./ai-providers";
+import {
   buildGeminiGenerateContentUrl,
   buildGeminiStreamContentUrl,
   initGeminiKeys,
@@ -15,6 +26,9 @@ import {
 const LOCAL_AI_URL = "http://127.0.0.1:8010";
 const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
 const LOCAL_AI_RETRY_AFTER_MS = 45_000;
+// Marks errors raised by the configurable provider transport so the UI can
+// distinguish them from local-server / Gemini failures.
+const PROVIDER_ERROR_PREFIX = "[provider] ";
 
 let localAiRetryAfter = 0;
 
@@ -187,6 +201,153 @@ interface ClientRetryNotice {
   waitMs: number;
   errorClass: GeminiErrorClass;
   reason: string;
+}
+
+// ─── Configured provider transport (OpenAI-compatible / Anthropic / local) ────
+// Tried before the legacy Gemini multi-key path. Returns null when the active
+// provider config can't serve the request (e.g. no base URL or no API key for a
+// remote provider), so callers can fall through to Gemini or the mock.
+
+function providerToChatMessages(messages: AIMessage[]): OpenAiChatMessage[] {
+  return messages.map((m) => ({ role: m.role, content: m.content }));
+}
+
+function canServeWithConfiguredProvider(): boolean {
+  const cfg = getAiProviderConfig();
+  // The local server needs no key; remote providers must have one.
+  if (cfg.kind === 'local') return Boolean(cfg.baseUrl);
+  return Boolean(cfg.baseUrl && cfg.apiKey);
+}
+
+async function callConfiguredProvider(
+  messages: AIMessage[],
+  maxTokens: number,
+  temperature: number,
+): Promise<AIResponse | null> {
+  await initAiProviderConfig().catch(() => undefined);
+  if (!canServeWithConfiguredProvider()) return null;
+
+  const cfg = getAiProviderConfig();
+  const chatMessages = providerToChatMessages(messages);
+  const body =
+    cfg.kind === 'anthropic'
+      ? buildAnthropicBody(chatMessages, maxTokens, temperature, cfg.model, false)
+      : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, false);
+
+  try {
+    const res = await fetch(buildProviderChatUrl(cfg, false), {
+      method: 'POST',
+      headers: buildProviderHeaders(cfg),
+      body: JSON.stringify(body),
+    });
+
+    const responseText = await res.text();
+    if (!res.ok) {
+      return {
+        success: false,
+        content: '',
+        rating: 'unknown',
+        error: `${PROVIDER_ERROR_PREFIX}${cfg.kind} HTTP ${res.status}: ${responseText.slice(0, 220)}`,
+      } as AIResponse;
+    }
+
+    const content = extractProviderText(JSON.parse(responseText), cfg.kind);
+    if (!content) {
+      return { success: false, content: '', rating: 'unknown', error: 'El proveedor devolvió contenido vacío.' } as AIResponse;
+    }
+    return { success: true, content, rating: parseRating(content) };
+  } catch (err) {
+    return {
+      success: false,
+      content: '',
+      rating: 'unknown',
+      error: `${PROVIDER_ERROR_PREFIX}${cfg.kind}: ${err instanceof Error ? err.message : String(err)}`,
+    } as AIResponse;
+  }
+}
+
+async function streamConfiguredProvider(
+  messages: AIMessage[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string, accumulated: string) => void,
+  signal: AbortSignal | undefined,
+  debugContext: string,
+): Promise<{ success: boolean; content: string; error?: string } | null> {
+  await initAiProviderConfig().catch(() => undefined);
+  if (!canServeWithConfiguredProvider()) return null;
+
+  const cfg = getAiProviderConfig();
+  const chatMessages = providerToChatMessages(messages);
+  const body =
+    cfg.kind === 'anthropic'
+      ? buildAnthropicBody(chatMessages, maxTokens, temperature, cfg.model, true)
+      : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, true);
+
+  const reqId = `provider-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+  let accumulated = '';
+  debugStore.startRequest(reqId, `${debugContext}:${cfg.kind}`);
+
+  try {
+    const res = await fetch(buildProviderChatUrl(cfg, true), {
+      method: 'POST',
+      headers: buildProviderHeaders(cfg),
+      signal,
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const responseText = await res.text().catch(() => '');
+      debugStore.endRequest(reqId, false);
+      return {
+        success: false,
+        content: '',
+        error: `${PROVIDER_ERROR_PREFIX}${cfg.kind} HTTP ${res.status}: ${responseText.slice(0, 200)}`,
+      };
+    }
+    if (!res.body) throw new Error('El proveedor no devolvió cuerpo de respuesta.');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+
+        const token = extractProviderStreamToken(payload, cfg.kind);
+        if (!token) continue;
+        accumulated += token;
+        onToken(token, accumulated);
+        debugStore.addToken(reqId, token, accumulated);
+      }
+    }
+
+    debugStore.endRequest(reqId, true);
+    return { success: true, content: accumulated };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      debugStore.endRequest(reqId, accumulated.length > 0, true);
+      return { success: accumulated.length > 0, content: accumulated };
+    }
+    debugStore.endRequest(reqId, false);
+    return {
+      success: accumulated.length > 0,
+      content: accumulated,
+      error: `${PROVIDER_ERROR_PREFIX}${cfg.kind}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 async function callGeminiAI(
@@ -461,6 +622,11 @@ async function fallbackNonStreamingAI(
   temperature: number,
   debugContext: string,
 ): Promise<AIResponse> {
+  // 1) Configured provider (OpenAI-compatible / Anthropic / local-with-custom-base).
+  const configured = await callConfiguredProvider(messages, maxTokens, temperature);
+  if (configured?.success) return configured;
+
+  // 2) Legacy Gemini multi-key path.
   const gemini = await callGeminiAI(messages, maxTokens, temperature, purposeFromDebugContext(debugContext));
   if (gemini?.success) return gemini;
 
@@ -469,7 +635,7 @@ async function fallbackNonStreamingAI(
       success: false,
       content: "",
       rating: "unknown",
-      error: "No hay IA disponible. Inicia la IA local o configura una API key de Gemini.",
+      error: "No hay IA disponible. Revisa la configuración del proveedor o inicia la IA local.",
     };
   }
 
@@ -680,10 +846,19 @@ export async function streamLocalAI(
       } catch (_) { /* ignore */ }
     }
 
-    // ── Gemini fallback before mock — this is the real chain from Figma:
-    // IA Local (8010) -> Gemini Key 1 -> Gemini Key 2 -> Mock.
+    // ── Provider chain: IA Local (8010) -> configured provider -> Gemini -> Mock.
     if (isNetwork) {
       markLocalAiUnavailable();
+      const configured = await streamConfiguredProvider(
+        messages,
+        maxTokens,
+        temperature,
+        onToken,
+        signal,
+        debugContext,
+      );
+      if (configured?.success) return configured;
+
       const gemini = await streamGeminiAI(
         messages,
         maxTokens,
@@ -702,7 +877,7 @@ export async function streamLocalAI(
         return {
           success: false,
           content: accumulated,
-          error: "No hay IA disponible. Inicia la IA local o configura una API key de Gemini.",
+          error: "No hay IA disponible. Revisa la configuración del proveedor o inicia la IA local.",
         };
       }
 

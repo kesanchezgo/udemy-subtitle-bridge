@@ -6,6 +6,7 @@ import dockStylesheet from './app/styles/index.css?inline';
 import { THEME_CSS } from './app/styles/sepia-overrides';
 import { InPageDock } from './app/components/InPageDock';
 import { onMessageFromSidebar, sendToSidebar } from './app/services/contentBridge';
+import { initAiProviderConfig } from './app/services/ai-providers';
 import {
 	DOCK_COLLAPSED_WIDTH,
 	DOCK_DEFAULT_WIDTH,
@@ -459,7 +460,10 @@ function parseTimedTextIntoCues(sourceText: string): CapturedCue[] {
 		const text = lines.slice(timeLineIndex + 1).join(' ').replace(/<[^>]+>/g, '').trim();
 
 		if (text && Number.isFinite(startTime) && Number.isFinite(endTime)) {
-			parsed.push({ index, startTime, endTime, text });
+			// A zero-length cue can never win the active-cue window and would be
+			// silently dropped from the overlay. Give it a small visible span.
+			const safeEnd = endTime > startTime ? endTime : startTime + 1.2;
+			parsed.push({ index, startTime, endTime: safeEnd, text });
 			index++;
 		}
 	}
@@ -476,7 +480,7 @@ function parseVttTime(timeStr: string): number {
 	if (parts.length === 2) {
 		return Number(parts[0]) * 60 + Number(parts[1]);
 	}
-	return 0;
+	return Number.NaN;
 }
 
 function isSubtitleLikeTrack(track: TextTrack) {
@@ -599,26 +603,70 @@ function refreshCapturedCuesFromVideo() {
 
 function getCurrentVideoTime(): number | undefined {
 	const video = document.querySelector('video');
-	if (video instanceof HTMLVideoElement && Number.isFinite(video.currentTime)) {
-		return video.currentTime;
+	// Do NOT use `instanceof HTMLVideoElement`: a content script runs in an
+	// isolated world, so DOM nodes are instances of the page's constructors, not
+	// ours. That check silently failed and every cue lookup read `undefined`,
+	// freezing the overlay on the first cue. Duck-type instead.
+	if (video && typeof (video as HTMLVideoElement).currentTime === 'number') {
+		const currentTime = (video as HTMLVideoElement).currentTime;
+		if (Number.isFinite(currentTime)) {
+			return currentTime;
+		}
 	}
 	return undefined;
 }
 
 function getActiveCueTextFromList(cues: CapturedCue[], offsetMs = 0) {
 	const currentTime = getCurrentVideoTime();
-	if (!Number.isFinite(currentTime) || cues.length === 0) {
+	if (cues.length === 0) {
 		return '';
 	}
 
-	const time = (currentTime as number) - (offsetMs / 1000);
-	const active = cues
-		.filter((cue) => time >= cue.startTime - 0.05 && time <= cue.endTime + 0.05)
+	const valid = cues
 		.map((cue) => ({ ...cue, text: normalizeSubtitleText(cue.text) }))
-		.filter((cue) => isValidSubtitleText(cue.text))
-		.sort((a, b) => b.startTime - a.startTime || b.endTime - a.endTime);
+		.filter((cue) => isValidSubtitleText(cue.text));
 
-	return active[0]?.text ?? '';
+	if (valid.length === 0) {
+		return '';
+	}
+
+	// No readable video clock (fresh SPA navigation / element swap). Keep the
+	// last known cue rather than blanking the overlay for a frame.
+	if (!Number.isFinite(currentTime)) {
+		return lastImportedSubtitleText || '';
+	}
+
+	const time = (currentTime as number) - (offsetMs / 1000);
+
+	// Exact hit within the cue window (±50ms, matching native caption timing).
+	const active = valid
+		.filter((cue) => time >= cue.startTime - 0.05 && time <= cue.endTime + 0.05)
+		.sort((a, b) => b.startTime - a.startTime || b.endTime - a.endTime);
+	if (active[0]) {
+		return active[0].text;
+	}
+
+	// No exact hit. Real players drift a few hundred ms from the caption track,
+	// and users pause/scrub between cues. Fall back to the nearest cue while it
+	// is still within a tolerance window instead of blanking the overlay, which
+	// otherwise makes the translation look like it "stopped" after a couple of
+	// cues. A gap strictly larger than the tolerance still clears the text.
+	const CUE_SNAP_TOLERANCE_SECONDS = 1.5;
+	let nearest: CapturedCue | null = null;
+	let nearestDistance = Number.POSITIVE_INFINITY;
+	for (const cue of valid) {
+		const distance = time < cue.startTime ? cue.startTime - time : time - cue.endTime;
+		if (distance < nearestDistance) {
+			nearestDistance = distance;
+			nearest = cue;
+		}
+	}
+
+	if (nearest && nearestDistance <= CUE_SNAP_TOLERANCE_SECONDS) {
+		return nearest.text;
+	}
+
+	return '';
 }
 
 // ── SRT formatting ──
@@ -944,8 +992,10 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 	void readCachedTranslation(currentLectureKey).then((cached) => {
 		if (cached?.srt) {
 			importedEsCues = parseTimedTextIntoCues(cached.srt);
+			logImportedCueDiagnostics('cached SRT', importedEsCues);
 			currentSubtitle = '';
 			resetImportedSubtitleBridge();
+			ensureOverlayVisibleForImportedCues();
 			scanForSubtitleChanges();
 			void sendToSidebar({
 				type: 'PIPELINE_TRANSLATION_RESULT',
@@ -978,8 +1028,10 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 			};
 			if (result.ok && typeof result.srt === 'string' && result.srt.trim()) {
 				importedEsCues = parseTimedTextIntoCues(result.srt);
+				logImportedCueDiagnostics('pipeline SRT', importedEsCues);
 				currentSubtitle = '';
 				resetImportedSubtitleBridge();
+				ensureOverlayVisibleForImportedCues();
 				scanForSubtitleChanges();
 				void writeCachedTranslation(
 					currentLectureKey,
@@ -1015,8 +1067,8 @@ function findVideoContainer() {
 
 	for (const selector of selectors) {
 		const element = document.querySelector(selector);
-		if (element instanceof HTMLElement) {
-			return element;
+		if (element && typeof (element as HTMLElement).getBoundingClientRect === 'function') {
+			return element as HTMLElement;
 		}
 	}
 
@@ -1223,8 +1275,10 @@ function getRenderedVideoRect(video: HTMLVideoElement): DOMRect {
 
 function findOverlayAnchorRect(preferredContainer?: HTMLElement | null): DOMRect | null {
 	const video = document.querySelector('video');
-	if (video instanceof HTMLVideoElement) {
-		const rect = getRenderedVideoRect(video);
+	// Duck-typed: a content-script `instanceof HTMLVideoElement` check fails for
+	// page-owned nodes in an isolated world.
+	if (video && typeof (video as HTMLVideoElement).getBoundingClientRect === 'function') {
+		const rect = getRenderedVideoRect(video as HTMLVideoElement);
 		if (rect.width > 40 && rect.height > 40) {
 			return rect;
 		}
@@ -1250,8 +1304,8 @@ function findOverlayAnchorRect(preferredContainer?: HTMLElement | null): DOMRect
 
 function getOverlayParent() {
 	const fullscreenElement = document.fullscreenElement;
-	if (fullscreenElement instanceof HTMLElement) {
-		return fullscreenElement;
+	if (fullscreenElement && typeof (fullscreenElement as HTMLElement).appendChild === 'function') {
+		return fullscreenElement as HTMLElement;
 	}
 
 	return document.body || document.documentElement;
@@ -1921,6 +1975,61 @@ function clearImportedSubtitleState() {
 	resetImportedSubtitleBridge();
 }
 
+// When ES cues are applied (import or auto-translate), make sure the overlay is
+// on so the translation is visible without an extra manual toggle. Overlay
+// visibility is gated on BOTH visible/enabled AND autoTranslate
+// (see applyOverlayStyle), so autoTranslate must be set too or the element
+// stays display:none even while cues are being detected.
+function ensureOverlayVisibleForImportedCues() {
+	if (importedEsCues.length === 0) return;
+	if (currentConfig.visible && currentConfig.enabled && currentConfig.autoTranslate) return;
+	currentConfig = { ...currentConfig, visible: true, enabled: true, autoTranslate: true };
+	applyOverlayStyle();
+	logOverlaySync('overlay forced visible for imported cues');
+}
+
+// Diagnostics are opt-in via `document.documentElement.dataset.usbDebug = '1'`
+// (a dataset flag is visible across the isolated-world boundary, unlike a
+// window property). Helps debug cue/overlay sync issues in the wild.
+function isUsbDebugEnabled(): boolean {
+	try {
+		return document.documentElement?.dataset?.usbDebug === '1';
+	} catch {
+		return false;
+	}
+}
+
+function logOverlaySync(event: string, text?: string) {
+	try {
+		if (!isUsbDebugEnabled()) return;
+		console.info(`[USG][overlay] ${event}`, {
+			time: getCurrentVideoTime() ?? null,
+			cues: importedEsCues.length,
+			visible: currentConfig.visible,
+			autoTranslate: currentConfig.autoTranslate,
+			offsetMs: currentConfig.offsetMs,
+			text: text ? text.slice(0, 48) : undefined,
+		});
+	} catch {
+		/* diagnostics must never throw */
+	}
+}
+
+function logImportedCueDiagnostics(sourceLabel: string, parsed: CapturedCue[]) {
+	try {
+		if (!isUsbDebugEnabled()) return;
+		const first = parsed[0];
+		const last = parsed[parsed.length - 1];
+		console.info(`[USG][overlay] ${sourceLabel}: ${parsed.length} ES cues`, {
+			first: first ? `${first.startTime.toFixed(2)}–${first.endTime.toFixed(2)} "${first.text.slice(0, 32)}"` : null,
+			last: last ? `${last.startTime.toFixed(2)}–${last.endTime.toFixed(2)} "${last.text.slice(0, 32)}"` : null,
+			videoTime: getCurrentVideoTime() ?? null
+		});
+	} catch {
+		/* diagnostics must never throw */
+	}
+}
+
 function resetRuntimeState() {
 	capturedEnVtt = null;
 	capturedCues = [];
@@ -2485,6 +2594,7 @@ function scanForSubtitleChanges() {
 		if (importedText !== currentSubtitle) {
 			currentSubtitle = importedText;
 			updateOverlayText(importedText);
+			logOverlaySync('cue', importedText);
 			void sendToSidebar({
 				type: 'IMPORTED_ES_LINE_RECEIVED',
 				payload: {
@@ -2500,13 +2610,12 @@ function scanForSubtitleChanges() {
 	}
 
 	if (importedEsCues.length > 0 && currentConfig.autoTranslate) {
+		// getActiveCueTextFromList already snaps to the nearest cue within a
+		// tolerance window, so reaching here means we are in a real gap between
+		// cues (or outside the track). Clear the overlay; no wall-clock grace is
+		// needed and the previous Date.now()-based grace wrongly blanked text
+		// while the video was simply paused.
 		clearPendingSubtitleEmit();
-		const shouldBridgeTinyCueGap =
-			Boolean(lastImportedSubtitleText) &&
-			Date.now() - lastImportedSubtitleAt <= IMPORTED_CUE_GAP_GRACE_MS;
-		if (shouldBridgeTinyCueGap) {
-			return;
-		}
 		if (currentSubtitle) {
 			currentSubtitle = '';
 			updateOverlayText('');
@@ -2681,8 +2790,10 @@ function setupChromeMessageHandler() {
 					: '';
 			const parsed = parseTimedTextIntoCues(srtText);
 			importedEsCues = parsed;
+			logImportedCueDiagnostics('imported SRT (popup)', importedEsCues);
 			currentSubtitle = '';
 			resetImportedSubtitleBridge();
+			ensureOverlayVisibleForImportedCues();
 			scanForSubtitleChanges();
 			sendResponse({ ok: true, importedCount: parsed.length, alreadyLoaded: false });
 			return false;
@@ -2787,6 +2898,7 @@ function bootstrap() {
 	syncUdemyRuntimeForUrl();
 	setupChromeMessageHandler();
 	watchUrlChanges();
+	void initAiProviderConfig();
 
 	// Try to extract cues from video after a delay
 	setTimeout(() => {
@@ -2860,8 +2972,13 @@ function bootstrap() {
 
 		if (message.type === 'AUTO_TRANSLATE_TOGGLE') {
 			const payload = message.payload as { active?: boolean } | undefined;
-			currentConfig = { ...currentConfig, autoTranslate: Boolean(payload?.active) };
-			if (!currentConfig.autoTranslate) {
+			const nextActive = Boolean(payload?.active);
+			// When the user already has an imported/translated ES track, turning off
+			// "auto translate" must NOT blank the overlay: nothing is being
+			// auto-translated, the cues are already there. Keep them visible.
+			const hasImportedTrack = importedEsCues.length > 0;
+			currentConfig = { ...currentConfig, autoTranslate: nextActive };
+			if (!nextActive && !hasImportedTrack) {
 				if (pendingSubtitleEmitTimer != null) {
 					window.clearTimeout(pendingSubtitleEmitTimer);
 					pendingSubtitleEmitTimer = null;
@@ -2869,7 +2986,11 @@ function bootstrap() {
 				pendingSubtitleText = '';
 				updateOverlayText('');
 			}
+			if (hasImportedTrack) {
+				ensureOverlayVisibleForImportedCues();
+			}
 			applyOverlayStyle();
+			logOverlaySync('auto-translate toggle', `active=${nextActive} importedTrack=${hasImportedTrack}`);
 			return;
 		}
 
@@ -2913,8 +3034,10 @@ function bootstrap() {
 		if (message.type === 'IMPORT_ES_SRT') {
 			const payload = message.payload as { srtText?: string } | undefined;
 			importedEsCues = parseTimedTextIntoCues(payload?.srtText ?? '');
+			logImportedCueDiagnostics('imported SRT (dock)', importedEsCues);
 			currentSubtitle = '';
 			resetImportedSubtitleBridge();
+			ensureOverlayVisibleForImportedCues();
 			scanForSubtitleChanges();
 			void sendToSidebar({
 				type: 'IMPORT_ES_SRT_RESULT',
