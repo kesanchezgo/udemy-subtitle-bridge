@@ -1770,19 +1770,51 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
     if (rec.confidence) setConfidence(rec.confidence);
 
-    // Replay user's answers + AI feedback for each question
+    // Replay user's answers + AI feedback for each question.
+    // Attempts are stored in canonical question order, but the on-screen order
+    // (visibleQuestions) is weakness-sorted and can differ. Index the stored
+    // attempts by prompt and resolve each visible question through that map so
+    // answers/feedback never land on the wrong card.
+    const attemptsByPrompt = new Map<string, QuestionAttempt>();
+    rec.questions.forEach((q) => {
+      if (q.prompt) attemptsByPrompt.set(q.prompt, q);
+    });
+
+    const restoredConfidence = rec.confidence ?? null;
+    const canonicalQuestions = restoredConfidence
+      ? restored.questions.filter((q) => QUESTIONS_FOR[restoredConfidence].includes(q.difficulty))
+      : [];
+
     const answers: Record<number, string> = {};
     const feedbacks: Record<number, FeedbackState> = {};
-    rec.questions.forEach((q, i) => {
-      answers[i] = q.answer ?? "";
-      if (q.feedback || q.rating) {
+
+    canonicalQuestions.forEach((cq, i) => {
+      const attempt = attemptsByPrompt.get(cq.q);
+      if (!attempt) return;
+      answers[i] = attempt.answer ?? "";
+      if (attempt.feedback || attempt.rating) {
         feedbacks[i] = {
           status: "done",
-          content: q.feedback ?? "",
-          rating: (q.rating ?? "unknown") as AIRating,
+          content: attempt.feedback ?? "",
+          rating: (attempt.rating ?? "unknown") as AIRating,
         };
       }
     });
+
+    // Legacy snapshots (no prompt stored) fall back to positional mapping.
+    if (!attemptsByPrompt.size && rec.questions.length) {
+      rec.questions.forEach((q, i) => {
+        answers[i] = q.answer ?? "";
+        if (q.feedback || q.rating) {
+          feedbacks[i] = {
+            status: "done",
+            content: q.feedback ?? "",
+            rating: (q.rating ?? "unknown") as AIRating,
+          };
+        }
+      });
+    }
+
     setQuestionAnswers(answers);
     setQuestionFeedbacks(feedbacks);
 
@@ -1849,14 +1881,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       ]);
       if (cancelled) return;
 
-      if (cache && !cache.isMock) {
+      if (cache) {
+        // Render whatever we have, including offline/mock objectives, so the
+        // Study tab is never empty. objectivesMock drives the "generated
+        // locally" notice and lets Regenerar retry against the live AI.
         setDynamicObjectives(cache.objectives);
-        setObjectivesMock(false);
-        setObjectivesError(null);
-      } else if (cache?.isMock) {
-        setDynamicObjectives(null);
-        setObjectivesMock(true);
-        setObjectivesError(cache.error ?? null);
+        setObjectivesMock(Boolean(cache.isMock));
+        setObjectivesError(cache.isMock ? cache.error ?? null : null);
       } else {
         setDynamicObjectives(null);
         setObjectivesMock(false);
@@ -1898,7 +1929,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       setObjectivesLoading(true);
       try {
         const entry = await objectivesService.getOrGenerate(courseName, effectiveCourseDescription);
-        setDynamicObjectives(entry.isMock ? null : entry.objectives);
+        // Always surface the objectives, including the deterministic offline
+        // fallback, so the Study tab renders instead of staying empty.
+        setDynamicObjectives(entry.objectives.length ? entry.objectives : null);
         setObjectivesMock(entry.isMock);
         setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
         setObjectivesExpanded(!lastUsedObjectiveId);
@@ -2123,19 +2156,31 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, confidence, conceptSelectionSignature]);
 
-  const persistQuestionProgress = (idx: number, fb: FeedbackState) => {
-    const q = visibleQuestions[idx];
-    if (!q) return;
-    const attempts: QuestionAttempt[] = visibleQuestions.map((vq, i) => {
-      const f = i === idx ? fb : questionFeedbacks[i];
+  // Persist attempts in the canonical question order (content.questions), not in
+  // the weakness-sorted visibleQuestions order. Rehydration maps by prompt, so a
+  // reorder while answering can no longer shuffle answer/feedback across cards.
+  const persistQuestionsInCanonicalOrder = (idx: number, fb: FeedbackState): QuestionAttempt[] => {
+    const baseQuestions = content
+      ? content.questions.filter(q => confidence && QUESTIONS_FOR[confidence].includes(q.difficulty))
+      : [];
+    const canonical = baseQuestions.length ? baseQuestions : visibleQuestions;
+
+    return canonical.map((cq) => {
+      const vi = visibleQuestions.findIndex(vq => vq.q === cq.q);
+      const f = vi === idx ? fb : vi >= 0 ? questionFeedbacks[vi] : undefined;
       return {
-        prompt: vq.q,
-        answer: questionAnswers[i] ?? "",
+        prompt: cq.q,
+        answer: vi >= 0 ? questionAnswers[vi] ?? "" : "",
         rating: f?.rating,
         feedback: f?.content,
-        answeredAt: i === idx ? Date.now() : undefined,
+        answeredAt: vi === idx ? Date.now() : undefined,
       };
     });
+  };
+
+  const persistQuestionProgress = (idx: number, fb: FeedbackState) => {
+    if (!visibleQuestions[idx]) return;
+    const attempts: QuestionAttempt[] = persistQuestionsInCanonicalOrder(idx, fb);
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,

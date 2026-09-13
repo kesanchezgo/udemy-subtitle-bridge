@@ -23,6 +23,17 @@ type ChromeApi = typeof globalThis & {
   };
 };
 
+// localStorage fallback keys are namespaced per Chrome storage area so the
+// sync and local backends never collide in preview/dev mode.
+const FALLBACK_KEY_PREFIX: Record<"sync" | "local", string> = {
+  sync: "usb_sync_",
+  local: "usb_local_",
+};
+
+// Custom event used to fan out storage changes between components in preview
+// mode, where chrome.storage.onChanged does not exist.
+const FALLBACK_CHANGE_EVENT = "usb_storage_change";
+
 function getChromeStorageArea(area: "sync" | "local" = "sync") {
   const chromeApi = globalThis as ChromeApi;
   return chromeApi.chrome?.storage?.[area] ?? null;
@@ -30,6 +41,35 @@ function getChromeStorageArea(area: "sync" | "local" = "sync") {
 
 function getFallbackStorage() {
   return globalThis.localStorage;
+}
+
+function fallbackKey(area: "sync" | "local", key: string) {
+  return FALLBACK_KEY_PREFIX[area] + key;
+}
+
+function emitFallbackChange(area: "sync" | "local", items: Record<string, unknown>) {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  window.dispatchEvent(
+    new CustomEvent(FALLBACK_CHANGE_EVENT, { detail: { areaName: area, changes: items } })
+  );
+}
+
+function fallbackOnChange(
+  area: "sync" | "local",
+  callback: (changes: Record<string, unknown>) => void,
+): () => void {
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
+    return () => {};
+  }
+
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<{ areaName: string; changes: Record<string, unknown> }>).detail;
+    if (!detail || detail.areaName !== area) return;
+    callback(detail.changes);
+  };
+
+  window.addEventListener(FALLBACK_CHANGE_EVENT, handler);
+  return () => window.removeEventListener(FALLBACK_CHANGE_EVENT, handler);
 }
 
 export const chromeStorage = {
@@ -47,7 +87,7 @@ export const chromeStorage = {
 
     const out: Record<string, unknown> = {};
     for (const key of keys) {
-      const rawValue = getFallbackStorage().getItem(key);
+      const rawValue = getFallbackStorage().getItem(fallbackKey("sync", key));
       if (!rawValue) continue;
       try {
         out[key] = JSON.parse(rawValue);
@@ -73,15 +113,16 @@ export const chromeStorage = {
     }
 
     for (const [key, value] of Object.entries(items)) {
-      getFallbackStorage().setItem(key, JSON.stringify(value));
+      getFallbackStorage().setItem(fallbackKey("sync", key), JSON.stringify(value));
     }
+    emitFallbackChange("sync", items);
   },
 
   onChange(callback: (changes: Record<string, unknown>) => void): () => void {
     const chromeApi = globalThis as ChromeApi;
     const onChanged = chromeApi.chrome?.storage?.onChanged;
     if (!onChanged) {
-      return () => {};
+      return fallbackOnChange("sync", callback);
     }
 
     const listener = (
@@ -116,7 +157,7 @@ export const chromeLocalStorage = {
 
     const out: Record<string, unknown> = {};
     for (const key of keys) {
-      const rawValue = getFallbackStorage().getItem(key);
+      const rawValue = getFallbackStorage().getItem(fallbackKey("local", key));
       if (!rawValue) continue;
       try {
         out[key] = JSON.parse(rawValue);
@@ -142,15 +183,16 @@ export const chromeLocalStorage = {
     }
 
     for (const [key, value] of Object.entries(items)) {
-      getFallbackStorage().setItem(key, JSON.stringify(value));
+      getFallbackStorage().setItem(fallbackKey("local", key), JSON.stringify(value));
     }
+    emitFallbackChange("local", items);
   },
 
   onChange(callback: (changes: Record<string, unknown>) => void): () => void {
     const chromeApi = globalThis as ChromeApi;
     const onChanged = chromeApi.chrome?.storage?.onChanged;
     if (!onChanged) {
-      return () => {};
+      return fallbackOnChange("local", callback);
     }
 
     const listener = (
@@ -192,5 +234,6 @@ export async function removeStorageValue(key: string): Promise<void> {
     return;
   }
 
-  getFallbackStorage().removeItem(key);
+  getFallbackStorage().removeItem(fallbackKey("sync", key));
+  emitFallbackChange("sync", { [key]: undefined });
 }

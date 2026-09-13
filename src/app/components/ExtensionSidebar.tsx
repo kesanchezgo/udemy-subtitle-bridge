@@ -242,7 +242,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const translateAbortRef = useRef<AbortController | null>(null);
 
   // ── Bridge / connection state ─────────────────────────────────────────────
-  const [, setContentScriptConnected] = useState(false);
+  const [contentScriptConnected, setContentScriptConnected] = useState(false);
   const [syncPulse, setSyncPulse]                           = useState(false);
 
   // ── Local API status via background health check ─────────────────────────
@@ -494,17 +494,24 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   }, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset, hasCustomPos, customPosX, customPosY]);
 
   // ── Auto-translate toggle sync ────────────────────────────────────────────
+  // Only fire on the toggle itself; live-overlay pushes are handled below.
   useEffect(() => {
     contentBridge.sendToContent({ type: "AUTO_TRANSLATE_TOGGLE", payload: { active: autoTranslate } });
     if (!autoTranslate) {
       translateAbortRef.current?.abort();
       setLiveEs("");
       pushOverlayText("");
-    } else if (liveEn && showOverlay) {
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTranslate]);
+
+  // ── Live overlay text push (per incoming cue) ─────────────────────────────
+  useEffect(() => {
+    if (autoTranslate && liveEn && showOverlay) {
       pushOverlayText(liveEs || liveEn);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoTranslate, liveEn, liveEs, showOverlay]);
+  }, [liveEn, liveEs, showOverlay]);
 
   // ── Live caption ticker ───────────────────────────────────────────────────
   useEffect(() => {
@@ -868,6 +875,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   />
                   <StatusRow label="IA local (8010)"          status={localConnected ? "Conectada" : "Sin conexión"}         ok={localConnected} pulse={localConnected}/>
                   <StatusRow label="Traducción activa"        status={autoTranslate ? "En curso" : "Pausada"}                ok={autoTranslate}/>
+                  <StatusRow label="Content script"           status={contentScriptConnected ? "Activo" : "Esperando…"}      ok={contentScriptConnected} pulse={contentScriptConnected}/>
                   {hasKeys && (
                     <StatusRow label="Gemini fallback"        status={`${configuredGeminiKeys.length} keys en rotación`}   ok={true}  pulse/>
                   )}

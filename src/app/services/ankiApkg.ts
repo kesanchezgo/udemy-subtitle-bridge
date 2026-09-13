@@ -31,6 +31,14 @@ function stableNumericId(input: string, offset: number) {
   return offset + hash;
 }
 
+// Advances on every apkg build so ids never repeat within a session, even when
+// two exports happen in the same wall-clock second. The stride dwarfs any
+// realistic card count, keeping note ids and card ids in disjoint bands.
+let idStrideCounter = 0;
+function nextIdStride(): number {
+  return idStrideCounter++ * 10_000_000;
+}
+
 function sanitizeTags(tags: string[]) {
   return tags
     .map((tag) => String(tag || '').trim().replace(/\s+/g, '-').replace(/[,\t\r\n]+/g, '-'))
@@ -81,10 +89,10 @@ function buildModelJson(modelId: number, modelCss: string, frontTemplate: string
           bqfmt: '',
           bafmt: '',
           did: null,
-          sticky: false,
-          req: [[0, 'any', [0]]]
+          sticky: false
         }
       ],
+      req: [[0, 'any', [0]]],
       flds: [
         { name: 'Front', ord: 0, sticky: false, rtl: false, font: 'Arial', size: 20, media: [], strip: false },
         { name: 'Back', ord: 1, sticky: false, rtl: false, font: 'Arial', size: 20, media: [], strip: false }
@@ -168,7 +176,7 @@ function createCollectionSchema(db: any, deckId: number, deckName: string, model
       usn integer not null,
       tags text not null,
       flds text not null,
-      sfld integer not null,
+      sfld text not null,
       csum integer not null,
       flags integer not null,
       data text not null
@@ -258,13 +266,17 @@ export async function buildAnkiApkg(
   const deckId = stableNumericId(deckName, 1_700_000_000_000);
   const modelId = stableNumericId('Subtitle Bridge Basic', 1_800_000_000_000);
   const nowSec = Math.floor(Date.now() / 1000);
+  // Monotonic note-id base: two exports in the same second must not reuse ids,
+  // or Anki merges the new notes into the previous ones. Each call advances the
+  // base by a stride larger than any realistic card count.
+  const idBase = nowSec * 1000 + nextIdStride();
 
   createCollectionSchema(db, deckId, deckName, modelId, modelCss, frontTemplate, backTemplate);
 
   for (let index = 0; index < cards.length; index += 1) {
     const card = cards[index];
-    const noteId = nowSec * 1000 + index;
-    const cardId = nowSec * 1000 + index + 100_000;
+    const noteId = idBase + index;
+    const cardId = idBase + index + 1_000_000;
     const tags = Array.isArray(card.tags) ? sanitizeTags(card.tags) : '';
     const front = String(card.front || '');
     const back = String(card.back || '');
@@ -327,8 +339,10 @@ export async function buildAnkiApkg(
 }
 
 export function downloadApkg(data: Uint8Array, filename: string): void {
-  const payload = new Uint8Array(Array.from(data)).buffer;
-  const blob = new Blob([payload], { type: 'application/octet-stream' });
+  // Pass the Uint8Array straight to Blob. Going through Array.from() would
+  // materialize a second copy of the whole archive in memory. The cast only
+  // narrows the backing buffer type; no data is copied.
+  const blob = new Blob([data as BlobPart], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

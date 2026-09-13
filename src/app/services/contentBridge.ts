@@ -42,6 +42,14 @@ export interface BridgeMessage {
 const USB_TO_CONTENT_EVENT = "usb_to_content";
 const USB_TO_SIDEBAR_EVENT = "usb_to_sidebar";
 
+// Message types handled by the content script's own chrome.runtime listener
+// (setupChromeMessageHandler). The bridge's passive runtime listener must skip
+// them so a single popup action is not processed twice.
+const DEDICATED_HANDLER_TYPES = new Set<string>([
+  "TOGGLE_DOCK_VISIBILITY",
+  "SET_DOCK_VISIBILITY",
+]);
+
 function getChromeApi(): ChromeApi["chrome"] | undefined {
   const chromeApi = globalThis as ChromeApi;
   return chromeApi.chrome;
@@ -83,7 +91,8 @@ function safeRuntimeSendMessage(message: BridgeMessage): void {
 
 function addRuntimeListener(
   callback: (message: BridgeMessage) => void,
-  withSendResponse: boolean
+  withSendResponse: boolean,
+  skipTypes?: Set<string>
 ): (() => void) | null {
   const chromeApi = getChromeApi();
   if (!chromeApi?.runtime?.onMessage) return null;
@@ -93,6 +102,11 @@ function addRuntimeListener(
     _sender?: unknown,
     sendResponse?: (r: unknown) => void
   ) => {
+    // Types owned by the content script's dedicated runtime handler are skipped
+    // here so the same message is not processed (and, for toggles, applied) twice.
+    if (skipTypes && msg && skipTypes.has(msg.type)) {
+      return undefined;
+    }
     callback(msg);
     if (withSendResponse && typeof sendResponse === "function") {
       sendResponse({ ok: true });
@@ -181,8 +195,12 @@ export const contentBridge = {
     // On web page context we support BOTH:
     // - window events (in-page dock <-> content script)
     // - runtime messages (popup/background -> content script via tabs.sendMessage)
+    //
+    // The runtime listener is passive (no sendResponse) and skips the visibility
+    // toggles, which setupChromeMessageHandler() already owns; otherwise those
+    // toggles would be applied twice and race each other.
     const cleanupWindow = addWindowListener(USB_TO_CONTENT_EVENT, callback);
-    const cleanupRuntime = addRuntimeListener(callback, true);
+    const cleanupRuntime = addRuntimeListener(callback, false, DEDICATED_HANDLER_TYPES);
     return () => {
       cleanupWindow?.();
       cleanupRuntime?.();

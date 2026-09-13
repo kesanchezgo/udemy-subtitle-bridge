@@ -290,7 +290,13 @@ export const historyService = {
         : clearProgress
           ? undefined
           : prev?.completedAt,
-      deletedAt: clearProgress ? undefined : prev?.deletedAt,
+      deletedAt: clearProgress
+        ? undefined
+        // A new upsert that carries real progress revives a tombstoned lecture;
+        // otherwise the record would stay hidden from the UI forever.
+        : (partial.studyContent || partial.confidence || partial.questions?.length || partial.codeChallenge || partial.ankiCards?.length || partial.status === "completed")
+          ? undefined
+          : prev?.deletedAt,
       version:      (prev?.version ?? 0) + 1,
     };
 
@@ -432,7 +438,9 @@ export const historyService = {
 
   /** Export the full namespace for Supabase sync / backup. */
   async exportAll(): Promise<LectureHistoryRecord[]> {
-    return this.listLectures();
+    // Exclude tombstones: deleted lectures must not be pushed to the cloud,
+    // otherwise they clutter sync and can come back as ghost records.
+    return (await this.listLectures()).filter((rec) => !rec.deletedAt);
   },
 
   /**
