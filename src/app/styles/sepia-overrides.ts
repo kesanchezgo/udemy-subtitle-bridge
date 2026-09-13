@@ -636,7 +636,8 @@ export const THEME_CSS = `
 .usb-dock.dock-sepia [class*="to-teal-950"],
 .usb-dock.dock-sepia [class*="to-rose-950"] {
   background-image: linear-gradient(135deg, rgba(247,249,250,0.88) 0%, rgba(255,255,255,0.92) 100%) !important;
-  backdrop-filter: blur(8px) saturate(140%) !important;
+  /* No backdrop-filter here: it forces GPU rasterization of the subtree and
+     softens any text/icons inside. The opaque gradient already reads correctly. */
 }
 
 /* ════════════════════════════════════════════════════════════════

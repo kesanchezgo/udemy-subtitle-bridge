@@ -542,7 +542,7 @@ export function TranslationPipeline({
             <button
               onClick={() => setRunCount(n => n + 1)}
               disabled={!autoTranslate}
-              className="flex items-center gap-1 text-[9px] text-white/25 hover:text-white/55 disabled:opacity-30 disabled:cursor-not-allowed border border-white/8 hover:border-white/15 px-1.5 py-0.5 rounded transition-colors"
+              className="flex items-center gap-1 text-[9px] text-white/25 hover:text-white/55 disabled:opacity-30 disabled:cursor-not-allowed border border-[var(--usb-border)] hover:border-white/15 px-1.5 py-0.5 rounded transition-colors"
             >
               <RefreshCcw size={7} />Retranducir
             </button>
@@ -564,7 +564,7 @@ export function TranslationPipeline({
                 ? { scale: [1, 1.35, 1], boxShadow: ["0 0 0px #0ea5e9","0 0 10px #0ea5e9","0 0 0px #0ea5e9"] }
                 : {}}
               transition={{ duration: 1.4, repeat: isBuilding ? Infinity : 0 }}
-              className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
+              className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[var(--usb-bg-1)] ${
                 phase !== "idle" ? "border-sky-500/50" : "border-white/10"
               }`}
             >
@@ -616,10 +616,10 @@ export function TranslationPipeline({
         <div className={`px-4 py-2.5 relative z-10 transition-colors duration-500 ${
           isSending || isStreaming
             ? "bg-violet-500/5 border-y border-violet-500/10"
-            : "border-y border-white/5 bg-white/[0.015]"
+            : "border-y border-[var(--usb-divider)] bg-white/[0.015]"
         }`}>
           <div className="flex items-center gap-2">
-            <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
+            <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[var(--usb-bg-1)] ${
               isSending || isStreaming ? "border-violet-500/50" : "border-white/10"
             }`}>
               <Radio size={8} className={`transition-colors ${isSending || isStreaming ? "text-violet-400" : "text-white/20"}`} />
@@ -690,7 +690,7 @@ export function TranslationPipeline({
                 ? { scale: [1, 1.2, 1], boxShadow: ["0 0 0px #10b981","0 0 10px #10b981","0 0 0px #10b981"] }
                 : {}}
               transition={{ duration: 0.8 }}
-              className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[#121214] ${
+              className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[var(--usb-bg-1)] ${
                 isDone ? "border-emerald-500/50" : isStreaming ? "border-violet-400/50" : "border-white/10"
               }`}
             >
@@ -779,7 +779,7 @@ export function TranslationPipeline({
       </div>
 
       {/* ── Expandable Prompt section ─────────────────────────────────────── */}
-      <div className="rounded-xl border border-white/6 bg-[#0d0e0f] overflow-hidden">
+      <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-4)] overflow-hidden">
         <button
           onClick={() => setShowPrompt(v => !v)}
           className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white/3 transition-colors"
@@ -807,7 +807,7 @@ export function TranslationPipeline({
               transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
               className="overflow-hidden"
             >
-              <div className="border-t border-white/5">
+              <div className="border-t border-[var(--usb-divider)]">
                 {/* Copy button */}
                 <div className="flex items-center justify-between px-3 py-2">
                   <p className="text-white/22 text-[9px]">
@@ -818,7 +818,7 @@ export function TranslationPipeline({
                     className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border transition-all ${
                       promptCopied
                         ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/8"
-                        : "text-white/35 hover:text-white/65 border-white/8 hover:border-white/18"
+                        : "text-white/35 hover:text-white/65 border-[var(--usb-border)] hover:border-white/18"
                     }`}
                     style={{ fontWeight: 600 }}
                   >
@@ -827,7 +827,7 @@ export function TranslationPipeline({
                 </div>
 
                 {/* Prompt text */}
-                <div className="mx-3 mb-3 bg-[#070809] border border-white/6 rounded-lg overflow-hidden">
+                <div className="mx-3 mb-3 bg-[var(--usb-bg-0)] border border-[var(--usb-border)] rounded-lg overflow-hidden">
                   <pre className="px-3 py-2.5 text-[9px] text-white/45 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
                     {TRANSLATION_PROMPT}
                   </pre>

@@ -741,7 +741,7 @@ function AIFeedback({
         <motion.div
           initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
           transition={{ delay: 0.32, duration: 0.22 }}
-          className="border-t border-white/6 px-3 py-2.5 flex items-center gap-2"
+          className="border-t border-[var(--usb-border)] px-3 py-2.5 flex items-center gap-2"
         >
           <span className="text-white/20 text-[9px] uppercase tracking-wider shrink-0" style={{ fontWeight: 600 }}>
             Siguiente paso
@@ -779,7 +779,7 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between text-[11px] font-medium tracking-wide">
-        <span className="text-white/30 bg-white/5 px-2 py-0.5 rounded-full border border-white/5 shadow-inner">
+        <span className="text-white/30 bg-white/5 px-2 py-0.5 rounded-full border border-[var(--usb-divider)] shadow-inner">
           {idx+1} de {cards.length}
         </span>
         <motion.span
@@ -789,7 +789,7 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
           className={`${meta.color} flex items-center gap-1.5 bg-white/5 px-2 py-0.5 rounded-full border`}
           style={{ borderColor: `${meta.accent}38`, boxShadow: `0 0 10px ${meta.accent}26` }}
         >
-          <span className="drop-shadow-md">{meta.icon}</span> {meta.label}
+          <span style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{meta.icon}</span> {meta.label}
         </motion.span>
       </div>
       <div className="relative cursor-pointer select-none group" style={{ perspective:"1200px" }} onClick={() => setFlipped(v => !v)}>
@@ -797,7 +797,7 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
           {/* Front */}
           <div className="bg-gradient-to-b from-[#18181b] to-[#121214] border border-white/10 rounded-xl p-4 min-h-[100px] flex flex-col justify-between shadow-[0_8px_30px_rgba(0,0,0,0.4)] group-hover:border-white/20 transition-colors" style={{ backfaceVisibility:"hidden" }}>
             <p className="text-white/80 text-[12px] leading-relaxed font-medium">{strip(card.front)}</p>
-            <div className="flex items-center justify-center gap-1.5 mt-3 pt-3 border-t border-white/5">
+            <div className="flex items-center justify-center gap-1.5 mt-3 pt-3 border-t border-[var(--usb-divider)]">
               <FlipHorizontal size={11} className="text-white/30 group-hover:text-white/60 transition-colors" />
               <span className="text-white/30 text-[10px] tracking-wide font-medium group-hover:text-white/60 transition-colors">Toca para voltear</span>
             </div>
@@ -1215,7 +1215,7 @@ function VerifyDoneReview({
             fb.rating === "wrong" ? "bg-rose-400" : "bg-white/10";
           const isOpen = openIdx === i;
           return (
-            <div key={i} className="border border-white/6 rounded-xl overflow-hidden">
+            <div key={i} className="border border-[var(--usb-border)] rounded-xl overflow-hidden">
               <button onClick={() => setOpenIdx(isOpen ? null : i)}
                 className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-white/3 transition-colors">
                 <div className={`mt-[3px] w-2 h-2 rounded-full shrink-0 ${ratingDot}`} />
@@ -1227,7 +1227,7 @@ function VerifyDoneReview({
               <AnimatePresence>
                 {isOpen && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                    <div className="border-t border-white/5 px-3 py-2.5 space-y-2.5 bg-black/15">
+                    <div className="border-t border-[var(--usb-divider)] px-3 py-2.5 space-y-2.5 bg-black/15">
                       {answers[i] && (
                         <div>
                           <p className="text-white/20 text-[8px] uppercase tracking-widest mb-1">Tu respuesta</p>
@@ -1235,7 +1235,7 @@ function VerifyDoneReview({
                         </div>
                       )}
                       {fb?.content && (
-                        <div className="border-t border-white/5 pt-2">
+                        <div className="border-t border-[var(--usb-divider)] pt-2">
                           <p className="text-white/20 text-[8px] uppercase tracking-widest mb-1">Feedback IA</p>
                           <p className={`text-[10px] leading-relaxed ${ratingColor}`}>{fb.content.split("\n").filter(Boolean)[0]}</p>
                         </div>
@@ -2584,9 +2584,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               key="hist-drawer"
               initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
-              className="absolute inset-y-0 right-0 z-50 w-[88%] max-w-[360px] bg-[#0f0f12] border-l border-white/8 shadow-2xl flex flex-col"
+              className="absolute inset-y-0 right-0 z-50 w-[88%] max-w-[360px] bg-[var(--usb-bg-1)] border-l border-[var(--usb-border)] shadow-2xl flex flex-col"
             >
-              <div className="flex items-center justify-between px-3.5 py-3 border-b border-white/6 shrink-0">
+              <div className="flex items-center justify-between px-3.5 py-3 border-b border-[var(--usb-border)] shrink-0">
                 <div className="flex items-center gap-2">
                   <History size={13} className="text-violet-400" />
                   <span className="text-white/80 text-[12px]" style={{ fontWeight: 600 }}>Historial de estudio</span>
@@ -2626,11 +2626,11 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
         {/* ══ OBJECTIVE ══ */}
         {phase === "objective" && (
-          <motion.div key="obj" initial={{ opacity: 0, y: 10, filter: "blur(2px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, y: -10, filter: "blur(2px)" }} transition={{ duration: 0.3 }}
+          <motion.div key="obj" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3 }}
             className="flex-1 overflow-y-auto custom-scrollbar p-3.5 space-y-4">
 
             {/* Hero header */}
-            <div className="bg-white/[0.03] border border-white/8 rounded-xl p-3.5">
+            <div className="bg-white/[0.03] border border-[var(--usb-border)] rounded-xl p-3.5">
               <div className="flex items-center gap-2 mb-1.5">
                 <div className="w-6 h-6 rounded-lg bg-violet-500/12 flex items-center justify-center">
                   <Brain size={13} className="text-violet-400"/>
@@ -2657,7 +2657,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               {objectivesLoading && !dynamicObjectives && (
                 <div className="grid grid-cols-2 gap-2">
                   {[0,1,2,3].map(i => (
-                    <div key={i} className="h-[68px] rounded-xl bg-white/3 border border-white/5 animate-pulse"/>
+                    <div key={i} className="h-[68px] rounded-xl bg-white/3 border border-[var(--usb-divider)] animate-pulse"/>
                   ))}
                 </div>
               )}
@@ -2701,7 +2701,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       <button onClick={() => { setSelectedObj(hero.id); setCustomObj(""); setRefinedObj(""); }}
                         className={`relative w-full text-left p-3.5 rounded-xl border transition-all overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/4 border-white/10 hover:bg-white/6"}`}>
                         <div className="flex items-start gap-2.5">
-                          <span className="text-[18px] drop-shadow-md">{hero.icon}</span>
+                          <span className="text-[18px]" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{hero.icon}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-0.5">
                               <p className="text-white/85 text-[12px] leading-tight" style={{ fontWeight: 600 }}>{hero.title}</p>
@@ -2713,7 +2713,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         </div>
                       </button>
                       <button onClick={() => setObjectivesExpanded(true)}
-                        className="w-full h-7 rounded-lg bg-white/3 border border-white/7 text-white/45 hover:text-white/70 hover:bg-white/5 text-[10px] flex items-center justify-center gap-1 transition-all">
+                        className="w-full h-7 rounded-lg bg-white/3 border border-[var(--usb-border)] text-white/45 hover:text-white/70 hover:bg-white/5 text-[10px] flex items-center justify-center gap-1 transition-all">
                         Cambiar enfoque <ChevronDown size={10}/>
                       </button>
                     </div>
@@ -2756,7 +2756,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   ease: [0.22, 1, 0.36, 1],
                                 }}
                                 onClick={() => { setSelectedObj(obj.id); setCustomObj(""); setRefinedObj(""); }}
-                                className={`relative text-left p-3 rounded-xl border transition-colors overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/3 border-white/7 hover:bg-white/5 hover:border-white/12"}`}>
+                                className={`relative text-left p-3 rounded-xl border transition-colors overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/3 border-[var(--usb-border)] hover:bg-white/5 hover:border-white/12"}`}>
                                 {/* Per-card reveal flash on regenerate */}
                                 <motion.span
                                   aria-hidden
@@ -2769,7 +2769,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   initial={{ rotate: -18, scale: 0.6, opacity: 0 }}
                                   animate={{ rotate: 0, scale: 1, opacity: 1 }}
                                   transition={{ delay: i * 0.08 + 0.12, type: "spring", stiffness: 260, damping: 16 }}
-                                  className="relative text-[12px] block mb-1.5 drop-shadow-md">{obj.icon}</motion.span>
+                                  className="relative text-[12px] block mb-1.5" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{obj.icon}</motion.span>
                                 <motion.p
                                   initial={{ opacity: 0, x: -4 }}
                                   animate={{ opacity: 1, x: 0 }}
@@ -2835,7 +2835,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       else { setSelectedObj(fallbackId); setRefinedObj(""); setRefinedFromText(""); }
                     }}
                     placeholder="Ej: Conseguir trabajo en fintech como Java dev en 3 meses…"
-                    className={`w-full h-[44px] text-[11px] rounded-lg bg-black/25 border ${isCustomActive ? "border-violet-500/35" : "border-white/8"} text-white/65 placeholder:text-white/16 p-2.5 resize-none outline-none focus:border-violet-500/30 transition-colors leading-relaxed`}/>
+                    className={`w-full h-[44px] text-[11px] rounded-lg bg-black/25 border ${isCustomActive ? "border-violet-500/35" : "border-[var(--usb-border)]"} text-white/65 placeholder:text-white/16 p-2.5 resize-none outline-none focus:border-violet-500/30 transition-colors leading-relaxed`}/>
 
                   <AnimatePresence mode="wait">
                     {/* No refined version yet → primary CTA */}
@@ -2895,12 +2895,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
             <div className="space-y-1.5">
               <p className="text-white/20 text-[9px] uppercase tracking-wider">Datos del curso</p>
               <input value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Nombre del curso (para mazo Anki)"
-                className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-white/7 text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
+                className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
-                className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-white/7 text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
+                className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
               <textarea value={courseDescription} onChange={e => setCourseDescription(e.target.value)}
                 placeholder="Descripción breve del curso (ayuda a la IA a generar mejores objetivos)"
-                className="w-full h-[52px] text-[11px] rounded-lg bg-black/25 border border-white/7 text-white/60 placeholder:text-white/18 p-2.5 resize-none outline-none focus:border-violet-500/25 transition-colors leading-relaxed custom-scrollbar-thin"/>
+                className="w-full h-[52px] text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 p-2.5 resize-none outline-none focus:border-violet-500/25 transition-colors leading-relaxed custom-scrollbar-thin"/>
             </div>
 
             {/* Transcript indicator */}
@@ -2938,7 +2938,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
             <div className="w-full space-y-2">
               {GEN_STEPS.map((s, i) => (
                 <motion.div key={s} initial={{ opacity: 0.3 }} animate={{ opacity: i <= genStep ? 1 : 0.3 }} className="flex items-center gap-2.5">
-                  <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-all ${i < genStep ? "bg-emerald-500/15 border-emerald-500/30" : i === genStep ? "bg-violet-500/15 border-violet-500/30 animate-pulse" : "bg-white/4 border-white/8"}`}>
+                  <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-all ${i < genStep ? "bg-emerald-500/15 border-emerald-500/30" : i === genStep ? "bg-violet-500/15 border-violet-500/30 animate-pulse" : "bg-white/4 border-[var(--usb-border)]"}`}>
                     {i < genStep ? <Check size={8} className="text-emerald-400"/> : i === genStep ? <Loader2 size={8} className="text-violet-400 animate-spin"/> : <Circle size={6} className="text-white/15"/>}
                   </div>
                   <span className={`text-[11px] ${i <= genStep ? "text-white/65" : "text-white/20"}`}>{s}</span>
@@ -2950,11 +2950,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
         {/* ══ RESULT ══ */}
         {phase === "result" && content && (
-          <motion.div key="result" initial={{ opacity: 0, y: 15, filter: "blur(4px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, filter: "blur(4px)" }} transition={{ duration: 0.4, ease: "easeOut" }}
+          <motion.div key="result" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.4, ease: "easeOut" }}
             ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar">
 
-            {/* Sticky header */}
-            <div className="sticky top-0 z-20 bg-[#1c1d1f]/95 backdrop-blur-sm border-b border-white/6 px-3.5 py-2">
+            {/* Sticky header — solid bg (no backdrop-filter) so its text and
+                icons stay crisp instead of being rasterized into a blur layer. */}
+            <div className="sticky top-0 z-20 bg-[var(--usb-bg-2)] border-b border-[var(--usb-border)] px-3.5 py-2">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <BookOpen size={10} className="text-violet-400 shrink-0"/>
@@ -2996,7 +2997,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               </AnimatePresence>
 
               {/* ── Relevance bar ── */}
-              <div className="flex items-center gap-2 bg-white/3 border border-white/6 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 bg-white/3 border border-[var(--usb-border)] rounded-lg px-3 py-2">
                 <div className="h-1 flex-1 bg-white/6 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${content.relevance.score}%` }}
                     transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full"/>
@@ -3055,7 +3056,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                   <p className="text-white/35 text-[11px] leading-relaxed">Sé honesto — calibra todo lo que sigue. No hay respuesta incorrecta ni buena ni mala.</p>
                 </div>
 
-                <div className="bg-[#131315] border border-white/7 rounded-xl p-3.5">
+                <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-3.5">
                   <StepHeader n={1} label="¿Cómo llegaste al video?" subLabel="mi nivel" status={confidence ? "done" : "active"}/>
                   <div className="grid grid-cols-2 gap-2">
                     {CONFIDENCE.map(c => (
@@ -3067,7 +3068,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         className={`relative flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all overflow-hidden ${
                           confidence === c.id
                             ? `${c.bg} ${c.border} shadow-[0_0_18px_rgba(0,0,0,0.3)] ring-1 ${c.ring}`
-                            : "bg-white/3 border-white/7 hover:bg-white/6 hover:border-white/14"
+                            : "bg-white/3 border-[var(--usb-border)] hover:bg-white/6 hover:border-white/14"
                         }`}>
                         {/* Shimmer on selected */}
                         {confidence === c.id && (
@@ -3103,7 +3104,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -4, scale: 0.97 }}
                         transition={{ type: "spring", stiffness: 380, damping: 28, delay: 0.15 }}
-                        className="mt-3 pt-3 border-t border-white/6 flex items-start gap-2.5"
+                        className="mt-3 pt-3 border-t border-[var(--usb-border)] flex items-start gap-2.5"
                       >
                         <motion.span
                           animate={{ rotate: [0, -8, 8, -4, 0] }}
@@ -3135,7 +3136,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     <p className="text-white/35 text-[11px] leading-relaxed">Marca solo los que realmente entendiste. Usaremos eso para priorizar tus preguntas.</p>
                   </div>
 
-                  <div className="bg-[#131315] border border-white/7 rounded-xl overflow-hidden">
+                  <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
                     {/* Header with live counter */}
                     <div className="flex items-center justify-between px-3.5 pt-3.5 pb-1">
                       <StepHeader n={2} label="Lo que aprendiste" subLabel={isLocked ? "registrado ✓" : "marca los que te quedaron"} status={isReady ? "done" : "active"}/>
@@ -3146,7 +3147,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         className={`shrink-0 ml-2 mb-3.5 px-2 py-0.5 rounded-full text-[10px] font-mono border transition-all ${
                           isReady
                             ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
-                            : "bg-white/5 border-white/8 text-white/30"
+                            : "bg-white/5 border-[var(--usb-border)] text-white/30"
                         }`}
                       >
                         {checkedCount}/{total}
@@ -3169,7 +3170,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           <div className={`mt-0.5 w-4 h-4 rounded-md border flex items-center justify-center shrink-0 transition-all ${
                             conceptsChecked[i]
                               ? "bg-emerald-500/20 border-emerald-500/40 shadow-[0_0_8px_rgba(52,211,153,0.2)]"
-                              : isLocked ? "border-white/8" : "border-white/12 group-hover:border-white/25"
+                              : isLocked ? "border-[var(--usb-border)]" : "border-white/12 group-hover:border-white/25"
                           }`}>
                             <AnimatePresence mode="wait">
                               {conceptsChecked[i] && (
@@ -3267,8 +3268,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     onGoApply={() => goToStep(3)}
                   />
                 )}
-                <div className={`bg-[#131315] border border-white/7 rounded-xl overflow-hidden ${questionsComplete ? "hidden" : ""}`}>
-                    <div className="px-3.5 pt-3.5 pb-2.5 border-b border-white/5">
+                <div className={`bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden ${questionsComplete ? "hidden" : ""}`}>
+                    <div className="px-3.5 pt-3.5 pb-2.5 border-b border-[var(--usb-divider)]">
                       <div className="flex items-center justify-between">
                         <StepHeader n={3} label="¿Cuánto retuviste?" status={questionsComplete ? "done" : "active"}/>
                         <div className="flex items-center gap-1.5 shrink-0 ml-2 pb-3.5">
@@ -3315,7 +3316,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           <div className="hidden">���</div>
                           <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>¡Comprensión verificada!</p>
                           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none animate-[spin_15s_linear_infinite]" />
-                          <div className="text-4xl drop-shadow-[0_0_15px_rgba(52,211,153,0.3)] relative z-10 animate-[bounce_2s_ease-in-out_infinite] mt-2">🚀</div>
+                          <div className="text-4xl relative z-10 animate-[bounce_2s_ease-in-out_infinite] mt-2" style={{ textShadow: "0 0 15px rgba(52,211,153,0.3)" }}>🚀</div>
                           <p className="text-white/40 text-[10px] relative z-10 pt-1">La IA confirmó que captaste los conceptos clave. Continúa con la práctica.</p>
                         </motion.div>
                       ) : (
@@ -3340,7 +3341,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
                                   showHint
                                     ? "bg-amber-500/8 border-amber-500/20 text-amber-300/80"
-                                    : "bg-white/3 border-white/7 text-white/28 hover:text-white/50 hover:border-white/14"
+                                    : "bg-white/3 border-[var(--usb-border)] text-white/28 hover:text-white/50 hover:border-white/14"
                                 }`}>
                                 <Sparkles size={9} className="shrink-0 text-amber-400/60" />
                                 <span className="text-[10px] flex-1">{showHint ? "Ocultar pista" : "Ver pista"}</span>
@@ -3366,7 +3367,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                     ? "border-amber-500/25"
                                     : qfb?.status === "done" && qfb.rating === "wrong"
                                     ? "border-rose-500/22"
-                                    : "border-white/8 focus:border-violet-500/35";
+                                    : "border-[var(--usb-border)] focus:border-violet-500/35";
                                 return (
                                   <div className="relative">
                                     <textarea value={questionAnswers[i] || ""}
@@ -3437,7 +3438,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                     className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
                                       showModelAnswer
                                         ? "bg-white/5 border-white/10 text-white/55"
-                                        : "border-white/6 text-white/25 hover:text-white/45 hover:border-white/12"
+                                        : "border-[var(--usb-border)] text-white/25 hover:text-white/45 hover:border-white/12"
                                     }`}>
                                     <span className="text-[10px] flex-1">Respuesta modelo</span>
                                     <ChevronDown size={9} className={`shrink-0 transition-transform text-white/30 ${showModelAnswer ? "rotate-180" : ""}`}/>
@@ -3445,7 +3446,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   <AnimatePresence>
                                     {showModelAnswer && (
                                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                                        <div className="bg-white/3 border border-white/8 rounded-xl px-3 py-2.5 text-[11px] text-white/50 leading-relaxed whitespace-pre-line">
+                                        <div className="bg-white/3 border border-[var(--usb-border)] rounded-xl px-3 py-2.5 text-[11px] text-white/50 leading-relaxed whitespace-pre-line">
                                           {q.answer}
                                         </div>
                                       </motion.div>
@@ -3483,7 +3484,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     </p>
                   </div>
 
-                  <div ref={applyRef} className="bg-[#131315] border border-white/7 rounded-xl overflow-hidden">
+                  <div ref={applyRef} className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
                     <div className="px-3.5 pt-3.5 pb-2">
                       <StepHeader
                         n={4}
@@ -3500,9 +3501,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     </div>
 
                     {content.application.isCode ? (
-                      <pre className="mx-3.5 mb-3 bg-black/50 border border-white/6 rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
+                      <pre className="mx-3.5 mb-3 bg-black/50 border border-[var(--usb-border)] rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
                     ) : (
-                      <div className="mx-3.5 mb-3 bg-black/35 border border-white/6 rounded-xl p-3 text-[11px] text-white/68 overflow-x-auto leading-relaxed shadow-inner whitespace-pre-wrap">{content.application.challenge}</div>
+                      <div className="mx-3.5 mb-3 bg-black/35 border border-[var(--usb-border)] rounded-xl p-3 text-[11px] text-white/68 overflow-x-auto leading-relaxed shadow-inner whitespace-pre-wrap">{content.application.challenge}</div>
                     )}
 
                     <div className="px-3.5 pb-3.5 space-y-2.5">
@@ -3524,7 +3525,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                               ? "border-amber-500/25"
                               : appFeedback.status === "done" && appFeedback.rating === "wrong"
                               ? "border-rose-500/22"
-                              : "border-white/8 focus:border-violet-500/30"
+                              : "border-[var(--usb-border)] focus:border-violet-500/30"
                           }`}/>
                         {appAnswer.length > 0 && (
                           <span className="absolute bottom-2 right-2.5 text-[9px] text-white/18 font-mono pointer-events-none">{appAnswer.length}</span>
@@ -3540,7 +3541,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           {appFeedback.status === "loading" ? <><Loader2 size={10} className="animate-spin"/>Revisando…</> : <><Send size={10}/>Revisar con IA</>}
                         </button>
                         <button onClick={() => setShowAppSolution(v => !v)}
-                          className={`flex items-center gap-1.5 text-[10px] border px-2.5 py-1.5 rounded-lg transition-all ${showAppSolution ? "bg-white/5 border-white/12 text-white/55" : "border-white/7 text-white/25 hover:text-white/45 hover:border-white/14"}`}>
+                          className={`flex items-center gap-1.5 text-[10px] border px-2.5 py-1.5 rounded-lg transition-all ${showAppSolution ? "bg-white/5 border-white/12 text-white/55" : "border-[var(--usb-border)] text-white/25 hover:text-white/45 hover:border-white/14"}`}>
                           <ChevronDown size={9} className={`transition-transform ${showAppSolution ? "rotate-180" : ""}`}/>
                           {showAppSolution ? "Ocultar" : "Ver"} solución
                         </button>
@@ -3618,7 +3619,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                   </div>
                 </div>
                 ) : (
-                  <div className="bg-[#131315] border border-white/5 rounded-xl p-3.5 opacity-35">
+                  <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-divider)] rounded-xl p-3.5 opacity-35">
                     <StepHeader
                       n={4}
                       label="Practícalo"
@@ -3665,7 +3666,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 </motion.div>
 
               {content.interviewQ && (
-                <div className="bg-[#131315] border border-sky-500/18 rounded-xl overflow-hidden">
+                <div className="bg-[var(--usb-bg-3)] border border-sky-500/18 rounded-xl overflow-hidden">
                   {/* Header */}
                   <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-sky-500/6 border-b border-sky-500/12">
                     <div className="w-7 h-7 rounded-lg bg-sky-500/12 border border-sky-500/22 flex items-center justify-center shrink-0">
@@ -3682,7 +3683,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
                         showInterviewAnswer
                           ? "bg-sky-500/8 border-sky-500/20 text-sky-300/80"
-                          : "border-white/7 text-white/28 hover:text-white/50 hover:border-white/14"
+                          : "border-[var(--usb-border)] text-white/28 hover:text-white/50 hover:border-white/14"
                       }`}>
                       <span className="text-[10px] flex-1">{oralPracticeMeta.answerLabel}</span>
                       <ChevronDown size={9} className={`shrink-0 transition-transform text-white/30 ${showInterviewAnswer ? "rotate-180" : ""}`}/>
@@ -3712,14 +3713,14 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
               {/* ── Step 4 Anki ── */}
               {focusStep === 4 && confidence && (
-                  <div ref={ankiRef} className={`rounded-xl border overflow-hidden transition-all duration-500 ${showApply ? "border-violet-500/22" : "border-white/7 opacity-60"}`}>
-                    <div className={`px-3.5 py-2.5 flex items-center justify-between border-b transition-all ${showApply ? "bg-violet-500/8 border-violet-500/15" : "bg-white/3 border-white/6"}`}>
+                  <div ref={ankiRef} className={`rounded-xl border overflow-hidden transition-all duration-500 ${showApply ? "border-violet-500/22" : "border-[var(--usb-border)] opacity-60"}`}>
+                    <div className={`px-3.5 py-2.5 flex items-center justify-between border-b transition-all ${showApply ? "bg-violet-500/8 border-violet-500/15" : "bg-white/3 border-[var(--usb-border)]"}`}>
                       <div className="flex items-center gap-2">
                         <Repeat2 size={12} className={showApply ? "text-violet-400" : "text-white/30"}/>
                         <span className={`text-[11px] ${showApply ? "text-violet-300" : "text-white/40"}`} style={{ fontWeight: 600 }}>Fíjalo en memoria</span>
                         {!showApply && <Lock size={9} className="text-white/18"/>}
                       </div>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${showApply ? "text-violet-400/70 bg-violet-500/10 border-violet-500/20" : "text-white/20 bg-white/4 border-white/8"}`}>{content.ankiCards.length} tarjetas</span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${showApply ? "text-violet-400/70 bg-violet-500/10 border-violet-500/20" : "text-white/20 bg-white/4 border-[var(--usb-border)]"}`}>{content.ankiCards.length} tarjetas</span>
                     </div>
                     <div className="p-3 space-y-3">
                       <p className="text-white/28 text-[11px] leading-relaxed">
@@ -3817,7 +3818,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       <AnimatePresence>
                         {showAnkiGuide && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <div className="bg-black/25 border border-white/7 rounded-xl p-3 space-y-3">
+                            <div className="bg-black/25 border border-[var(--usb-border)] rounded-xl p-3 space-y-3">
                               {isFirstExport ? (
                                 <>
                                   <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Guía TXT manual · solo si no usas .apkg</p>
@@ -3826,7 +3827,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                     { file:"PLANTILLA-ANKI.txt",   color:"text-sky-300/60",   steps:[`En ${ANKI_NOTE_TYPE} → Cards`,"Ábrelo y ve al final del archivo","Anverso: selecciona todo → pega el bloque FRONT","Reverso: selecciona todo → pega el bloque BACK → guarda"] },
                                     { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-emerald-300/60", steps:["En Anki: Archivo → Importar → selecciona este archivo","Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar"] },
                                   ].map(({ file, color, steps }) => (
-                                    <div key={file} className="space-y-1 pt-2 border-t border-white/5">
+                                    <div key={file} className="space-y-1 pt-2 border-t border-[var(--usb-divider)]">
                                       <p className={`font-mono text-[10px] ${color}`}>{file}</p>
                                       {steps.map((s,i) => <p key={i} className="text-white/28 text-[10px] leading-relaxed pl-2">{i+1}. {s}</p>)}
                                     </div>
@@ -3873,12 +3874,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                   >
                     <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 via-violet-500 to-emerald-500 opacity-20 blur-xl group-hover:opacity-30 transition-opacity duration-1000 animate-[pulse_4s_cubic-bezier(0.4,0,0.6,1)_infinite]" />
                     <div className="absolute inset-0 bg-gradient-to-r from-emerald-400 via-violet-400 to-emerald-400 rounded-[18px] opacity-40" />
-                    <div className="relative bg-[#121214]/90 backdrop-blur-xl rounded-[17px] p-5 text-center h-full border border-white/10 shadow-2xl">
+                    <div className="relative bg-[var(--usb-bg-1)] rounded-[17px] p-5 text-center h-full border border-white/10 shadow-2xl">
                       {/* Trophy */}
                       <motion.div
                         animate={{ scale: [1, 1.15, 1], rotate: [0, -8, 8, -4, 4, 0] }}
                         transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 2.5 }}
-                        className="text-4xl mb-3 drop-shadow-[0_0_20px_rgba(167,139,250,0.5)] inline-block"
+                        className="text-4xl mb-3 inline-block"
+                        style={{ textShadow: "0 0 20px rgba(167,139,250,0.5)" }}
                       >🏆</motion.div>
                       <h3 className="text-white text-[16px] mb-1 tracking-tight" style={{ fontWeight: 600 }}>¡Sesión 100% completada!</h3>
                       <p className="text-white/40 text-[10px] mb-4 max-w-[200px] mx-auto leading-relaxed">Conocimiento consolidado y tarjetas listas. El instructor puede continuar.</p>
