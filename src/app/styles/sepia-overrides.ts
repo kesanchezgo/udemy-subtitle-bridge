@@ -44,6 +44,17 @@ export const THEME_CSS = `
   --usb-input-bg:     rgba(0,0,0,0.30);
   --usb-placeholder:  rgba(255,255,255,0.20);
   --usb-scrollbar:    rgba(255,255,255,0.10);
+
+  /*
+   * Semantic accents. Hardcoding Tailwind palettes (text-violet-400 etc.) tuned
+   * for dark broke contrast in the light theme, so status colours are tokens:
+   * text uses the -fg variant, backgrounds/tints use the -bg variant.
+   */
+  --usb-accent:       #a78bfa;       /* violet-400 — readable on dark   */
+  --usb-accent-2:     #8b5cf6;
+  --usb-accent-soft:  rgba(139,92,246,0.14);
+  --usb-accent-ring:  rgba(139,92,246,0.40);
+  --usb-accent-fg:    #c4b5fd;
 }
 
 .usb-dock.dock-sepia {
@@ -70,10 +81,36 @@ export const THEME_CSS = `
   --usb-accent-2:     #8710d8;       /* darker for hover                  */
   --usb-accent-soft:  rgba(164,53,240,0.10);
   --usb-accent-ring:  rgba(164,53,240,0.32);
+  --usb-accent-fg:    #7c22c9;       /* violet readable on white          */
 
   --usb-input-bg:     rgba(0,0,0,0.035);
   --usb-placeholder:  rgba(28,29,31,0.34);
   --usb-scrollbar:    rgba(0,0,0,0.14);
+}
+
+/* Status colours need different lightness per theme to stay legible. */
+.usb-dock {
+  --usb-ok:           #34d399;
+  --usb-ok-soft:      rgba(16,185,129,0.12);
+  --usb-ok-fg:        #6ee7b7;
+  --usb-warn:         #fbbf24;
+  --usb-warn-soft:    rgba(245,158,11,0.12);
+  --usb-warn-fg:      #fcd34d;
+  --usb-danger:       #fb7185;
+  --usb-danger-soft:  rgba(244,63,94,0.12);
+  --usb-danger-fg:    #fda4af;
+}
+
+.usb-dock.dock-sepia {
+  --usb-ok:           #059669;
+  --usb-ok-soft:      rgba(16,185,129,0.10);
+  --usb-ok-fg:        #047857;
+  --usb-warn:         #b45309;
+  --usb-warn-soft:    rgba(245,158,11,0.12);
+  --usb-warn-fg:      #92400e;
+  --usb-danger:       #e11d48;
+  --usb-danger-soft:  rgba(244,63,94,0.10);
+  --usb-danger-fg:    #be123c;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -290,42 +327,12 @@ export const THEME_CSS = `
   color: white !important;
 }
 
-/* ── 10. Syntax & Feedback colors (Light Mode Contrast) ── */
-.usb-dock.dock-sepia [class*="text-amber-200"] { color: #d97706 !important; /* amber-600 */ }
-.usb-dock.dock-sepia [class*="text-amber-300"] { color: #d97706 !important; /* amber-600 */ }
-.usb-dock.dock-sepia [class*="text-amber-400"] { color: #d97706 !important; /* amber-600 */ }
-.usb-dock.dock-sepia [class*="bg-amber-500"] { background-color: rgba(217, 119, 6, 0.08) !important; }
-.usb-dock.dock-sepia [class*="border-amber-500"] { border-color: rgba(217, 119, 6, 0.2) !important; }
-
-/* Emerald / Green for success states */
-.usb-dock.dock-sepia [class*="text-emerald-200"] { color: #059669 !important; /* emerald-600 */ }
-.usb-dock.dock-sepia [class*="text-emerald-300"] { color: #059669 !important; /* emerald-600 */ }
-.usb-dock.dock-sepia [class*="text-emerald-400"] { color: #059669 !important; /* emerald-600 */ }
-.usb-dock.dock-sepia [class*="bg-emerald-500"] { background-color: rgba(5, 150, 105, 0.08) !important; }
-.usb-dock.dock-sepia [class*="border-emerald-500"] { border-color: rgba(5, 150, 105, 0.2) !important; }
-
-/* Rose / Red for error states */
-.usb-dock.dock-sepia [class*="text-rose-200"] { color: #e11d48 !important; /* rose-600 */ }
-.usb-dock.dock-sepia [class*="text-rose-300"] { color: #e11d48 !important; /* rose-600 */ }
-.usb-dock.dock-sepia [class*="text-rose-400"] { color: #e11d48 !important; /* rose-600 */ }
-.usb-dock.dock-sepia [class*="text-red-200"] { color: #e11d48 !important; /* red-600 */ }
-.usb-dock.dock-sepia [class*="text-red-300"] { color: #e11d48 !important; /* red-600 */ }
-.usb-dock.dock-sepia [class*="bg-rose-500"] { background-color: rgba(225, 29, 72, 0.08) !important; }
-.usb-dock.dock-sepia [class*="border-rose-500"] { border-color: rgba(225, 29, 72, 0.2) !important; }
-.usb-dock.dock-sepia [class*="bg-red-500"] { background-color: rgba(225, 29, 72, 0.08) !important; }
-.usb-dock.dock-sepia [class*="border-red-500"] { border-color: rgba(225, 29, 72, 0.2) !important; }
-
-/* Sky / Blue for info states */
-.usb-dock.dock-sepia [class*="text-sky-300"] { color: #0284c7 !important; /* sky-600 */ }
-.usb-dock.dock-sepia [class*="bg-sky-500"] { background-color: rgba(2, 132, 199, 0.08) !important; }
-
-/* Violet for excellent/evaluating states */
-.usb-dock.dock-sepia [class*="text-violet-300"] { color: #7c3aed !important; /* violet-600 */ }
-.usb-dock.dock-sepia [class*="bg-violet-500"] { background-color: rgba(124, 58, 237, 0.08) !important; }
-
-/* Fuchsia for retry states */
-.usb-dock.dock-sepia [class*="text-fuchsia-300"] { color: #c026d3 !important; /* fuchsia-600 */ }
-.usb-dock.dock-sepia [class*="bg-fuchsia-500"] { background-color: rgba(192, 38, 211, 0.08) !important; }
+/* ── 10. Semantic accent colours (light mode) ──────────────────────────────
+   Redefined once, in §11 below, against the --usb-* status tokens. The old
+   duplicate block that lived here was dead code: every rule was immediately
+   overridden further down the sheet, and the two sets drifted (#e11d48 vs
+   #dc2626 for the same "error" state), so colours depended on rule order.
+   Keeping one definition per colour makes the light palette predictable. */
 
 /* Code syntax highlighting colors */
 .usb-dock.dock-sepia [class*="text-green-400"] { color: #059669 !important; }
@@ -397,27 +404,53 @@ export const THEME_CSS = `
 
 .usb-dock.dock-sepia [class*="border-fuchsia-500"] { border-color: rgba(217, 70, 239, 0.45) !important; }
 
-/* Vibrant accent text — Udemy purple + saturated companions */
+/* Vibrant accent text — Udemy purple + saturated companions.
+   Values are tuned for AA contrast on white (≥4.5:1 for body copy), which is
+   why they sit at the 600/700 step rather than the 400 used on dark. */
 .usb-dock.dock-sepia [class*="text-violet-300"],
 .usb-dock.dock-sepia [class*="text-violet-400"],
-.usb-dock.dock-sepia [class*="text-violet-500"] { color: #a435f0 !important; }
+.usb-dock.dock-sepia [class*="text-violet-500"] { color: var(--usb-accent-fg) !important; }
 .usb-dock.dock-sepia [class*="text-violet-200"] { color: #b557f7 !important; }
-.usb-dock.dock-sepia [class*="text-violet-600"] { color: #8710d8 !important; }
+.usb-dock.dock-sepia [class*="text-violet-600"] { color: var(--usb-accent-2) !important; }
 .usb-dock.dock-sepia [class*="text-emerald-300"],
-.usb-dock.dock-sepia [class*="text-emerald-400"] { color: #059669 !important; }
-.usb-dock.dock-sepia [class*="text-emerald-200"] { color: #10b981 !important; }
+.usb-dock.dock-sepia [class*="text-emerald-400"] { color: var(--usb-ok-fg) !important; }
+.usb-dock.dock-sepia [class*="text-emerald-200"] { color: var(--usb-ok) !important; }
 .usb-dock.dock-sepia [class*="text-emerald-500"] { color: #047857 !important; }
 .usb-dock.dock-sepia [class*="text-amber-300"],
-.usb-dock.dock-sepia [class*="text-amber-400"]  { color: #d97706 !important; }
-.usb-dock.dock-sepia [class*="text-amber-200"]  { color: #f59e0b !important; }
+.usb-dock.dock-sepia [class*="text-amber-400"]  { color: var(--usb-warn-fg) !important; }
+.usb-dock.dock-sepia [class*="text-amber-200"]  { color: var(--usb-warn) !important; }
 .usb-dock.dock-sepia [class*="text-sky-300"],
 .usb-dock.dock-sepia [class*="text-sky-400"],
-.usb-dock.dock-sepia [class*="text-sky-500"]    { color: #0284c7 !important; }
+.usb-dock.dock-sepia [class*="text-sky-500"]    { color: #0369a1 !important; }
 .usb-dock.dock-sepia [class*="text-rose-300"],
 .usb-dock.dock-sepia [class*="text-rose-400"],
-.usb-dock.dock-sepia [class*="text-red-400"]    { color: #dc2626 !important; }
+.usb-dock.dock-sepia [class*="text-red-400"]    { color: var(--usb-danger-fg) !important; }
+.usb-dock.dock-sepia [class*="text-red-300"],
+.usb-dock.dock-sepia [class*="text-red-200"],
+.usb-dock.dock-sepia [class*="text-rose-200"]  { color: var(--usb-danger-fg) !important; }
 .usb-dock.dock-sepia [class*="text-fuchsia-300"],
-.usb-dock.dock-sepia [class*="text-fuchsia-400"] { color: #c026d3 !important; }
+.usb-dock.dock-sepia [class*="text-fuchsia-400"] { color: #a21caf !important; }
+
+/* Tinted backgrounds for status chips — flat washes, no dark-mode leftovers. */
+.usb-dock.dock-sepia [class*="bg-amber-500"],
+.usb-dock.dock-sepia [class*="bg-amber-400"]     { background-color: var(--usb-warn-soft) !important; }
+.usb-dock.dock-sepia [class*="bg-emerald-500"],
+.usb-dock.dock-sepia [class*="bg-emerald-400"]   { background-color: var(--usb-ok-soft) !important; }
+.usb-dock.dock-sepia [class*="bg-rose-500"],
+.usb-dock.dock-sepia [class*="bg-red-500"]       { background-color: var(--usb-danger-soft) !important; }
+.usb-dock.dock-sepia [class*="bg-sky-500"]       { background-color: rgba(2, 132, 199, 0.08) !important; }
+.usb-dock.dock-sepia [class*="bg-violet-500"]    { background-color: var(--usb-accent-soft) !important; }
+.usb-dock.dock-sepia [class*="bg-fuchsia-500"]   { background-color: rgba(192, 38, 211, 0.08) !important; }
+
+.usb-dock.dock-sepia [class*="border-amber-500"],
+.usb-dock.dock-sepia [class*="border-amber-400"] { border-color: color-mix(in srgb, var(--usb-warn) 45%, transparent) !important; }
+.usb-dock.dock-sepia [class*="border-emerald-500"],
+.usb-dock.dock-sepia [class*="border-emerald-400"] { border-color: color-mix(in srgb, var(--usb-ok) 40%, transparent) !important; }
+.usb-dock.dock-sepia [class*="border-rose-500"],
+.usb-dock.dock-sepia [class*="border-red-500"]   { border-color: color-mix(in srgb, var(--usb-danger) 40%, transparent) !important; }
+.usb-dock.dock-sepia [class*="border-sky-500"],
+.usb-dock.dock-sepia [class*="border-sky-400"]   { border-color: rgba(2, 132, 199, 0.35) !important; }
+.usb-dock.dock-sepia [class*="border-fuchsia-500"] { border-color: rgba(162, 28, 175, 0.35) !important; }
 
 /* Ring colors */
 .usb-dock.dock-sepia [class*="ring-violet-500"]   { --tw-ring-color: rgba(124, 58, 237, 0.45) !important; }
@@ -768,6 +801,48 @@ export const THEME_CSS = `
   background-color: rgba(139, 92, 246, 0.45);
 }
 .usb-dock { scrollbar-width: thin; scrollbar-color: var(--usb-scrollbar) transparent; }
+
+/* ════════════════════════════════════════════════════════════════
+   TYPOGRAPHY SCALE
+
+   Components use fixed text-[Npx] sizes so the dock matches the Figma and the
+   local preview exactly. Inside the Shadow DOM those literals must still
+   follow the user's browser/OS text-size setting, so every size the design
+   uses is re-declared as N x --usb-scale.
+
+   --usb-scale is measured on the host page (browser default over 16) and set
+   on the dock host; at the 16px default it is exactly 1 and nothing changes.
+════════════════════════════════════════════════════════════════ */
+
+${[7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30, 32]
+  .map(
+    (px) =>
+      `.usb-dock .text-\\[${px}px\\] { font-size: calc(${px}px * var(--usb-scale)) !important; }`,
+  )
+  .join('\n')}
+
+/* Leading stays proportional to the scaled font size. */
+.usb-dock .leading-relaxed { line-height: 1.625; }
+
+/* ════════════════════════════════════════════════════════════════
+   SURFACE SCALE
+
+   Paddings, gaps and radii built from Tailwind's spacing scale follow the
+   same factor so the layout grows with the text instead of cramping it.
+════════════════════════════════════════════════════════════════ */
+${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
+  .map((n) => {
+    const cls = String(n).replace('.', '\\.');
+    const value = n * 4;
+    return [
+      `.usb-dock .p-\\[${cls}px\\] { padding: calc(${value}px * var(--usb-scale)) !important; }`,
+      `.usb-dock .px-\\[${cls}px\\] { padding-left: calc(${value}px * var(--usb-scale)) !important; padding-right: calc(${value}px * var(--usb-scale)) !important; }`,
+      `.usb-dock .py-\\[${cls}px\\] { padding-top: calc(${value}px * var(--usb-scale)) !important; padding-bottom: calc(${value}px * var(--usb-scale)) !important; }`,
+      `.usb-dock .gap-\\[${cls}px\\] { gap: calc(${value}px * var(--usb-scale)) !important; }`,
+      `.usb-dock .rounded-\\[${cls}px\\] { border-radius: calc(${value}px * var(--usb-scale)) !important; }`,
+    ].join('\n');
+  })
+  .join('\n')}
 `;
 
 /** @deprecated Use THEME_CSS — kept for backward-compat */
