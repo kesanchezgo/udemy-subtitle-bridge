@@ -159,26 +159,18 @@ export function ApiKeysPanel({
     : Boolean(provider.baseUrl && provider.apiKey);
 
   const chain: { label: string; active: boolean; color: string }[] = [
-    { label: "Local", active: localConnected, color: localConnected ? "text-[var(--usb-ok-fg)]" : "text-[var(--usb-fg-dim)]" },
-    { label: PROVIDER_KINDS_LABELS[provider.kind], active: providerReady, color: providerReady ? "text-[var(--usb-accent-fg)]" : "text-[var(--usb-fg-dim)]" },
-    { label: activeCount > 0 ? `Gemini ×${activeCount}` : "Gemini", active: activeCount > 0, color: activeCount > 0 ? "text-[var(--usb-accent-fg)]" : "text-[var(--usb-fg-dim)]" },
+    { label: "Local", active: localConnected, color: localConnected ? "text-emerald-400" : "text-[var(--usb-fg-dim)]" },
+    { label: PROVIDER_KINDS_LABELS[provider.kind], active: providerReady, color: providerReady ? "text-violet-400" : "text-[var(--usb-fg-dim)]" },
+    { label: activeCount > 0 ? `Gemini ×${activeCount}` : "Gemini", active: activeCount > 0, color: activeCount > 0 ? "text-violet-400" : "text-[var(--usb-fg-dim)]" },
     productionRuntime
       ? { label: "Sin mock", active: false, color: "text-[var(--usb-fg-dim)]" }
-      : { label: "Mock", active: true, color: "text-[var(--usb-warn-fg)]" },
+      : { label: "Mock", active: true, color: "text-amber-500/60" },
   ];
 
   // ── Shared field styling (token-based so both themes are correct) ───────────
   const fieldClass =
-    "w-full h-9 bg-[var(--usb-input-bg)] border border-[var(--usb-border)] focus:border-[var(--usb-accent-ring)] focus:ring-2 focus:ring-[var(--usb-accent-soft)] rounded-[var(--radius-md)] px-3 text-[11px] text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-placeholder)] outline-none transition-all font-mono";
+    "w-full h-9 bg-[var(--usb-input-bg)] border border-[var(--usb-border)] focus:border-violet-500/50 rounded-lg px-3 text-[11px] text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-placeholder)] outline-none transition-colors font-mono";
   const labelClass = "text-[var(--usb-fg-lo)] text-[9px] uppercase tracking-wider";
-
-  // ── Per-kind guidance so the fields are never a guessing game ───────────────
-  const KIND_HINTS: Record<typeof provider.kind, { base: string; model: string }> = {
-    local:    { base: "Servidor local incluido en el puerto 8010.",            model: "Se detecta automáticamente." },
-    openai:   { base: "Cualquier endpoint compatible con OpenAI. Acepta también un proxy en 127.0.0.1 (p. ej. 6660).", model: "Ej.: gpt-4o-mini, deepseek-v4.1-flash" },
-    anthropic:{ base: "Usa la API Messages de Anthropic.",                     model: "Ej.: claude-3-5-sonnet-latest" },
-    gemini:   { base: "Usa las keys de Gemini de abajo.",                      model: "Ej.: gemini-2.5-flash" },
-  };
 
   return (
     <AnimatePresence>
@@ -195,73 +187,51 @@ export function ApiKeysPanel({
 
             {/* ── Header ── */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-[var(--radius-md)] bg-[var(--usb-accent-soft)] flex items-center justify-center shrink-0">
-                  <Cpu size={12} className="text-[var(--usb-accent-fg)]" />
+              <div className="flex items-center gap-1.5">
+                <Cpu size={11} className="text-violet-400" />
+                <span className="text-[var(--usb-fg-hi)] text-[11px] tracking-tight" style={{ fontWeight: 600 }}>
+                  Motores de IA
                 </span>
-                <div className="leading-none">
-                  <p className="text-[var(--usb-fg-hi)] text-[12px] tracking-tight" style={{ fontWeight: 600 }}>
-                    Motores de IA
-                  </p>
-                  <p className="text-[var(--usb-fg-dim)] text-[9px] mt-[3px]">
-                    Elige dónde traducir y estudiar
-                  </p>
-                </div>
               </div>
               <button
                 onClick={onClose}
-                className="text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-fg-dim)]/10 transition-colors w-6 h-6 flex items-center justify-center rounded-[var(--radius-md)]"
+                className="text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors w-5 h-5 flex items-center justify-center rounded"
                 aria-label="Cerrar"
               >
                 <X size={13} />
               </button>
             </div>
 
-            {/* ── Provider ── */}
+            {/* ── Provider — flat section, hierarchy by weight not nested boxes ── */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className={labelClass} style={{ fontWeight: 600 }}>Proveedor</span>
-                <span className={`flex items-center gap-1 text-[9px] px-2 py-[3px] rounded-full ${
+                <span className={`text-[9px] px-1.5 py-[3px] rounded-full ${
                   providerReady
-                    ? "bg-[var(--usb-ok-soft)] text-[var(--usb-ok-fg)]"
+                    ? "bg-violet-500/12 text-violet-400"
                     : "bg-[var(--usb-fg-dim)]/10 text-[var(--usb-fg-lo)]"
                 }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${providerReady ? "bg-[var(--usb-ok)]" : "bg-[var(--usb-fg-dim)]"}`} />
                   {providerReady ? "activo" : "sin configurar"}
                 </span>
               </div>
 
               {/* Segmented control — quiet, single pill */}
-              <div className="relative flex gap-0.5 p-0.5 rounded-[var(--radius-md)] bg-[var(--usb-input-bg)]">
-                {PROVIDER_KINDS.map((kind) => {
-                  const isActive = provider.kind === kind;
-                  return (
-                    <button
-                      key={kind}
-                      onClick={() => changeProviderKind(kind)}
-                      className={`relative flex-1 h-7 rounded-[var(--radius-sm)] text-[10px] transition-colors duration-200 z-10 ${
-                        isActive
-                          ? "text-white"
-                          : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)]"
-                      }`}
-                      style={{ fontWeight: isActive ? 600 : 500 }}
-                    >
-                      {isActive && (
-                        <motion.span
-                          layoutId="provider-pill"
-                          className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--usb-accent)] shadow-[0_1px_6px_var(--usb-accent-ring)]"
-                          transition={{ type: "spring", stiffness: 480, damping: 38 }}
-                        />
-                      )}
-                      <span className="relative">{PROVIDER_KINDS_LABELS[kind]}</span>
-                    </button>
-                  );
-                })}
+              <div className="flex gap-0.5 p-0.5 rounded-[10px] bg-[var(--usb-input-bg)]">
+                {PROVIDER_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    onClick={() => changeProviderKind(kind)}
+                    className={`flex-1 h-7 rounded-lg text-[10px] transition-all duration-200 ${
+                      provider.kind === kind
+                        ? "bg-violet-600 text-white shadow-[0_1px_6px_rgba(139,92,246,0.35)]"
+                        : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-fg-dim)]/8"
+                    }`}
+                    style={{ fontWeight: provider.kind === kind ? 600 : 500 }}
+                  >
+                    {PROVIDER_KINDS_LABELS[kind]}
+                  </button>
+                ))}
               </div>
-
-              <p className="text-[var(--usb-fg-dim)] text-[9px] leading-relaxed -mt-1">
-                {KIND_HINTS[provider.kind].base}
-              </p>
 
               <div className="space-y-1">
                 <label className={labelClass}>Base URL</label>
@@ -301,10 +271,7 @@ export function ApiKeysPanel({
               )}
 
               <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className={labelClass}>Modelo</label>
-                  <span className="text-[var(--usb-fg-dim)] text-[8px] font-mono">{KIND_HINTS[provider.kind].model}</span>
-                </div>
+                <label className={labelClass}>Modelo</label>
                 <input
                   type="text"
                   value={provider.model}
@@ -318,13 +285,13 @@ export function ApiKeysPanel({
 
               <button
                 onClick={handleSaveProvider}
-                disabled={validating || !providerReady}
-                className={`w-full flex items-center justify-center gap-1.5 h-8 rounded-[var(--radius-md)] text-[11px] transition-all duration-200 ${
+                disabled={validating}
+                className={`w-full flex items-center justify-center gap-1.5 h-8 rounded-lg text-[11px] transition-all duration-200 ${
                   validating
-                    ? "bg-[var(--usb-accent)]/45 text-white/70 cursor-wait"
+                    ? "bg-violet-600/45 text-white/70 cursor-wait"
                     : providerSaved
-                      ? "bg-[var(--usb-ok-soft)] text-[var(--usb-ok-fg)]"
-                      : "bg-[var(--usb-accent)] hover:bg-[var(--usb-accent-2)] text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : "bg-violet-600 hover:bg-violet-500 text-white"
                 }`}
                 style={{ fontWeight: 600 }}
               >
@@ -341,10 +308,10 @@ export function ApiKeysPanel({
                     initial={{ opacity: 0, y: -2 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
-                    className={`text-[10px] leading-relaxed rounded-[var(--radius-md)] px-2.5 py-2 border ${
+                    className={`text-[9px] leading-relaxed rounded-lg px-2.5 py-2 ${
                       validation.status === "ok"
-                        ? "text-[var(--usb-ok-fg)] bg-[var(--usb-ok-soft)] border-[var(--usb-ok)]/25"
-                        : "text-[var(--usb-warn-fg)] bg-[var(--usb-warn-soft)] border-[var(--usb-warn)]/25"
+                        ? "text-emerald-400/90 bg-emerald-500/8"
+                        : "text-amber-300/90 bg-amber-500/8"
                     }`}
                   >
                     {validation.status === "ok" ? "✓ " : "⚠ "}{validation.message}
@@ -372,7 +339,7 @@ export function ApiKeysPanel({
                         autoComplete="off"
                         spellCheck={false}
                         className={`${fieldClass} pr-16 ${
-                          duplicate ? "border-[var(--usb-warn)]/50 focus:border-[var(--usb-warn)]/60" : ""
+                          duplicate ? "border-amber-500/50 focus:border-amber-400/60" : ""
                         }`}
                       />
                       <button
@@ -384,7 +351,7 @@ export function ApiKeysPanel({
                       </button>
                       <button
                         onClick={() => removeKey(idx)}
-                        className="absolute right-2.5 text-[var(--usb-fg-lo)] hover:text-[var(--usb-danger-fg)] transition-colors"
+                        className="absolute right-2.5 text-[var(--usb-fg-lo)] hover:text-rose-400 transition-colors"
                         title="Quitar key"
                       >
                         <Trash2 size={10} />
@@ -394,14 +361,14 @@ export function ApiKeysPanel({
                       {duplicate ? (
                         <motion.p
                           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                          className="text-[var(--usb-warn-fg)] text-[9px] ml-0.5 flex items-center gap-1"
+                          className="text-amber-400/80 text-[9px] ml-0.5 flex items-center gap-1"
                         >
                           <AlertCircle size={8} />Key duplicada
                         </motion.p>
                       ) : active && (
                         <motion.p
                           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                          className="text-[var(--usb-ok-fg)] text-[9px] ml-0.5 flex items-center gap-1"
+                          className="text-emerald-400/70 text-[9px] ml-0.5 flex items-center gap-1"
                         >
                           <CheckCircle2 size={8} />Activa · rotación #{idx + 1}
                         </motion.p>
@@ -414,19 +381,19 @@ export function ApiKeysPanel({
               <div className="flex gap-2">
                 <button
                   onClick={addKey}
-                  className="flex-1 h-8 rounded-[var(--radius-md)] border border-dashed border-[var(--usb-border-mid)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-fg-dim)] text-[10px] flex items-center justify-center gap-1.5 transition-colors"
+                  className="flex-1 h-8 rounded-lg border border-dashed border-[var(--usb-border-mid)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-fg-dim)] text-[10px] flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <Plus size={11} />Agregar key
                 </button>
                 <button
                   onClick={handleSave}
                   disabled={hasDuplicates}
-                  className={`flex-1 flex items-center justify-center gap-1.5 h-8 rounded-[var(--radius-md)] text-[11px] transition-all duration-200 ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-[11px] transition-all duration-200 ${
                     hasDuplicates
-                      ? "text-[var(--usb-warn-fg)] cursor-not-allowed bg-[var(--usb-warn-soft)]"
+                      ? "text-amber-300/70 cursor-not-allowed bg-amber-500/8"
                       : saved
-                        ? "bg-[var(--usb-ok-soft)] text-[var(--usb-ok-fg)]"
-                        : "bg-[var(--usb-accent)] hover:bg-[var(--usb-accent-2)] text-white"
+                        ? "bg-emerald-500/15 text-emerald-400"
+                        : "bg-violet-600 hover:bg-violet-500 text-white"
                   }`}
                   style={{ fontWeight: 600 }}
                 >
