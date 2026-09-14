@@ -1478,9 +1478,70 @@ function applyDockViewportFrame() {
 		return;
 	}
 
+	applyDockTypographyScale(host);
+
 	const top = getDockTopOffset();
 	host.style.top = `${top}px`;
 	host.style.height = `calc(100vh - ${top}px)`;
+}
+
+/**
+ * How much larger is the user's text than the 16px design baseline?
+ *
+ * The dock lives in a Shadow DOM hosted on udemy.com, so a `rem` inside it would
+ * resolve against Udemy's root font-size (10px) instead of the user's browser
+ * setting. A sandboxed iframe inherits the browser's default font size and the
+ * host page's stylesheet cannot reach it, which makes it the reliable probe.
+ *
+ * Chrome zoom is intentionally excluded: it already scales the whole viewport,
+ * and applying it here too would double-scale the dock.
+ *
+ * Clamped to 1-1.4. Never below 1: the px values in the components are the
+ * intended minimum, so shrinking there can only hurt readability.
+ */
+function measureTextScale(): number {
+	try {
+		const frame = document.createElement('iframe');
+		frame.setAttribute('aria-hidden', 'true');
+		frame.setAttribute('tabindex', '-1');
+		frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden;left:-9999px;top:-9999px;';
+		(document.documentElement || document.body).appendChild(frame);
+
+		const frameDoc = frame.contentDocument;
+		let userDefault = 0;
+		if (frameDoc?.documentElement) {
+			userDefault = Number.parseFloat(
+				frameDoc.defaultView?.getComputedStyle(frameDoc.documentElement).fontSize || '0',
+			);
+		}
+		frame.remove();
+
+		const baseline = Number.isFinite(userDefault) && userDefault > 0 ? userDefault : 16;
+		const ratio = baseline / 16;
+
+		// 16px default -> 1, 18px -> 1.125, 20px -> 1.25, 22px+ -> 1.375 (capped).
+		return Math.min(1.4, Math.max(1, Number(ratio.toFixed(3))));
+	} catch {
+		return 1;
+	}
+}
+
+/** Publish the measured text scale as CSS variables the dock can read. */
+function applyDockTypographyScale(host: HTMLElement): void {
+	const scale = String(measureTextScale());
+
+	host.style.setProperty('--usb-scale', scale);
+
+	// The ShadowRoot needs it too: `:host` inherits from the host element, but
+	// rules written against the root itself read the variable from there.
+	const shadow = host.shadowRoot;
+	if (shadow) {
+		(shadow.host as HTMLElement).style.setProperty('--usb-scale', scale);
+	}
+
+	// Also expose it on the page root so the dock's React tree can size its own
+	// width from it (getComputedStyle reads the light DOM, not the shadow tree).
+	host.ownerDocument?.documentElement?.style.setProperty('--usb-scale', scale);
 }
 
 function handleDockViewportChange() {
@@ -1686,7 +1747,7 @@ function initInPageDock() {
 	hostReset.textContent = `
 :host {
 	display: block;
-	font-size: 16px;
+	font-size: calc(16px * var(--usb-scale, 1));
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	/* Keep host isolated without clobbering Tailwind visual utilities. */
 	color-scheme: dark;
