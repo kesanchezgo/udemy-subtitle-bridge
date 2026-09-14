@@ -18,6 +18,41 @@
 export const THEME_CSS = `
 
 /* ════════════════════════════════════════════════════════════════
+   ESCALA TIPOGRÁFICA
+
+   Los componentes usan tamaños fijos (text-[10px], etc.) para coincidir
+   exactamente con el diseño. Dentro del Shadow DOM esos valores también deben
+   seguir el tamaño de texto del navegador/SO, así que cada tamaño usado se
+   redeclara como N × --usb-scale.
+
+   --usb-scale lo mide el content script en la página (tamaño por defecto del
+   navegador ÷ 16) y se publica en el host. Con el valor por defecto (16px)
+   vale exactamente 1, así que el resultado es pixel a pixel el original.
+════════════════════════════════════════════════════════════════ */
+
+${[7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30, 32]
+  .map(
+    (px) =>
+      `.usb-dock .text-\\[${px}px\\] { font-size: calc(${px}px * var(--usb-scale, 1)) !important; }`,
+  )
+  .join('\n')}
+
+/* Espaciado, gaps y radios siguen el mismo factor para que el layout acompañe
+   al texto en lugar de apretarlo. */
+${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
+  .map((n) => {
+    const cls = String(n).replace('.', '\\.');
+    const value = n * 4;
+    return [
+      `.usb-dock .p-\\[${cls}px\\] { padding: calc(${value}px * var(--usb-scale, 1)) !important; }`,
+      `.usb-dock .px-\\[${cls}px\\] { padding-left: calc(${value}px * var(--usb-scale, 1)) !important; padding-right: calc(${value}px * var(--usb-scale, 1)) !important; }`,
+      `.usb-dock .py-\\[${cls}px\\] { padding-top: calc(${value}px * var(--usb-scale, 1)) !important; padding-bottom: calc(${value}px * var(--usb-scale, 1)) !important; }`,
+      `.usb-dock .gap-\\[${cls}px\\] { gap: calc(${value}px * var(--usb-scale, 1)) !important; }`,
+    ].join('\n');
+  })
+  .join('\n')}
+
+/* ════════════════════════════════════════════════════════════════
    PALETA DE TOKENS — CSS Custom Properties
    Cambiar aquí cambia todo el dock automáticamente.
 ════════════════════════════════════════════════════════════════ */
