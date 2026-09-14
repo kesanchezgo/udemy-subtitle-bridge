@@ -1,5 +1,5 @@
 import { buildGeminiGenerateContentUrl, initGeminiKeys, markGeminiKeyCooldown, normalizeGeminiKeys, saveGeminiKeys, selectGeminiKeysForPurpose, setGeminiKeysSync, type GeminiPurpose } from './gemini-config';
-import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
+import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, normalizeAiProviderConfig, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
 
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -290,6 +290,35 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 
 		return true;
+	}
+
+	// Provider validation must run HERE, not in the content script: a fetch to a
+	// third-party host from the page's isolated world is subject to CORS and gets
+	// blocked, while the service worker has host permissions and is not.
+	if (type === 'USG_VALIDATE_PROVIDER') {
+		const cfg = (message as { config?: Partial<AiProviderConfig> }).config;
+		const requestId = String((message as { requestId?: unknown }).requestId || '');
+
+		// MV3 hazard: a service worker can be torn down while a long fetch is in
+		// flight, which surfaces to the caller as "The message port closed before a
+		// response was received". So we acknowledge immediately and publish the
+		// result to chrome.storage. The caller polls storage keyed by requestId.
+		publishProviderValidation(requestId, { status: 'pending', message: 'Validando…' });
+
+		void validateProviderFromBackground(normalizeAiProviderConfig(cfg))
+			.then((result) => publishProviderValidation(requestId, result))
+			.catch((error) => publishProviderValidation(requestId, { status: 'unreachable', message: toErrorMessage(error) }));
+
+		sendResponse({ ok: true, status: 'pending', message: 'Validando…' });
+		return false;
+	}
+
+	// Cheap no-op the dock sends on an interval while a probe is running. A
+	// service worker is torn down after ~30s idle, and a slow provider probe can
+	// outlast that; each inbound message resets the timer and keeps us alive.
+	if (type === 'USG_KEEPALIVE') {
+		sendResponse({ ok: true });
+		return false;
 	}
 
 	if (type === 'USG_GENERATE_COURSE_OBJECTIVES') {
@@ -1452,6 +1481,114 @@ async function requestLocalText(prompt: string, temperature: number, maxTokens: 
 function canServeWithConfiguredProvider(cfg: AiProviderConfig): boolean {
 	if (cfg.kind === 'local') return Boolean(cfg.baseUrl);
 	return Boolean(cfg.baseUrl && cfg.apiKey);
+}
+
+/**
+ * Turn a provider error response into something actionable. Rate limits and
+ * exhausted balances are the two failures users actually hit with hosted
+ * OpenAI-compatible proxies, and both look like a generic 429/400 unless the
+ * body is inspected. Reporting them as "server not running" sends people down
+ * the wrong path entirely.
+ */
+function describeProviderHttpError(status: number, rawBody: string): string {
+	const body = (rawBody || '').slice(0, 400);
+	const lower = body.toLowerCase();
+
+	if (status === 429 || lower.includes('rate limit') || lower.includes('ratelimit')) {
+		return `El proveedor está limitando peticiones (HTTP 429). ${body.slice(0, 200)}`;
+	}
+	if (lower.includes('insufficient') && (lower.includes('quota') || lower.includes('balance'))) {
+		return `La cuenta del proveedor no tiene saldo/cuota disponible (HTTP ${status}). ${body.slice(0, 200)}`;
+	}
+	if (status === 401 || status === 403) {
+		return `API key rechazada o sin permisos (HTTP ${status}). ${body.slice(0, 160)}`;
+	}
+	if (status === 404) {
+		return `El endpoint o el modelo no existe en ese servidor (HTTP 404). ${body.slice(0, 160)}`;
+	}
+	return `El servidor respondió HTTP ${status}. ${body.slice(0, 200)}`;
+}
+
+/**
+ * Where the background parks a provider-validation result so the caller can read
+ * it without depending on the message port surviving a multi-second fetch.
+ */
+const PROVIDER_VALIDATION_STORAGE_KEY = 'usg_provider_validation';
+
+function publishProviderValidation(
+	requestId: string,
+	result: { status: string; message: string; httpStatus?: number },
+): void {
+	if (!requestId) return;
+	try {
+		void chromeApi?.storage?.local?.set?.({
+			[PROVIDER_VALIDATION_STORAGE_KEY]: { requestId, ...result, at: Date.now() },
+		});
+	} catch {
+		/* storage unavailable — the direct response still carries the ack */
+	}
+}
+
+/**
+ * Validate a provider config by issuing a minimal real request. Runs in the
+ * service worker so host permissions apply and CORS does not block localhost.
+ */
+async function validateProviderFromBackground(
+	cfg: AiProviderConfig,
+): Promise<{ status: string; message: string; httpStatus?: number }> {
+	if (!cfg.baseUrl) return { status: 'missing_fields', message: 'Falta la Base URL.' };
+	if (cfg.kind !== 'local' && !cfg.apiKey) return { status: 'missing_fields', message: 'Falta la API key.' };
+	if (!cfg.model) return { status: 'missing_fields', message: 'Falta el nombre del modelo.' };
+
+	try {
+		const parsed = new URL(cfg.baseUrl);
+		if (!/^https?:$/.test(parsed.protocol)) {
+			return { status: 'bad_url', message: 'La Base URL debe empezar por http:// o https://.' };
+		}
+	} catch {
+		return { status: 'bad_url', message: 'La Base URL no es válida.' };
+	}
+
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 25000);
+
+	try {
+		const messages = [{ role: 'user' as const, content: 'Responde solo: ok' }];
+		const body = cfg.kind === 'anthropic'
+			? buildAnthropicBody(messages, 8, 0, cfg.model, false)
+			: buildOpenAiCompatibleBody(messages, 8, 0, cfg.model, false);
+
+		const response = await fetch(buildProviderChatUrl(cfg, false), {
+			method: 'POST',
+			headers: buildProviderHeaders(cfg),
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+
+		const text = await response.text().catch(() => '');
+		if (!response.ok) {
+			return { status: 'http_error', httpStatus: response.status, message: describeProviderHttpError(response.status, text) };
+		}
+
+		const content = extractProviderText(JSON.parse(text), cfg.kind);
+		if (!content) {
+			return { status: 'http_error', message: 'El servidor respondió pero sin contenido utilizable (¿modelo incorrecto?).' };
+		}
+
+		return { status: 'ok', message: `Conexión correcta (${cfg.kind} · ${cfg.model}).` };
+	} catch (error) {
+		const isAbort = error instanceof DOMException && error.name === 'AbortError';
+		if (isAbort) {
+			return { status: 'unreachable', message: 'El servidor no respondió a tiempo (timeout). ¿Está encendido?' };
+		}
+		const host = (() => { try { return new URL(cfg.baseUrl).host; } catch { return cfg.baseUrl; } })();
+		return {
+			status: 'unreachable',
+			message: `No se pudo contactar ${host} desde la extensión. Verifica que el servidor esté corriendo en ese puerto.`,
+		};
+	} finally {
+		clearTimeout(timeout);
+	}
 }
 
 /**

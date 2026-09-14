@@ -225,6 +225,132 @@ export async function validateProviderConfig(
     return { status: 'bad_url', message: 'La Base URL no es válida.' };
   }
 
+  // Inside the extension, the probe MUST run in the service worker: a fetch to a
+  // local or third-party host from the content script's isolated world is subject
+  // to CORS and is aborted before it completes, whereas the service worker has
+  // host permissions and is exempt. If delegation is possible we never fall back
+  // to a direct fetch — that path can only fail and would report a misleading
+  // "server not running" error for a server that is running fine.
+  const delegation = await validateViaBackground(cfg);
+  if (delegation.attempted) return delegation.result;
+
+  // Preview / no-extension fallback: validate directly.
+  return validateDirectly(cfg, options);
+}
+
+interface DelegationOutcome {
+  /** True when the message was actually sent to the background (extension context). */
+  attempted: boolean;
+  /** Present whenever `attempted` is true — success or a truthful failure. */
+  result: ProviderValidationResult | null;
+}
+
+/**
+ * The background parks validation results here. Polling this is what makes the
+ * probe reliable: MV3 may tear the service worker down mid-fetch, which kills
+ * the message port, but the result still lands in storage once the fetch
+ * settles (or the worker is restarted and replays it).
+ */
+const VALIDATION_RESULT_KEY = 'usg_provider_validation';
+
+function readValidationResult(requestId: string): Promise<{ status?: string; message?: string; httpStatus?: number } | null> {
+  return new Promise((resolve) => {
+    try {
+      const chromeApi = (globalThis as typeof globalThis & {
+        chrome?: { storage?: { local?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } };
+      }).chrome;
+      const getter = chromeApi?.storage?.local?.get;
+      if (typeof getter !== 'function') { resolve(null); return; }
+
+      getter.call(chromeApi!.storage!.local, [VALIDATION_RESULT_KEY], (res) => {
+        const stored = res?.[VALIDATION_RESULT_KEY] as
+          | { requestId?: string; status?: string; message?: string; httpStatus?: number }
+          | undefined;
+        resolve(stored && stored.requestId === requestId ? stored : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Ask the service worker to probe the provider. Returns `attempted: false` only
+ * when there is no background to talk to (preview/dev), which is the one case
+ * where the caller may fall back to a direct fetch.
+ */
+function validateViaBackground(cfg: AiProviderConfig): Promise<DelegationOutcome> {
+  return new Promise((resolve) => {
+    try {
+      const chromeApi = (globalThis as typeof globalThis & {
+        chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void; lastError?: { message?: string } } };
+      }).chrome;
+      if (typeof chromeApi?.runtime?.sendMessage !== 'function') {
+        resolve({ attempted: false, result: null });
+        return;
+      }
+
+      const requestId = `v${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      let settled = false;
+      let pollTimer: ReturnType<typeof setInterval> | null = null;
+      let hardStop: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = (result: ProviderValidationResult) => {
+        if (settled) return;
+        settled = true;
+        if (pollTimer) clearInterval(pollTimer);
+        if (hardStop) clearTimeout(hardStop);
+        resolve({ attempted: true, result });
+      };
+
+      const acceptIfFinal = (value: { status?: string; message?: string; httpStatus?: number } | null) => {
+        if (!value) return false;
+        if (typeof value.status !== 'string' || typeof value.message !== 'string') return false;
+        if (value.status === 'pending') return false;
+        finish({
+          status: value.status as ProviderValidationStatus,
+          message: value.message,
+          httpStatus: typeof value.httpStatus === 'number' ? value.httpStatus : undefined,
+        });
+        return true;
+      };
+
+      // Poll storage for the outcome. This is the primary path: it survives the
+      // message port closing when the worker is torn down mid-probe. Each tick
+      // also pings the worker, which resets its idle-shutdown timer so a slow
+      // provider cannot outlive the service worker.
+      pollTimer = setInterval(async () => {
+        if (settled) return;
+        try { chromeApi.runtime?.sendMessage?.({ type: 'USG_KEEPALIVE' }, () => { void chromeApi.runtime?.lastError; }); } catch { /* ignore */ }
+        acceptIfFinal(await readValidationResult(requestId));
+      }, 700);
+
+      chromeApi.runtime.sendMessage({ type: 'USG_VALIDATE_PROVIDER', config: cfg, requestId }, async (response) => {
+        // lastError is expected on a torn-down worker; storage polling covers it.
+        void chromeApi.runtime?.lastError;
+        const res = response as { status?: string; message?: string; httpStatus?: number } | undefined;
+        if (acceptIfFinal(res ?? null)) return;
+
+        // If the background answered synchronously with a final verdict we are
+        // done; otherwise check storage once in case it beat the poll.
+        acceptIfFinal(await readValidationResult(requestId));
+      });
+
+      // Backstop. The background probe allows 25s, so this must sit above it.
+      hardStop = setTimeout(async () => {
+        if (acceptIfFinal(await readValidationResult(requestId))) return;
+        finish({ status: 'unreachable', message: 'La validación no respondió a tiempo. Verifica que el servidor esté corriendo.' });
+      }, 45000);
+    } catch {
+      resolve({ attempted: false, result: null });
+    }
+  });
+}
+
+async function validateDirectly(
+  cfg: AiProviderConfig,
+  options: { timeoutMs?: number },
+): Promise<ProviderValidationResult> {
   const controller = new AbortController();
   // Generous timeout: some local proxies/models take 10-15s to answer even a
   // tiny prompt (cold start, queued inference). Too short a timeout would reject

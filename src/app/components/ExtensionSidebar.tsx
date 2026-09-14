@@ -663,11 +663,18 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   // Label describes the provider by its actual endpoint, not just its kind tag,
   // so a mis-tagged config (e.g. kind=gemini pointing at a local proxy) still
   // reads correctly instead of claiming "Gemini".
+  //
+  // A localhost URL is NOT automatically "the bundled local server": the user's
+  // own OpenAI-compatible proxy commonly lives on 127.0.0.1 too. Only the
+  // bundled server's own default port (8010) gets the "Proveedor local" label;
+  // anything else keeps its real provider name.
   const providerLabel = (() => {
     const url = (providerConfig.baseUrl || "").toLowerCase();
     if (providerConfig.kind === "gemini" || url.includes("generativelanguage.googleapis.com")) return "Gemini";
     if (providerConfig.kind === "anthropic" || url.includes("anthropic")) return "Anthropic";
-    if (/^https?:\/\/(127\.0\.0\.1|localhost)/.test(url)) return "Proveedor local";
+    if (/^https?:\/\/(127\.0\.0\.1|localhost)(:8010)?(\/|$)/.test(url) && providerConfig.kind === "local") {
+      return "Proveedor local";
+    }
     return PROVIDER_LABELS[providerConfig.kind] || "Proveedor";
   })();
 

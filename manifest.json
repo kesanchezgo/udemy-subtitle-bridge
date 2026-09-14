@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Udemy Subtitle Bridge",
   "description": "Captura subtítulos EN de Udemy, los traduce con IA local y superpone la traducción EN → ES en tiempo real. Dock in-page con Shadow DOM: Study Agent, Anki .apkg y cloud sync.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "permissions": [
     "storage",
     "activeTab",

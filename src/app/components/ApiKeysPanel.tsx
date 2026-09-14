@@ -73,7 +73,11 @@ export function ApiKeysPanel({
   const externalProviderSignature = `${providerConfig.kind}|${providerConfig.baseUrl}|${providerConfig.apiKey}|${providerConfig.model}`;
 
   useEffect(() => { setKeys(apiKeys.length ? apiKeys : [""]); }, [externalSignature]);
-  useEffect(() => { setProvider(providerConfig); setValidation(null); }, [externalProviderSignature]);
+  // Sync when the config changes from outside, but keep the validation message:
+  // our own save also changes this signature, and clearing there would wipe the
+  // "✓ Conexión correcta" result the user just asked for before it can be read.
+  // Editing any field already clears it via updateProvider.
+  useEffect(() => { setProvider(providerConfig); }, [externalProviderSignature]);
 
   const updateProvider = (patch: Partial<AiProviderConfig>) => {
     setValidation(null);
