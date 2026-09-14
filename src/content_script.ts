@@ -1526,6 +1526,44 @@ function measureTextScale(): number {
 	}
 }
 
+/**
+ * Restore the dock width the user last dragged to, before the React tree mounts.
+ *
+ * Stored unscaled, so it is multiplied by the current text scale here; a user
+ * who enlarged their browser font keeps a width that fits the larger text.
+ */
+async function restoreDockWidth(): Promise<void> {
+	try {
+		const chromeApi = (globalThis as typeof globalThis & {
+			chrome?: { storage?: { local?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } };
+		}).chrome;
+		const getter = chromeApi?.storage?.local?.get;
+		if (typeof getter !== 'function') {
+			return;
+		}
+
+		const stored = await new Promise<unknown>((resolve) => {
+			getter.call(chromeApi!.storage!.local, ['dock_width'], (res) => resolve(res?.dock_width));
+		});
+
+		const parsed = typeof stored === 'number' ? stored : Number.parseFloat(String(stored));
+		if (!Number.isFinite(parsed) || parsed <= 0) {
+			return;
+		}
+
+		const scaled = clampDockWidth(parsed * measureTextScale());
+		dockWidth = scaled;
+
+		// If the dock is already mounted, push the restored width through the same
+		// path a drag would use so the host and the page layout both follow.
+		if (dockHostEl || document.getElementById(DOCK_HOST_ID)) {
+			adjustUdemyLayout(dockWidth, dockCollapsed);
+		}
+	} catch {
+		/* storage unavailable — fall back to the default width */
+	}
+}
+
 /** Publish the measured text scale as CSS variables the dock can read. */
 function applyDockTypographyScale(host: HTMLElement): void {
 	const scale = String(measureTextScale());
@@ -2960,6 +2998,7 @@ function bootstrap() {
 	setupChromeMessageHandler();
 	watchUrlChanges();
 	void initAiProviderConfig();
+	void restoreDockWidth();
 
 	// Try to extract cues from video after a delay
 	setTimeout(() => {

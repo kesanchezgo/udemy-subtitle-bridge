@@ -14,6 +14,7 @@ import {
   DOCK_MAX_WIDTH,
   DOCK_MIN_WIDTH,
   DOCK_RESIZE_HANDLE_WIDTH,
+  DOCK_WIDTH_STORAGE_KEY,
 } from "../constants/dock";
 
 function dispatchToDock(type: string, payload?: unknown) {
@@ -56,6 +57,78 @@ function useTextScale(): number {
   return scale;
 }
 
+/**
+ * The user's manually chosen dock width, persisted across page loads.
+ *
+ * Stored UNSCALED (the value the user dragged to at the 16px baseline) so that
+ * changing the browser font size later rescales the layout instead of locking in
+ * a width that no longer fits the text.
+ *
+ * Returns `null` until the stored value has been read, so the caller can avoid
+ * flashing the default width before the real one arrives.
+ */
+function useStoredDockWidth(): [number | null, (width: number) => void] {
+  const [stored, setStored] = useState<number | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    const apply = (value: unknown) => {
+      if (!alive) return;
+      const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+      setStored(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+    };
+
+    const chromeApi = (globalThis as typeof globalThis & {
+      chrome?: { storage?: { local?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } };
+    }).chrome;
+
+    const getter = chromeApi?.storage?.local?.get;
+    if (typeof getter === "function") {
+      try {
+        getter.call(chromeApi!.storage!.local, [DOCK_WIDTH_STORAGE_KEY], (res) => apply(res?.[DOCK_WIDTH_STORAGE_KEY]));
+      } catch {
+        apply(null);
+      }
+    } else {
+      // Local preview: same `usb_local_` namespace as chromeLocalStorage.
+      try { apply(localStorage.getItem("usb_local_" + DOCK_WIDTH_STORAGE_KEY)); } catch { apply(null); }
+    }
+
+    // React to changes made in another tab / by another dock instance.
+    const onChanged = chromeApi ? (globalThis as typeof globalThis & {
+      chrome?: { storage?: { onChanged?: { addListener: (cb: (c: Record<string, { newValue?: unknown }>, area: string) => void) => void; removeListener: (cb: unknown) => void } } };
+    }).chrome?.storage?.onChanged : undefined;
+    let listener: ((c: Record<string, { newValue?: unknown }>, area: string) => void) | undefined;
+    if (onChanged) {
+      listener = (changes, area) => {
+        if (area === "local" && DOCK_WIDTH_STORAGE_KEY in changes) apply(changes[DOCK_WIDTH_STORAGE_KEY]?.newValue);
+      };
+      onChanged.addListener(listener);
+    }
+
+    return () => {
+      alive = false;
+      if (onChanged && listener) onChanged.removeListener(listener);
+    };
+  }, []);
+
+  const persist = useCallback((width: number) => {
+    setStored(width);
+    const chromeApi = (globalThis as typeof globalThis & {
+      chrome?: { storage?: { local?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } };
+    }).chrome;
+    const setter = chromeApi?.storage?.local?.set;
+    if (typeof setter === "function") {
+      try { setter.call(chromeApi!.storage!.local, { [DOCK_WIDTH_STORAGE_KEY]: width }); } catch { /* stale context */ }
+      return;
+    }
+    try { localStorage.setItem("usb_local_" + DOCK_WIDTH_STORAGE_KEY, JSON.stringify(width)); } catch { /* ignore */ }
+  }, []);
+
+  return [stored, persist];
+}
+
 function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageDockProps) {
   const textScale = useTextScale();
   // Scale the default and the bounds so a larger text size still fits.
@@ -63,27 +136,35 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
   const minWidth = Math.round(DOCK_MIN_WIDTH * textScale);
   const maxWidth = Math.round(DOCK_MAX_WIDTH * textScale);
 
+  const [storedWidth, setStoredWidth] = useStoredDockWidth();
+  const userResized = useRef(false);
+
+  // The persisted (unscaled) width wins over the default, so a width the user
+  // dragged to is reused on every later page load instead of snapping back.
+  const resolvedWidth = storedWidth !== null
+    ? Math.max(minWidth, Math.min(maxWidth, Math.round(storedWidth * textScale)))
+    : defaultWidth;
+
   const [collapsed, setCollapsed] = useState(false);
-  const [width, setWidth] = useState(defaultWidth);
+  const [width, setWidth] = useState(resolvedWidth);
   const [isResizing, setIsResizing] = useState(false);
   const { isSepia, toggleTheme, t } = useDockTheme();
   const panelWidth = collapsed ? DOCK_COLLAPSED_WIDTH : Math.max(0, width - DOCK_RESIZE_HANDLE_WIDTH);
 
   const resizeStartX = useRef(0);
   const resizeStartW = useRef(0);
-  const latestWidth = useRef(defaultWidth);
+  const latestWidth = useRef(resolvedWidth);
   const resizePublishFrame = useRef<number | null>(null);
   const resizeVisualFrame = useRef<number | null>(null);
 
-  // Adopt the scaled default once the measurement lands, unless the user has
-  // already resized the dock by hand.
-  const userResized = useRef(false);
+  // Adopt the resolved width (stored, or the scaled default) unless the user is
+  // mid-drag, which would otherwise fight the incoming value.
   useEffect(() => {
-    if (userResized.current) return;
-    setWidth(defaultWidth);
-    latestWidth.current = defaultWidth;
-    dispatchToDock("DOCK_RESIZE", { width: defaultWidth, live: false });
-  }, [defaultWidth]);
+    if (userResized.current && isResizing) return;
+    setWidth(resolvedWidth);
+    latestWidth.current = resolvedWidth;
+    dispatchToDock("DOCK_RESIZE", { width: resolvedWidth, live: false });
+  }, [resolvedWidth, isResizing]);
 
   const publishResize = useCallback((nextWidth: number) => {
     latestWidth.current = nextWidth;
@@ -154,6 +235,9 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
       setCollapsed(false);
       setWidth(latestWidth.current);
       dispatchToDock("DOCK_RESIZE", { width: latestWidth.current, live: false });
+      // Remember the width the user chose, stored unscaled so a later change to
+      // the browser font size still rescales it instead of clamping it.
+      setStoredWidth(Math.round(latestWidth.current / textScale));
     };
 
     document.addEventListener("mousemove", handleMove);
@@ -171,7 +255,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
         resizeVisualFrame.current = null;
       }
     };
-  }, [isResizing, minWidth, maxWidth, scheduleWidthUpdate]);
+  }, [isResizing, minWidth, maxWidth, scheduleWidthUpdate, setStoredWidth, textScale]);
 
   return (
     <div
