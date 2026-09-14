@@ -28,16 +28,61 @@ interface InPageDockProps {
   injectGlobalThemeCss?: boolean;
 }
 
+/**
+ * The text scale the content script measured from the browser/OS (1 at the 16px
+ * default). Reused here so the dock's width grows with its text: at 1.25 the
+ * labels are 25% wider, and a fixed 400px panel would truncate them.
+ *
+ * Falls back to 1 in the local preview, where there is no content script.
+ */
+function useTextScale(): number {
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const read = () => {
+      const root = document.documentElement;
+      const raw = getComputedStyle(root).getPropertyValue('--usb-scale').trim();
+      const parsed = Number.parseFloat(raw);
+      setScale(Number.isFinite(parsed) && parsed > 0 ? parsed : 1);
+    };
+    read();
+
+    // The content script writes the variable after mount, and it changes when the
+    // user edits their browser font size, so observe rather than read once.
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  return scale;
+}
+
 function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageDockProps) {
+  const textScale = useTextScale();
+  // Scale the default and the bounds so a larger text size still fits.
+  const defaultWidth = Math.round(DOCK_DEFAULT_WIDTH * textScale);
+  const minWidth = Math.round(DOCK_MIN_WIDTH * textScale);
+  const maxWidth = Math.round(DOCK_MAX_WIDTH * textScale);
+
   const [collapsed, setCollapsed] = useState(false);
-  const [width, setWidth] = useState(DOCK_DEFAULT_WIDTH);
+  const [width, setWidth] = useState(defaultWidth);
   const [isResizing, setIsResizing] = useState(false);
   const { isSepia, toggleTheme, t } = useDockTheme();
   const panelWidth = collapsed ? DOCK_COLLAPSED_WIDTH : Math.max(0, width - DOCK_RESIZE_HANDLE_WIDTH);
 
+  // Adopt the scaled default once the measurement lands, unless the user has
+  // already resized the dock themselves.
+  const userResized = useRef(false);
+  useEffect(() => {
+    if (userResized.current) return;
+    setWidth(defaultWidth);
+    latestWidth.current = defaultWidth;
+    dispatchToDock("DOCK_RESIZE", { width: defaultWidth, live: false });
+  }, [defaultWidth]);
+
   const resizeStartX = useRef(0);
   const resizeStartW = useRef(0);
-  const latestWidth = useRef(DOCK_DEFAULT_WIDTH);
+  const latestWidth = useRef(defaultWidth);
   const resizePublishFrame = useRef<number | null>(null);
   const resizeVisualFrame = useRef<number | null>(null);
 
@@ -80,6 +125,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    userResized.current = true;
     setIsResizing(true);
     resizeStartX.current = event.clientX;
     resizeStartW.current = width;
@@ -92,7 +138,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
 
     const handleMove = (event: MouseEvent) => {
       const delta = resizeStartX.current - event.clientX;
-      const nextWidth = Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, resizeStartW.current + delta));
+      const nextWidth = Math.max(minWidth, Math.min(maxWidth, resizeStartW.current + delta));
       scheduleWidthUpdate(nextWidth);
     };
 
