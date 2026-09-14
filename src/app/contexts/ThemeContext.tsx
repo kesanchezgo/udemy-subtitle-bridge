@@ -12,38 +12,12 @@ interface ThemeContextValue {
   t: (dark: string, light: string) => string;
 }
 
-const THEME_STORAGE_KEY = "usb_dock_theme";
-
 const ThemeContext = createContext<ThemeContextValue>({
   theme:       "dark",
   isSepia:     false,
   toggleTheme: () => {},
   t:           (dark) => dark,
 });
-
-/** True when the OS/browser reports a light colour-scheme preference. */
-function systemPrefersLight(): boolean {
-  try {
-    return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Initial theme: the user's stored choice wins; with no stored choice the OS
- * preference decides. Previously this always booted dark, so a light-mode user
- * got a dark dock until they toggled it themselves.
- */
-function resolveInitialTheme(): DockTheme {
-  try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "dark" || stored === "sepia") return stored;
-  } catch {
-    /* private mode / storage disabled — fall through to the OS preference */
-  }
-  return systemPrefersLight() ? "sepia" : "dark";
-}
 
 // ── Paletas exportadas (para uso directo en componentes) ──────────────────────
 /** Paleta Dark — tokens de referencia */
@@ -96,34 +70,10 @@ export function ThemeProvider({
   children: React.ReactNode;
   injectGlobalCss?: boolean;
 }) {
-  const [theme, setTheme] = useState<DockTheme>(() => resolveInitialTheme());
+  const [theme, setTheme] = useState<DockTheme>("dark");
   const isSepia = theme === "sepia";
 
-  const toggleTheme = () => {
-    setTheme((prev) => {
-      const next: DockTheme = prev === "dark" ? "sepia" : "dark";
-      try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch { /* ignore */ }
-      return next;
-    });
-  };
-
-  // Follow the OS while the user has not made an explicit choice. Once they
-  // toggle, the stored value takes over and this stops applying.
-  useEffect(() => {
-    let stored: string | null = null;
-    try { stored = localStorage.getItem(THEME_STORAGE_KEY); } catch { /* ignore */ }
-    if (stored === "dark" || stored === "sepia") return;
-
-    let mq: MediaQueryList;
-    try {
-      mq = matchMedia("(prefers-color-scheme: light)");
-    } catch {
-      return;
-    }
-    const onChange = (e: MediaQueryListEvent) => setTheme(e.matches ? "sepia" : "dark");
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  const toggleTheme = () => setTheme(prev => (prev === "dark" ? "sepia" : "dark"));
 
   /** Devuelve la clase correcta según el tema activo */
   const t = (dark: string, light: string) => (isSepia ? light : dark);

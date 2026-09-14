@@ -1,29 +1,20 @@
 @custom-variant dark (&:is(.dark *));
 
-/*
- * Typography scale.
- *
- * The dock renders inside a Shadow DOM hosted on udemy.com, so `rem` would
- * resolve against Udemy's root font-size (often 10px), not the user's browser
- * setting. To make the UI grow with the browser/OS text size without inheriting
- * a foreign root, every size is expressed as `calc(N * var(--usb-scale))`.
- *
- *   --usb-scale = the user's browser default font-size / 16, clamped.
- *
- * content_script.ts measures that ratio on the host page and writes it to the
- * dock host, so Chrome's "Font size" setting and OS DPI both take effect while
- * a 16px default still yields exactly the hand-tuned px values below.
- */
 :root, :host {
   --font-size: 16px;
-  --usb-scale: 1;
-  --spacing: calc(4px * var(--usb-scale));
-  --text-xs: calc(12px * var(--usb-scale));
-  --text-sm: calc(14px * var(--usb-scale));
-  --text-base: calc(16px * var(--usb-scale));
-  --text-lg: calc(18px * var(--usb-scale));
-  --text-xl: calc(20px * var(--usb-scale));
-  --text-2xl: calc(24px * var(--usb-scale));
+  /*
+   * Tailwind v4 defaults use rem-based variables. In the content script those rems
+   * resolve against Udemy's document root (often 10px), even inside Shadow DOM.
+   * Pinning the design tokens to px keeps extension, local preview and Figma at
+   * the same physical scale.
+   */
+  --spacing: 4px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);
   --card: #ffffff;
@@ -52,7 +43,7 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --radius: calc(10px * var(--usb-scale));
+  --radius: 10px;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: #030213;
@@ -127,10 +118,10 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px * var(--usb-scale));
-  --radius-md: calc(var(--radius) - 2px * var(--usb-scale));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px * var(--usb-scale));
+  --radius-xl: calc(var(--radius) + 4px);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
