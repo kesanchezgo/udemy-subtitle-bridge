@@ -1496,8 +1496,9 @@ function applyDockViewportFrame() {
  * Chrome zoom is intentionally excluded: it already scales the whole viewport,
  * and applying it here too would double-scale the dock.
  *
- * Clamped to 1-1.4. Never below 1: the px values in the components are the
- * intended minimum, so shrinking there can only hurt readability.
+ * Clamped to 1.1-1.4. The 1.1 comfort floor lifts the smallest labels (9px in
+ * the components) to ~10px at the browser default, which reads noticeably
+ * better on high-DPI screens; the browser/OS font setting scales on top.
  */
 function measureTextScale(): number {
 	try {
@@ -1519,10 +1520,14 @@ function measureTextScale(): number {
 		const baseline = Number.isFinite(userDefault) && userDefault > 0 ? userDefault : 16;
 		const ratio = baseline / 16;
 
-		// 16px default -> 1, 18px -> 1.125, 20px -> 1.25, 22px+ -> 1.375 (capped).
-		return Math.min(1.4, Math.max(1, Number(ratio.toFixed(3))));
+		// The components are sized against a 9px smallest label, which is below
+		// comfortable reading for most users on a high-DPI screen. A comfort floor
+		// of 1.1 lifts the smallest text to ~10px at the 16px default, and the
+		// browser/OS setting scales on top of that.
+		//   16px default -> 1.1, 18px -> 1.237, 20px -> 1.375, 22px -> 1.4 (capped).
+		return Math.min(1.4, Math.max(1.1, Number((ratio * 1.1).toFixed(3))));
 	} catch {
-		return 1;
+		return 1.1;
 	}
 }
 
@@ -2165,6 +2170,35 @@ function buildLectureContextPayload() {
 }
 
 function sendLectureContextUpdate() {
+	// Auto-rellenado del curso/lección reales en el dock: se escriben por
+	// chrome.storage.sync — el mismo canal de usePersistedState("agent_course_name")
+	// — para que el dock los hidrate sin depender del puente de eventos.
+	// Solo se sobreescriben los valores demo/vacíos; lo que el usuario escribió
+	// se respeta.
+	const courseTitle = getCourseTitle();
+	const lectureTitle = getLectureTitle();
+	if (courseTitle || lectureTitle) {
+		try {
+			const chromeApi = globalThis as typeof globalThis & {
+				chrome?: { storage?: { sync?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void; set: (items: Record<string, unknown>, cb?: () => void) => void } } };
+			};
+			const sync = chromeApi.chrome?.storage?.sync;
+			if (sync) {
+				sync.get(['agent_course_name', 'agent_lesson_name'], (current) => {
+					const DEMO_COURSE = 'java in-depth - udemy';
+					const DEMO_LESSON = '02 - jvm y tipos de datos';
+					const courseStored = String(current.agent_course_name ?? '').trim();
+					const lessonStored = String(current.agent_lesson_name ?? '').trim();
+					const courseIsDemoOrEmpty = !courseStored || courseStored.toLowerCase() === DEMO_COURSE;
+					const lessonIsDemoOrEmpty = !lessonStored || lessonStored.toLowerCase() === DEMO_LESSON;
+					const updates: Record<string, unknown> = {};
+					if (courseTitle && courseIsDemoOrEmpty) updates.agent_course_name = courseTitle;
+					if (lectureTitle && lessonIsDemoOrEmpty) updates.agent_lesson_name = lectureTitle;
+					if (Object.keys(updates).length > 0) sync.set(updates);
+				});
+			}
+		} catch { /* storage no disponible — el dock usa sus valores por defecto */ }
+	}
 	void sendToSidebar({
 		type: 'LECTURE_CONTEXT_UPDATE',
 		payload: buildLectureContextPayload()

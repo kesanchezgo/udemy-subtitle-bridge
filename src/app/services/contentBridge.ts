@@ -149,25 +149,17 @@ export const contentBridge = {
 
   // ── Content script → sidebar/popup ─────────────────────────────────────────
   async sendToSidebar(message: BridgeMessage): Promise<void> {
-    const extensionPage = isExtensionPageContext();
-
-    // In in-page mode (content script + Shadow DOM dock), local window events
-    // are the primary path so the dock receives messages reliably.
-    if (!extensionPage && hasWindowContext()) {
-      window.dispatchEvent(new CustomEvent(USB_TO_SIDEBAR_EVENT, { detail: message }));
-      // Mirror to runtime as best effort (for popup/background listeners).
-      if (canUseRuntimeMessaging()) {
-        safeRuntimeSendMessage(message);
-      }
-      return;
-    }
-
-    if (canUseRuntimeMessaging()) {
-      safeRuntimeSendMessage(message);
-      return;
-    }
+    // El dock in-page vive en el MISMO contexto que el content script, y
+    // chrome.runtime.sendMessage NUNCA hace eco al contexto emisor: sin el
+    // evento de ventana, mensajes como LECTURE_CONTEXT_UPDATE no llegan nunca
+    // al dock. Por eso la entrega por window es incondicional (cuando existe),
+    // y el runtime queda como mirror para oyentes en otros contextos (popup).
     if (hasWindowContext()) {
       window.dispatchEvent(new CustomEvent(USB_TO_SIDEBAR_EVENT, { detail: message }));
+    }
+
+    if (isExtensionPageContext() && canUseRuntimeMessaging()) {
+      safeRuntimeSendMessage(message);
     }
   },
 
@@ -175,9 +167,17 @@ export const contentBridge = {
   onMessageFromContent(
     callback: (message: BridgeMessage) => void
   ): () => void {
+    // Suscribir AMBOS canales cuando existen: el runtime entrega mensajes de
+    // otros contextos (popup/background), el evento de ventana entrega los del
+    // content script en la misma página (el emisor no se auto-escucha por
+    // runtime). No hay duplicados: el emisor queda excluido del runtime.
     if (isExtensionPageContext()) {
       const cleanupRuntime = addRuntimeListener(callback, false);
-      return () => cleanupRuntime?.();
+      const cleanupWindow = addWindowListener(USB_TO_SIDEBAR_EVENT, callback);
+      return () => {
+        cleanupRuntime?.();
+        cleanupWindow?.();
+      };
     }
     const cleanupWindow = addWindowListener(USB_TO_SIDEBAR_EVENT, callback);
     return () => cleanupWindow?.();

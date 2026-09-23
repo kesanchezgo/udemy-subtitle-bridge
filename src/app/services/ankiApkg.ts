@@ -251,17 +251,58 @@ function checksumField(text: string) {
   return hash;
 }
 
+/**
+ * Resuelve la URL del wasm contra el bundle de la extensión.
+ *
+ * El import `?url` emite una ruta RELATIVA ("assets/sql-wasm-*.wasm") que, al
+ * hacer fetch desde un content script, se resuelve contra el ORIGEN DE LA
+ * PÁGINA (https://www.udemy.com/assets/...) y devuelve HTML → el wasm no
+ * compila ("expected magic word"). chrome.runtime.getURL la convierte en una
+ * URL chrome-extension:// servida por el bundle (el recurso está declarado en
+ * web_accessible_resources).
+ */
+function resolveSqlWasmUrl(): string {
+	if (/^(https?|chrome-extension|moz-extension):/.test(sqlWasmUrl)) {
+		return sqlWasmUrl;
+	}
+	const api = (globalThis as typeof globalThis & {
+		chrome?: { runtime?: { getURL?: (path: string) => string } };
+	}).chrome;
+	if (typeof api?.runtime?.getURL === 'function') {
+		try {
+			return api.runtime.getURL(sqlWasmUrl.replace(/^\/+/, ''));
+		} catch {
+			/* sin runtime — devolver la cruda */
+		}
+	}
+	return sqlWasmUrl;
+}
+
 export async function buildAnkiApkg(
-  cards: AnkiCardData[],
-  deckName: string,
-  modelCss: string,
-  frontTemplate: string,
-  backTemplate: string,
-  onProgress?: (msg: string) => void
+	cards: AnkiCardData[],
+	deckName: string,
+	modelCss: string,
+	frontTemplate: string,
+	backTemplate: string,
+	onProgress?: (msg: string) => void
 ): Promise<Uint8Array> {
-  onProgress?.('Inicializando SQLite...');
-  const SQL = await initSqlJs({ locateFile: () => sqlWasmUrl });
-  const db = new SQL.Database();
+	onProgress?.('Inicializando SQLite...');
+	// Carga explícita del wasm con timeout: el locateFile interno puede quedar
+	// colgado sin error si el fetch del recurso del bundle no responde, y el
+	// usuario vería el export congelado sin explicación.
+	const SQL = await Promise.race([
+		(async () => {
+			const wasmBinary = await fetch(resolveSqlWasmUrl()).then((r) => {
+				if (!r.ok) throw new Error(`HTTP ${r.status} al cargar sql-wasm.wasm`);
+				return r.arrayBuffer();
+			});
+			return initSqlJs({ wasmBinary });
+		})(),
+		new Promise<never>((_, reject) =>
+			setTimeout(() => reject(new Error('sql.js no inicializó en 15 s — el wasm del bundle no respondió')), 15000)
+		),
+	]);
+	const db = new SQL.Database();
 
   const deckId = stableNumericId(deckName, 1_700_000_000_000);
   const modelId = stableNumericId('Subtitle Bridge Basic', 1_800_000_000_000);
@@ -289,7 +330,10 @@ export async function buildAnkiApkg(
       `INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         noteId,
-        card.guid?.trim() || stableGuid(`${deckName}|${front}|${index}`),
+        // GUID por contenido (mazo+front): re-importar la misma lección
+        // ACTUALIZA las notas en vez de duplicarlas, aunque el orden o la
+        // cantidad de tarjetas cambie entre exportaciones.
+        card.guid?.trim() || stableGuid(`${deckName}|${front}`),
         modelId,
         Math.floor(Date.now() / 1000),
         0,

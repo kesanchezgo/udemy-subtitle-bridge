@@ -43,6 +43,20 @@ Planned scope (not fully implemented yet):
 
 If you load the root folder, Chrome will try to open the source manifest and fail on TypeScript scripts. The extension must be loaded from `dist/`.
 
+## Automated QA
+
+| Command | What it does |
+|---------|--------------|
+| `npm run qa:extension` | Full E2E against the built extension: loads `dist/` in Chromium, serves a local Udemy-shaped fixture under `https://www.udemy.com` (host mapping + throwaway cert), drives the real dock with real AI (provider at 127.0.0.1:6660), audits the exported `.apkg` (unzip + SQLite), captures the Obsidian `obsidian://` URIs, verifies the duplicate guard and the typography scales (550px / 660px). Exit 0 = all green. |
+| `node scripts/qa-udemy-real.mjs` | Same flow against a REAL Udemy lecture using exported session cookies (`USB_COOKIES`, default `%TEMP%/usb-qa-udemy-cookies.json`). Requires the provider proxy running. |
+| `node scripts/prompt-harness.mjs` | 12 prompt behaviours (SRT translation, objectives, refine, study session) against the live provider, including the Anki card format contract. |
+| `node scripts/test-obsidian-export.mjs` | Unit asserts for the Obsidian export builders (note, MOC, scaffold, URI). |
+
+Artifacts land in the repo root as `qa-*.png` (gitignored). The real-Udemy run needs the
+provider proxy at `127.0.0.1:6660` and valid session cookies; see
+`docs/obsidian-integration.md` for the Obsidian integration contract and
+`CHANGELOG.md` for the latest changes.
+
 ## Current Manual Flow (What Works Now)
 
 1. Open a Udemy lecture page.
