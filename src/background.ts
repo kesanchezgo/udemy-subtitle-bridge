@@ -1,5 +1,15 @@
 import { buildGeminiGenerateContentUrl, initGeminiKeys, markGeminiKeyCooldown, normalizeGeminiKeys, saveGeminiKeys, selectGeminiKeysForPurpose, setGeminiKeysSync, type GeminiPurpose } from './gemini-config';
 import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, normalizeAiProviderConfig, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
+import {
+	buildObjectivesPrompt,
+	buildRefinePrompt,
+	buildStudyPrompt,
+	buildSrtTranslationPrompt,
+	estimateAnkiCardTarget,
+	formatOriginalSrtBlocks,
+	type SrtBlock,
+	type StudyMetadata
+} from './shared/prompts';
 
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -427,12 +437,6 @@ function toErrorMessage(error: unknown) {
 	return String(error);
 }
 
-type SrtBlock = {
-	index: number;
-	timeLine: string;
-	text: string;
-};
-
 function parseSrtBlocks(srtText: string): SrtBlock[] {
 	const normalized = String(srtText || '').replace(/\r/g, '').trim();
 	if (!normalized) {
@@ -460,12 +464,6 @@ function formatSrtBlocks(blocks: SrtBlock[]) {
 		.join('\n\n');
 }
 
-function formatOriginalSrtBlocks(blocks: SrtBlock[]) {
-	return blocks
-		.map((block) => `${block.index}\n${block.timeLine}\n${block.text}`)
-		.join('\n\n');
-}
-
 function stripModelFences(text: string) {
 	return String(text || '')
 		.replace(/^\s*```(?:srt|text)?\s*/i, '')
@@ -485,25 +483,6 @@ function looksLikeStudyFeedback(text: string) {
 		upper.includes('PROFUNDIZACIÓN:') ||
 		upper.includes('PROFUNDIZACION:')
 	);
-}
-
-function buildSrtTranslationPrompt(blocks: SrtBlock[]) {
-	return [
-		'Actua como traductor experto para cursos online de Udemy.',
-		'Traduce este SRT de ingles a espanol latino neutro.',
-		'',
-		'REGLAS OBLIGATORIAS:',
-		'1. Devuelve SOLO SRT plano. Sin markdown, sin explicaciones, sin comentarios.',
-		'2. Conserva exactamente los numeros de bloque y timestamps.',
-		'3. No unas, no dividas, no reordenes bloques.',
-		'4. Traduce solo el texto del subtitulo.',
-		'5. Mantén terminos tecnicos, nombres propios, marcas, comandos, APIs, librerias y palabras clave en ingles cuando sea mas claro.',
-		'6. No generes feedback de estudio, porcentajes, BIEN/FALTO/PROFUNDIZACION ni evaluaciones.',
-		`7. IMPORTANTE: El SRT tiene exactamente ${blocks.length} bloques. Tu respuesta debe tener exactamente ${blocks.length} bloques traducidos.`,
-		'',
-		'SRT EN:',
-		formatOriginalSrtBlocks(blocks)
-	].join('\n');
 }
 
 function extractOpenAiText(data: unknown): string {
@@ -1112,105 +1091,13 @@ function looksTruncatedJsonResponse(text: string): boolean {
 	return inString || depth > 0;
 }
 
-type StudyMetadata = {
-	lectureKey: string;
-	courseSlug: string;
-	lectureId: string;
-	courseName?: string;
-	courseDescription?: string;
-	lessonName?: string;
-	objective?: string;
-	cueCount?: number;
-	transcriptTruncated?: boolean;
-};
-
-function estimateAnkiCardTarget(transcriptText: string, cueCount?: number) {
-	const chars = transcriptText.trim().length;
-	const cues = typeof cueCount === 'number' && Number.isFinite(cueCount) ? cueCount : 0;
-	if (chars < 2500 || cues > 0 && cues < 35) return { min: 3, max: 4, label: 'leccion corta o liviana' };
-	if (chars < 6000 || cues > 0 && cues < 90) return { min: 4, max: 5, label: 'leccion breve con pocos conceptos' };
-	if (chars < 12000 || cues > 0 && cues < 180) return { min: 5, max: 6, label: 'leccion normal' };
-	return { min: 6, max: 8, label: 'leccion larga o densa' };
-}
-
-function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata) {
-	const cardTarget = estimateAnkiCardTarget(transcriptText, metadata.cueCount);
-	return [
-		'Eres un diseñador instruccional experto para cursos online de Udemy.',
-		'Genera una sesión de estudio adaptada al curso, la lección actual y el objetivo del estudiante.',
-		'No asumas que el curso es de programación. Si es técnico, usa su lenguaje/framework real; si no lo es, crea ejercicios prácticos del dominio correspondiente.',
-		'Usa esta prioridad pedagogica: 1) la transcripción es la fuente de verdad; 2) el objetivo del estudiante define el ángulo, dificultad y distribución; 3) el curso/descripción solo aporta contexto; 4) no inventes contenido para satisfacer el objetivo.',
-		'',
-		`CURSO: ${metadata.courseName || metadata.courseSlug || 'Curso Udemy'}`,
-		`DESCRIPCIÓN DEL CURSO: ${metadata.courseDescription || '(sin descripción)'}`,
-		`LECCIÓN: ${metadata.lessonName || metadata.lectureId || 'Desconocida'}`,
-		`OBJETIVO DEL ESTUDIANTE: ${metadata.objective || 'Dominar la lección y aplicarla correctamente'}`,
-		`DENSIDAD DE LA LECCIÓN: ${cardTarget.label}; transcripción ${transcriptText.length} caracteres; cues ${metadata.cueCount ?? 'desconocidos'}; truncada: ${metadata.transcriptTruncated ? 'sí' : 'no'}`,
-		`CANTIDAD RECOMENDADA DE ANKI: ${cardTarget.min}-${cardTarget.max} tarjetas`,
-		'',
-		'TRANSCRIPCIÓN DEL VIDEO:',
-		transcriptText.slice(0, 18000),
-		'',
-		'Genera un JSON VÁLIDO (sin markdown, sin ```json) con esta estructura EXACTA:',
-		'{',
-		'  "relevance": { "score": 85, "reason": "explicación breve" },',
-		'  "keyConcepts": ["concepto 1 en una oración", "concepto 2", "concepto 3", "concepto 4"],',
-		'  "quickWin": "una acción rápida que el estudiante puede hacer ahora",',
-		'  "questions": [',
-		'    { "q": "pregunta", "bloom": "comprender|aplicar|analizar|evaluar", "difficulty": "confused|partial|clear|mastered", "conceptRefs": [0], "hint": "pista", "answer": "respuesta ideal" }',
-		'  ],',
-		'  "application": {',
-		'    "isCode": true,',
-		'    "setup": "contexto del ejercicio práctico",',
-		'    "challenge": "código con bug o ejercicio",',
-		'    "solution": "solución explicada"',
-		'  },',
-		'  "interviewQ": { "q": "pregunta oral/de cierre", "idealAnswer": "estructura ideal de respuesta" },',
-		'  "nextAction": "siguiente paso recomendado",',
-		'  "ankiCards": [',
-		'    { "id": "card-001", "type": "concepto|aplicacion|codigo|entrevista|comparacion|proceso", "front": "HTML simple", "back": "HTML simple", "tags": ["tag1", "tag2"] }',
-		'  ]',
-		'}',
-		'',
-		'REGLAS:',
-		'- Genera exactamente 4 keyConcepts. El indice de cada concepto (0, 1, 2, 3) se usara para calibrar preguntas.',
-		'- Genera exactamente 4 preguntas, una por difficulty: confused, partial, clear, mastered.',
-		'- Cada pregunta DEBE incluir conceptRefs con 1-3 indices de keyConcepts que evalua. Usa indices validos entre 0 y 3.',
-		'- Las preguntas deben enfocarse en verificar comprension aplicable, no repetir literalmente el subtitulo.',
-		'- Usa el objetivo para decidir el enfoque de preguntas y tarjetas. Ejemplo: si el objetivo es entrevista, favorece explicación oral, comparaciones, trade-offs y preguntas tipo entrevista, PERO solo cuando se justifiquen desde la transcripción.',
-		`- Genera entre ${cardTarget.min} y ${cardTarget.max} tarjetas Anki útiles y específicas de la lección. No rellenes por cantidad: una lección corta debe tener pocas tarjetas de alta calidad; una lección densa puede tener más.`,
-		'- Cada tarjeta Anki debe ser atómica: una sola idea evaluable por tarjeta. Evita duplicados, preguntas vagas y respuestas enciclopédicas.',
-		'- El front debe ser una pregunta clara o un prompt de recuperación activa. El back debe responder con precisión y suficiente contexto para repasar dentro de semanas.',
-		'- Puedes usar HTML simple en front/back SOLO si mejora la memoria o la comprensión. No lo uses como decoración.',
-		'- Usa <pre><code> solo cuando la transcripción realmente incluya código, comandos, sintaxis, APIs o configuraciones. No inventes código.',
-		'- Usa <table> solo para comparaciones pequeñas y claras. Usa <ul>/<ol> para pasos o listas breves. Mantén cada tarjeta corta.',
-		'- Puedes usar <details><summary> para matices opcionales que no deban saturar la respuesta principal.',
-		'- Puedes usar <div class="concept-box">, <div class="tip-box">, <div class="warning-box"> o <div class="interview-box"> cuando ayuden a distinguir definición, consejo, advertencia o práctica oral/profesional. No fuerces estas clases si el contenido no lo necesita.',
-		'- Usa type="aplicacion" para casos, decisiones, ejercicios de transferencia, práctica profesional o uso real que no sea código.',
-		'- Usa type="codigo" solo si la lección realmente enseña código, comandos, APIs o sintaxis. Usa type="entrevista" solo si aporta valor para explicar el tema oralmente o para el objetivo del estudiante, y nunca para rellenar cantidad.',
-		'- interviewQ representa una práctica oral/de cierre para consolidar la lección. Puede ser null si no aporta valor.',
-		'- Hazla de entrevista SOLO si el objetivo del estudiante, el curso o la lección lo justifican claramente. Si no, formula una explicación en voz alta, reflexión guiada o pregunta de transferencia del dominio.',
-		'- Si el objetivo es entrevista pero la lección no contiene material entrevistable, genera una pregunta oral sobre lo que sí aparece en la transcripción, no sobre temas externos.',
-		'- Las tags deben ser cortas, sin espacios, y reflejar curso/tema/tipo. No inventes tags genéricas si hay términos específicos en la transcripción.',
-		'- application.isCode debe ser true solo si la lección realmente requiere código.',
-		'- Si no es código, challenge debe ser un caso práctico, análisis, decisión o ejercicio aplicable.',
-		'- Todo en español excepto términos técnicos, marcas, comandos, APIs, librerías o nombres propios que convenga mantener.',
-		'- No inventes temas ajenos a la transcripción; si falta contexto, usa el curso/lección como guía.',
-		'- Responde SOLO con el JSON, sin texto adicional'
-	].join('\n');
-}
-
 async function generateLearningPanelFromTranscript(transcriptText: string, metadata: StudyMetadata, forcedApiKeys: string[] = []) {
 	const cleaned = String(transcriptText || '').replace(/\r/g, '').trim();
 	if (cleaned.length < 120) {
 		throw new Error('Transcript is too short for learning panel generation.');
 	}
 
-	const loadedKeys = await loadGeminiKeysForBackground(forcedApiKeys);
-	const apiKeys = loadedKeys.keys;
 	console.groupCollapsed('[USG][study] generate learning panel');
-	console.info('[USG][study] keys loaded before request:', describeGeminiKeys(apiKeys));
-	console.info('[USG][study] key sources:', loadedKeys.debug);
 	console.info('[USG][study] metadata:', {
 		courseName: metadata.courseName,
 		lessonName: metadata.lessonName,
@@ -1219,6 +1106,30 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 		objective: metadata.objective,
 		transcriptChars: cleaned.length
 	});
+
+	// ── Try the user-configured provider first (local proxy / OpenAI / etc.) ──
+	// This is the same fallback chain the objectives and refine paths use, and it
+	// is what makes the feature work without Gemini keys.
+	try {
+		console.log('[USG][study] trying configured provider…');
+		const text = await requestConfiguredProviderText(buildStudyPrompt(cleaned, metadata), 0.35, 8192);
+		console.info('[USG][study] raw provider response:', text);
+		const parsed = safeJsonParse(text);
+		if (parsed && typeof parsed === 'object') {
+			console.info('[USG][study] JSON parse ok. Keys:', Object.keys(parsed as Record<string, unknown>));
+			console.groupEnd();
+			return { payload: parsed, raw: cleaned };
+		}
+		console.warn('[USG][study] ⚠️ Provider response could not be parsed as JSON object.');
+	} catch (providerError) {
+		console.warn('[USG][study] provider error:', providerError);
+	}
+
+	// ── Fall back to Gemini if the provider did not produce a usable payload ──
+	const loadedKeys = await loadGeminiKeysForBackground(forcedApiKeys);
+	const apiKeys = loadedKeys.keys;
+	console.info('[USG][study] keys loaded before request:', describeGeminiKeys(apiKeys));
+	console.info('[USG][study] key sources:', loadedKeys.debug);
 
 	if (apiKeys.length > 0) {
 		let prompt = '';
@@ -1287,69 +1198,6 @@ export interface GeneratedObjective {
 	icon: string;
 	title: string;
 	sub: string;
-}
-
-function buildObjectivesPrompt(courseName: string, description: string): string {
-	return [
-		'Eres un asesor pedagógico para estudiantes de Udemy.',
-		'Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.',
-		'',
-		'FORMATO DE SALIDA (CRÍTICO):',
-		'- Responde EXCLUSIVAMENTE con un array JSON válido.',
-		'- NO uses bloques de código markdown (sin ``` ni ```json).',
-		'- NO añadas texto antes ni después del array.',
-		'- NO incluyas comentarios dentro del JSON.',
-		'',
-		'ESQUEMA EXACTO:',
-		'[',
-		'  {"id":"slug-en-minusculas","icon":"🚀","title":"Texto corto","sub":"clarificador"},',
-		'  {"id":"slug-2","icon":"🎯","title":"...","sub":"..."},',
-		'  {"id":"slug-3","icon":"🛠️","title":"...","sub":"..."},',
-		'  {"id":"slug-4","icon":"🏆","title":"...","sub":"..."}',
-		']',
-		'',
-		'REGLAS DE CONTENIDO:',
-		'- id: minúsculas-con-guiones (ej: "entrevista-spring", "cert-oracle"); 4-40 chars.',
-		'- icon: UN solo emoji, sin texto.',
-		'- title: máximo 35 caracteres.',
-		'- sub: máximo 40 caracteres, frase clarificadora.',
-		'- Los 4 objetivos deben salir del curso y su descripción, no de plantillas fijas.',
-		'- Cubre 4 motivaciones naturalmente distintas para ESTE curso: aplicación práctica, dominio conceptual, meta profesional, creación/producción, evaluación/certificación, entrevista, portafolio, mejora personal u otra que encaje.',
-		'- NO fuerces entrevista, certificación o proyecto si el curso no lo justifica.',
-		'- Si el curso no es técnico o no es de código, adapta los objetivos al dominio real del curso.',
-		'- Usa solo los datos proporcionados. No inventes detalles externos del curso.',
-		'- Personalízalos al curso específico, no genérico.',
-		'',
-		`Curso: ${courseName}`,
-		`Descripción: ${description || '(sin descripción)'}`,
-		'',
-		'Genera AHORA el array JSON (4 objetos, sin texto adicional):'
-	].join('\n');
-}
-
-function buildRefinePrompt(courseName: string, description: string, rawGoal: string): string {
-	return [
-		'Eres un coach pedagógico para estudiantes de Udemy.',
-		'Convierte el objetivo libre del estudiante en un objetivo de aprendizaje personalizado y de alta calidad.',
-		'Debe mantener la intención original del estudiante y adaptarse al curso real.',
-		'',
-		'CRITERIOS:',
-		'- Resultado observable: que el estudiante pueda notar si avanzó.',
-		'- Acción concreta: aprender, aplicar, crear, aprobar, explicar, resolver, mejorar, practicar, etc.',
-		'- Contexto del curso: usa el nombre y descripción; no inventes datos externos.',
-		'- No fuerces entrevista, certificación, proyecto o código si no encaja con el objetivo o el curso.',
-		'- Tono motivador, profesional y específico; evita frases genéricas tipo "aprender el curso".',
-		'',
-		'FORMATO:',
-		'- Devuelve SOLO una frase.',
-		'- Sin comillas, sin explicaciones, sin markdown.',
-		'- Máximo 95 caracteres.',
-		'',
-		`Curso: ${courseName}`,
-		`Descripción: ${description || '(sin descripción)'}`,
-		`Objetivo del estudiante: "${rawGoal.trim()}"`,
-		'Objetivo refinado:'
-	].join('\n');
 }
 
 function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
@@ -1691,6 +1539,7 @@ async function generateObjectivesViaGemini(
 	}
 
 	// Try the user-configured provider (OpenAI-compatible / Anthropic).
+	let providerError: unknown = null;
 	try {
 		console.log('[USG][objectives] trying configured provider…');
 		const text = await requestConfiguredProviderText(prompt, 0.5, 1500);
@@ -1701,8 +1550,9 @@ async function generateObjectivesViaGemini(
 			return { objectives: parsed, isMock: false, source: 'local' };
 		}
 		console.warn('[USG][objectives] ⚠️ Provider response could not be parsed as JSON array.');
-	} catch (providerError) {
-		console.warn('[USG][objectives] provider error:', providerError);
+	} catch (err) {
+		providerError = err;
+		console.warn('[USG][objectives] provider error:', err);
 	}
 
 	// Try Gemini using the 'objectives' key preference (reverses order so it
@@ -1748,11 +1598,17 @@ async function generateObjectivesViaGemini(
 	console.warn('[USG][objectives] No real objectives generated. Reason:', geminiError);
 	console.groupEnd();
 
+	// When Gemini had no keys at all, the actionable failure is whatever
+	// happened upstream in the configured-provider path — reporting "No Gemini
+	// API keys configured" would send the user to configure the wrong thing.
+	const noGeminiKeys = typeof geminiError === 'string' && /no gemini api keys/i.test(geminiError);
+	const reportedError = noGeminiKeys && providerError ? providerError : geminiError;
+
 	return {
 		objectives: [],
 		isMock: true,
 		source: 'mock',
-		error: typeof geminiError === 'string' ? geminiError : undefined,
+		error: typeof reportedError === 'string' ? reportedError : undefined,
 		rawResponse,
 	};
 }
@@ -1774,7 +1630,18 @@ async function refineObjectiveViaGemini(
 			if (cleaned) return { refined: cleaned, isMock: false, source: 'local' };
 		}
 	} catch (_localError) {
-		// Fall through to Gemini
+		// Fall through to the configured provider
+	}
+
+	// Try the user-configured provider (OpenAI-compatible / Anthropic).
+	let providerError: unknown = null;
+	try {
+		const text = await requestConfiguredProviderText(prompt, 0.4, 200);
+		const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
+		if (cleaned) return { refined: cleaned, isMock: false, source: 'local' };
+	} catch (err) {
+		providerError = err;
+		console.warn('[USG][refine] provider error:', err);
 	}
 
 	// Try Gemini using 'objectives' preference
@@ -1796,10 +1663,15 @@ async function refineObjectiveViaGemini(
 		geminiError = toErrorMessage(err);
 	}
 
+	// Same masking rule as objectives: if Gemini had no keys, the upstream
+	// provider failure is the actionable one.
+	const noGeminiKeys = typeof geminiError === 'string' && /no gemini api keys/i.test(geminiError);
+	const reportedError = noGeminiKeys && providerError ? providerError : geminiError;
+
 	return {
 		refined: '',
 		isMock: true,
 		source: 'mock',
-		error: typeof geminiError === 'string' ? geminiError : undefined,
+		error: typeof reportedError === 'string' ? reportedError : undefined,
 	};
 }

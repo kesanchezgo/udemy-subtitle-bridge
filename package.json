@@ -4,7 +4,8 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "qa:local": "npm run build && node scripts/qa-local.js"
+    "qa:local": "npm run build && node scripts/qa-local.js",
+    "qa:extension": "npm run build && node scripts/qa-extension-local.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slider": "^1.2.3",

@@ -4,7 +4,8 @@ import {
   CheckCircle2, Circle, RotateCcw, X, Zap, FlipHorizontal,
   ChevronLeft, ChevronRight, Info, FileDown, FolderPlus,
   FolderSync, Send, Loader2, Wifi, WifiOff, Star, BookOpen,
-  Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History
+  Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History,
+  BookMarked, Settings2, ClipboardCopy, ExternalLink
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
@@ -17,6 +18,16 @@ import { projectId } from "../../../utils/supabase/info";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
+import {
+  buildSessionNoteMarkdown, buildSessionNotePath, buildRawSrtNoteMarkdown, buildRawSrtNotePath,
+  createVaultScaffold, sessionExportKey,
+  DEFAULT_OBSIDIAN_EXPORT_CONFIG, exportSessionToObsidian, loadCreatedMocs,
+  loadObsidianExportConfig, loadObsidianExportedNotes, openObsidianUri,
+  buildObsidianNewUri, buildObsidianOpenVaultUri,
+  saveCreatedMocs, saveObsidianExportConfig, saveObsidianExportedNotes,
+  slugifyVault,
+  type ObsidianExportConfig, type ObsidianSessionData,
+} from "../services/obsidianExport";
 import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
 import confetti from "canvas-confetti";
 import { toast } from "sonner";
@@ -877,21 +888,38 @@ function ProgressStepper({ steps }: { steps: { label: string; done: boolean; act
 }
 
 // ─── Anki builders ────────────────────────────────────────────────────────────
-function toPrism(html: string, lang = "java"): string {
+function toPrism(html: string, defaultLang = "java"): string {
+  // Preserva una clase language-* explícita del modelo (p. ej. sql, markup,
+  // properties); solo cae al default cuando el bloque no trae lenguaje.
+  const langOf = (...attrs: string[]): string => {
+    for (const attr of attrs) {
+      const m = /language-([\w+#.-]+)/i.exec(attr);
+      if (m) return m[1];
+    }
+    return defaultLang;
+  };
   return html
-    .replace(/<pre[^>]*>\s*<code[^>]*>/gi, "%%USB_PRE_CODE%%")
-    .replace(/<\/code>\s*<\/pre>/gi, "%%USB_END_PRE_CODE%%")
-    .replace(/<pre[^>]*>/gi, "%%USB_PRE_CODE%%")
-    .replace(/<\/pre>/gi, "%%USB_END_PRE_CODE%%")
-    .replace(/%%USB_PRE_CODE%%/g, `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`)
-    .replace(/%%USB_END_PRE_CODE%%/g, "</code></pre>");
+    .replace(/<pre([^>]*)>\s*<code([^>]*)>/gi, (_m, preAttrs: string, codeAttrs: string) => {
+      const lang = langOf(codeAttrs, preAttrs);
+      return `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`;
+    })
+    .replace(/<pre([^>]*)>(?!\s*<code)/gi, (_m, preAttrs: string) => {
+      const lang = langOf(preAttrs);
+      return `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`;
+    })
+    .replace(/(?<!<\/code>)\s*<\/pre>/gi, "</code></pre>");
 }
+/** La plantilla Anki limpia badges al inicio del campo; no enviarlos nunca. */
+function stripCodeBadge(html: string): string {
+  return String(html || "").replace(/^(💻\s*CÓDIGO|CÓDIGO)\s*/i, "");
+}
+// La plantilla del note type ya dibuja el marco (terminal bar, píldora, tipografía).
+// Los campos llevan SOLO el contenido: cualquier chrome aquí se duplicaría.
 function buildCardFront(card: AnkiCard): string {
-  const m = CARD_META[card.type]; const a = m.accent;
-  return `<div class="header-bar"><div class="header-dot red"></div><div class="header-dot yellow"></div><div class="header-dot green"></div><div class="type-pill" style="background:${a}18;color:${a};border:1px solid ${a}38">${m.icon} ${m.label}</div></div><div id="qa">${toPrism(card.front)}</div>`;
+  return toPrism(stripCodeBadge(card.front));
 }
 function buildCardBack(card: AnkiCard): string {
-  return `<div class="answer">${toPrism(card.back)}</div>`;
+  return toPrism(stripCodeBadge(card.back));
 }
 function normalizeAnkiTag(tag: string): string {
   return String(tag || "")
@@ -903,8 +931,11 @@ function normalizeAnkiTag(tag: string): string {
 function toAnkiImportField(html: string): string {
   return String(html || "").replace(/\t/g, "  ").replace(/\r?\n/g, "<br>");
 }
-function stableAnkiGuid(course: string, lesson: string, card: AnkiCard, index: number): string {
-  const source = `${course}|${lesson}|${card.id || index}|${card.front}`;
+// GUID por contenido (curso|lección|front): re-importar la misma lección
+// actualiza las notas en vez de duplicarlas, aunque el orden o la cantidad de
+// tarjetas cambie entre exportaciones.
+function stableAnkiGuid(course: string, lesson: string, card: AnkiCard): string {
+  const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.front}`;
   let hash = 2166136261;
   for (let i = 0; i < source.length; i += 1) {
     hash ^= source.charCodeAt(i);
@@ -912,76 +943,504 @@ function stableAnkiGuid(course: string, lesson: string, card: AnkiCard, index: n
   }
   return `usb${hash.toString(36)}`;
 }
-const FRONT_TEMPLATE = `{{Front}}
+const FRONT_TEMPLATE = `<div class="anki-wrapper dev-card">
+  <div class="card-box front-layout">
+
+    <header class="terminal-bar">
+      <div class="terminal-dots">
+        <span class="dot red"></span>
+        <span class="dot yellow"></span>
+        <span class="dot green"></span>
+      </div>
+      <div class="type-pill context-pill">Java / Backend</div>
+    </header>
+
+    <main class="qa-container">
+      <div id="qa" class="qa-question">
+        {{Front}}
+      </div>
+    </main>
+
+  </div>
+</div>
+
 <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-properties.min.js"></script>
+
 <script>
-  var pill=document.querySelector('.context-pill,.type-pill');
-  if(pill&&pill.innerText)pill.innerText=pill.innerText.replace(/_/g,' ').trim();
-  document.querySelectorAll('#qa code').forEach(el=>{el.innerHTML=el.innerHTML.replace(/<br\\s*\\/?>/gi,'\\n');});
-  setTimeout(function(){if(window.Prism)window.Prism.highlightAll();},50);
+(function initDevFront() {
+  var pill = document.querySelector('.context-pill, .type-pill');
+  if (pill && pill.innerText) {
+    pill.innerText = pill.innerText.replace(/_/g, ' ').trim();
+  }
+
+  var qaContainer = document.getElementById('qa');
+  if (qaContainer) {
+    qaContainer.innerHTML = qaContainer.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
+  }
+
+  document.querySelectorAll('#qa code, .qa-container code').forEach(function(el) {
+    el.innerHTML = el.innerHTML.replace(/<br\\s*\\/?>/gi, '\\n');
+  });
+
+  setTimeout(function() {
+    if (window.Prism) window.Prism.highlightAll();
+  }, 30);
+})();
 </script>`;
-const BACK_TEMPLATE = `<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+const BACK_TEMPLATE = `<div class="anki-wrapper dev-card">
+  <div class="card-box back-layout">
+
+    <header class="terminal-bar">
+      <div class="terminal-dots">
+        <span class="dot red"></span>
+        <span class="dot yellow"></span>
+        <span class="dot green"></span>
+      </div>
+      <div class="type-pill context-pill">Solución / Concepto</div>
+    </header>
+
+    <div class="qa-header-back" id="qaBack">
+      {{Front}}
+    </div>
+
+    <div class="soft-divider"></div>
+
+    <main class="answer-section answer">
+      {{Back}}
+    </main>
+
+  </div>
+</div>
+
+<!-- La cara B no hereda los scripts del anverso en Anki: sin estas líneas
+     Prism no existe al mostrar la respuesta y el código no se resalta. -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-properties.min.js"></script>
-{{FrontSide}}
-<hr id="answer">
-{{Back}}
+
 <script>
-  document.querySelectorAll('.answer code').forEach(el=>{el.innerHTML=el.innerHTML.replace(/<br\\s*\\/?>/gi,'\\n');});
-  setTimeout(function(){if(window.Prism)window.Prism.highlightAll();},50);
+(function initDevBack() {
+  var qaBack = document.getElementById('qaBack');
+  if (qaBack) {
+    qaBack.innerHTML = qaBack.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
+  }
+
+  document.querySelectorAll('.answer code, pre code').forEach(function(el) {
+    el.innerHTML = el.innerHTML.replace(/<br\\s*\\/?>/gi, '\\n');
+  });
+
+  setTimeout(function() {
+    if (window.Prism) window.Prism.highlightAll();
+  }, 30);
+})();
 </script>`;
-const ANKI_CSS = `@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-.card{--card-bg:#1e1e2e;--text:#d1d5db;--muted:#94a3b8;--answer:#e4e4e7;--accent:#a78bfa;--accent-soft:rgba(167,139,250,.08);--border:rgba(255,255,255,.07);--header-border:rgba(255,255,255,.06);--surface:rgba(255,255,255,.035);--surface-2:rgba(0,0,0,.2);--shadow:0 12px 40px -10px rgba(0,0,0,.65);--code-bg:#1a1b26;--code-head:#16171f;--code-border:#2d2e3f;--inline-bg:#2c2c3e;--inline-fg:#c4b5fd;--table-head:#2a2a3d;--table-cell:#c9cad4;--success:#a7f3d0;--success-border:#86efac;--warn:#fde68a;--warn-border:#fcd34d;--info:#bae6fd;--info-border:#93c5fd;font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI","Roboto",sans-serif;font-size:17px;line-height:1.6;color:var(--text);background-color:var(--card-bg);text-align:left;padding:22px;border-radius:18px;box-shadow:var(--shadow);animation:fadeIn .25s ease-out}
-@media (prefers-color-scheme:light){.card{--card-bg:#f7f9fa;--text:#2d2f31;--muted:#6a6f73;--answer:#1f2937;--accent:#6d28d9;--accent-soft:rgba(109,40,217,.08);--border:rgba(45,47,49,.12);--header-border:rgba(45,47,49,.12);--surface:rgba(255,255,255,.78);--surface-2:rgba(255,255,255,.7);--shadow:0 12px 36px -18px rgba(31,41,55,.35);--code-bg:#1f2937;--code-head:#111827;--code-border:#374151;--inline-bg:#ede9fe;--inline-fg:#5b21b6;--table-head:#ede9fe;--table-cell:#374151;--success:#065f46;--success-border:#10b981;--warn:#92400e;--warn-border:#f59e0b;--info:#075985;--info-border:#0ea5e9}}
-.card.nightMode,.nightMode .card,.night_mode .card{--card-bg:#1e1e2e;--text:#d1d5db;--muted:#94a3b8;--answer:#e4e4e7;--accent:#a78bfa;--accent-soft:rgba(167,139,250,.08);--border:rgba(255,255,255,.07);--header-border:rgba(255,255,255,.06);--surface:rgba(255,255,255,.035);--surface-2:rgba(0,0,0,.2);--shadow:0 12px 40px -10px rgba(0,0,0,.65);--code-bg:#1a1b26;--code-head:#16171f;--code-border:#2d2e3f;--inline-bg:#2c2c3e;--inline-fg:#c4b5fd;--table-head:#2a2a3d;--table-cell:#c9cad4;--success:#a7f3d0;--success-border:#86efac;--warn:#fde68a;--warn-border:#fcd34d;--info:#bae6fd;--info-border:#93c5fd;background-color:var(--card-bg);color:var(--text)}
-.header-bar{display:flex;align-items:center;gap:7px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--header-border)}
-.header-dot{width:11px;height:11px;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.25)}
-.header-dot.red{background:#ff5f56}.header-dot.yellow{background:#ffbd2e}.header-dot.green{background:#27c93f}
-.type-pill,.context-pill{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:.72em;font-weight:600;padding:3px 10px;border-radius:6px;text-transform:uppercase;letter-spacing:.4px;box-shadow:0 2px 6px rgba(0,0,0,.12)}
-#qa{font-family:'Poppins',sans-serif;font-weight:600;font-size:22px;text-align:center;color:var(--accent);margin-bottom:18px;line-height:1.45;letter-spacing:-.4px;text-shadow:0 0 20px rgba(167,139,250,.12)}
-hr#answer{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--border) 50%,transparent);margin:22px 0}
-.answer{font-family:'Inter',sans-serif;color:var(--answer);font-size:16px;line-height:1.75}
-pre{position:relative;background-color:var(--code-bg)!important;color:#f8f8f2;border-radius:10px;padding:0!important;font-size:.88em;font-family:"JetBrains Mono","Fira Code",monospace!important;display:block;overflow-x:auto;margin:14px 0 18px;box-shadow:0 6px 18px rgba(0,0,0,.25);border:1px solid var(--code-border)}
-pre::before{content:attr(data-lang);display:block;position:sticky;left:0;top:0;width:100%;background:var(--code-head);color:#a78bfa;font-family:'Poppins',sans-serif;font-size:.75em;font-weight:600;padding:7px 16px;border-radius:10px 10px 0 0;text-transform:uppercase;border-bottom:1px solid var(--code-border);z-index:10;letter-spacing:.5px}
-pre>code{display:inline-block;min-width:100%;padding:14px 16px 16px;box-sizing:border-box}
-p>code,li>code,td>code{background-color:var(--inline-bg);color:var(--inline-fg);padding:2px 6px;border-radius:5px;font-size:.88em;font-family:"JetBrains Mono",monospace!important;border:1px solid var(--border)}
-table{border-collapse:collapse;width:100%;margin:12px 0;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.12)}
-th{background:var(--table-head);color:var(--accent);font-family:'Poppins',sans-serif;font-weight:600;font-size:.85em;padding:9px 14px;text-align:left;border-bottom:2px solid var(--border)}
-td{border:1px solid var(--border);padding:8px 14px;font-size:.9em;color:var(--table-cell);background:var(--surface)}
-tr:nth-child(even) td{background:var(--surface-2)}
-blockquote{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 14px;margin:12px 0;border-radius:6px;font-style:italic;color:var(--answer)}
-.tip-box{background:rgba(16,185,129,.08);border-left:3px solid var(--success-border);border-radius:6px;padding:10px 14px;margin:12px 0;color:var(--success);font-size:.92em}
-.warning-box{background:rgba(245,158,11,.09);border-left:3px solid var(--warn-border);border-radius:6px;padding:10px 14px;margin:12px 0;color:var(--warn);font-size:.92em}
-.concept-box{background:rgba(14,165,233,.08);border-left:3px solid var(--info-border);border-radius:6px;padding:10px 14px;margin:12px 0;color:var(--info);font-size:.92em}
-.interview-box{background:var(--accent-soft);border:1px solid rgba(167,139,250,.24);border-radius:8px;padding:12px 14px;margin:12px 0}
-.interview-box .label{color:var(--accent);font-family:'Poppins',sans-serif;font-size:.78em;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-details{background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-top:14px;border:1px solid var(--border)}
-summary{cursor:pointer;font-weight:600;color:var(--accent);outline:none;font-family:'Poppins',sans-serif;font-size:.9em;list-style:none}
-summary::after{content:" ↓";font-size:.8em;opacity:.6}
-details[open] summary::after{content:" ↑"}
-details[open] summary{margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:5px}
-mark{background:rgba(252,211,77,.24);color:var(--warn);padding:0 3px;border-radius:3px}
-b,strong{color:var(--accent)}
-em{color:var(--muted);font-style:italic}
-ul{padding-left:20px;margin:8px 0}
-li{margin-bottom:5px}
-ul>li::marker,ol>li::marker{color:var(--accent);font-weight:600}
-.image-container{margin:18px auto;padding:12px;background:var(--surface-2);border-radius:10px;text-align:center;border:1px solid var(--border)}
-.image-container img{max-width:100%;height:auto;border-radius:7px}
-@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-@media screen and (max-width:768px){.card{padding:15px;font-size:15px;border-radius:14px}#qa{font-size:18px}pre{font-size:.82em!important}p>code,li>code{word-break:break-word}table{font-size:.83em}}`;
+const ANKI_CSS = `/* ==========================================================
+   SISTEMA DE DISEÑO DEVELOPER / INGENIERÍA DE SOFTWARE
+   ========================================================== */
+
+/* --- TEMA CLARO (Clean IDE / GitHub Light) --- */
+:root {
+  --bg-app: #f4f5f7;
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-shadow: 0 20px 40px -12px rgba(15, 23, 42, 0.08),
+                 0 6px 16px -4px rgba(15, 23, 42, 0.03);
+
+  --text-main: #0f172a;
+  --text-sub: #334155;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+
+  --accent: #6d28d9;           /* Violeta técnico */
+  --accent-light: #f5f3ff;
+  --accent-glow: rgba(109, 40, 217, 0.15);
+
+  --block-bg: #f8fafc;
+  --block-border: #e2e8f0;
+  --divider: #edf2f7;
+
+  /* Terminal & Code Blocks en Modo Claro (Integrados y Suaves) */
+  --code-bg: #f8fafc;
+  --code-head: #f1f5f9;
+  --code-border: #e2e8f0;
+  --code-text: #0f172a;
+
+  --inline-bg: #f1f5f9;
+  --inline-fg: #6d28d9;
+  --inline-border: #e2e8f0;
+
+  --callout-tip-bg: #ecfdf5;
+  --callout-tip-border: #10b981;
+  --callout-tip-text: #065f46;
+
+  --callout-warn-bg: #fffbeb;
+  --callout-warn-border: #f59e0b;
+  --callout-warn-text: #92400e;
+
+  --callout-info-bg: #f0f9ff;
+  --callout-info-border: #0ea5e9;
+  --callout-info-text: #0369a1;
+}
+
+/* --- TEMA OSCURO (OneDark / Dracula Slate) --- */
+.nightMode, .card.night_mode {
+  --bg-app: #090a0f;
+  --card-bg: #12151d;
+  --card-border: rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 24px 48px -15px rgba(0, 0, 0, 0.7);
+
+  --text-main: #f8fafc;
+  --text-sub: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+
+  --accent: #a78bfa;           /* Púrpura pastel */
+  --accent-light: rgba(167, 139, 250, 0.12);
+  --accent-glow: rgba(167, 139, 250, 0.25);
+
+  --block-bg: #181c26;
+  --block-border: #262c3b;
+  --divider: #1f2533;
+
+  /* Terminal & Code Blocks en Modo Noche */
+  --code-bg: #0d1117;
+  --code-head: #161b22;
+  --code-border: #30363d;
+  --code-text: #e6edf3;
+
+  --inline-bg: rgba(167, 139, 250, 0.14);
+  --inline-fg: #c4b5fd;
+  --inline-border: rgba(167, 139, 250, 0.25);
+
+  --callout-tip-bg: rgba(16, 185, 129, 0.1);
+  --callout-tip-border: #34d399;
+  --callout-tip-text: #6ee7b7;
+
+  --callout-warn-bg: rgba(245, 158, 11, 0.1);
+  --callout-warn-border: #fbbf24;
+  --callout-warn-text: #fde68a;
+
+  --callout-info-bg: rgba(14, 165, 233, 0.1);
+  --callout-info-border: #38bdf8;
+  --callout-info-text: #7dd3fc;
+}
+
+/* --- RESET Y BASE --- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.card {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  min-height: 100vh;
+  margin: 0;
+  padding: 40px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-font-smoothing: antialiased;
+}
+
+hr#answer {
+  display: none !important;
+}
+
+/* --- CONTENEDOR ANCHO PARA FIRMAS DE CÓDIGO --- */
+.anki-wrapper.dev-card {
+  width: 100%;
+  max-width: 720px;
+  margin: auto;
+}
+
+.card-box {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 22px;
+  padding: 34px 32px;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* --- BARRA SUPERIOR DE VENTANA (TERMINAL MINIMAL) --- */
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.terminal-dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.terminal-dots .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.terminal-dots .dot.red { background-color: #ef4444; }
+.terminal-dots .dot.yellow { background-color: #f59e0b; }
+.terminal-dots .dot.green { background-color: #10b981; }
+
+.context-pill, .type-pill {
+  font-family: "SF Mono", "Fira Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 4px 12px;
+  border-radius: 999px;
+  user-select: none;
+}
+
+/* --- PREGUNTA / HERO FRONT --- */
+.front-layout {
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.qa-container {
+  margin: 16px 0;
+  padding: 8px 0;
+}
+
+.qa-question {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.015em;
+  color: var(--text-main);
+  text-align: left;
+}
+
+.qa-header-back {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.soft-divider {
+  height: 1px;
+  background: var(--divider);
+  margin: 20px 0 24px;
+}
+
+/* --- SECCIÓN DE RESPUESTA --- */
+.answer-section {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--text-sub);
+}
+
+/* --- BLOQUES DE CÓDIGO (ADAPTABLES A LIGHT/DARK) --- */
+pre {
+  background-color: var(--code-bg) !important;
+  color: var(--code-text) !important;
+  border: 1px solid var(--code-border);
+  border-radius: 12px;
+  margin: 16px 0 !important;
+  padding: 14px 18px !important;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace !important;
+  font-size: 0.92rem !important;
+  line-height: 1.6 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+pre code {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  text-shadow: none !important;
+}
+
+/* Código Inline (inline code) */
+code, p > code, li > code, td > code {
+  font-family: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace;
+  font-size: 0.88em;
+  color: var(--inline-fg);
+  background-color: var(--inline-bg);
+  border: 1px solid var(--inline-border);
+  padding: 2px 7px;
+  border-radius: 6px;
+  vertical-align: baseline;
+}
+
+/* --- CAJAS DE ALERTA Y CONCEPTOS (CALLOUTS) --- */
+.tip-box, .warning-box, .concept-box, .interview-box {
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin: 16px 0;
+  font-size: 0.96rem;
+  line-height: 1.55;
+}
+
+.tip-box {
+  background: var(--callout-tip-bg);
+  border-left: 4px solid var(--callout-tip-border);
+  color: var(--callout-tip-text);
+}
+
+.warning-box {
+  background: var(--callout-warn-bg);
+  border-left: 4px solid var(--callout-warn-border);
+  color: var(--callout-warn-text);
+}
+
+.concept-box {
+  background: var(--callout-info-bg);
+  border-left: 4px solid var(--callout-info-border);
+  color: var(--callout-info-text);
+}
+
+.interview-box {
+  background: var(--block-bg);
+  border: 1px solid var(--accent);
+  border-left: 4px solid var(--accent);
+}
+
+.interview-box .label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+/* --- TABLAS COMPARATIVAS --- */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  margin: 18px 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--block-border);
+  background: var(--card-bg);
+}
+
+th {
+  background: var(--block-bg);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--block-border);
+}
+
+td {
+  padding: 10px 16px;
+  font-size: 0.92rem;
+  color: var(--text-sub);
+  border-bottom: 1px solid var(--block-border);
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- LISTAS Y ENFASIS --- */
+ul, ol {
+  padding-left: 22px;
+  margin: 12px 0;
+}
+
+li {
+  margin-bottom: 6px;
+  color: var(--text-sub);
+}
+
+b, strong {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-light);
+  padding: 12px 18px;
+  border-radius: 0 12px 12px 0;
+  margin: 16px 0;
+  font-style: italic;
+  color: var(--text-sub);
+}
+
+/* --- RESPONSIVE EN MÓVILES --- */
+@media (max-width: 600px) {
+  .card {
+    padding: 14px 10px;
+    font-size: 15px;
+  }
+
+  .card-box {
+    padding: 24px 18px;
+    border-radius: 18px;
+  }
+
+  .qa-question {
+    font-size: 1.3rem;
+  }
+
+  .front-layout {
+    min-height: 250px;
+  }
+
+  pre {
+    padding: 12px 14px !important;
+    font-size: 0.84rem !important;
+  }
+
+  table {
+    font-size: 0.82rem;
+  }
+
+  th, td {
+    padding: 8px 10px;
+  }
+}`;
+
+// Los nombres de mazo se segmentan por "::" en Anki: un título de curso o
+// lección que contenga "::" crearía subniveles accidentales. También se
+// eliminan comillas, que rompen importadores de texto antiguos.
+function sanitizeDeckSegment(name: string): string {
+  return String(name || "").replace(/::/g, " — ").replace(/"/g, "'").trim();
+}
 
 function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
   let out = [
     "#separator:Tab",
     "#html:true",
-    `#deck:${course}::${lesson}`,
+    `#deck:${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}`,
     `#notetype:${ANKI_NOTE_TYPE}`,
     "#columns:Front\tBack\tTags",
     "#tags column:3",
@@ -1008,7 +1467,7 @@ ARCHIVO 1 - ${safe}_tarjetas.txt - Tarjetas
   2. Selecciona el archivo "_tarjetas.txt"
   3. Verifica: Separador = Tabulador | HTML = activado
   4. Verifica columnas: Front, Back, Tags
-  5. Deck destino = ${course}::${lesson}
+  5. Deck destino = ${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}
   6. Clic en "Importar"
 
 ARCHIVO 2 - anki-card-styles.css - Estilo visual
@@ -1045,8 +1504,20 @@ ${BACK_TEMPLATE}
 FIN BACK
 `;
 }
-function downloadFile(content: string, name: string, mime = "text/plain;charset=utf-8") {
-  const b = new Blob([content], { type: mime }); const u = URL.createObjectURL(b);
+/**
+ * Breadcrumb de diagnóstico en el DOM compartido: el dock corre en el mundo
+ * aislado del content script y su `console` no siempre es observable desde
+ * fuera (QA/harness). Un data-attribute en el mount sí lo es. Invisible en
+ * producción; cero efectos.
+ */
+function markQa(tag: string) {
+	try {
+		const mount = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector("#usb-dock-root");
+		mount?.setAttribute("data-usb-qa-last", tag);
+	} catch { /* noop */ }
+}
+
+function downloadFile(content: string, name: string, mime = "text/plain;charset=utf-8") {  const b = new Blob([content], { type: mime }); const u = URL.createObjectURL(b);
   const a = document.createElement("a"); a.href = u; a.download = name;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u);
 }
@@ -1057,15 +1528,15 @@ async function exportApkgFile(
   courseName: string,
   lessonName: string,
   onProgress: (msg: string) => void,
-): Promise<void> {
+): Promise<string> {
   const safe = lessonName.replace(/[^a-z0-9]/gi, "_");
-  const deckName = `${courseName}::${lessonName}`;
+  const deckName = `${sanitizeDeckSegment(courseName)}::${sanitizeDeckSegment(lessonName)}`;
   const data = await buildAnkiApkg(
     cards.map((c, i) => ({
       front: buildCardFront(c),
       back: buildCardBack(c),
       tags: c.tags.map(normalizeAnkiTag).filter(Boolean),
-      guid: stableAnkiGuid(courseName, lessonName, c, i),
+      guid: stableAnkiGuid(courseName, lessonName, c),
     })),
     deckName,
     ANKI_CSS,
@@ -1074,6 +1545,7 @@ async function exportApkgFile(
     onProgress,
   );
   downloadApkg(data, `${safe}.apkg`);
+  return deckName;
 }
 
 // ─── Mock content ────────────────────────────────────────────��────────────────
@@ -1280,7 +1752,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [objectivesExpanded, setObjectivesExpanded]   = useState(false);
   // Bumped on every regenerate so the grid remounts even if the AI returns identical ids.
   const [objectivesRegenCount, setObjectivesRegenCount] = useState(0);
-  const objectivesAutoGenRef = useRef<string>(""); // track which courseId we already auto-generated
+  const objectivesForRef = useRef<string>(""); // courseId the current objectives were generated/loaded for
 
   const [content, setContent]                       = useState<StudyContent | null>(null);
   const [activeSessionObjective, setActiveSessionObjective] = useState<string | null>(null);
@@ -1295,6 +1767,16 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [showAnkiGuide, setShowAnkiGuide]           = useState(false);
   const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
   const [apkgProgress, setApkgProgress]             = useState("");
+
+  // ── Obsidian export ─────────────────────────────────────────────────────────
+  const [obsidianCfg, setObsidianCfg]               = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
+  const [obsidianPanelOpen, setObsidianPanelOpen]   = useState(false);
+  const [obsidianHelpOpen, setObsidianHelpOpen]     = useState(false);
+  const [obsidianStatus, setObsidianStatus]         = useState<"idle" | "done" | "error">("idle");
+  const [createdMocs, setCreatedMocs]               = useState<string[]>([]);
+  const [exportedNotes, setExportedNotes]           = useState<string[]>([]);
+  const exportedNotesRef                            = useRef<string[]>([]);
+  const obsidianAutoRef                             = useRef(false);
   const [showHint, setShowHint]                     = useState(false);
   const [showModelAnswer, setShowModelAnswer]       = useState(false);
   const [questionAnswers, setQuestionAnswers]       = useState<Record<number, string>>({});
@@ -1319,6 +1801,38 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   useEffect(() => {
     selectedObjRef.current = selectedObj;
   }, [selectedObj]);
+
+  // ── Obsidian: carga inicial de config y MOCs ya creados ────────────────────
+  useEffect(() => {
+    void loadObsidianExportConfig().then(setObsidianCfg);
+    void loadCreatedMocs().then(setCreatedMocs);
+    void loadObsidianExportedNotes().then((notes) => {
+      exportedNotesRef.current = notes;
+      setExportedNotes(notes);
+    });
+  }, []);
+
+  // ── Contexto real de la lección: auto-rellenar curso/lección ───────────────
+  // El content script envía LECTURE_CONTEXT_UPDATE con los metadatos raspados
+  // de la página de Udemy. Sin esto, el dock queda con los nombres demo y el
+  // mazo Anki / notas de Obsidian se crean con un curso inventado.
+  const courseNameEditedRef = useRef(false);
+  useEffect(() => {
+    const cleanup = contentBridge.onMessageFromContent((message: BridgeMessage) => {
+      if (message.type !== "LECTURE_CONTEXT_UPDATE") return;
+      const payload = (message.payload ?? {}) as { courseTitle?: string; lectureTitle?: string; courseDescription?: string };
+      if (!courseNameEditedRef.current && payload.courseTitle?.trim()) {
+        setCourseName(payload.courseTitle.trim());
+      }
+      if (payload.lectureTitle?.trim()) {
+        setLessonName(payload.lectureTitle.trim());
+      }
+      if (payload.courseDescription?.trim() && !courseDescription.trim()) {
+        setCourseDescription(payload.courseDescription.trim());
+      }
+    });
+    return cleanup;
+  }, [courseDescription]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1706,6 +2220,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       setActiveSessionObjective(sessionObjective);
       setPhase("result");
 
+      // Auto-export a Obsidian (si está activado y el vault está configurado).
+      // Solo tras generar en vivo, nunca al restaurar del historial.
+      if (obsidianCfg.autoExport && obsidianCfg.vaultName.trim() && !obsidianAutoRef.current) {
+        obsidianAutoRef.current = true;
+        setTimeout(() => handleExportObsidian(), 1200);
+      }
+
       // Persist initial history record (paso 1 + paso 2)
       historyService.upsertLecture({
         courseName,
@@ -1888,6 +2409,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         setDynamicObjectives(cache.objectives);
         setObjectivesMock(Boolean(cache.isMock));
         setObjectivesError(cache.isMock ? cache.error ?? null : null);
+        objectivesForRef.current = slugify(courseName); // cache matches this course
       } else {
         setDynamicObjectives(null);
         setObjectivesMock(false);
@@ -1914,18 +2436,19 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     return () => { cancelled = true; };
   }, [courseName, setSelectedObj]);
 
-  // Auto-generate objectives the FIRST time we see a new course (once per courseId).
+  // Auto-generate objectives for each NEW course (revalidate-on-key-change:
+  // when the lecture context replaces the placeholder name with the real one,
+  // the objectives regenerate once for the real course — no manual Regenerar).
   useEffect(() => {
     if (phase !== "objective") return;
     if (!courseName.trim()) return;
-    if (dynamicObjectives) return;        // already have something
-    if (objectivesLoading) return;
     const courseId = slugify(courseName);
-    if (objectivesAutoGenRef.current === courseId) return;
+    if (objectivesForRef.current === courseId) return; // objectives already match this course
+    if (objectivesLoading) return;
 
     // Debounce so we don't fire on every keystroke while user is typing the name.
     const t = setTimeout(async () => {
-      objectivesAutoGenRef.current = courseId;
+      objectivesForRef.current = courseId;
       setObjectivesLoading(true);
       try {
         const entry = await objectivesService.getOrGenerate(courseName, effectiveCourseDescription);
@@ -2399,18 +2922,24 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   };
 
   const handleExportApkg = async () => {
-    if (!content || apkgStatus === "loading") return;
+    markQa("apkg-click");
+    if (!content || apkgStatus === "loading") { markQa("apkg-skip:" + (content ? "loading" : "no-content")); return; }
     setApkgStatus("loading");
     setApkgProgress("Iniciando…");
     try {
-      await exportApkgFile(content.ankiCards, courseName, lessonName, setApkgProgress);
+      const deckName = await exportApkgFile(content.ankiCards, courseName, lessonName, (msg) => {
+        setApkgProgress(msg);
+        markQa("apkg-progress:" + msg.slice(0, 40));
+      });
       setApkgStatus("done");
       setAnkiExported(true);
+      markQa("apkg-done:" + deckName.slice(0, 60));
       persistAnkiAndComplete();
-      celebrate({ type: "anki_export", title: "¡Paquete Anki listo!", subtitle: "Ábrelo en Anki Desktop para importar tus tarjetas", icon: <Package className="text-violet-400" /> });
+      celebrate({ type: "anki_export", title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
       setTimeout(() => setApkgStatus("idle"), 4000);
     } catch (err) {
       console.error("[apkg export]", err);
+      markQa("apkg-error:" + String(err instanceof Error ? err.message : err).slice(0, 80));
       setApkgStatus("error");
       setApkgProgress("Error al generar el .apkg. Revisa la consola.");
       toast.error("Hubo un error al generar el paquete .apkg", {
@@ -2422,6 +2951,182 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       });
       setTimeout(() => setApkgStatus("idle"), 5000);
     }
+  };
+
+  // ── Obsidian export ──────────────────────────────────────────────────────────
+  const getObsidianSessionData = (): ObsidianSessionData | null => {
+    if (!content) return null;
+    return {
+      courseName,
+      lessonName,
+      objective: getActiveObjectiveText() || undefined,
+      sourceUrl: typeof window !== "undefined" ? window.location.href : undefined,
+      platform: "udemy",
+      content: content as ObsidianSessionData["content"],
+    };
+  };
+
+  const handleExportObsidian = () => {
+    const data = getObsidianSessionData();
+    if (!data) return;
+    if (!obsidianCfg.vaultName.trim()) {
+      setObsidianPanelOpen(true);
+      toast.error("Escribe el nombre de tu vault para exportar", {
+        description: "Obsidian lo abre y crea la nota — sin plugins ni servidores.",
+        icon: <BookMarked className="text-violet-400" size={18} />,
+      });
+      return;
+    }
+    // Guard de duplicados: obsidian://new sobre un archivo existente crea
+    // "nombre 1.md". Si ya se exportó esta sesión, avisar y dejar decidir.
+    // (Ref, no state: el guard debe ver las marcas aunque el closure sea viejo.)
+    const key = sessionExportKey(data.courseName, data.lessonName);
+    if (exportedNotesRef.current.includes(key)) {
+      markQa("exportar-guard");
+      toast.warning("Esta sesión ya fue exportada a Obsidian", {
+        description: "Reexportar crea una copia (\"nombre 1.md\"). «Copiar» te da el markdown sin duplicar.",
+        action: { label: "Exportar copia", onClick: () => doExportObsidian(data, false) },
+        duration: 10000,
+        icon: <BookMarked className="text-amber-400" size={18} />,
+      });
+      return;
+    }
+    doExportObsidian(data, true);
+  };
+
+  const doExportObsidian = (data: ObsidianSessionData, markExported: boolean) => {
+    try {
+      const result = exportSessionToObsidian(data, obsidianCfg, {
+        createdMocs,
+        onMocCreated: (slug) => {
+          const next = [...createdMocs, slug];
+          setCreatedMocs(next);
+          void saveCreatedMocs(next);
+        },
+      });
+      setObsidianStatus("done");
+      toast.success("Exportado a Obsidian", {
+        description: result.mocPath
+          ? `Nota: ${result.notePath} · MOC: ${result.mocPath}`
+          : `Nota: ${result.notePath}`,
+        icon: <BookMarked className="text-violet-400" size={18} />,
+      });
+      setTimeout(() => setObsidianStatus("idle"), 4000);
+      if (markExported) {
+        const key = sessionExportKey(data.courseName, data.lessonName);
+        const next = [...new Set([...exportedNotesRef.current, key])];
+        exportedNotesRef.current = next;
+        setExportedNotes(next);
+        void saveObsidianExportedNotes(next);
+      }
+
+      // SRT crudo → raw/ (material inmutable para el destilado posterior).
+      if (obsidianCfg.includeRawSrt) {
+        void fetchEnSrtForExport().then((srt) => {
+          if (!srt) {
+            toast.info("SRT crudo no disponible todavía — raw/ omitido en esta exportación.");
+            return;
+          }
+          const rawPath = buildRawSrtNotePath(data.courseName, data.lessonName, { platform: "udemy" });
+          openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
+            path: rawPath,
+            markdown: buildRawSrtNoteMarkdown(data.courseName, data.lessonName, srt, {
+              platform: "udemy",
+              sourceUrl: data.sourceUrl,
+            }),
+          }));
+          toast.success("SRT crudo guardado en raw/", { description: rawPath });
+        });
+      }
+    } catch (err) {
+      setObsidianStatus("error");
+      toast.error(err instanceof Error ? err.message : "No se pudo exportar a Obsidian.");
+    }
+  };
+
+  /** Pide al content script el SRT EN capturado (timeout 5s, no bloquea el export). */
+  const fetchEnSrtForExport = (): Promise<string> => {
+    return new Promise((resolve) => {
+      let done = false;
+      const cleanup = contentBridge.onMessageFromContent((message: BridgeMessage) => {
+        if (message.type !== "EN_SRT_RESULT") return;
+        done = true;
+        cleanup();
+        const payload = (message.payload ?? {}) as { srt?: string };
+        resolve(String(payload.srt || ""));
+      });
+      void contentBridge.sendToContent({ type: "GET_EN_SRT", payload: {} });
+      window.setTimeout(() => {
+        if (!done) {
+          cleanup();
+          resolve("");
+        }
+      }, 5000);
+    });
+  };
+
+  const handleCopyObsidianMarkdown = async () => {
+    const data = getObsidianSessionData();
+    if (!data) { markQa("copy-skip:no-content"); return; }
+    markQa("copy-click");
+    const markdown = buildSessionNoteMarkdown(data, obsidianCfg);
+    // writeText falla silencioso en algunos contextos de content script:
+    // el fallback execCommand copia con la activación del click.
+    try {
+      await navigator.clipboard.writeText(markdown);
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = markdown;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      try {
+        if (!document.execCommand("copy")) throw new Error("execCommand(copy) devolvió false");
+      } finally {
+        area.remove();
+      }
+    }
+    toast.success("Markdown copiado", { description: "Pégalo en Obsidian donde quieras (Ctrl+V)." });
+  };
+
+  const handleDownloadObsidianMarkdown = () => {
+    const data = getObsidianSessionData();
+    if (!data) return;
+    const path = buildSessionNotePath(obsidianCfg, courseName, lessonName);
+    downloadFile(buildSessionNoteMarkdown(data, obsidianCfg), path.split("/").pop() || "sesion.md", "text/markdown;charset=utf-8");
+    toast.success("Nota .md descargada", { description: "Muévela a la carpeta del vault si no la guardaste ahí." });
+  };
+
+  const handleSaveObsidianCfg = (patch: Partial<ObsidianExportConfig>) => {
+    const next = { ...obsidianCfg, ...patch };
+    setObsidianCfg(next);
+    void saveObsidianExportConfig(next);
+  };
+
+  const handleTestObsidianVault = () => {
+    if (!obsidianCfg.vaultName.trim()) {
+      toast.error("Escribe el nombre del vault primero.");
+      return;
+    }
+    openObsidianUri(buildObsidianOpenVaultUri(obsidianCfg.vaultName));
+    toast.info("Obsidian debería abrir ese vault ahora", {
+      description: "Si abre vacío o avisa que no existe, revisa el nombre exacto en el selector de vaults.",
+      duration: 7000,
+    });
+  };
+
+  const handleCreateVaultScaffold = () => {
+    if (!obsidianCfg.vaultName.trim()) {
+      toast.error("Escribe el nombre del vault primero.");
+      return;
+    }
+    const count = createVaultScaffold(obsidianCfg, { platform: "udemy" });
+    toast.success(`Creando estructura (${count} notas)…`, {
+      description: "Obsidian crea carpetas y notas: CLAUDE.md, índice, log y plantillas.",
+      icon: <FolderPlus className="text-violet-400" size={18} />,
+    });
   };
 
   const isFirstExport = !txtSetupCourses.has(slugify(courseName));
@@ -2894,7 +3599,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
             {/* Course info */}
             <div className="space-y-1.5">
               <p className="text-white/20 text-[9px] uppercase tracking-wider">Datos del curso</p>
-              <input value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Nombre del curso (para mazo Anki)"
+              <input value={courseName} onChange={e => { setCourseName(e.target.value); courseNameEditedRef.current = true; }} placeholder="Nombre del curso (para mazo Anki)"
                 className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
                 className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
@@ -3804,6 +4509,118 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         <span className="text-violet-400/60">.apkg</span> = importar desde Anki, sin configuración.
                         <span className="text-white/15"> .txt</span> = importación manual con CSS + plantilla.
                       </p>
+
+                      {/* ── Obsidian export ── */}
+                      <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-white/40 text-[9px] uppercase tracking-wider" style={{ fontWeight: 700 }}>Obsidian</p>
+                          <button onClick={() => setObsidianPanelOpen(v => !v)}
+                            className="text-white/30 hover:text-white/60 text-[9px] flex items-center gap-1 transition-colors">
+                            <Settings2 size={9}/>{obsidianPanelOpen ? "Cerrar" : "Configurar"}
+                          </button>
+                        </div>
+
+                        {obsidianPanelOpen ? (
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-white/30 text-[9px] mb-1">Nombre del vault (igual que en el selector de Obsidian)</p>
+                              <input value={obsidianCfg.vaultName} onChange={(e) => handleSaveObsidianCfg({ vaultName: e.target.value })}
+                                placeholder="Ej: Dev Courses"
+                                className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 placeholder:text-white/20 px-2 outline-none focus:border-violet-500/30 transition-colors"/>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <p className="text-white/30 text-[9px] mb-1">Notas de sesión</p>
+                                <input value={obsidianCfg.sourcesFolder} onChange={(e) => handleSaveObsidianCfg({ sourcesFolder: e.target.value })}
+                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-violet-500/30 transition-colors"/>
+                              </div>
+                              <div>
+                                <p className="text-white/30 text-[9px] mb-1">MOCs de curso</p>
+                                <input value={obsidianCfg.mocsFolder} onChange={(e) => handleSaveObsidianCfg({ mocsFolder: e.target.value })}
+                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-violet-500/30 transition-colors"/>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <label className="flex items-center gap-1.5 text-white/40 text-[9px] cursor-pointer">
+                                <input type="checkbox" checked={obsidianCfg.includeCards} onChange={(e) => handleSaveObsidianCfg({ includeCards: e.target.checked })} className="accent-violet-500"/>
+                                Tarjetas #flashcards
+                              </label>
+                              <label className="flex items-center gap-1.5 text-white/40 text-[9px] cursor-pointer">
+                                <input type="checkbox" checked={obsidianCfg.autoExport} onChange={(e) => handleSaveObsidianCfg({ autoExport: e.target.checked })} className="accent-violet-500"/>
+                                Auto-exportar al generar
+                              </label>
+                              <label className="flex items-center gap-1.5 text-white/40 text-[9px] cursor-pointer">
+                                <input type="checkbox" checked={obsidianCfg.includeRawSrt} onChange={(e) => handleSaveObsidianCfg({ includeRawSrt: e.target.checked })} className="accent-violet-500"/>
+                                SRT crudo → raw/
+                              </label>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button onClick={handleTestObsidianVault}
+                                className="h-7 rounded-lg bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white/85 text-[9px] flex items-center justify-center gap-1 transition-all">
+                                <ExternalLink size={9}/>Probar vault
+                              </button>
+                              <button onClick={handleCreateVaultScaffold}
+                                className="h-7 rounded-lg bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white/85 text-[9px] flex items-center justify-center gap-1 transition-all">
+                                <FolderPlus size={9}/>Crear desde cero
+                              </button>
+                            </div>
+                            <p className="text-white/20 text-[9px] leading-relaxed">
+                              Obsidian debe estar instalado. La primera vez Chrome preguntará si abrir el enlace <span className="text-white/30">obsidian://</span> — marca "Siempre".
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            {!obsidianCfg.vaultName.trim() && (
+                              <p className="text-amber-300/60 text-[9px] leading-relaxed">
+                                Pulsa <span className="text-amber-200/80">Configurar</span> y escribe el nombre de tu vault para exportar con un clic.
+                              </p>
+                            )}
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <button onClick={handleExportObsidian} disabled={!showApply}
+                                className={`h-8 rounded-lg text-white text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] border ${
+                                  !showApply
+                                    ? "bg-white/6 opacity-40 cursor-not-allowed border-white/10"
+                                    : obsidianStatus === "done"
+                                      ? "bg-emerald-700 hover:bg-emerald-600 border-emerald-500/30"
+                                      : "bg-violet-600/80 hover:bg-violet-600 border-violet-400/30"
+                                }`}>
+                                {obsidianStatus === "done"
+                                  ? <><CheckCircle2 size={10}/>Listo</>
+                                  : <><BookMarked size={10}/>Exportar</>}
+                              </button>
+                              <button onClick={handleCopyObsidianMarkdown} disabled={!showApply}
+                                className={`h-8 rounded-lg text-white/70 text-[10px] flex items-center justify-center gap-1.5 transition-all border ${!showApply ? "bg-white/6 opacity-40 cursor-not-allowed border-white/10" : "bg-white/6 hover:bg-white/10 border-white/10"}`}>
+                                <ClipboardCopy size={10}/>Copiar
+                              </button>
+                              <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply}
+                                className={`h-8 rounded-lg text-white/70 text-[10px] flex items-center justify-center gap-1.5 transition-all border ${!showApply ? "bg-white/6 opacity-40 cursor-not-allowed border-white/10" : "bg-white/6 hover:bg-white/10 border-white/10"}`}>
+                                <FileDown size={10}/>.md
+                              </button>
+                            </div>
+                            <p className="text-white/20 text-[9px] leading-relaxed">
+                              <span className="text-violet-400/60">Exportar</span> crea la nota en <span className="font-mono">{obsidianCfg.sourcesFolder}/</span> y el MOC del curso en <span className="font-mono">{obsidianCfg.mocsFolder}/</span>.
+                              <span className="text-white/15"> Copiar y .md son respaldos manuales.</span>
+                            </p>
+                            <button onClick={() => setObsidianHelpOpen(v => !v)}
+                              className="text-white/25 hover:text-white/50 text-[9px] flex items-center gap-1 transition-colors">
+                              <Info size={9}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
+                            </button>
+                            {obsidianHelpOpen && (
+                              <div className="bg-black/25 border border-[var(--usb-border)] rounded-lg p-2 space-y-1">
+                                {[
+                                  "1. Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
+                                  "2. Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir.",
+                                  "3. Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, borra el bloqueo de obsidian.",
+                                  "4. Verifica el nombre del vault con Probar vault (en Configurar) — Obsidian avisa si no existe.",
+                                  "5. Como respaldo siempre queda Copiar (portapapeles) o .md (archivo descargado).",
+                                ].map((s, i) => (
+                                  <p key={i} className="text-white/35 text-[9px] leading-relaxed">{s}</p>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
                       {!isFirstExport && (
                         <button onClick={handleDownloadTxtSetup}
                           className="w-full h-7 rounded-lg bg-amber-500/7 border border-amber-500/14 text-amber-300/70 hover:text-amber-200 hover:bg-amber-500/10 text-[10px] flex items-center justify-center gap-1.5 transition-all">
