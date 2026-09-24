@@ -181,7 +181,7 @@ export function ApiKeysPanel({
           animate={{ opacity: 1, height: "auto" }}
           exit={{ opacity: 0, height: 0 }}
           transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-          className="overflow-hidden border-b border-[var(--usb-border)] bg-[var(--usb-bg-5)] shrink-0"
+          className="usb-ai-panel overflow-hidden border-b border-[var(--usb-border)] bg-[var(--usb-bg-5)] shrink-0"
         >
           <div className="px-4 pt-3.5 pb-4 space-y-4">
 

@@ -44,3 +44,4 @@ dist/
 .tmp-dev.log
 .env
 .env.local
+theme-*.png
