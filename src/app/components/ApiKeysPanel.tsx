@@ -224,7 +224,7 @@ export function ApiKeysPanel({
                     className={`flex-1 h-7 rounded-lg text-[10px] transition-all duration-200 ${
                       provider.kind === kind
                         ? "bg-violet-600 text-white shadow-[0_1px_6px_rgba(139,92,246,0.35)]"
-                        : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-fg-dim)]/8"
+                        : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-black/10"
                     }`}
                     style={{ fontWeight: provider.kind === kind ? 600 : 500 }}
                   >
@@ -311,7 +311,7 @@ export function ApiKeysPanel({
                     className={`text-[9px] leading-relaxed rounded-lg px-2.5 py-2 ${
                       validation.status === "ok"
                         ? "text-emerald-400/90 bg-emerald-500/8"
-                        : "text-amber-300/90 bg-amber-500/8"
+                        : "text-[var(--usb-warn-text)] bg-amber-500/8"
                     }`}
                   >
                     {validation.status === "ok" ? "✓ " : "⚠ "}{validation.message}
@@ -361,7 +361,7 @@ export function ApiKeysPanel({
                       {duplicate ? (
                         <motion.p
                           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                          className="text-amber-400/80 text-[9px] ml-0.5 flex items-center gap-1"
+                          className="text-[var(--usb-warn-text)] text-[9px] ml-0.5 flex items-center gap-1"
                         >
                           <AlertCircle size={8} />Key duplicada
                         </motion.p>
@@ -390,7 +390,7 @@ export function ApiKeysPanel({
                   disabled={hasDuplicates}
                   className={`flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-[11px] transition-all duration-200 ${
                     hasDuplicates
-                      ? "text-amber-300/70 cursor-not-allowed bg-amber-500/8"
+                      ? "text-[var(--usb-warn-text)] cursor-not-allowed bg-amber-500/8"
                       : saved
                         ? "bg-emerald-500/15 text-emerald-400"
                         : "bg-violet-600 hover:bg-violet-500 text-white"
