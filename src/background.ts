@@ -1427,7 +1427,10 @@ async function validateProviderFromBackground(
 	} catch (error) {
 		const isAbort = error instanceof DOMException && error.name === 'AbortError';
 		if (isAbort) {
-			return { status: 'unreachable', message: 'El servidor no respondió a tiempo (timeout). ¿Está encendido?' };
+			return {
+				status: 'unreachable',
+				message: `El modelo "${cfg.model}" no respondió en 25 s. El servidor está activo pero ese modelo está saturado o caído: prueba otro modelo del mismo proxy.`,
+			};
 		}
 		const host = (() => { try { return new URL(cfg.baseUrl).host; } catch { return cfg.baseUrl; } })();
 		return {
