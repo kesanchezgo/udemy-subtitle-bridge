@@ -82,33 +82,39 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 }
 
 .usb-dock.dock-sepia {
-  /* ─── Light / Pure White theme (Udemy-style, cool neutral) ─── */
-  --usb-bg-0:         #eceef1;      /* bars / deepest       */
-  --usb-bg-1:         #f3f4f6;      /* header               */
-  --usb-bg-2:         #f7f9fa;      /* página principal     */
+  /* ── Light theme (Udemy-native: cool grays + white elevated surfaces) ──
+     Jerarquía por ELEVACIÓN, no solo color: página gris frío → tarjetas
+     BLANCAS con borde visible + sombra suave (--usb-elev-1/2). */
+  --usb-bg-0:         #e8ecf0;      /* bars / deepest       */
+  --usb-bg-1:         #f1f4f7;      /* header               */
+  --usb-bg-2:         #f4f6f9;      /* página principal     */
   --usb-bg-3:         #ffffff;      /* cards — pure white   */
-  --usb-bg-4:         #f1f3f5;      /* tabbar / inputs      */
-  --usb-bg-5:         #eef0f3;      /* footer               */
+  --usb-bg-4:         #eef1f5;      /* tabbar / inputs      */
+  --usb-bg-5:         #ffffff;      /* footer / panels (blanco elevado) */
 
   --usb-fg:           #1c1d1f;      /* Udemy primary text   */
-  --usb-fg-hi:        rgba(28,29,31,0.95);
-  --usb-fg-mid:       rgba(28,29,31,0.78);
-  --usb-fg-lo:        rgba(28,29,31,0.58);
-  --usb-fg-dim:       rgba(28,29,31,0.38);
+  --usb-fg-hi:        rgba(28,29,31,0.96);
+  --usb-fg-mid:       rgba(28,29,31,0.72);
+  --usb-fg-lo:        rgba(28,29,31,0.55);
+  --usb-fg-dim:       rgba(28,29,31,0.34);
 
-  --usb-border:       rgba(0,0,0,0.10);
-  --usb-border-mid:   rgba(0,0,0,0.16);
-  --usb-divider:      rgba(0,0,0,0.08);
+  --usb-border:       rgba(28,29,31,0.11);
+  --usb-border-mid:   rgba(28,29,31,0.18);
+  --usb-divider:      rgba(28,29,31,0.07);
 
   /* Brand accents — vibrant Udemy palette */
   --usb-accent:       #a435f0;       /* Udemy purple — primary CTA       */
   --usb-accent-2:     #8710d8;       /* darker for hover                  */
-  --usb-accent-soft:  rgba(164,53,240,0.10);
-  --usb-accent-ring:  rgba(164,53,240,0.32);
+  --usb-accent-soft:  rgba(164,53,240,0.08);
+  --usb-accent-ring:  rgba(164,53,240,0.30);
 
-  --usb-input-bg:     rgba(0,0,0,0.035);
-  --usb-placeholder:  rgba(28,29,31,0.34);
-  --usb-scrollbar:    rgba(0,0,0,0.14);
+  --usb-input-bg:     #ffffff;
+  --usb-placeholder:  rgba(28,29,31,0.38);
+  --usb-scrollbar:    rgba(28,29,31,0.16);
+
+  /* Elevación (solo light): el dark la da la oscuridad, el light la necesita */
+  --usb-elev-1: 0 1px 2px rgba(16,24,40,0.05), 0 2px 6px -1px rgba(16,24,40,0.07);
+  --usb-elev-2: 0 2px 4px rgba(16,24,40,0.05), 0 10px 24px -8px rgba(16,24,40,0.14);
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -227,10 +233,10 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 .usb-dock.dock-sepia [class~="text-white/15"],
 .usb-dock.dock-sepia [class~="text-white/14"],
 .usb-dock.dock-sepia [class~="text-white/12"],
-.usb-dock.dock-sepia [class~="text-white/10"]           { color: rgba(28,29,31,0.55) !important; }
+.usb-dock.dock-sepia [class~="text-white/10"]           { color: rgba(28,29,31,0.62) !important; }
 .usb-dock.dock-sepia [class~="text-white/8"],
 .usb-dock.dock-sepia [class~="text-white/6"],
-.usb-dock.dock-sepia [class~="text-white/5"]            { color: rgba(28,29,31,0.42) !important; }
+.usb-dock.dock-sepia [class~="text-white/5"]            { color: rgba(28,29,31,0.48) !important; }
 
 .usb-dock.dock-sepia [class*="hover:text-white"]:hover  { color: var(--usb-fg)     !important; }
 
@@ -256,9 +262,10 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 .usb-dock.dock-sepia input:not([type="range"]),
 .usb-dock.dock-sepia textarea {
   background-color: var(--usb-input-bg) !important;
-  border-color:     rgba(0,0,0,0.12) !important;
+  border-color:     rgba(28,29,31,0.16) !important;
   color:            var(--usb-fg) !important;
-  caret-color:      #4a4744 !important;
+  caret-color:      #8710d8 !important;
+  box-shadow:       var(--usb-elev-1);
 }
 
 .usb-dock.dock-sepia input:not([type="range"])::placeholder,
@@ -268,8 +275,8 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 
 .usb-dock.dock-sepia input:not([type="range"]):focus,
 .usb-dock.dock-sepia textarea:focus {
-  border-color: rgba(0,0,0,0.22) !important;
-  box-shadow:   0 0 0 2px rgba(0,0,0,0.06) !important;
+  border-color: #a435f0 !important;
+  box-shadow:   0 0 0 3px rgba(164,53,240,0.14) !important;
   outline:      none !important;
 }
 
@@ -591,12 +598,12 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 
 /* Cool-neutral white backgrounds (Udemy style) — components still hardcode
    the legacy cream hex values; remap them on the fly. */
-.usb-dock [class~="bg-[#f8f7f6]"]   { background-color: #f7f9fa !important; }  /* main page bg       */
-.usb-dock [class~="bg-[#f0efed]"]   { background-color: #f3f4f6 !important; }  /* header bg          */
-.usb-dock [class~="bg-[#f2f1ef]"]   { background-color: #f1f3f5 !important; }  /* tabbar / footer    */
+.usb-dock [class~="bg-[#f8f7f6]"]   { background-color: #f4f6f9 !important; }  /* main page bg       */
+.usb-dock [class~="bg-[#f0efed]"]   { background-color: #f1f4f7 !important; }  /* header bg          */
+.usb-dock [class~="bg-[#f2f1ef]"]   { background-color: #f1f4f7 !important; }  /* tabbar / footer    */
 .usb-dock [class~="bg-[#ebebea]"]   { background-color: #eef0f3 !important; }  /* collapsed / deep   */
 .usb-dock [class~="bg-[#e8e7e5]"]   { background-color: #eceef1 !important; }  /* deepest bar        */
-.usb-dock [class*="bg-[#f8f7f6]/"]  { background-color: #f7f9fa !important; }  /* bg-[#f8f7f6]/98 etc */
+.usb-dock [class*="bg-[#f8f7f6]/"]  { background-color: #f4f6f9 !important; }  /* bg-[#f8f7f6]/98 etc */
 .usb-dock [class*="bg-[#f0efed]/"]  { background-color: #f3f4f6 !important; }
 .usb-dock [class*="bg-[#f2f1ef]/"]  { background-color: #f1f3f5 !important; }
 .usb-dock [class~="bg-[#fbfaf9]"]   { background-color: #ffffff !important; }
@@ -803,6 +810,58 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   background-color: rgba(139, 92, 246, 0.45);
 }
 .usb-dock { scrollbar-width: thin; scrollbar-color: var(--usb-scrollbar) transparent; }
+
+/* ════════════════════════════════════════════════════════════════
+   §24. LIGHT ELEVATION & SURFACES
+   El dark tiene jerarquía por oscuridad; el light la necesita por
+   ELEVACIÓN: página gris frío → superficies BLANCAS con borde fuerte
+   y sombra suave en dos niveles (--usb-elev-1/-2).
+════════════════════════════════════════════════════════════════ */
+
+/* Superficies tipo tarjeta (familias white-alpha dark-first) → blanco elevado */
+.usb-dock.dock-sepia [class*="bg-white/[0.015]"],
+.usb-dock.dock-sepia [class*="bg-white/[0.02]"],
+.usb-dock.dock-sepia [class*="bg-white/[0.03]"],
+.usb-dock.dock-sepia [class*="bg-white/[0.04]"],
+.usb-dock.dock-sepia [class~="bg-white/2"],
+.usb-dock.dock-sepia [class~="bg-white/3"],
+.usb-dock.dock-sepia [class~="bg-white/4"],
+.usb-dock.dock-sepia [class~="bg-white/5"],
+.usb-dock.dock-sepia [class~="bg-white/6"],
+.usb-dock.dock-sepia [class~="bg-white/7"],
+.usb-dock.dock-sepia [class~="bg-white/8"] {
+  background-color: #ffffff !important;
+  box-shadow: var(--usb-elev-1) !important;
+}
+
+/* Bordes de esas tarjetas: visibles de verdad en light */
+.usb-dock.dock-sepia [class*="border-[var(--usb-border)]"] {
+  border-color: var(--usb-border) !important;
+}
+
+/* Panel de IA/modelos: tarjeta blanca elevada flotando sobre la página */
+.usb-dock.dock-sepia .usb-ai-panel {
+  background-color: #ffffff !important;
+  box-shadow: var(--usb-elev-2) !important;
+}
+
+/* Segmented control (Local/OpenAI/Claude/Gemini): track gris para que los
+   segmentos activos/en repos se lean sobre blanco */
+.usb-dock.dock-sepia [class*="rounded-[10px]"][class*="bg-[var(--usb-input-bg)]"] {
+  background-color: #eef1f5 !important;
+  box-shadow: none !important;
+}
+
+/* CTA violeta: sombra más ligera y honesta sobre fondo claro */
+.usb-dock.dock-sepia [class*="from-violet"][class~="text-white"] {
+  box-shadow: 0 4px 14px rgba(164,53,240,0.25), 0 1px 3px rgba(164,53,240,0.20) !important;
+}
+
+/* Header y tabbar: separación clara con la página */
+.usb-dock.dock-sepia [class*="border-b"][class*="border-white/5"],
+.usb-dock.dock-sepia [class*="border-b"][class*="border-white/6"] {
+  border-bottom-color: var(--usb-border) !important;
+}
 `;
 
 /** @deprecated Use THEME_CSS — kept for backward-compat */
