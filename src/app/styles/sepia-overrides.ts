@@ -79,6 +79,7 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   --usb-input-bg:     rgba(0,0,0,0.30);
   --usb-placeholder:  rgba(255,255,255,0.20);
   --usb-scrollbar:    rgba(255,255,255,0.10);
+  --usb-warn-text:    #fcd34d;
 }
 
 .usb-dock.dock-sepia {
@@ -111,6 +112,7 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   --usb-input-bg:     #ffffff;
   --usb-placeholder:  rgba(28,29,31,0.38);
   --usb-scrollbar:    rgba(28,29,31,0.16);
+  --usb-warn-text:    #92400e;
 
   /* Elevación (solo light): el dark la da la oscuridad, el light la necesita */
   --usb-elev-1: 0 1px 2px rgba(16,24,40,0.05), 0 2px 6px -1px rgba(16,24,40,0.07);
