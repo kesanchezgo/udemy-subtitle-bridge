@@ -223,7 +223,7 @@ export function ApiKeysPanel({
                     onClick={() => changeProviderKind(kind)}
                     className={`flex-1 h-7 rounded-lg text-[10px] transition-all duration-200 ${
                       provider.kind === kind
-                        ? "bg-violet-600 text-white shadow-[0_1px_6px_rgba(139,92,246,0.35)]"
+                        ? "bg-gradient-to-r from-violet-700 to-violet-600 text-white shadow-[0_1px_6px_rgba(139,92,246,0.35)]"
                         : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-black/10"
                     }`}
                     style={{ fontWeight: provider.kind === kind ? 600 : 500 }}
@@ -291,7 +291,7 @@ export function ApiKeysPanel({
                     ? "bg-violet-600/45 text-white/70 cursor-wait"
                     : providerSaved
                       ? "bg-emerald-500/15 text-emerald-400"
-                      : "bg-violet-600 hover:bg-violet-500 text-white"
+                      : "bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 text-white shadow-lg shadow-violet-900/25"
                 }`}
                 style={{ fontWeight: 600 }}
               >
@@ -393,7 +393,7 @@ export function ApiKeysPanel({
                       ? "text-[var(--usb-warn-text)] cursor-not-allowed bg-amber-500/8"
                       : saved
                         ? "bg-emerald-500/15 text-emerald-400"
-                        : "bg-violet-600 hover:bg-violet-500 text-white"
+                        : "bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 text-white shadow-lg shadow-violet-900/25"
                   }`}
                   style={{ fontWeight: 600 }}
                 >
