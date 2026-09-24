@@ -322,12 +322,36 @@ function validateViaBackground(cfg: AiProviderConfig): Promise<DelegationOutcome
       pollTimer = setInterval(async () => {
         if (settled) return;
         try { chromeApi.runtime?.sendMessage?.({ type: 'USG_KEEPALIVE' }, () => { void chromeApi.runtime?.lastError; }); } catch { /* ignore */ }
-        acceptIfFinal(await readValidationResult(requestId));
+        const stored = await readValidationResult(requestId);
+        if (stored?.status === 'pending') pendingSeen = true;
+        // MV3 wake race: a runtime message sent while the service worker is
+        // tearing down is dropped SILENTLY ("message port closed"), which left
+        // the probe without a verdict until the hardstop. Retry the probe
+        // message until the worker acknowledges with the 'pending' stamp.
+        if (!pendingSeen && pendingResends < 4 && pollTick >= 3) {
+          pendingResends += 1;
+          try {
+            chromeApi.runtime?.sendMessage?.({ type: 'USG_VALIDATE_PROVIDER', config: cfg, requestId }, () => {
+              void chromeApi.runtime?.lastError;
+            });
+          } catch { /* ignore — retried on the next tick */ }
+        }
+        pollTick += 1;
+        acceptIfFinal(stored);
       }, 700);
 
+      let pendingSeen = false;
+      let pendingResends = 0;
+      let pollTick = 0;
       chromeApi.runtime.sendMessage({ type: 'USG_VALIDATE_PROVIDER', config: cfg, requestId }, async (response) => {
         // lastError is expected on a torn-down worker; storage polling covers it.
-        void chromeApi.runtime?.lastError;
+        const lastErr = chromeApi.runtime?.lastError;
+        if (lastErr) {
+          try {
+            (document.documentElement as HTMLElement & { dataset: DOMStringMap }).dataset.usbQaValidateError =
+              String((lastErr as { message?: string }).message || 'unknown').slice(0, 120);
+          } catch { /* QA breadcrumb only */ }
+        }
         const res = response as { status?: string; message?: string; httpStatus?: number } | undefined;
         if (acceptIfFinal(res ?? null)) return;
 

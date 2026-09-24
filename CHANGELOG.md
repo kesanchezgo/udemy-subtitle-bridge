@@ -26,6 +26,11 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   nesting) or `"` are sanitized in `.apkg` and `.txt` exports.
 - **Provider error masking**: when the configured provider failed, refine/objectives
   reported "No Gemini API keys configured" instead of the actual provider error.
+- **Provider validation could hang until the 45 s hardstop with no verdict**:
+  `USG_VALIDATE_PROVIDER` was sent exactly once, and a runtime message fired while the
+  MV3 service worker is tearing down is dropped silently — so the probe never started.
+  The validation relay now retries the probe message until the worker acknowledges with
+  the `pending` stamp (max 4 resends alongside the existing keepalive polling).
 
 ### Added
 
