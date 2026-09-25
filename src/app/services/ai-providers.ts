@@ -490,16 +490,18 @@ export function buildProviderHeaders(config: AiProviderConfig): Record<string, s
  */
 export function buildOpenAiCompatibleBody(
   messages: OpenAiChatMessage[],
-  maxTokens: number,
+  maxTokens: number | undefined,
   temperature: number,
   model: string,
   stream: boolean,
 ): Record<string, unknown> {
+  // max_tokens undefined se omite del body: los modelos de razonamiento
+  // (p. ej. rutas gemini vía cline-free) pueden colgarse con topes bajísimos.
   return {
     model,
     messages,
     temperature,
-    max_tokens: maxTokens,
+    ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     stream,
   };
 }
