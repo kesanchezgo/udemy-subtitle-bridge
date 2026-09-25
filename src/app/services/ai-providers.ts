@@ -326,22 +326,24 @@ function validateViaBackground(cfg: AiProviderConfig): Promise<DelegationOutcome
         if (stored?.status === 'pending') pendingSeen = true;
         // MV3 wake race: a runtime message sent while the service worker is
         // tearing down is dropped SILENTLY ("message port closed"), which left
-        // the probe without a verdict until the hardstop. Retry the probe
-        // message until the worker acknowledges with the 'pending' stamp.
-        if (!pendingSeen && pendingResends < 4 && pollTick >= 3) {
-          pendingResends += 1;
+        // the probe without a verdict until the hardstop. On heavy pages the
+        // worker can take several seconds to wake, so keep re-sending the
+        // probe message every ~2.5 s until it acknowledges ('pending' stamp)
+        // or the validation window closes.
+        const sinceStart = Date.now() - startedAt;
+        if (!pendingSeen && sinceStart > 2500 && sinceStart < 38000 && pollTick % 4 === 3) {
           try {
             chromeApi.runtime?.sendMessage?.({ type: 'USG_VALIDATE_PROVIDER', config: cfg, requestId }, () => {
               void chromeApi.runtime?.lastError;
             });
-          } catch { /* ignore — retried on the next tick */ }
+          } catch { /* ignore — retried on a later tick */ }
         }
         pollTick += 1;
         acceptIfFinal(stored);
       }, 700);
 
+      const startedAt = Date.now();
       let pendingSeen = false;
-      let pendingResends = 0;
       let pollTick = 0;
       chromeApi.runtime.sendMessage({ type: 'USG_VALIDATE_PROVIDER', config: cfg, requestId }, async (response) => {
         // lastError is expected on a torn-down worker; storage polling covers it.
@@ -360,11 +362,12 @@ function validateViaBackground(cfg: AiProviderConfig): Promise<DelegationOutcome
         acceptIfFinal(await readValidationResult(requestId));
       });
 
-      // Backstop. The background probe allows 25s, so this must sit above it.
+      // Backstop. The background probe allows 25s and may start late on a
+      // heavy page (wake retries), so this sits well above both.
       hardStop = setTimeout(async () => {
         if (acceptIfFinal(await readValidationResult(requestId))) return;
         finish({ status: 'unreachable', message: 'La validación no respondió a tiempo. Verifica que el servidor esté corriendo.' });
-      }, 45000);
+      }, 75000);
     } catch {
       resolve({ attempted: false, result: null });
     }

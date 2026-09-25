@@ -113,10 +113,13 @@ export function ApiKeysPanel({
     const result = await validateProviderConfig(provider);
     setValidating(false);
     setValidation(result);
-    if (result.status !== "ok") return;
+    // La config se guarda SIEMPRE: el pre-vuelo puede fallar por causas que no
+    // afectan a la generación real (p. ej. el proxy bloquea el origin del
+    // navegador para la sonda). Bloquear el guardado por un 403 del pre-vuelo
+    // dejaba al usuario sin config guardada y sin forma de avanzar.
     onSaveProvider(provider);
     setProviderSaved(true);
-    setTimeout(() => setProviderSaved(false), 2200);
+    setTimeout(() => setProviderSaved(false), 2600);
   };
 
   const productionRuntime = Boolean(
