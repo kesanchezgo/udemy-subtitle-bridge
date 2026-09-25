@@ -26,6 +26,13 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   nesting) or `"` are sanitized in `.apkg` and `.txt` exports.
 - **Provider error masking**: when the configured provider failed, refine/objectives
   reported "No Gemini API keys configured" instead of the actual provider error.
+- **Provider config now saves even when the pre-flight probe fails**: blocking the
+  save on a probe 403 (e.g. the proxy rejecting browser origins) left the user with
+  no saved config and no way forward. The panel always persists the config and
+  surfaces the probe result as information. Real-Udemy E2E confirmed the root
+  cause end-to-end: the gmifree proxy rejects browser origins with
+  `HTTP 403 access_denied "Browser origin not allowed; set GMIFREE_CORS_ORIGINS"`
+  — fix that env var on the proxy to accept the extension origin.
 - **Provider validation could hang until the 45 s hardstop with no verdict**:
   `USG_VALIDATE_PROVIDER` was sent exactly once, and a runtime message fired while the
   MV3 service worker is tearing down is dropped silently — so the probe never started.
