@@ -1931,7 +1931,34 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 		shadow.addEventListener(type, stopAtDockBoundary);
 	});
 
-	(['wheel', 'touchmove'] as const).forEach((type) => {
+	// Wheel: stopPropagation alone does NOT stop the native scroll — when the
+	// delta cannot be absorbed by a dock container (non-scrollable areas, or
+	// content already at its edge), it chains to the page and Udemy scrolls
+	// behind the dock. This guard prevents the default ONLY when no dock
+	// container can absorb the delta, leaving native scrolling inside the dock
+	// untouched. Non-passive: preventDefault requires it.
+	const canAbsorb = (el: Element, deltaY: number): boolean => {
+		if (el.scrollHeight <= el.clientHeight) return false;
+		if (deltaY < 0) return el.scrollTop > 0;
+		return el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+	};
+
+	const handleWheelBoundary = (event: WheelEvent) => {
+		event.stopPropagation();
+		for (const node of event.composedPath()) {
+			if (node === shadow) break; // fin de las interioridades del dock
+			const el = node as Element;
+			const overflowY = getComputedStyle(el).overflowY;
+			if ((overflowY === 'auto' || overflowY === 'scroll') && canAbsorb(el, event.deltaY)) {
+				return; // un contenedor del dock absorbe el delta: comportamiento nativo
+			}
+		}
+		event.preventDefault();
+	};
+
+	shadow.addEventListener('wheel', handleWheelBoundary, { passive: false });
+
+	(['touchmove'] as const).forEach((type) => {
 		shadow.addEventListener(type, stopAtDockBoundary, { passive: true });
 	});
 }
