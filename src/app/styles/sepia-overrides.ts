@@ -814,6 +814,19 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 .usb-dock { scrollbar-width: thin; scrollbar-color: var(--usb-scrollbar) transparent; }
 
 /* ════════════════════════════════════════════════════════════════
+   §25. SCROLL BOUNDARY (ambos temas)
+   El scroll dentro del dock NUNCA encadena a la página de Udemy:
+   ni al llegar al fin del contenido ni sobre zonas no desplazables.
+   (El guard JS del content script previene el default; esto cubre
+   contenedores nativos y navegadores sin JS activo.)
+════════════════════════════════════════════════════════════════ */
+.usb-dock,
+.usb-dock .custom-scrollbar,
+.usb-dock .custom-scrollbar-thin {
+  overscroll-behavior: contain;
+}
+
+/* ════════════════════════════════════════════════════════════════
    §24. LIGHT ELEVATION & SURFACES
    El dark tiene jerarquía por oscuridad; el light la necesita por
    ELEVACIÓN: página gris frío → superficies BLANCAS con borde fuerte
