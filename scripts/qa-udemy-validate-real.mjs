@@ -1,10 +1,12 @@
 // Validación del proveedor sobre UDEMY REAL con las cookies del usuario,
 // usando el MISMO flujo que el usuario: panel "Motores de IA" → OpenAI →
 // URL/key/modelo → "Probar y guardar" → leer el veredicto del panel.
-// Sin seeding por SW (esa vía colgaba con el target del SW no responsivo):
-// el panel persiste por sus propios medios (onSaveProvider).
+//
+// La sonda de validación NO envía max_tokens (los topes bajísimos colgaban
+// rutas de modelos de razonamiento vía proxies gratuitos).
 //
 // Run: node scripts/qa-udemy-validate-real.mjs
+//   USB_MODEL_A / USB_MODEL_B: los dos modelos a validar.
 
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,8 +20,8 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.rep
 const distDir = path.join(repoRoot, 'dist');
 const COOKIES_FILE = process.env.USB_COOKIES || path.join(tmpdir(), 'usb-qa-udemy-cookies.json');
 const COURSE_URL = process.env.USB_COURSE_URL || 'https://www.udemy.com/course/java-in-depth-become-a-complete-java-engineer/learn/lecture/42163342?start=0#overview';
-const MODEL_MUERTO = process.env.USB_MODEL_MUERTO || 'cline-free/gemini-3.8-flash';
-const MODEL_OK = 'muse-spark-1.3-contributor-free';
+const MODEL_A = process.env.USB_MODEL_A || 'cline-free/gemini-3.8-flash';
+const MODEL_B = process.env.USB_MODEL_B || 'muse-spark-1.3-contributor-free';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const step = (m) => console.log(`\n▶ ${m}`);
@@ -97,9 +99,8 @@ const panel = page.locator('[id^="usb-dock-host-"] .usb-ai-panel').first();
 await panel.locator('button:has-text("OpenAI")').first().click({ timeout: 5000 }).catch(() => null);
 await sleep(300);
 
-// El panel hidrata sus campos desde chrome.storage de forma asíncrona: los
-// fills pueden ser pisados por la hidratación. Rellenar con READBACK hasta
-// que el valor se quede (3 intentos).
+// Relleno con READBACK: el panel hidrata sus campos desde chrome.storage de
+// forma asíncrona y puede pisar un fill temprano; rellenar hasta que se quede.
 async function fillStable(locator, value) {
 	for (let i = 0; i < 5; i++) {
 		await locator.fill(value).catch(() => null);
@@ -118,42 +119,26 @@ if (!urlOk || !keyOk) {
 	console.log('   ⚠️ fill inestable — continuando: el veredicto del panel dirá qué se validó');
 }
 
-step('Validating model with a DEAD proxy route');
-await fillStable(panel.locator('input[placeholder*="gpt-4o"]').first(), MODEL_MUERTO);
-await panel.locator('button:has-text("Probar y guardar")').first().click({ timeout: 10000 });
-let verdictMuerto = '(sin veredicto en 40 s)';
-for (let i = 0; i < 20; i++) {
-	await sleep(2000);
-	// Veredicto SOLO del panel (los toasts del dock contienen otros mensajes
-	// con 'contactar' que enmascaran la lectura global).
-	const v = await panel.locator('p').filter({ hasText: /✓|⚠/ }).first().textContent().catch(() => null);
-	if (v) { verdictMuerto = v.slice(0, 140); break; }
+// ── Validación de cada modelo: sonda sin max_tokens (fix de rutas lentas) ──
+async function tryValidate(model) {
+	console.log(`\n=== VALIDANDO: ${model} ===`);
+	await fillStable(panel.locator('input[placeholder*="gpt-4o"]').first(), model);
+	await panel.locator('button:has-text("Probar y guardar")').first().click({ timeout: 10000 });
+	for (let i = 0; i < 20; i++) {
+		await sleep(2000);
+		const v = await panel.locator('p').filter({ hasText: /✓|⚠/ }).first().textContent().catch(() => null);
+		if (v) {
+			console.log(`   veredicto: ${v.slice(0, 140)}`);
+			return /Conexión correcta/i.test(v) ? 'ok' : v.slice(0, 120);
+		}
+	}
+	return 'sin veredicto';
 }
-console.log(`   veredicto modelo muerto: ${verdictMuerto}`);
-if (!/(no respondió en 25 s|403|access_denied)/.test(verdictMuerto)) {
-	await fail(`se esperaba un veredicto accionable del probe y se obtuvo: ${verdictMuerto}`, page, 'timeout-msg');
-}
-console.log('   ✅ veredicto accionable para la ruta muerta (sin hardstop genérico)');
 
-step('Validating model with a LIVE proxy route');
-await fillStable(panel.locator('input[placeholder*="gpt-4o"]').first(), MODEL_OK);
-await panel.locator('button:has-text("Probar y guardar")').first().click({ timeout: 10000 });
-let verdictOk = '(sin veredicto en 40 s)';
-for (let i = 0; i < 20; i++) {
-	await sleep(2000);
-	const v = await panel.locator('p').filter({ hasText: /✓|⚠/ }).first().textContent().catch(() => null);
-	if (v) { verdictOk = v.slice(0, 140); break; }
-}
-console.log(`   veredicto muse-spark: ${verdictOk}`);
-if (!/(Conexión correcta|403|access_denied)/.test(verdictOk)) {
-	await fail(`muse-spark debería producir un veredicto del proxy y se obtuvo: ${verdictOk}`, page, 'muse-fail');
-}
-console.log('   ✅ veredicto del proxy recibido (403 de policy = GMIFREE_CORS_ORIGINS en el proxy)');
+const r1 = await tryValidate(MODEL_A);
+const r2 = await tryValidate(MODEL_B);
 
-
-// La config debe persistir aunque el pre-vuelo falle (guardado incondicional).
-// Leerla vía el SW de la EXTENSIÓN (filtro por URL: la página de Udemy
-// registra los suyos) con reintentos de wake.
+// La config debe persistir aunque un pre-vuelo falle (guardado incondicional)
 let savedCfg = null;
 for (let i = 0; i < 3 && !savedCfg; i++) {
 	const w = context.serviceWorkers().filter((x) => x.url().startsWith('chrome-extension://')).pop()
@@ -165,15 +150,17 @@ for (let i = 0; i < 3 && !savedCfg; i++) {
 	]).catch(() => null);
 	if (!savedCfg || !savedCfg.model) savedCfg = null;
 }
-if (!savedCfg || savedCfg.model !== MODEL_OK) {
-	await fail(`la config no se persistió con el modelo sano (persistió: "${String(savedCfg ? savedCfg.model : 'nada').slice(0, 60)}")`, page, 'persist');
+if (!savedCfg || savedCfg.model !== MODEL_B) {
+	await fail(`la config no se persistió con el modelo B (persistió: "${String(savedCfg ? savedCfg.model : 'nada').slice(0, 60)}")`, page, 'persist');
 }
 console.log(`   ✅ config persistida en storage: ${savedCfg.baseUrl} · ${savedCfg.model}`);
+
 await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-validate-final.png') });
 
 console.log('\n=== RESUMEN ===');
-console.log(`modelo muerto : ${verdictMuerto}`);
-console.log(`muse-spark    : ${verdictOk}`);
+console.log(`${MODEL_A} : ${r1 === 'ok' ? '✓ Conexión correcta' : r1}`);
+console.log(`${MODEL_B} : ${r2 === 'ok' ? '✓ Conexión correcta' : r2}`);
+console.log(`config persistida: ${savedCfg.baseUrl} · ${savedCfg.model}`);
 
 await context.close().catch(() => undefined);
-process.exit(/Conexión correcta/.test(verdictOk) && /no respondió en 25 s/.test(verdictMuerto) ? 0 : 1);
+process.exit(r1 === 'ok' && r2 === 'ok' ? 0 : 1);
