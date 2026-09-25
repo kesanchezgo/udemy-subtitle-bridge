@@ -33,6 +33,14 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   cause end-to-end: the gmifree proxy rejects browser origins with
   `HTTP 403 access_denied "Browser origin not allowed; set GMIFREE_CORS_ORIGINS"`
   — fix that env var on the proxy to accept the extension origin.
+- **Validation probe no longer caps tokens**: the probe sent `max_tokens: 8`,
+  which hangs reasoning-model routes on free proxies (e.g.
+  `cline-free/gemini-3.8-flash` never answers a capped request but answers in
+  <2 s uncapped). The probe omits `max_tokens` and uses a 45 s abort.
+- **Provider validation relay retries until acknowledged**: a runtime message
+  fired while the MV3 service worker is tearing down is dropped silently, which
+  left the panel waiting until the hardstop. The relay re-sends the probe
+  message until the worker stamps `pending` into storage.
 - **Provider validation could hang until the 45 s hardstop with no verdict**:
   `USG_VALIDATE_PROVIDER` was sent exactly once, and a runtime message fired while the
   MV3 service worker is tearing down is dropped silently — so the probe never started.
