@@ -1398,13 +1398,16 @@ async function validateProviderFromBackground(
 	}
 
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 25000);
+	const timeout = setTimeout(() => controller.abort(), 45000);
 
 	try {
 		const messages = [{ role: 'user' as const, content: 'Responde solo: ok' }];
+		// SIN tope de tokens en la sonda: los modelos de razonamiento vía
+		// proxies gratuitos (p. ej. gemini en rutas cline-free) se quedan
+		// colgados con max_tokens bajo y la validación nunca responde.
 		const body = cfg.kind === 'anthropic'
 			? buildAnthropicBody(messages, 8, 0, cfg.model, false)
-			: buildOpenAiCompatibleBody(messages, 8, 0, cfg.model, false);
+			: buildOpenAiCompatibleBody(messages, undefined, 0, cfg.model, false);
 
 		const response = await fetch(buildProviderChatUrl(cfg, false), {
 			method: 'POST',
@@ -1429,7 +1432,7 @@ async function validateProviderFromBackground(
 		if (isAbort) {
 			return {
 				status: 'unreachable',
-				message: `El modelo "${cfg.model}" no respondió en 25 s. El servidor está activo pero ese modelo está saturado o caído: prueba otro modelo del mismo proxy.`,
+				message: `El modelo "${cfg.model}" no respondió en 45 s. El servidor está activo pero ese modelo está saturado o caído: prueba otro modelo del mismo proxy.`,
 			};
 		}
 		const host = (() => { try { return new URL(cfg.baseUrl).host; } catch { return cfg.baseUrl; } })();
