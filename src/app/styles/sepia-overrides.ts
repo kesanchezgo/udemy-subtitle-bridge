@@ -821,6 +821,10 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
    contenedores nativos y navegadores sin JS activo.)
 ════════════════════════════════════════════════════════════════ */
 .usb-dock,
+.usb-dock [class*="overflow-y-auto"],
+.usb-dock [class*="overflow-auto"],
+.usb-dock [class*="overflow-x-auto"],
+.usb-dock [class*="overflow-y-scroll"],
 .usb-dock .custom-scrollbar,
 .usb-dock .custom-scrollbar-thin {
   overscroll-behavior: contain;

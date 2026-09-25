@@ -83,6 +83,7 @@ const FIXTURE_HTML = `<!doctype html>
 </div>
 <main>
   <h2 data-purpose="curriculum-item-view-title">Platform Independence in Java</h2>
+  <div style="height: 2600px; background: linear-gradient(#eef, #fee);">spacer: hace la página desplazable para el test de scroll</div>
   <video id="qa-video" controls muted poster="">
     <source src="/qa-video.mp4" type="video/mp4">
     <track kind="subtitles" srclang="en" label="English" default src="/qa-captions.vtt">
@@ -393,6 +394,32 @@ try {
 await page.locator('[id^="usb-dock-host-"] >> text=/^Obsidian$/').first().waitFor({ timeout: 20000 });
 await page.screenshot({ path: path.join(repoRoot, 'qa-extension-export.png') });
 console.log('   export panel reached → qa-extension-export.png');
+
+step('Verifying scroll boundary (rueda sobre el dock nunca mueve la página)');
+const scrollTarget = await page.evaluate(() => {
+	const sr = document.querySelector('[id^="usb-dock-host-"]').shadowRoot;
+	const el = [...sr.querySelectorAll('.custom-scrollbar')].find((c) => c.scrollHeight > c.clientHeight + 10 && c.getClientRects().length > 0);
+	if (!el) return null;
+	const r = el.getBoundingClientRect();
+	return { cx: r.x + r.width / 2, cy: r.y + Math.min(200, r.height / 2) };
+});
+if (scrollTarget) {
+	const pageBefore = await page.evaluate(() => window.scrollY);
+	await page.mouse.move(scrollTarget.cx, scrollTarget.cy);
+	for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, 200); await sleep(150); }
+	const pageAfter = await page.evaluate(() => window.scrollY);
+	const containerTop = await page.evaluate(() => {
+		const sr = document.querySelector('[id^="usb-dock-host-"]').shadowRoot;
+		const el = [...sr.querySelectorAll('.custom-scrollbar')].find((c) => c.scrollHeight > c.clientHeight + 10 && c.getClientRects().length > 0);
+		return el ? Math.round(el.scrollTop) : -1;
+	});
+	if (pageAfter > pageBefore) {
+		await fail(`la rueda sobre el dock desplazó la PÁGINA de Udemy (${pageBefore} → ${pageAfter})`, page, 'scroll-page');
+	}
+	console.log(`   ✅ scroll: página quieta (${pageAfter}) | contenedor del dock scrollTop=${containerTop}`);
+} else {
+	console.log('   (sin contenedor desplazable visible en esta vista — skip)');
+}
 
 step('Verifying inline help (¿No pasó nada al exportar?)');
 // Primero en el orden: la celebración del .apkg taparía el botón después.
