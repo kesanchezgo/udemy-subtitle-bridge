@@ -76,8 +76,9 @@ check('solo se añadieron mazos bajo la raíz de la extensión', added.every((d)
 	console.log(`  fsrs en preset importado: ${'fsrs' in lessonConf ? lessonConf.fsrs : '(clave no expuesta por getDeckConfig)'}`);
 
 	const vocabTemplates = await call('modelTemplates', { modelName: 'Udemy Bridge Vocab' });
-	check('plantilla de vocabulario habla con {{tts}} nativo (sin addons)',
-		JSON.stringify(vocabTemplates).includes('{{tts en_US:word}}') && JSON.stringify(vocabTemplates).includes('{{tts en_US:sentence}}'));
+	const tplJson = JSON.stringify(vocabTemplates);
+	check('plantilla de vocabulario reproduce ARCHIVOS de calidad (word/sentence audio)',
+		tplJson.includes('{{#word audio}}') && tplJson.includes('{{sentence audio}}') && !tplJson.includes('{{tts'));
 
 const vocabConf = await call('getDeckConfig', { deck: vocabDeck });
 check('mazo de vocabulario usa preset "Udemy Bridge · Vocabulario" (15/día)', vocabConf.name === 'Udemy Bridge · Vocabulario' && vocabConf.new.perDay === 15, `${vocabConf.name} ${vocabConf.new.perDay}`);
