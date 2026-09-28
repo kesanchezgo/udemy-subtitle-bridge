@@ -58,16 +58,44 @@ await page.goto(`https://www.udemy.com:${port}/course/qa/learn/lecture/1/`, { wa
 const dock = await page.waitForSelector('[id^="usb-dock-host-"]', { timeout: 20000 });
 console.log('dock montado');
 
+const TAB = (process.env.QA_TAB || 'study').toLowerCase();
+
 try {
 	await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 6000 });
 } catch {}
 await sleep(1000);
+try {
+	await page.locator(`[id^="usb-dock-host-"] >> text=/${TAB === 'overlay' ? '^Overlay$' : TAB === 'captions' ? '^Captions$' : '^Study$'}/`).first().click({ timeout: 8000 });
+	await sleep(1200);
+	console.log('tab activa:', TAB);
+} catch (e) {
+	console.log('   tab switch falló:', String(e).slice(0, 100));
+}
 
 // Posicionar el ratón sobre el CENTRO del dock (zona con contenido)
 const box = await dock.boundingBox();
 const mx = box.x + box.width / 2;
 const my = box.y + 400;
 await page.mouse.move(mx, my);
+
+// Instrumentación: observador en window (burbuja, main world) — registra cada
+// rueda que sobreviva al guard y si llegó con defaultPrevented o no.
+await page.evaluate(() => {
+	window.__qaBubble = [];
+	window.addEventListener('wheel', (e) => {
+		window.__qaBubble.push({ deltaY: Math.round(e.deltaY), defaultPrevented: e.defaultPrevented });
+	});
+});
+
+// Instrumentación: listener a nivel host (main world, DOM compartido) —
+// registra CADA rueda y si alguien llamó preventDefault.
+await page.evaluate(() => {
+	const host = document.querySelector('[id^="usb-dock-host-"]');
+	window.__qaWheel = [];
+	host.addEventListener('wheel', (e) => {
+		window.__qaWheel.push({ deltaY: Math.round(e.deltaY), defaultPrevented: e.defaultPrevented });
+	}, { passive: true });
+});
 
 // Cadena de hit-test desde el cursor + contenedores desplazables
 const metrics = await page.evaluate(({ mx, my }) => {
@@ -128,6 +156,10 @@ const after = await page.evaluate(() => {
 console.log('\n=== DESPUÉS de wheel(0, 360) sobre el dock ===');
 console.log('page scrollY:', after.pageScrollY, '(si >0: LA PÁGINA SE MOVIÓ)');
 after.scrollables.forEach((s, i) => console.log(`  scrollable[${i}]:`, JSON.stringify(s)));
+console.log('ruedas registradas en el host:', JSON.stringify(await page.evaluate(() => window.__qaWheel || [])));
+console.log('breadcrumb del guard:', await page.evaluate(() => document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector('#usb-dock-root')?.getAttribute('data-usb-wheel') || '(nunca)'));
+console.log('walk del guard:', await page.evaluate(() => document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector('#usb-dock-root')?.getAttribute('data-usb-wheel-walk') || '(sin walk)'));
+console.log('ruedas en window (burbuja):', JSON.stringify(await page.evaluate(() => window.__qaBubble || [])));
 
 await page.screenshot({ path: path.join(repoRoot, 'qa-scroll-diag.png') });
 

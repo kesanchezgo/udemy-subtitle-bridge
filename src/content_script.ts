@@ -1937,23 +1937,58 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 	// behind the dock. This guard prevents the default ONLY when no dock
 	// container can absorb the delta, leaving native scrolling inside the dock
 	// untouched. Non-passive: preventDefault requires it.
+	// El contenedor debe poder absorber el delta COMPLETO (tolerancia 2px):
+	// un contenedor con 4-5px de espacio (p. ej. el textarea del SRT) con un
+	// delta de 120px absorbía un fragmento mínimo y el navegador encadenaba
+	// el resto a la página de Udemy.
 	const canAbsorb = (el: Element, deltaY: number): boolean => {
 		if (el.scrollHeight <= el.clientHeight) return false;
-		if (deltaY < 0) return el.scrollTop > 0;
-		return el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+		const space = deltaY < 0
+			? el.scrollTop
+			: el.scrollHeight - el.clientHeight - el.scrollTop;
+		return space >= Math.abs(deltaY) - 2;
 	};
 
 	const handleWheelBoundary = (event: WheelEvent) => {
-		event.stopPropagation();
-		for (const node of event.composedPath()) {
-			if (node === shadow) break; // fin de las interioridades del dock
-			const el = node as Element;
-			const overflowY = getComputedStyle(el).overflowY;
-			if ((overflowY === 'auto' || overflowY === 'scroll') && canAbsorb(el, event.deltaY)) {
-				return; // un contenedor del dock absorbe el delta: comportamiento nativo
-			}
-		}
+		// preventDefault INCONDICIONAL: la página de Udemy NUNCA se mueve por
+		// la rueda sobre el dock. El scroll del dock se aplica manualmente al
+		// contenedor desplazable más cercano bajo el cursor.
 		event.preventDefault();
+		event.stopPropagation();
+		try {
+			const qaMount = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector('#usb-dock-root');
+			if (qaMount) {
+				qaMount.setAttribute('data-usb-wheel', 'fired:' + Math.round(event.deltaY) + '@' + Math.round(event.clientX) + ',' + Math.round(event.clientY));
+			}
+		} catch { /* QA breadcrumb only */ }
+
+		// Contenedor desplazable más cercano al target (dentro del dock)
+		let node = event.target as Element | null;
+		const visited: string[] = [];
+		let qaWalk = 'walk-vacío';
+		visited.push('target=' + (node ? node.tagName + '.' + String(node.className).slice(0, 30) : 'null'));
+		while (node && (node as unknown as ShadowRoot) !== shadow) {
+			const el = node as HTMLElement;
+			const overflowY = getComputedStyle(el).overflowY;
+			visited.push(el.tagName + '.' + String(el.className).slice(0, 30) + ':' + overflowY + ':' + el.scrollHeight + '/' + el.clientHeight);
+			if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+				const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+				const delta = horizontal ? event.deltaX : event.deltaY;
+				const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+				const current = horizontal ? el.scrollLeft : el.scrollTop;
+				const next = Math.max(0, Math.min(current + delta, max));
+				if (horizontal) el.scrollLeft = next;
+				else el.scrollTop = next;
+				qaWalk = 'scrolled:' + Math.round(next) + '/' + Math.round(max);
+				break;
+			}
+			node = el.parentElement;
+		}
+		try {
+			const qaMount = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector('#usb-dock-root');
+			if (qaMount) qaMount.setAttribute('data-usb-wheel-walk', visited.join(' >> ').slice(0, 600));
+		} catch { /* QA breadcrumb only */ }
+		// Sin contenedor desplazable bajo el cursor: nada que desplazar
 	};
 
 	shadow.addEventListener('wheel', handleWheelBoundary, { passive: false });
