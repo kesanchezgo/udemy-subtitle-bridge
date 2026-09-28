@@ -1440,6 +1440,28 @@ blockquote {
 // sanitizeDeckSegment vive en services/ankiDesign.ts (fuente única compartida
 // con el builder .apkg y el servicio de vocabulario).
 
+// Detección ligera del idioma de la transcripción con palabras funcionales
+// distintivas: evita ofrecer vocabulario del idioma objetivo cuando la lección
+// no tiene subtítulos en ese idioma (p. ej. cursos grabados en español).
+const LANG_MARKERS: Record<"en" | "es", string[]> = {
+  en: ["the", "and", "of", "to", "is", "are", "that", "this", "you", "we", "it's", "i'm", "let's", "going", "want", "know", "right", "okay", "welcome", "because", "which", "there", "here", "just", "really", "actually", "section", "lesson"],
+  es: ["que", "de", "los", "las", "una", "por", "para", "con", "del", "se", "su", "como", "más", "pero", "este", "esta", "vamos", "entonces", "porque", "también", "muy", "ya", "está", "eso", "aquí", "cuando", "todos", "lección", "entonces"],
+};
+
+function detectTranscriptLang(text: string): "en" | "es" | null {
+  const words = String(text || "").toLowerCase().match(/[a-záéíóúüñ']+/g) ?? [];
+  let en = 0;
+  let es = 0;
+  for (const word of words) {
+    if (LANG_MARKERS.en.includes(word)) en += 1;
+    else if (LANG_MARKERS.es.includes(word)) es += 1;
+  }
+  if (en === es) return null;
+  if (en > es * 1.4) return "en";
+  if (es > en * 1.4) return "es";
+  return null;
+}
+
 function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
   let out = [
     "#separator:Tab",
@@ -1782,6 +1804,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [vocabPanelOpen, setVocabPanelOpen]         = useState(false);
   const [vocabStatus, setVocabStatus]               = useState<"idle" | "loading" | "done" | "error">("idle");
   const [vocabProgress, setVocabProgress]           = useState("");
+  // true = subtítulos en el idioma objetivo; false = lección en otro idioma
+  // (se oculta el bloque); null = desconocido (se muestra y valida al exportar).
+  const [vocabLangOk, setVocabLangOk]               = useState<boolean | null>(null);
 
   // ── Obsidian export ─────────────────────────────────────────────────────────
   const [obsidianCfg, setObsidianCfg]               = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
@@ -2173,6 +2198,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       let generationError = "";
 
       if (transcript.ok && transcript.transcriptText?.trim()) {
+        const detected = detectTranscriptLang(transcript.transcriptText);
+        setVocabLangOk(detected === "en" ? true : detected === "es" ? false : null);
         if (resolvedGeminiKeys.length > 0) {
           const syncResponse = await sendRuntimeMessage<{ ok?: boolean; source?: string; keyCount?: number; error?: string }>({
             type: "USG_SYNC_GEMINI_KEYS",
@@ -2223,6 +2250,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
           generationError = "No hubo respuesta del motor de IA. Configura Gemini o inicia la IA local y reintenta.";
         }
       } else {
+        setVocabLangOk(null);
         generationError = transcript.error || "No hay transcripción disponible para esta lección.";
         console.warn("[study] transcript unavailable:", transcript.error);
       }
@@ -3006,7 +3034,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
       const parsed = parseVocabularyPayload(ai.payload);
       if (parsed.length === 0) {
-        throw new Error(`La IA no encontró palabras de nivel ${vocabCfg.minLevel}+ en esta lección.`);
+        throw new Error(`La IA no encontró palabras de nivel ${vocabCfg.minLevel}+. ¿Los subtítulos de la lección están en ${vocabCfg.targetLangLabel}?`);
       }
       const { fresh: levelFiltered } = filterVocabulary(parsed, vocabCfg);
       const registry = await loadVocabRegistry();
@@ -4612,6 +4640,15 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       </p>
 
                       {/* ── Vocabulario del curso (idiomas) ── */}
+                      {vocabLangOk === false ? (
+                        <div className="flex items-start gap-2 rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5">
+                          <Languages size={11} className="text-white/25 shrink-0 mt-0.5"/>
+                          <p className="text-white/25 text-[9.5px] leading-relaxed">
+                            Vocabulario no disponible aquí: los subtítulos de esta lección no están en
+                            {" "}{vocabCfg.targetLangLabel}. Las tarjetas de conceptos y Obsidian funcionan igual.
+                          </p>
+                        </div>
+                      ) : (
                       <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
                         <div className="flex items-center justify-between">
                           <p className="text-white/40 text-[9px] uppercase tracking-wider" style={{ fontWeight: 700 }}>
@@ -4650,7 +4687,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                             </div>
                             <p className="text-white/25 text-[9px] leading-relaxed">
                               Palabras del idioma del curso con oración limpia creada para la tarjeta (no el subtítulo crudo).
-                              Repetidas de otras lecciones se saltan solas. Imágenes, fonética y audio los completa tu pipeline de imágenes.
+                              Repetidas de otras lecciones se saltan solas. El audio lo pone Anki con sus voces nativas
+                              ({"{{tts}}"}) y tu pipeline de imágenes completa imagen y fonética después.
                             </p>
                           </div>
                         ) : null}
@@ -4675,6 +4713,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           }
                         </button>
                       </div>
+                      )}
 
                       {/* ── Obsidian export ── */}
                       <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
@@ -4802,6 +4841,20 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         {showAnkiGuide && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                             <div className="bg-black/25 border border-[var(--usb-border)] rounded-xl p-3 space-y-3">
+                              {/* Qué configura la extensión en Anki (automático, primera importación) */}
+                              <div className="space-y-1">
+                                <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Qué se configura solo en Anki (primera importación)</p>
+                                {[
+                                  `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → English → curso (vocabulario).`,
+                                  "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
+                                  "Tus demás mazos y tu preset Default NO se tocan nunca.",
+                                  "FSRS (opcional, 1 clic): Herramientas → Opciones de mazo → preset «Udemy Bridge · Cursos» o «· Vocabulario» → activar FSRS; optimiza los pesos tras unos días de reseñas.",
+                                  "El vocabulario habla solo: la plantilla usa las voces nativas de Anki ({{tts}}), sin addons ni archivos.",
+                                ].map((s, i) => (
+                                  <p key={i} className="text-white/28 text-[10px] leading-relaxed">{i + 1}. {s}</p>
+                                ))}
+                              </div>
+                              <div className="pt-2 border-t border-[var(--usb-divider)]" />
                               {isFirstExport ? (
                                 <>
                                   <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Guía TXT manual · solo si no usas .apkg</p>

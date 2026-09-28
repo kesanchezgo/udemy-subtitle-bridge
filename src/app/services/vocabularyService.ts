@@ -200,14 +200,14 @@ export function buildVocabularySpec(
 		guid: stableGuid(`usb-vocab|${config.targetLang}|${normalizeLemma(word.word)}`),
 		fields: [
 			word.word,
-			'', // phonetic — la completa ReadPronunciation
+			'', // phonetic — opcional; lo añade un addon externo si existe (p. ej. ReadPronunciation)
 			word.sentence,
 			word.sentenceTranslation,
 			`(${word.pos}) ${word.meaning}`,
 			'', // monolingual — lo completa el pipeline de imágenes
 			'', // picture — la completa ANKI-IMAGE-SENTENCE
-			'', // sentence audio
-			'', // word audio
+			'', // sentence audio — la plantilla ya habla con {{tts}} nativo; campo para archivos externos
+			'', // word audio — ídem
 		],
 		tags: [
 			'udemy-bridge',
