@@ -59,6 +59,13 @@ const dock = await page.waitForSelector('[id^="usb-dock-host-"]', { timeout: 200
 console.log('dock montado');
 
 const TAB = (process.env.QA_TAB || 'study').toLowerCase();
+try {
+	await page.locator(`[id^="usb-dock-host-"] >> text=/${TAB === 'overlay' ? '^Overlay$' : '^Study$'}/`).first().click({ timeout: 8000 });
+	await sleep(1200);
+	console.log('tab activa:', TAB);
+} catch (e) {
+	console.log('   tab switch:', String(e).slice(0, 90));
+}
 
 try {
 	await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 6000 });

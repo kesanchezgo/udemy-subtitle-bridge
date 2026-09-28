@@ -1949,10 +1949,10 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 		return space >= Math.abs(deltaY) - 2;
 	};
 
+	// preventDefault INCONDICIONAL: la página de Udemy NUNCA se mueve por
+	// la rueda sobre el dock. El scroll del dock se aplica manualmente al
+	// contenedor desplazable más cercano bajo el cursor.
 	const handleWheelBoundary = (event: WheelEvent) => {
-		// preventDefault INCONDICIONAL: la página de Udemy NUNCA se mueve por
-		// la rueda sobre el dock. El scroll del dock se aplica manualmente al
-		// contenedor desplazable más cercano bajo el cursor.
 		event.preventDefault();
 		event.stopPropagation();
 		try {
@@ -1965,12 +1965,10 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 		// Contenedor desplazable más cercano al target (dentro del dock)
 		let node = event.target as Element | null;
 		const visited: string[] = [];
-		let qaWalk = 'walk-vacío';
 		visited.push('target=' + (node ? node.tagName + '.' + String(node.className).slice(0, 30) : 'null'));
 		while (node && (node as unknown as ShadowRoot) !== shadow) {
 			const el = node as HTMLElement;
 			const overflowY = getComputedStyle(el).overflowY;
-			visited.push(el.tagName + '.' + String(el.className).slice(0, 30) + ':' + overflowY + ':' + el.scrollHeight + '/' + el.clientHeight);
 			if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
 				const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
 				const delta = horizontal ? event.deltaX : event.deltaY;
@@ -1979,7 +1977,6 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 				const next = Math.max(0, Math.min(current + delta, max));
 				if (horizontal) el.scrollLeft = next;
 				else el.scrollTop = next;
-				qaWalk = 'scrolled:' + Math.round(next) + '/' + Math.round(max);
 				break;
 			}
 			node = el.parentElement;
@@ -1996,6 +1993,48 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 	(['touchmove'] as const).forEach((type) => {
 		shadow.addEventListener(type, stopAtDockBoundary, { passive: true });
 	});
+
+	// Wheel GLOBAL en window (capture, no-passive): Chrome aplica el scroll de
+	// la página EN EL COMPOSITOR sin despachar el evento al renderer cuando no
+	// hay listeners no-pasivos en window — el guard del ShadowRoot llegaba
+	// tarde y la página scroleaba detrás del dock. Este listener intercepta
+	// ANTES: preventDefault si el cursor está sobre el rect del dock, y el
+	// scroll del contenedor del dock se aplica manualmente.
+	window.addEventListener('wheel', (event: WheelEvent) => {
+		const host = document.querySelector('[id^="usb-dock-host-"]');
+		if (!host) return;
+		const rect = host.getBoundingClientRect();
+		if (event.clientX < rect.left || event.clientX > rect.right
+			|| event.clientY < rect.top || event.clientY > rect.bottom) {
+			return; // el cursor no está sobre el dock: no intervenir
+		}
+
+		// Sobre el dock: la página NUNCA se mueve. El scroll va al contenedor
+		// del dock bajo el cursor (si puede absorber en esta dirección).
+		event.preventDefault();
+
+		const sr = host.shadowRoot;
+		let node: Element | null = sr.elementFromPoint(event.clientX, event.clientY);
+		const srBoundary = sr as unknown as Element;
+		while (node && node !== srBoundary) {
+			const el = node as HTMLElement;
+			const overflowY = getComputedStyle(el).overflowY;
+			if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+				const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+				const delta = horizontal ? event.deltaX : event.deltaY;
+				const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+				const current = horizontal ? el.scrollLeft : el.scrollTop;
+				if (max > 0) {
+					const next = Math.max(0, Math.min(current + delta, max));
+					if (horizontal) el.scrollLeft = next;
+					else el.scrollTop = next;
+				}
+				return;
+			}
+			node = el.parentElement;
+		}
+		// Sin contenedor desplazable bajo el cursor: nada que desplazar
+	}, { capture: true, passive: false });
 }
 
 function notifyDockVisibilityChanged() {
