@@ -44,6 +44,40 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   before it, prevents the default when the cursor is over the dock, and
   applies the scroll manually to the dock container under the cursor.
   `overscroll-behavior: contain` covers every dock overflow container.
+
+### Added — Anki: estructura, configuración y vocabulario del curso
+
+- **Árbol de mazos propio de la extensión**: todo lo generado vive bajo un
+  mazo raíz configurable (por defecto `Udemy Bridge`) con dos ramas —
+  `<Root>::Courses::<Curso>::<Lección>` para conceptos y
+  `<Root>::Vocabulary::<Idioma>::<Curso>` para vocabulario. Nada se crea
+  fuera de esa raíz.
+- **Presets de estudio dedicados, instalados en la primera importación**:
+  el `.apkg` incluye los presets «Udemy Bridge · Cursos» (20 nuevas/día) y
+  «Udemy Bridge · Vocabulario» (15/día) con pasos `[1m, 10m]`, lapso con
+  new-interval 30 %, leech marcado con tag y retención 0.9. Los mazos de la
+  extensión apuntan a esos presets por ID propio: el preset «Default» (y
+  cualquier otro) del usuario queda intacto.
+- **Note type «Udemy Bridge Concept»**: el diseño dev-card (terminal bar +
+  Prism) ahora viaja dentro del `.apkg` con la píldora mostrando la lección
+  real (campo `Leccion`) y un pie con enlace de vuelta a la lección (campo
+  `Fuente`).
+- **Vocabulario del curso (idiomas)**: nuevo bloque en el paso de exportación
+  que extrae de los subtítulos palabras del idioma del curso (inglés ahora,
+  arquitectura abierta a cualquier idioma) en el nivel CEFR configurado
+  (A2–C2, por defecto B1+) y genera tarjetas con oración limpia creada para
+  la tarjeta (no el párrafo del subtítulo), traducción fiel y significado
+  con POS. El note type «Udemy Bridge Vocab» usa los mismos nombres de campo
+  que «English Cards», así que el pipeline externo de imágenes y
+  ReadPronunciation las completan sin cambios. Lemas repetidos de otras
+  lecciones se saltan solas (registro persistente + GUID por
+  `idioma|lema`, reimportar actualiza y no duplica).
+- **Checksum de notas compatible con Anki**: el `csum` es ahora SHA-1 estándar
+  de Anki (antes un hash casero que rompía el buscador de duplicados).
+- **QA**: `scripts/qa-anki-decks.mjs` (estructura del `.apkg` contra el código
+  de producción), `scripts/qa-anki-import-verify.mjs` (importación real en
+  Anki vía AnkiConnect + capturas + limpieza) y `scripts/qa-vocab-ai.mjs`
+  (calidad del contenido contra el modelo real del proxy local).
 - **Provider validation relay retries until acknowledged**: a runtime message
   fired while the MV3 service worker is tearing down is dropped silently, which
   left the panel waiting until the hardstop. The relay re-sends the probe

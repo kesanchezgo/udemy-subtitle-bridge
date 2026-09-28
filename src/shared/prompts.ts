@@ -273,6 +273,94 @@ EJEMPLO B — lección NO técnica (cocina):
     {"id": "card-003", "type": "aplicacion", "front": "¿Por qué sacar la pasta 1 minuto antes del tiempo del paquete?", "back": "Termina de cocerse con calor residual y al saltearse con la salsa", "tags": ["cocina", "tecnica"]}
   ]
 }
-`,
+	`,
+	].join('\n');
+}
+
+// ─── Vocabulario (aprendizaje de idiomas con el contenido del curso) ─────────
+
+export type VocabularyWord = {
+	word: string;
+	level: string;
+	pos: string;
+	meaning: string;
+	sentence: string;
+	sentenceTranslation: string;
+};
+
+const CEFR_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+
+export function cefrRank(level: string): number {
+	const index = CEFR_ORDER.indexOf(String(level || '').trim().toUpperCase());
+	return index === -1 ? -1 : index;
+}
+
+export function cefrLevels(): string[] {
+	return [...CEFR_ORDER];
+}
+
+export interface VocabularyOptions {
+	course: string;
+	lesson: string;
+	/** Idioma objetivo, p. ej. "inglés". Arquitectura abierta a cualquier idioma. */
+	targetLang: string;
+	/** Idioma base del estudiante para significados y traducciones, p. ej. "español". */
+	baseLang: string;
+	/** Nivel CEFR mínimo (incluido), p. ej. "B1". */
+	minLevel: string;
+	/** Máximo de palabras a extraer de la lección. */
+	maxWords: number;
+}
+
+/**
+ * Extracción de vocabulario desde la transcripción REAL del curso:
+ * palabras del idioma objetivo en o por encima del nivel configurado, con
+ * oración limpia creada para la tarjeta (no el párrafo ruidoso del subtítulo).
+ */
+export function buildVocabularyPrompt(transcriptText: string, options: VocabularyOptions): string {
+	return [
+		`Eres un creador experto de tarjetas de vocabulario para aprender ${options.targetLang} con el método de repetición espaciada, especializado en reutilizar contenido real de cursos online de Udemy.`,
+		`El estudiante tiene ${options.baseLang} como lengua base y quiere aprovechar el contenido del curso para ampliar su vocabulario de ${options.targetLang}.`,
+		'',
+		`CURSO: ${options.course || 'Curso Udemy'}`,
+		`LECCIÓN: ${options.lesson || 'Desconocida'}`,
+		`NIVEL MÍNIMO (CEFR, incluido): ${options.minLevel}`,
+		`MÁXIMO DE PALABRAS: ${options.maxWords}`,
+		'',
+		'TRANSCRIPCIÓN ORIGINAL DE LA LECCIÓN (fuente de verdad):',
+		transcriptText.slice(0, 18000),
+		'',
+		'TAREA: extrae de la transcripción palabras o expresiones en ' + options.targetLang + ' cuyo nivel CEFR sea ' + options.minLevel + ' o superior, y crea una tarjeta por palabra.',
+		'',
+		'REGLAS DE SELECCIÓN:',
+		'- Solo palabras de contenido: sustantivos, verbos, adjetivos, adverbios y phrasal verbs.',
+		'- "word" SIEMPRE en forma base (lema) y minúsculas: "run", no "ran"; "framework"; "look up".',
+		'- Excluye SIEMPRE: nombres propios, personas, marcas, productos y tecnologías concretas (Java, Spring Boot, JVM, Docker), siglas y acrónimos (API, HTTP), números, contracciones, interjecciones y palabras de menos de 3 letras.',
+		'- Excluye todo lo que esté por debajo del nivel mínimo: si el mínimo es B1, no incluyas palabras A1/A2 ni vocabulario escolar básico (house, water, make).',
+		'- Sí incluye: phrasal verbs útiles (figure out, wrap up), términos técnicos del dominio del curso (overhead, throughput, leak, pitfalls) y palabras frecuentes en registros profesionales.',
+		'- Prioriza palabras que aporten más: aparecen varias veces en la lección, se reutilizan en contextos profesionales, o son de nivel más alto.',
+		'- Cada lema una sola vez; cero relleno: mejor 4 palabras excelentes que 8 mediocres.',
+		'- Si la transcripción NO está en ' + options.targetLang + ' o es demasiado corta, devuelve {"words": []}.',
+		'',
+		'REGLAS DE ORACIÓN (críticas para la retención):',
+		'- "sentence": una oración NUEVA, limpia y autocontenida de 8 a 14 palabras que TÚ creas; usa la palabra con el sentido que tiene en la lección.',
+		'- PROHIBIDO copiar la línea del subtítulo (suelen ser fragmentos largos, ruidosos o sin contexto).',
+		'- La oración debe contener la palabra de forma reconocible (admite -s/-ed/-ing mínimas).',
+		'- Estructura simple y natural, utilizable en el mundo real; ambientada en el dominio del curso cuando suene natural.',
+		'- "sentenceTranslation": traducción fiel y natural a ' + options.baseLang + ' que conserve la estructura de la oración original (sin calcos forzados ni paráfrasis libres).',
+		'',
+		'REGLAS DE SIGNIFICADO:',
+		'- "pos": categoría gramatical en inglés entre paréntesis: noun, verb, adjective, adverb, phrasal verb.',
+		'- "meaning": 1 a 3 sentidos en ' + options.baseLang + ' separados por "; ", sin la categoría gramatical, en minúsculas.',
+		'- "level": el nivel CEFR real de la palabra: A1, A2, B1, B2, C1 o C2.',
+		'',
+		'FORMATO DE SALIDA (CRÍTICO):',
+		'- Responde EXCLUSIVAMENTE con un objeto JSON válido. Sin markdown, sin ```json, sin texto extra.',
+		'- Sin comillas dobles dentro de los valores; usa « » si necesitas citar.',
+		'- Esquema exacto:',
+		'{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}',
+		`- Máximo ${options.maxWords} elementos en "words".`,
+		'',
+		'Genera AHORA el JSON:',
 	].join('\n');
 }

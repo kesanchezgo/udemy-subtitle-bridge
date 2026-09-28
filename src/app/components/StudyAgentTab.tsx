@@ -5,11 +5,19 @@ import {
   ChevronLeft, ChevronRight, Info, FileDown, FolderPlus,
   FolderSync, Send, Loader2, Wifi, WifiOff, Star, BookOpen,
   Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History,
-  BookMarked, Settings2, ClipboardCopy, ExternalLink
+  BookMarked, Settings2, ClipboardCopy, ExternalLink, Languages
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
 import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
+import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
+import {
+  DEFAULT_VOCAB_CONFIG, buildVocabularySpec, filterVocabulary, loadVocabConfig,
+  loadVocabRegistry, markVocabularyExported, parseVocabularyPayload, saveVocabConfig,
+  splitAlreadyExported,
+  type VocabConfig,
+} from "../services/vocabularyService";
+import { cefrLevels } from "../../shared/prompts";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
@@ -1429,12 +1437,8 @@ blockquote {
   }
 }`;
 
-// Los nombres de mazo se segmentan por "::" en Anki: un título de curso o
-// lección que contenga "::" crearía subniveles accidentales. También se
-// eliminan comillas, que rompen importadores de texto antiguos.
-function sanitizeDeckSegment(name: string): string {
-  return String(name || "").replace(/::/g, " — ").replace(/"/g, "'").trim();
-}
+// sanitizeDeckSegment vive en services/ankiDesign.ts (fuente única compartida
+// con el builder .apkg y el servicio de vocabulario).
 
 function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
   let out = [
@@ -1523,29 +1527,34 @@ function downloadFile(content: string, name: string, mime = "text/plain;charset=
 }
 
 // ── .apkg async export helper ──────────────────────────────────────────────────
+// Árbol <Root>::Courses::<Curso>::<Lección> + note type/presets propios de la
+// extensión (buildConceptSpec). El preset viaja dentro del .apkg con ID único:
+// se instala en la primera importación y NUNCA toca el preset "Default" (ni
+// ningún otro mazo).
 async function exportApkgFile(
   cards: AnkiCard[],
   courseName: string,
   lessonName: string,
+  rootDeck: string,
   onProgress: (msg: string) => void,
 ): Promise<string> {
   const safe = lessonName.replace(/[^a-z0-9]/gi, "_");
-  const deckName = `${sanitizeDeckSegment(courseName)}::${sanitizeDeckSegment(lessonName)}`;
-  const data = await buildAnkiApkg(
-    cards.map((c, i) => ({
+  const lessonUrl = typeof window !== "undefined" ? window.location.href : "";
+  const spec = buildConceptSpec(
+    cards.map((c) => ({
       front: buildCardFront(c),
       back: buildCardBack(c),
-      tags: c.tags.map(normalizeAnkiTag).filter(Boolean),
       guid: stableAnkiGuid(courseName, lessonName, c),
+      tags: c.tags.map(normalizeAnkiTag).filter(Boolean),
     })),
-    deckName,
-    ANKI_CSS,
-    FRONT_TEMPLATE,
-    BACK_TEMPLATE,
-    onProgress,
+    courseName,
+    lessonName,
+    rootDeck,
+    lessonUrl,
   );
+  const data = await buildAnkiApkg(spec, onProgress);
   downloadApkg(data, `${safe}.apkg`);
-  return deckName;
+  return spec.decks[spec.decks.length - 1].name;
 }
 
 // ─── Mock content ────────────────────────────────────────────��────────────────
@@ -1768,6 +1777,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
   const [apkgProgress, setApkgProgress]             = useState("");
 
+  // ── Vocabulario del curso (idiomas) ─────────────────────────────────────────
+  const [vocabCfg, setVocabCfg]                     = useState<VocabConfig>(DEFAULT_VOCAB_CONFIG);
+  const [vocabPanelOpen, setVocabPanelOpen]         = useState(false);
+  const [vocabStatus, setVocabStatus]               = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [vocabProgress, setVocabProgress]           = useState("");
+
   // ── Obsidian export ─────────────────────────────────────────────────────────
   const [obsidianCfg, setObsidianCfg]               = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
   const [obsidianPanelOpen, setObsidianPanelOpen]   = useState(false);
@@ -1809,6 +1824,17 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     void loadObsidianExportedNotes().then((notes) => {
       exportedNotesRef.current = notes;
       setExportedNotes(notes);
+    });
+    void loadVocabConfig().then(setVocabCfg);
+  }, []);
+
+  // Guarda el ajuste de vocabulario en cada cambio (debounce implícito: cada
+  // pulsación escribe, pero chrome.storage es barato y evita perder el último).
+  const handleSaveVocabCfg = useCallback((patch: Partial<VocabConfig>) => {
+    setVocabCfg((prev) => {
+      const next = { ...prev, ...patch };
+      void saveVocabConfig(next).catch(() => {});
+      return next;
     });
   }, []);
 
@@ -2927,7 +2953,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     setApkgStatus("loading");
     setApkgProgress("Iniciando…");
     try {
-      const deckName = await exportApkgFile(content.ankiCards, courseName, lessonName, (msg) => {
+      const deckName = await exportApkgFile(content.ankiCards, courseName, lessonName, vocabCfg.rootDeck, (msg) => {
         setApkgProgress(msg);
         markQa("apkg-progress:" + msg.slice(0, 40));
       });
@@ -2950,6 +2976,81 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         )
       });
       setTimeout(() => setApkgStatus("idle"), 5000);
+    }
+  };
+
+  // ── Vocabulario del curso → .apkg (note type + preset propios) ─────────────
+  const handleExportVocabulary = async () => {
+    if (vocabStatus === "loading") return;
+    markQa("vocab-click");
+    setVocabStatus("loading");
+    setVocabProgress("Transcripción…");
+    try {
+      const transcript = await requestStudyTranscript(22000);
+      if (!transcript.ok || !transcript.transcriptText?.trim()) {
+        throw new Error(transcript.error || "No hay transcripción disponible en esta lección.");
+      }
+
+      setVocabProgress("IA extrayendo palabras…");
+      const ai = await sendRuntimeMessage<{ ok?: boolean; payload?: unknown; error?: string }>({
+        type: "USG_GENERATE_VOCABULARY",
+        transcriptText: transcript.transcriptText,
+        course: courseName,
+        lesson: lessonName,
+        targetLang: vocabCfg.targetLang === "en" ? "inglés" : vocabCfg.targetLangLabel,
+        baseLang: vocabCfg.baseLangLabel,
+        minLevel: vocabCfg.minLevel,
+        maxWords: vocabCfg.maxWords,
+      });
+      if (!ai?.ok) throw new Error(ai?.error || "El motor de IA no respondió.");
+
+      const parsed = parseVocabularyPayload(ai.payload);
+      if (parsed.length === 0) {
+        throw new Error(`La IA no encontró palabras de nivel ${vocabCfg.minLevel}+ en esta lección.`);
+      }
+      const { fresh: levelFiltered } = filterVocabulary(parsed, vocabCfg);
+      const registry = await loadVocabRegistry();
+      const { fresh, seen } = splitAlreadyExported(levelFiltered, registry, vocabCfg.targetLang);
+
+      if (fresh.length === 0) {
+        setVocabStatus("done");
+        setVocabProgress(`${seen.length} ya exportadas`);
+        markQa("vocab-dup:" + seen.length);
+        toast.info("Sin palabras nuevas esta lección", {
+          description: seen.length > 0
+            ? `Las ${seen.length} palabras ya estaban en tu mazo de otras lecciones.`
+            : "Todo el vocabulario de esta lección ya fue exportado.",
+          icon: <CheckCircle2 className="text-sky-400" size={18} />,
+        });
+        setTimeout(() => setVocabStatus("idle"), 4000);
+        return;
+      }
+
+      setVocabProgress(`Empaquetando ${fresh.length} palabras…`);
+      const { spec, deckPath } = buildVocabularySpec(fresh, courseName, lessonName, vocabCfg);
+      const apkg = await buildAnkiApkg(spec, (msg) => setVocabProgress(msg));
+      downloadApkg(apkg, `${lessonName.replace(/[^a-z0-9]/gi, "_")}_vocabulario_${vocabCfg.targetLang}.apkg`);
+      await markVocabularyExported(vocabCfg.targetLang, fresh, { course: courseName, lesson: lessonName, deck: deckPath });
+
+      setVocabStatus("done");
+      setVocabProgress(`${fresh.length} palabras`);
+      markQa("vocab-done:" + fresh.length);
+      celebrate({
+        type: "anki_export",
+        title: "¡Vocabulario exportado!",
+        subtitle: `${fresh.length} palabras → ${deckPath}${seen.length ? ` (${seen.length} repetidas saltadas)` : ""}`,
+        icon: <Languages className="text-sky-400" />,
+      });
+      setTimeout(() => setVocabStatus("idle"), 4000);
+    } catch (err) {
+      console.error("[vocab export]", err);
+      markQa("vocab-error:" + String(err instanceof Error ? err.message : err).slice(0, 70));
+      setVocabStatus("error");
+      setVocabProgress(err instanceof Error ? err.message.slice(0, 70) : "Error al exportar");
+      toast.error("No se pudo exportar el vocabulario", {
+        description: err instanceof Error && err.message.length > 140 ? `${err.message.slice(0, 140)}…` : undefined,
+      });
+      setTimeout(() => setVocabStatus("idle"), 5000);
     }
   };
 
@@ -4509,6 +4610,71 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         <span className="text-violet-400/60">.apkg</span> = importar desde Anki, sin configuración.
                         <span className="text-white/15"> .txt</span> = importación manual con CSS + plantilla.
                       </p>
+
+                      {/* ── Vocabulario del curso (idiomas) ── */}
+                      <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-white/40 text-[9px] uppercase tracking-wider" style={{ fontWeight: 700 }}>
+                            Vocabulario {vocabCfg.targetLangLabel} · {vocabCfg.minLevel}+
+                          </p>
+                          <button onClick={() => setVocabPanelOpen(v => !v)}
+                            className="text-white/30 hover:text-white/60 text-[9px] flex items-center gap-1 transition-colors">
+                            <Settings2 size={9}/>{vocabPanelOpen ? "Cerrar" : "Configurar"}
+                          </button>
+                        </div>
+
+                        {vocabPanelOpen ? (
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <p className="text-white/30 text-[9px] mb-1">Nivel mínimo (CEFR)</p>
+                                <select value={vocabCfg.minLevel} onChange={(e) => handleSaveVocabCfg({ minLevel: e.target.value })}
+                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-1.5 outline-none focus:border-sky-500/30 transition-colors">
+                                  {cefrLevels().map((level) => (
+                                    <option key={level} value={level} className="bg-slate-900">{level}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <p className="text-white/30 text-[9px] mb-1">Máx. palabras/lección</p>
+                                <input type="number" min={3} max={20} value={vocabCfg.maxWords}
+                                  onChange={(e) => handleSaveVocabCfg({ maxWords: Math.min(20, Math.max(3, Number(e.target.value) || 8)) })}
+                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-white/30 text-[9px] mb-1">Mazo raíz de la extensión (Courses + Vocabulary)</p>
+                              <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
+                                placeholder="Udemy Bridge"
+                                className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 placeholder:text-white/20 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
+                            </div>
+                            <p className="text-white/25 text-[9px] leading-relaxed">
+                              Palabras del idioma del curso con oración limpia creada para la tarjeta (no el subtítulo crudo).
+                              Repetidas de otras lecciones se saltan solas. Imágenes, fonética y audio los completa tu pipeline de imágenes.
+                            </p>
+                          </div>
+                        ) : null}
+
+                        <button onClick={handleExportVocabulary} disabled={vocabStatus === "loading"}
+                          className={`h-9 w-full rounded-xl text-white text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] ${
+                            vocabStatus === "loading"
+                              ? "bg-white/6 opacity-60 cursor-not-allowed"
+                              : vocabStatus === "done"
+                                ? "bg-sky-700 hover:bg-sky-600"
+                                : vocabStatus === "error"
+                                  ? "bg-red-700/70 hover:bg-red-700"
+                                  : "bg-sky-700 hover:bg-sky-600"
+                          }`}>
+                          {vocabStatus === "loading"
+                            ? <><Loader2 size={10} className="animate-spin"/><span className="truncate max-w-[150px]">{vocabProgress}</span></>
+                            : vocabStatus === "done"
+                              ? <><CheckCircle2 size={10}/>Exportado! {vocabProgress}</>
+                              : vocabStatus === "error"
+                                ? <><X size={10}/><span className="truncate max-w-[150px]">{vocabProgress}</span></>
+                                : <><Languages size={10}/>Extraer vocabulario (.apkg)</>
+                          }
+                        </button>
+                      </div>
 
                       {/* ── Obsidian export ── */}
                       <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
