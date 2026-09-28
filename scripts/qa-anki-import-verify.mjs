@@ -99,11 +99,13 @@ const conceptFields = fieldsOf(conceptInfo);
 check('nota de concepto: Leccion y Fuente rellenos', conceptFields.Leccion === LESSON && conceptFields.Fuente.includes('Repasar esta lección'));
 
 const vocabNids = await call('findNotes', { query: `deck:"${vocabDeck}"` });
-check('3 notas de vocabulario importadas', vocabNids.length === 3, String(vocabNids.length));
+check('4 notas de vocabulario importadas', vocabNids.length === 4, String(vocabNids.length));
 const vocabInfo = (await call('notesInfo', { notes: vocabNids }))[0];
 const vocabFields = fieldsOf(vocabInfo);
-check('nota de vocabulario: word/sentence/translation/bilingual rellenos, picture vacío',
-	Boolean(vocabFields.word) && Boolean(vocabFields.sentence) && Boolean(vocabFields.translation) && Boolean(vocabFields.bilingual) && vocabFields.picture === '');
+check('nota de vocabulario: word/phonetic/sentence/translation/bilingual/monolingual rellenos, picture y audios vacíos',
+	Boolean(vocabFields.word) && Boolean(vocabFields.phonetic) && Boolean(vocabFields.sentence) && Boolean(vocabFields.translation)
+	&& Boolean(vocabFields.bilingual) && Boolean(vocabFields.monolingual)
+	&& vocabFields.picture === '' && vocabFields['sentence audio'] === '' && vocabFields['word audio'] === '');
 console.log(`  ejemplo: word="${vocabFields.word}" | ${vocabFields.sentence}`);
 
 // Duplicados: reimportar el MISMO paquete no debe crear notas nuevas.

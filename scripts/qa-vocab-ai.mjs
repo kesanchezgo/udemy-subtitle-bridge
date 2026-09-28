@@ -104,6 +104,10 @@ check('oraciones 6-20 palabras', fresh.every((w) => w.sentence.split(/\s+/).leng
 check('oraciones contienen la palabra', fresh.every((w) => w.sentence.toLowerCase().includes(w.word.split(' ')[0])));
 check('traducción presente y distinta del original', fresh.every((w) => w.sentenceTranslation.length > 10 && w.sentenceTranslation !== w.sentence));
 check('significado con POS', fresh.every((w) => /^\(\w[\w ]*\)/.test(`(${w.pos}) `)));
+check('phonetic generada (IPA o kana)', fresh.every((w) => w.phonetic.length >= 2), JSON.stringify(fresh.filter((w) => w.phonetic.length < 2).map((w) => w.word)));
+check('monolingual generada y suficiente', fresh.every((w) => w.monolingual.length >= 10), JSON.stringify(fresh.filter((w) => w.monolingual.length < 10).map((w) => w.word)));
+const conLema = fresh.filter((w) => w.monolingual.toLowerCase().includes(w.word.toLowerCase()));
+if (conLema.length) console.log(`  · aviso: ${conLema.length} definiciones monolingües contienen el lema (${conLema.map((w) => w.word).join(', ')})`);
 
 const { spec } = buildVocabularySpec(fresh, course, lesson, DEFAULT_VOCAB_CONFIG);
 check('spec de vocabulario generada', spec.notes.length === fresh.length && spec.decks[spec.decks.length - 1].name.includes('Vocabulary::English'));

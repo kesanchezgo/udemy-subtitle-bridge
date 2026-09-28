@@ -1315,7 +1315,7 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
           <line x1="12" y1="16" x2="12" y2="12"></line>
           <line x1="12" y1="8" x2="12.01" y2="8"></line>
         </svg>
-        <span>Definición en inglés (Monolingüe)</span>
+        <span>Definición monolingüe</span>
       </div>
       <div class="peek-content mono-text">{{monolingual}}</div>
     </section>
@@ -1358,11 +1358,14 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
 
 <script>
 (function cleanCardData() {
-  // 1. Limpieza de fonética (garantiza una sola barra a cada lado)
+  // 1. Fonética: barras /…/ solo para IPA; lecturas en kana/CJK van sin barras
   var ipa = document.getElementById("ipaField");
   if (ipa) {
     var rawIpa = ipa.innerText.replace(/^\\/+|\\/+$/g, '').trim();
-    if (rawIpa) ipa.innerText = "/" + rawIpa + "/";
+    if (rawIpa) {
+      var isIpa = !/[\\u3040-\\u30ff\\u4e00-\\u9fff]/.test(rawIpa);
+      ipa.innerText = isIpa ? "/" + rawIpa + "/" : rawIpa;
+    }
   }
 
   // 2. Limpieza de la oración (remueve saltos de línea internos y comillas rotas)
