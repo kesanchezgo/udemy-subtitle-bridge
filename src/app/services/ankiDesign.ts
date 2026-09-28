@@ -683,12 +683,17 @@ export const CONCEPT_MODEL: import('./ankiApkgCore').ApkgModelSpec = {
 // "English Cards" para compatibilidad total con ANKI-IMAGE-SENTENCE
 // (imágenes + corrección de traducciones).
 //
-// Audio: la plantilla reproduce la palabra y la oración con {{tts}} nativo de
-// Anki (voces del sistema, offline, sin addons ni archivos). Los campos
-// "phonetic" y de audio quedan en el note type para herramientas externas
-// (p. ej. ReadPronunciation puede añadir fonética/archivos) pero la plantilla
-// no los renderiza: una sola fuente de audio, sin duplicados.
+// Audio (configurable, se envía dentro del .apkg y la reimportación lo
+// actualiza):
+//  · mode "field" (DEFAULT): la plantilla reproduce los campos "word audio" /
+//    "sentence audio" — archivos de calidad generados con HyperTTS o el
+//    sistema externo del usuario (edge-tts). Sin archivo todavía, sin botón.
+//  · mode "tts": audio inmediato con las voces del sistema vía {{tts}} nativo
+//    de Anki (sin archivos ni addons).
+// En ambos modos una sola fuente de audio por tarjeta: cero duplicados.
 // ─────────────────────────────────────────────────────────────────────────────
+
+export type VocabAudioMode = 'field' | 'tts';
 
 export const VOCAB_MODEL_NAME = 'Udemy Bridge Vocab';
 export const VOCAB_MODEL_ID = stableNumericId(VOCAB_MODEL_NAME, 1_650_000_000_000);
@@ -704,6 +709,32 @@ export const VOCAB_FIELDS = [
 	'sentence audio',
 	'word audio',
 ] as const;
+
+/** Bloque de audio del word/sentence según el modo elegido en la extensión. */
+function vocabAudioBlocks(audioMode: VocabAudioMode): { word: string; sentence: string } {
+	if (audioMode === 'tts') {
+		return {
+			word: `<div class="audio-inline-btn">
+        {{tts en_US:word}}
+      </div>`,
+			sentence: `<div class="audio-inline-btn mini-audio">
+          {{tts en_US:sentence}}
+        </div>`,
+		};
+	}
+	return {
+		word: `{{#word audio}}
+      <div class="audio-inline-btn">
+        {{word audio}}
+      </div>
+      {{/word audio}}`,
+		sentence: `{{#sentence audio}}
+        <div class="audio-inline-btn mini-audio">
+          {{sentence audio}}
+        </div>
+        {{/sentence audio}}`,
+	};
+}
 
 export const VOCAB_MODEL_CSS = `/* =========================================================
    SISTEMA DE DISEÑO MINIMALISTA / ELEGANTE (ADVANCED VOCAB)
@@ -1208,9 +1239,7 @@ const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
         <span>Palabra objetivo</span>
       </div>
 
-      <div class="audio-inline-btn">
-        {{tts en_US:word}}
-      </div>
+      {{AUDIO_WORD}}
     </div>
 
     <div class="front-word-hero">
@@ -1264,9 +1293,7 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
         <div class="ipa-box" id="ipaField">{{phonetic}}</div>
         {{/phonetic}}
       </div>
-      <div class="audio-inline-btn">
-        {{tts en_US:word}}
-      </div>
+      {{AUDIO_WORD}}
     </header>
 
     <div class="soft-divider"></div>
@@ -1306,9 +1333,7 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     <section class="section-block example-container">
       <div class="example-header">
         <span class="section-label">En contexto</span>
-        <div class="audio-inline-btn mini-audio">
-          {{tts en_US:sentence}}
-        </div>
+        {{AUDIO_SENTENCE}}
       </div>
 
       <div class="example-text" id="sentenceField">{{sentence}}</div>
@@ -1355,14 +1380,23 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
 })();
 </script>`;
 
-export const VOCAB_MODEL: import('./ankiApkgCore').ApkgModelSpec = {
-	id: VOCAB_MODEL_ID,
-	name: VOCAB_MODEL_NAME,
-	sortf: 0,
-	fields: VOCAB_FIELDS,
-	templates: [{ name: 'EN → ES', qfmt: VOCAB_FRONT_TEMPLATE, afmt: VOCAB_BACK_TEMPLATE }],
-	css: VOCAB_MODEL_CSS,
-};
+export function buildVocabModel(audioMode: VocabAudioMode = 'field'): import('./ankiApkgCore').ApkgModelSpec {
+	const audio = vocabAudioBlocks(audioMode);
+	return {
+		id: VOCAB_MODEL_ID,
+		name: VOCAB_MODEL_NAME,
+		sortf: 0,
+		fields: VOCAB_FIELDS,
+		templates: [
+			{
+				name: 'EN → ES',
+				qfmt: VOCAB_FRONT_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word),
+				afmt: VOCAB_BACK_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word).replace('{{AUDIO_SENTENCE}}', audio.sentence),
+			},
+		],
+		css: VOCAB_MODEL_CSS,
+	};
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Presets de configuración (deck options) — vivos SOLO en el .apkg de la

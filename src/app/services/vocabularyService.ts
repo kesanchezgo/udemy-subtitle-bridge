@@ -22,10 +22,12 @@ import {
 	COURSES_PRESET,
 	DEFAULT_ROOT_DECK,
 	ROOT_DECK_DESCRIPTION,
-	VOCAB_MODEL,
+	VOCAB_MODEL_NAME,
 	VOCAB_PRESET,
+	buildVocabModel,
 	stableGuid,
 	vocabDeckPath,
+	type VocabAudioMode,
 } from './ankiDesign';
 import type { ApkgSpec } from './ankiApkgCore';
 
@@ -42,6 +44,13 @@ export interface VocabConfig {
 	minLevel: string;
 	/** Máximo de palabras nuevas por lección. */
 	maxWords: number;
+	/**
+	 * Fuente de audio de las tarjetas:
+	 *  - "field" (default): archivos de calidad en "word audio"/"sentence audio"
+	 *    (HyperTTS o el sistema externo con edge-tts). Sin archivo, sin botón.
+	 *  - "tts": voces del sistema de Anki ({{tts}}), instantáneo y offline.
+	 */
+	audioMode: VocabAudioMode;
 }
 
 export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
@@ -51,6 +60,7 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 	baseLangLabel: 'español',
 	minLevel: 'B1',
 	maxWords: 8,
+	audioMode: 'field',
 };
 
 const VOCAB_CONFIG_KEY = 'usb_vocab_config';
@@ -195,7 +205,7 @@ export function buildVocabularySpec(
 	const deckPath = paths[paths.length - 1];
 
 	const notes = words.map((word) => ({
-		modelName: VOCAB_MODEL.name,
+		modelName: VOCAB_MODEL_NAME,
 		deck: deckPath,
 		guid: stableGuid(`usb-vocab|${config.targetLang}|${normalizeLemma(word.word)}`),
 		fields: [
@@ -206,7 +216,7 @@ export function buildVocabularySpec(
 			`(${word.pos}) ${word.meaning}`,
 			'', // monolingual — lo completa el pipeline de imágenes
 			'', // picture — la completa ANKI-IMAGE-SENTENCE
-			'', // sentence audio — la plantilla ya habla con {{tts}} nativo; campo para archivos externos
+			'', // sentence audio — archivos de calidad (HyperTTS o edge-tts en el sistema externo)
 			'', // word audio — ídem
 		],
 		tags: [
@@ -236,7 +246,7 @@ export function buildVocabularySpec(
 				desc: `Palabras de ${langLabel} extraídas de las lecciones de «${course}». Imágenes y audios los completa el pipeline externo.`,
 			},
 		],
-		models: [{ ...VOCAB_MODEL, fields: [...VOCAB_MODEL.fields] }],
+		models: [buildVocabModel(config.audioMode)],
 		dconfs: [COURSES_PRESET, VOCAB_PRESET],
 		notes,
 	};

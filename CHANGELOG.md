@@ -75,10 +75,13 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   persistente + GUID por `idioma|lema`, reimportar actualiza y no duplica).
   Si los subtítulos de la lección no están en el idioma objetivo (detectado
   localmente), el bloque se oculta con una explicación.
-- **Audio nativo en el vocabulario**: las plantillas reproducen palabra y
-  oración con `{{tts en-US}}` de Anki (voces del sistema, offline, sin addons
-  ni archivos externos); los campos de audio quedan en el note type para
-  herramientas externas pero no se renderizan (una sola fuente de audio).
+- **Audio de vocabulario con archivos de calidad (configurable)**: la
+  plantilla reproduce los campos `word audio` / `sentence audio` (modo
+  «Archivo de calidad», por defecto) — los genera el usuario con HyperTTS o
+  su sistema externo (edge-tts). Un selector en Configurar cambia a
+  «Voz del sistema» (`{{tts}}` de Anki: instantáneo, offline, sin archivos).
+  El modo viaja dentro del `.apkg` y la reimportación actualiza la plantilla
+  sin duplicar nada: una sola fuente de audio por tarjeta.
 - **Guía de Anki con la configuración automática**: la guía paso a paso
   explica qué instala la extensión (árbol, presets con sus cifras, FSRS en un
   clic) y que el resto de la colección no se toca.

@@ -4679,16 +4679,29 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
                               </div>
                             </div>
-                            <div>
-                              <p className="text-white/30 text-[9px] mb-1">Mazo raíz de la extensión (Courses + Vocabulary)</p>
-                              <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
-                                placeholder="Udemy Bridge"
-                                className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 placeholder:text-white/20 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <p className="text-white/30 text-[9px] mb-1">Audio de las tarjetas</p>
+                                <select value={vocabCfg.audioMode} onChange={(e) => handleSaveVocabCfg({ audioMode: e.target.value as VocabConfig["audioMode"] })}
+                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-1.5 outline-none focus:border-sky-500/30 transition-colors">
+                                  <option value="field" className="bg-slate-900">Archivo de calidad</option>
+                                  <option value="tts" className="bg-slate-900">Voz del sistema</option>
+                                </select>
+                              </div>
+                              <div>
+                                <p className="text-white/30 text-[9px] mb-1">Mazo raíz de la extensión</p>
+                                <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
+                                  placeholder="Udemy Bridge"
+                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 placeholder:text-white/20 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
+                              </div>
                             </div>
                             <p className="text-white/25 text-[9px] leading-relaxed">
                               Palabras del idioma del curso con oración limpia creada para la tarjeta (no el subtítulo crudo).
-                              Repetidas de otras lecciones se saltan solas. El audio lo pone Anki con sus voces nativas
-                              ({"{{tts}}"}) y tu pipeline de imágenes completa imagen y fonética después.
+                              Repetidas de otras lecciones se saltan solas.
+                              <span className="text-white/35"> Audio «Archivo de calidad»:</span> la plantilla reproduce
+                              word audio / sentence audio (los genera HyperTTS o tu sistema externo);
+                              <span className="text-white/35"> «Voz del sistema»:</span> habla al instante con las voces de Anki.
+                              La imagen y la fonética las completa tu pipeline de imágenes.
                             </p>
                           </div>
                         ) : null}
@@ -4847,9 +4860,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 {[
                                   `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → English → curso (vocabulario).`,
                                   "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
+                                  "FSRS queda activado automáticamente en los dos presets al importar (sin pasos). Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
                                   "Tus demás mazos y tu preset Default NO se tocan nunca.",
-                                  "FSRS (opcional, 1 clic): Herramientas → Opciones de mazo → preset «Udemy Bridge · Cursos» o «· Vocabulario» → activar FSRS; optimiza los pesos tras unos días de reseñas.",
-                                  "El vocabulario habla solo: la plantilla usa las voces nativas de Anki ({{tts}}), sin addons ni archivos.",
+                                  `Audio del vocabulario (${vocabCfg.audioMode === "tts" ? "voz del sistema" : "archivos de calidad"}): cambia el modo en Configurar. Imagen y fonética las completa tu sistema de imágenes.`,
                                 ].map((s, i) => (
                                   <p key={i} className="text-white/28 text-[10px] leading-relaxed">{i + 1}. {s}</p>
                                 ))}
