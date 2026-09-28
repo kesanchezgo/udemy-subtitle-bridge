@@ -87,6 +87,15 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   clic) y que el resto de la colección no se toca.
 - **Checksum de notas compatible con Anki**: el `csum` es ahora SHA-1 estándar
   de Anki (antes un hash casero que rompía el buscador de duplicados).
+- **Diseño pedagógico documentado con evidencia**: `docs/ANKI_PEDAGOGY.md`
+  racionaliza cada familia de mazos (conceptos = elaboración y transferencia;
+  vocabulario = automatización léxica con contexto) con bibliografía real
+  consultada vía Scopus API (20 referencias con DOI, queries documentadas).
+- **Mazos demo multi-dominio**: `scripts/qa-anki-samples.mjs` importa (y deja
+  en la colección) tarjetas de los 6 tipos × 3 dominios/objetivos (entrevista
+  Spring Boot senior, hacking ético, Excel sin código) y vocabulario en dos
+  idiomas (inglés B1+ y japonés con CJK) — construidos con el código de
+  producción. Capturas: `scripts/qa-anki-sample-shots.mjs`.
 - **QA**: `scripts/qa-anki-all.mjs` (suite completa re-ejecutable: estructura +
   importación real + contenido IA), `scripts/qa-anki-decks.mjs` (estructura
   del `.apkg` contra el código de producción), `scripts/qa-anki-import-verify.mjs`
