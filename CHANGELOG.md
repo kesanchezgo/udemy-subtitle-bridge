@@ -55,9 +55,11 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
 - **Presets de estudio dedicados, instalados en la primera importación**:
   el `.apkg` incluye los presets «Udemy Bridge · Cursos» (20 nuevas/día) y
   «Udemy Bridge · Vocabulario» (15/día) con pasos `[1m, 10m]`, lapso con
-  new-interval 30 %, leech marcado con tag y retención 0.9. Los mazos de la
-  extensión apuntan a esos presets por ID propio: el preset «Default» (y
-  cualquier otro) del usuario queda intacto.
+  new-interval 30 %, leech marcado con tag, retención 0.9 **y FSRS activado**
+  (verificado empíricamente: el flag `fsrs: true` sobrevive la importación y
+  queda aplicado al preset). Los mazos de la extensión apuntan a esos presets
+  por ID propio: el preset «Default» (y cualquier otro) del usuario queda
+  intacto. Reimportar actualiza plantillas y preset sin duplicar nada.
 - **Note type «Udemy Bridge Concept»**: el diseño dev-card (terminal bar +
   Prism) ahora viaja dentro del `.apkg` con la píldora mostrando la lección
   real (campo `Leccion`) y un pie con enlace de vuelta a la lección (campo
@@ -68,16 +70,27 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   (A2–C2, por defecto B1+) y genera tarjetas con oración limpia creada para
   la tarjeta (no el párrafo del subtítulo), traducción fiel y significado
   con POS. El note type «Udemy Bridge Vocab» usa los mismos nombres de campo
-  que «English Cards», así que el pipeline externo de imágenes y
-  ReadPronunciation las completan sin cambios. Lemas repetidos de otras
-  lecciones se saltan solas (registro persistente + GUID por
-  `idioma|lema`, reimportar actualiza y no duplica).
+  que «English Cards», así que el pipeline externo de imágenes las completa
+  sin cambios. Lemas repetidos de otras lecciones se saltan solas (registro
+  persistente + GUID por `idioma|lema`, reimportar actualiza y no duplica).
+  Si los subtítulos de la lección no están en el idioma objetivo (detectado
+  localmente), el bloque se oculta con una explicación.
+- **Audio nativo en el vocabulario**: las plantillas reproducen palabra y
+  oración con `{{tts en-US}}` de Anki (voces del sistema, offline, sin addons
+  ni archivos externos); los campos de audio quedan en el note type para
+  herramientas externas pero no se renderizan (una sola fuente de audio).
+- **Guía de Anki con la configuración automática**: la guía paso a paso
+  explica qué instala la extensión (árbol, presets con sus cifras, FSRS en un
+  clic) y que el resto de la colección no se toca.
 - **Checksum de notas compatible con Anki**: el `csum` es ahora SHA-1 estándar
   de Anki (antes un hash casero que rompía el buscador de duplicados).
-- **QA**: `scripts/qa-anki-decks.mjs` (estructura del `.apkg` contra el código
-  de producción), `scripts/qa-anki-import-verify.mjs` (importación real en
-  Anki vía AnkiConnect + capturas + limpieza) y `scripts/qa-vocab-ai.mjs`
-  (calidad del contenido contra el modelo real del proxy local).
+- **QA**: `scripts/qa-anki-all.mjs` (suite completa re-ejecutable: estructura +
+  importación real + contenido IA), `scripts/qa-anki-decks.mjs` (estructura
+  del `.apkg` contra el código de producción), `scripts/qa-anki-import-verify.mjs`
+  (importación real en Anki vía AnkiConnect + capturas + limpieza) y
+  `scripts/qa-vocab-ai.mjs` (calidad del contenido contra el modelo real del
+  proxy local). `scripts/qa-anki-delete-test-decks.mjs` borra mazos de prueba
+  con backup `.apkg` previo.
 - **Provider validation relay retries until acknowledged**: a runtime message
   fired while the MV3 service worker is tearing down is dropped silently, which
   left the panel waiting until the hardstop. The relay re-sends the probe

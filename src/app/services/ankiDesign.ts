@@ -680,8 +680,14 @@ export const CONCEPT_MODEL: import('./ankiApkgCore').ApkgModelSpec = {
 // Note type de VOCABULARIO — réplica del diseño "English Cards" del usuario
 // (word hero + IPA + cloze de contexto al frente; significado, definición
 // monolingüe, imagen, oración y traducción al reverso). Campos idénticos a
-// "English Cards" para compatibilidad total con ANKI-IMAGE-SENTENCE y
-// ReadPronunciation.
+// "English Cards" para compatibilidad total con ANKI-IMAGE-SENTENCE
+// (imágenes + corrección de traducciones).
+//
+// Audio: la plantilla reproduce la palabra y la oración con {{tts}} nativo de
+// Anki (voces del sistema, offline, sin addons ni archivos). Los campos
+// "phonetic" y de audio quedan en el note type para herramientas externas
+// (p. ej. ReadPronunciation puede añadir fonética/archivos) pero la plantilla
+// no los renderiza: una sola fuente de audio, sin duplicados.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const VOCAB_MODEL_NAME = 'Udemy Bridge Vocab';
@@ -1202,11 +1208,9 @@ const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
         <span>Palabra objetivo</span>
       </div>
 
-      {{#word audio}}
       <div class="audio-inline-btn">
-        {{word audio}}
+        {{tts en_US:word}}
       </div>
-      {{/word audio}}
     </div>
 
     <div class="front-word-hero">
@@ -1260,11 +1264,9 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
         <div class="ipa-box" id="ipaField">{{phonetic}}</div>
         {{/phonetic}}
       </div>
-      {{#word audio}}
       <div class="audio-inline-btn">
-        {{word audio}}
+        {{tts en_US:word}}
       </div>
-      {{/word audio}}
     </header>
 
     <div class="soft-divider"></div>
@@ -1304,11 +1306,9 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     <section class="section-block example-container">
       <div class="example-header">
         <span class="section-label">En contexto</span>
-        {{#sentence audio}}
         <div class="audio-inline-btn mini-audio">
-          {{sentence audio}}
+          {{tts en_US:sentence}}
         </div>
-        {{/sentence audio}}
       </div>
 
       <div class="example-text" id="sentenceField">{{sentence}}</div>
@@ -1394,9 +1394,9 @@ export interface DeckPresetConfig {
 }
 
 /** Config en formato legacy (schema 11) con las claves modernas que el
- *  importador de Anki actual reconoce. Sin `fsrs*` no portables: Anki deja el
- *  preset en SM-2 con estos valores y el usuario puede activar FSRS en un clic
- *  (Anki la activa por preset, no se puede forzar de forma fiable vía apkg). */
+ *  importador de Anki actual reconoce. `fsrs: true` se envía como intento de
+ *  activación directa (si el importador lo ignora, el preset queda en SM-2
+ *  con estos valores y el usuario lo activa en un clic). */
 export function buildDeckPreset({ id, name, newPerDay, desiredRetention }: DeckPresetConfig): Record<string, unknown> {
 	return {
 		id,
@@ -1407,6 +1407,7 @@ export function buildDeckPreset({ id, name, newPerDay, desiredRetention }: DeckP
 		autoplay: true,
 		timer: 0,
 		replayq: true,
+		fsrs: true,
 		new: {
 			bury: true,
 			delays: [1, 10],

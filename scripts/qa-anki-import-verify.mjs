@@ -66,18 +66,18 @@ console.log('  mazos añadidos:', JSON.stringify(added, null, 1));
 check('mazos de lección y vocabulario presentes', afterDecks.includes(lessonDeck) && afterDecks.includes(vocabDeck));
 check('solo se añadieron mazos bajo la raíz de la extensión', added.every((d) => d === ROOT || d.startsWith(`${ROOT}::`)) && removed.length === 0, JSON.stringify(removed));
 
-const lessonConf = await call('getDeckConfig', { deck: lessonDeck });
-console.log(`  preset de lección: "${lessonConf.name}" perDay=${lessonConf.new.perDay} delays=${JSON.stringify(lessonConf.new.delays)} lapseMult=${lessonConf.lapse.mult} leech=${lessonConf.lapse.leechAction} retention=${lessonConf.desiredRetention}`);
-check('mazos de la extensión usan preset PROPIO (no Default)', lessonConf.name === 'Udemy Bridge · Cursos' && lessonConf.id !== 1);
-check('config pedagógica aplicada (20/día, [1,10], lapso 30%, leech tag)', lessonConf.new.perDay === 20
-	&& JSON.stringify(lessonConf.new.delays) === '[1,10]'
-	&& lessonConf.lapse.mult === 0.3
-	&& lessonConf.lapse.leechAction === 1);
-if ('fsrs' in lessonConf) {
-	console.log(`  fsrs flag presente en preset importado: ${lessonConf.fsrs}`);
-} else {
-	console.log('  · fsrs flag no expuesto por getDeckConfig (FSRS se activa por preset en 1 clic; SM-2 con estos valores mientras tanto)');
-}
+	const lessonConf = await call('getDeckConfig', { deck: lessonDeck });
+	console.log(`  preset de lección: "${lessonConf.name}" perDay=${lessonConf.new.perDay} delays=${JSON.stringify(lessonConf.new.delays)} lapseMult=${lessonConf.lapse.mult} leech=${lessonConf.lapse.leechAction} retention=${lessonConf.desiredRetention}`);
+	check('mazos de la extensión usan preset PROPIO (no Default)', lessonConf.name === 'Udemy Bridge · Cursos' && lessonConf.id !== 1);
+	check('config pedagógica aplicada (20/día, [1,10], lapso 30%, leech tag)', lessonConf.new.perDay === 20
+		&& JSON.stringify(lessonConf.new.delays) === '[1,10]'
+		&& lessonConf.lapse.mult === 0.3
+		&& lessonConf.lapse.leechAction === 1);
+	console.log(`  fsrs en preset importado: ${'fsrs' in lessonConf ? lessonConf.fsrs : '(clave no expuesta por getDeckConfig)'}`);
+
+	const vocabTemplates = await call('modelTemplates', { modelName: 'Udemy Bridge Vocab' });
+	check('plantilla de vocabulario habla con {{tts}} nativo (sin addons)',
+		JSON.stringify(vocabTemplates).includes('{{tts en_US:word}}') && JSON.stringify(vocabTemplates).includes('{{tts en_US:sentence}}'));
 
 const vocabConf = await call('getDeckConfig', { deck: vocabDeck });
 check('mazo de vocabulario usa preset "Udemy Bridge · Vocabulario" (15/día)', vocabConf.name === 'Udemy Bridge · Vocabulario' && vocabConf.new.perDay === 15, `${vocabConf.name} ${vocabConf.new.perDay}`);
@@ -122,10 +122,13 @@ async function renderCards({ modelName, noteIds, fileBase }) {
 	const fields = fieldsOf(infos[0]);
 
 	function render(tmpl) {
+		// {{tts ...}} → botón de prueba (Anki lo sustituye por su reproductor
+		// nativo; aquí solo simulamos el hueco visual).
+		let out = tmpl.replace(/\{\{tts [^}]+\}\}/g,
+			'<span style="display:inline-flex;width:34px;height:34px;border-radius:50%;border:1px solid rgba(128,128,128,.6);align-items:center;justify-content:center;font-size:15px;">🔊</span>');
 		// mustache-lite con anidamiento: repite pasadas hasta estabilizar.
 		// {{#f}}...{{/f}} se conserva si el campo tiene contenido, si no se
 		// elimina el bloque completo; {{f}} se sustituye por el valor.
-		let out = tmpl;
 		for (let pass = 0; pass < 8; pass += 1) {
 			const next = out
 				.replace(/\{\{#([\w ]+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_m, f, inner) => (fields[f]?.trim() ? inner : ''))
