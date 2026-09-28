@@ -286,6 +286,10 @@ export type VocabularyWord = {
 	meaning: string;
 	sentence: string;
 	sentenceTranslation: string;
+	/** Pronunciación: IPA para la mayoría de idiomas; lectura en kana para japonés. */
+	phonetic: string;
+	/** Definición simple EN EL IDIOMA OBJETIVO (aprendizaje monolingüe). */
+	monolingual: string;
 };
 
 const CEFR_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -354,11 +358,16 @@ export function buildVocabularyPrompt(transcriptText: string, options: Vocabular
 		'- "meaning": 1 a 3 sentidos en ' + options.baseLang + ' separados por "; ", sin la categoría gramatical, en minúsculas.',
 		'- "level": el nivel CEFR real de la palabra: A1, A2, B1, B2, C1 o C2.',
 		'',
+		'REGLAS DE PRONUNCIACIÓN Y DEFINICIÓN MONOLINGÜE:',
+		'- "phonetic": la pronunciación de la palabra en su sistema nativo. Para la mayoría de idiomas: IPA entre barras (ej. "/liːk/"), acento marcado. Para japonés: la LECTURA de la palabra en hiragana (ej. "かくにん"), sin barras.',
+		'- "monolingual": una definición SIMPLE escrita EN ' + options.targetLang + ' (NO en ' + options.baseLang + '), de 6 a 14 palabras, clara para un estudiante del nivel ' + options.minLevel + '.',
+		'- La definición monolingüe NUNCA usa la palabra que define ni derivadas obvias.',
+		'',
 		'FORMATO DE SALIDA (CRÍTICO):',
 		'- Responde EXCLUSIVAMENTE con un objeto JSON válido. Sin markdown, sin ```json, sin texto extra.',
 		'- Sin comillas dobles dentro de los valores; usa « » si necesitas citar.',
 		'- Esquema exacto:',
-		'{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}',
+		'{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}',
 		`- Máximo ${options.maxWords} elementos en "words".`,
 		'',
 		'Genera AHORA el JSON:',

@@ -87,6 +87,13 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   clic) y que el resto de la colección no se toca.
 - **Checksum de notas compatible con Anki**: el `csum` es ahora SHA-1 estándar
   de Anki (antes un hash casero que rompía el buscador de duplicados).
+- **Fonética y definición monolingüe generadas por la IA**: el extractor de
+  vocabulario ahora rellena `phonetic` (IPA para la mayoría de idiomas;
+  lectura en kana para japonés — la plantilla no envuelve kana en `/…/`) y
+  `monolingual` (definición simple EN el idioma objetivo, sin usar el lema).
+  La plantilla los renderiza: IPA visible en el reverso, kana sin barras y
+  bloque «Definición monolingüe» con revelado difuminado. Respuestas parciales
+  de modelos sin estos campos se toleran (la plantilla oculta lo vacío).
 - **Diseño pedagógico documentado con evidencia**: `docs/ANKI_PEDAGOGY.md`
   racionaliza cada familia de mazos (conceptos = elaboración y transferencia;
   vocabulario = automatización léxica con contexto) con bibliografía real

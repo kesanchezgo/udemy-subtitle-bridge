@@ -175,13 +175,13 @@ const excelCards = [
 // 4. VOCABULARIO EN — mismo curso Spring (B1+)
 // ─────────────────────────────────────────────────────────────────────────────
 const enWords = [
-	{ word: 'pitfall', level: 'C1', pos: 'noun', meaning: 'escollo; trampa oculta; peligro potencial', sentence: 'Many teams ignore this common pitfall before releasing software to production.', sentenceTranslation: 'Muchos equipos ignoran este escollo común antes de lanzar software a producción.' },
-	{ word: 'overhead', level: 'C1', pos: 'noun', meaning: 'sobrecarga; coste adicional', sentence: 'Adding extra layers always introduces overhead in large distributed systems.', sentenceTranslation: 'Añadir capas adicionales siempre introduce sobrecarga en sistemas distribuidos grandes.' },
-	{ word: 'throughput', level: 'C1', pos: 'noun', meaning: 'rendimiento; tasa de transferencia', sentence: 'We measured throughput after optimizing the database queries last week.', sentenceTranslation: 'Medimos el rendimiento después de optimizar las consultas de base de datos la semana pasada.' },
-	{ word: 'leak', level: 'B2', pos: 'verb', meaning: 'filtrar; dejar escapar; comprometer', sentence: 'Poor design can leak sensitive details across different system layers.', sentenceTranslation: 'Un mal diseño puede filtrar detalles sensibles entre diferentes capas del sistema.' },
-	{ word: 'abstraction', level: 'C1', pos: 'noun', meaning: 'abstracción; simplificación conceptual', sentence: 'A good abstraction hides complex details behind a simple interface.', sentenceTranslation: 'Una buena abstracción oculta detalles complejos tras una interfaz sencilla.' },
-	{ word: 'benchmark', level: 'B2', pos: 'verb', meaning: 'evaluar; medir el rendimiento; comparar', sentence: 'We will benchmark both services to compare their response times.', sentenceTranslation: 'Evaluaremos ambos servicios para comparar sus tiempos de respuesta.' },
-	{ word: 'brush up', level: 'B2', pos: 'phrasal verb', meaning: 'repasar; refrescar; ponerse al día', sentence: 'I need to brush up on transaction basics before the interview.', sentenceTranslation: 'Necesito repasar los conceptos básicos de transacciones antes de la entrevista.' },
+	{ word: 'pitfall', level: 'C1', pos: 'noun', meaning: 'escollo; trampa oculta; peligro potencial', phonetic: '/ˈpɪtfɔːl/', monolingual: 'a hidden or unexpected difficulty in a plan or activity', sentence: 'Many teams ignore this common pitfall before releasing software to production.', sentenceTranslation: 'Muchos equipos ignoran este escollo común antes de lanzar software a producción.' },
+	{ word: 'overhead', level: 'C1', pos: 'noun', meaning: 'sobrecarga; coste adicional', phonetic: '/ˈoʊvərhɛd/', monolingual: 'extra work or resources needed beyond the main task', sentence: 'Adding extra layers always introduces overhead in large distributed systems.', sentenceTranslation: 'Añadir capas adicionales siempre introduce sobrecarga en sistemas distribuidos grandes.' },
+	{ word: 'throughput', level: 'C1', pos: 'noun', meaning: 'rendimiento; tasa de transferencia', phonetic: '/ˈθruːpʊt/', monolingual: 'the amount of work a system can complete in a given time', sentence: 'We measured throughput after optimizing the database queries last week.', sentenceTranslation: 'Medimos el rendimiento después de optimizar las consultas de base de datos la semana pasada.' },
+	{ word: 'leak', level: 'B2', pos: 'verb', meaning: 'filtrar; dejar escapar; comprometer', phonetic: '/liːk/', monolingual: 'to let private or secret information escape by accident or on purpose', sentence: 'Poor design can leak sensitive details across different system layers.', sentenceTranslation: 'Un mal diseño puede filtrar detalles sensibles entre diferentes capas del sistema.' },
+	{ word: 'abstraction', level: 'C1', pos: 'noun', meaning: 'abstracción; simplificación conceptual', phonetic: '/æbˈstrækʃən/', monolingual: 'a general idea that hides complex details behind a simple surface', sentence: 'A good abstraction hides complex details behind a simple interface.', sentenceTranslation: 'Una buena abstracción oculta detalles complejos tras una interfaz sencilla.' },
+	{ word: 'benchmark', level: 'B2', pos: 'verb', meaning: 'evaluar; medir el rendimiento; comparar', phonetic: '/ˈbentʃmɑːrk/', monolingual: 'a standard test used to compare the performance of things', sentence: 'We will benchmark both services to compare their response times.', sentenceTranslation: 'Evaluaremos ambos servicios para comparar sus tiempos de respuesta.' },
+	{ word: 'brush up', level: 'B2', pos: 'phrasal verb', meaning: 'repasar; refrescar; ponerse al día', phonetic: '/ˈbrʌʃ ʌp/', monolingual: 'to practice or review something you learned a while ago', sentence: 'I need to brush up on transaction basics before the interview.', sentenceTranslation: 'Necesito repasar los conceptos básicos de transacciones antes de la entrevista.' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,11 +191,11 @@ const JA = 'Japonés para Profesionales: N4 a N3 [2026]';
 const JA_L = '07. En la oficina (職場で)';
 
 const jaWords = [
-	{ word: '確認', level: 'B1', pos: 'noun', meaning: 'confirmación; verificación; comprobación', sentence: '資料を送る前に内容を確認してください。', sentenceTranslation: 'Por favor, verifique el contenido antes de enviar los documentos.' },
-	{ word: '保存', level: 'B1', pos: 'noun', meaning: 'guardado; almacenamiento; conservación', sentence: '作業のあとで必ずファイルを保存してください。', sentenceTranslation: 'Después de trabajar, asegúrese siempre de guardar el archivo.' },
-	{ word: '削除', level: 'B2', pos: 'noun', meaning: 'eliminación; borrado', sentence: '間違えた行を削除してください。', sentenceTranslation: 'Por favor, elimine la línea equivocada.' },
-	{ word: '経験', level: 'B1', pos: 'noun', meaning: 'experiencia', sentence: 'この仕事には三年の経験が必要です。', sentenceTranslation: 'Este trabajo requiere tres años de experiencia.' },
-	{ word: '覚える', level: 'B2', pos: 'verb', meaning: 'memorizar; aprender de memoria; recordar', sentence: '毎日十個の単語を覚えます。', sentenceTranslation: 'Cada día memorizo diez palabras.' },
+	{ word: '確認', level: 'B1', pos: 'noun', meaning: 'confirmación; verificación; comprobación', phonetic: 'かくにん', monolingual: '間違いや漏れがないか、もう一度よく調べること。', sentence: '資料を送る前に内容を確認してください。', sentenceTranslation: 'Por favor, verifique el contenido antes de enviar los documentos.' },
+	{ word: '保存', level: 'B1', pos: 'noun', meaning: 'guardado; almacenamiento; conservación', phonetic: 'ほぞん', monolingual: 'ファイルやデータを後で使えるように残しておくこと。', sentence: '作業のあとで必ずファイルを保存してください。', sentenceTranslation: 'Después de trabajar, asegúrese siempre de guardar el archivo.' },
+	{ word: '削除', level: 'B2', pos: 'noun', meaning: 'eliminación; borrado', phonetic: 'さくじょ', monolingual: '書かれたものやデータを消してなくすこと。', sentence: '間違えた行を削除してください。', sentenceTranslation: 'Por favor, elimine la línea equivocada.' },
+	{ word: '経験', level: 'B1', pos: 'noun', meaning: 'experiencia', phonetic: 'けいけん', monolingual: '実際に見たり、したりして得た知識や技能。', sentence: 'この仕事には三年の経験が必要です。', sentenceTranslation: 'Este trabajo requiere tres años de experiencia.' },
+	{ word: '覚える', level: 'B2', pos: 'verb', meaning: 'memorizar; aprender de memoria; recordar', phonetic: 'おぼえる', monolingual: '知識や言葉を自分のものにして、思い出せるようにすること。', sentence: '毎日十個の単語を覚えます。', sentenceTranslation: 'Cada día memorizo diez palabras.' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

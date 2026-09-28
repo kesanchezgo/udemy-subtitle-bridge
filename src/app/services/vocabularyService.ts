@@ -146,6 +146,10 @@ export function parseVocabularyPayload(payload: unknown): VocabularyWord[] {
 			meaning: meaning.toLowerCase(),
 			sentence: ensureSentenceEnd(sentence),
 			sentenceTranslation: ensureSentenceEnd(sentenceTranslation),
+			// Campos que antes quedaban para herramientas externas y ahora la IA
+			// genera directamente (vacíos tolerados: la plantilla los oculta).
+			phonetic: cleanText(raw.phonetic),
+			monolingual: cleanText(raw.monolingual),
 		});
 	}
 	return words;
@@ -210,11 +214,11 @@ export function buildVocabularySpec(
 		guid: stableGuid(`usb-vocab|${config.targetLang}|${normalizeLemma(word.word)}`),
 		fields: [
 			word.word,
-			'', // phonetic — opcional; lo añade un addon externo si existe (p. ej. ReadPronunciation)
+			word.phonetic, // IPA (o lectura en kana para japonés) generada por la IA
 			word.sentence,
 			word.sentenceTranslation,
 			`(${word.pos}) ${word.meaning}`,
-			'', // monolingual — lo completa el pipeline de imágenes
+			word.monolingual, // definición simple EN el idioma objetivo, generada por la IA
 			'', // picture — la completa ANKI-IMAGE-SENTENCE
 			'', // sentence audio — archivos de calidad (HyperTTS o edge-tts en el sistema externo)
 			'', // word audio — ídem
