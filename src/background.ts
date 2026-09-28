@@ -5,6 +5,7 @@ import {
 	buildRefinePrompt,
 	buildStudyPrompt,
 	buildSrtTranslationPrompt,
+	buildVocabularyPrompt,
 	estimateAnkiCardTarget,
 	formatOriginalSrtBlocks,
 	type SrtBlock,
@@ -403,6 +404,32 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 					}))
 					.catch(() => sendResponse({ ok: false, source: 'background', error: toErrorMessage(error) }));
 			});
+
+		return true;
+	}
+
+	if (type === 'USG_GENERATE_VOCABULARY') {
+		const transcriptText = String(message.transcriptText || '');
+		const opts = message as ExtensionMessage & {
+			course?: unknown;
+			lesson?: unknown;
+			targetLang?: unknown;
+			baseLang?: unknown;
+			minLevel?: unknown;
+			maxWords?: unknown;
+		};
+		const vocabularyOptions = {
+			course: String(opts.course || ''),
+			lesson: String(opts.lesson || ''),
+			targetLang: String(opts.targetLang || 'inglés'),
+			baseLang: String(opts.baseLang || 'español'),
+			minLevel: String(opts.minLevel || 'B1'),
+			maxWords: typeof opts.maxWords === 'number' && opts.maxWords > 0 ? Math.min(opts.maxWords, 20) : 8
+		};
+
+		generateVocabularyFromTranscript(transcriptText, vocabularyOptions)
+			.then((result) => sendResponse({ ok: true, source: 'background', ...result }))
+			.catch((error) => sendResponse({ ok: false, source: 'background', error: toErrorMessage(error) }));
 
 		return true;
 	}
@@ -1186,6 +1213,46 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 	console.warn('[USG][study] no Gemini keys available after initGeminiKeys().');
 	console.groupEnd();
 	throw new Error('No hay Gemini API keys configuradas para generar la sesión de estudio.');
+}
+
+// ─── Extracción de vocabulario (idiomas) desde la transcripción ──────────────
+// Misma cadena que la sesión de estudio: proveedor configurado primero
+// (proxy local / OpenAI-compatible), Gemini como respaldo. Respuesta pequeña:
+// un objeto {"words":[...]} — sin riesgo de truncado relevante.
+
+async function generateVocabularyFromTranscript(
+	transcriptText: string,
+	options: { course: string; lesson: string; targetLang: string; baseLang: string; minLevel: string; maxWords: number }
+) {
+	const cleaned = String(transcriptText || '').replace(/\r/g, '').trim();
+	if (cleaned.length < 120) {
+		throw new Error('La transcripción es demasiado corta para extraer vocabulario.');
+	}
+
+	const prompt = buildVocabularyPrompt(cleaned, options);
+
+	try {
+		const text = await requestConfiguredProviderText(prompt, 0.3, 4096);
+		const parsed = safeJsonParse(text);
+		if (parsed && typeof parsed === 'object') {
+			return { payload: parsed };
+		}
+		console.warn('[USG][vocab] provider response is not a JSON object');
+	} catch (providerError) {
+		console.warn('[USG][vocab] provider error:', providerError);
+	}
+
+	const loadedKeys = await loadGeminiKeysForBackground([]);
+	if (loadedKeys.keys.length > 0) {
+		const reply = await requestGeminiText(prompt, 0.3, 4096, 'vocab', undefined, loadedKeys.keys);
+		const parsed = safeJsonParse(reply);
+		if (parsed && typeof parsed === 'object') {
+			return { payload: parsed };
+		}
+		throw new Error('La IA respondió, pero no entregó un JSON válido de vocabulario.');
+	}
+
+	throw new Error('No hay proveedor de IA configurado para extraer vocabulario.');
 }
 
 

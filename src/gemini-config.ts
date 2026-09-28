@@ -18,7 +18,7 @@ type GeminiGlobal = typeof globalThis & {
   USB_GEMINI_KEY_COOLDOWNS?: Record<string, number>;
 };
 
-export type GeminiPurpose = 'translation' | 'objectives' | 'refine' | 'study' | 'evaluation' | 'general';
+export type GeminiPurpose = 'translation' | 'objectives' | 'refine' | 'study' | 'evaluation' | 'vocab' | 'general';
 
 type GeminiKeyValidationStatus = 'valid' | 'rate-limited' | 'invalid' | 'error';
 
