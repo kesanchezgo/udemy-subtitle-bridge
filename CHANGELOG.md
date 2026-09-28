@@ -37,6 +37,13 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
   which hangs reasoning-model routes on free proxies (e.g.
   `cline-free/gemini-3.8-flash` never answers a capped request but answers in
   <2 s uncapped). The probe omits `max_tokens` and uses a 45 s abort.
+- **Wheel over the dock no longer scrolls the Udemy page (any tab)**: the page
+  scroll is applied by the compositor without dispatching to the renderer when
+  no non-passive listeners exist on `window` — the ShadowRoot guard arrived
+  too late. A non-passive capture listener on `window` intercepts the wheel
+  before it, prevents the default when the cursor is over the dock, and
+  applies the scroll manually to the dock container under the cursor.
+  `overscroll-behavior: contain` covers every dock overflow container.
 - **Provider validation relay retries until acknowledged**: a runtime message
   fired while the MV3 service worker is tearing down is dropped silently, which
   left the panel waiting until the hardstop. The relay re-sends the probe
