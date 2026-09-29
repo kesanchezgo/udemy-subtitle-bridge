@@ -189,11 +189,14 @@ console.log('\n══ 2. Vocabulario (.apkg) ══');
 
 const mockAiPayload = {
 	words: [
-		{ word: 'Overhead', level: 'B2', pos: 'noun', meaning: 'coste adicional; sobrecarga', sentence: 'The garbage collector adds overhead to long-running applications.', sentenceTranslation: 'El recolector de basura añade sobrecarga a las aplicaciones de larga ejecución.', phonetic: '/ˈoʊvərhɛd/', monolingual: 'extra work or resources needed beyond the main task' },
-		{ word: 'leak', level: 'B2', pos: 'noun', meaning: 'fuga', sentence: 'A memory leak can crash a server after days of uptime.', sentenceTranslation: 'Una fuga de memoria puede tumbar un servidor tras días de actividad.', phonetic: '/liːk/', monolingual: 'an amount of memory or liquid that escapes slowly' },
-		{ word: 'wrap up', level: 'B1', pos: 'phrasal verb', meaning: 'terminar; concluir', sentence: 'Let us wrap up this section with a quick summary.', sentenceTranslation: 'Cerremos esta sección con un resumen rápido.', phonetic: '/ræp ʌp/', monolingual: 'to finish or complete something' },
+		// Palabras exclusivas del fixture: no deben colisionar con los mazos
+		// demo reales de la colección (el dedup por GUID es de TODA la
+		// colección y movería/actualizaría notas existentes).
+		{ word: 'Bottleneck', level: 'B2', pos: 'noun', meaning: 'cuello de botella; restricción', sentence: 'The slow disk is the main bottleneck in the pipeline.', sentenceTranslation: 'El disco lento es el principal cuello de botella del pipeline.', phonetic: '/ˈbɑːtəlnek/', monolingual: 'a stage that limits the speed of a whole process' },
+		{ word: 'trade-off', level: 'B2', pos: 'noun', meaning: 'contrapartida; equilibrio entre ventajas', sentence: 'Every caching strategy is a trade-off between speed and freshness.', sentenceTranslation: 'Toda estrategia de caché es un equilibrio entre velocidad y frescura.', phonetic: '/ˈtreɪd ɔːf/', monolingual: 'a balance between two opposing advantages' },
+		{ word: 'usbfixture', level: 'B1', pos: 'phrasal verb', meaning: 'terminar; concluir', sentence: 'Let us usbfixture this section with a quick summary.', sentenceTranslation: 'Cerremos esta sección con un resumen rápido.', phonetic: '/ˈfɪkstʃər/', monolingual: 'to finish or complete something' },
 		{ word: 'house', level: 'A1', pos: 'noun', meaning: 'casa', sentence: 'The house is big.', sentenceTranslation: 'La casa es grande.', phonetic: '/haʊs/', monolingual: 'a building where people live' },
-		{ word: 'leak', level: 'B2', pos: 'verb', meaning: 'fugar', sentence: 'Duplicate lemma should be dropped.', sentenceTranslation: 'El lema duplicado debe descartarse.', phonetic: '/liːk/', monolingual: 'to let something escape' },
+		{ word: 'usbfixture', level: 'B2', pos: 'verb', meaning: 'fugar', sentence: 'Duplicate lemma should be dropped.', sentenceTranslation: 'El lema duplicado debe descartarse.', phonetic: '/ˈfɪkstʃər/', monolingual: 'to let something escape' },
 		// tolerancia: palabra SIN phonetic/monolingual (respuesta parcial de un modelo)
 		{ word: 'latency', level: 'C1', pos: 'noun', meaning: 'latencia; retraso', sentence: 'Network latency hurts real-time applications the most.', sentenceTranslation: 'La latencia de red perjudica más a las aplicaciones en tiempo real.' },
 	],
@@ -204,8 +207,8 @@ check('payload tolerante: 6 candidatos parseados', parsed.length === 6, `got ${p
 check('tolerancia: palabra sin phonetic/monolingual se parsea', parsed.every((w) => w.sentence && w.meaning) && parsed.some((w) => !w.phonetic));
 const { fresh: levelFiltered, belowLevel } = filterVocabulary(parsed, DEFAULT_VOCAB_CONFIG);
 check('filtro CEFR: A1 descartada', belowLevel === 1 && levelFiltered.length === 4, `below=${belowLevel} fresh=${levelFiltered.length}`);
-check('filtro CEFR: lema duplicado descartado', levelFiltered.every((w) => w.word !== 'leak' || !levelFiltered.some((o) => o !== w && o.word === 'leak')));
-check('normalización de lema (minúsculas)', levelFiltered[0].word === 'overhead');
+check('filtro CEFR: lema duplicado descartado', levelFiltered.every((w) => w.word !== 'usbfixture' || !levelFiltered.some((o) => o !== w && o.word === 'usbfixture')));
+check('normalización de lema (minúsculas)', levelFiltered[0].word === 'bottleneck');
 
 const { fresh: freshWords, seen } = splitAlreadyExported(levelFiltered, {}, DEFAULT_VOCAB_CONFIG.targetLang);
 check('registro vacío: nada marcado como visto', freshWords.length === 4 && seen.length === 0);
@@ -234,7 +237,7 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 
 	const note = col.notes[0];
 	const fields = note.flds.split('\x1f');
-	check('campos de texto completos (word, phonetic, sentence, translation, bilingual, monolingual)', fields[0] === 'overhead'
+	check('campos de texto completos (word, phonetic, sentence, translation, bilingual, monolingual)', fields[0] === 'bottleneck'
 		&& fields[1].length > 3
 		&& fields[2].length > 10
 		&& fields[3].length > 10
@@ -242,7 +245,7 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 		&& fields[5].length > 10
 		&& fields[6] === '' && fields[7] === '' && fields[8] === '');
 	check('tags con curso/lección/cefr jerárquicos', note.tags.includes('curso::usb-qa-curso-de-prueba') && note.tags.includes('cefr::b2'), note.tags);
-	check('GUID por (idioma|lema)', note.guid === stableGuid(`usb-vocab|en|overhead`));
+	check('GUID por (idioma|lema)', note.guid === stableGuid(`usb-vocab|en|bottleneck`));
 
 	const langDeck = Object.values(col.decks).find((d) => d.name === `${ROOT}::Vocabulary::English`);
 	check('mazo de idioma apunta al preset de Vocabulario', langDeck?.conf === VOCAB_PRESET.id);
