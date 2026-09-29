@@ -354,7 +354,7 @@ for (let i = 0; i < 60; i++) {
 		sessionOk = true;
 		break;
 	}
-	if (/too short/i.test(text) && !retriedShortTranscript) {
+	if (/too short|No hay transcripción disponible/i.test(text) && !retriedShortTranscript) {
 		retriedShortTranscript = true;
 		console.log('   transcript not ready yet — waiting for VTT cues, retrying once');
 		await sleep(8000);
@@ -503,13 +503,25 @@ if (ev.d) {
 		const colRow = db.exec('SELECT models, decks FROM col LIMIT 1')[0].values[0];
 		const models = JSON.parse(colRow[0]);
 		const decks = JSON.parse(colRow[1]);
-		const model = Object.values(models).find((m) => m.name === 'Subtitle Bridge Basic');
-		if (!model) throw new Error('modelo Subtitle Bridge Basic ausente');
+		const model = Object.values(models).find((m) => m.name === 'Udemy Bridge Concept');
+		if (!model) throw new Error('modelo Udemy Bridge Concept ausente: ' + Object.values(models).map((m) => m.name).join(', '));
 		if (!model.css.includes('.nightMode')) throw new Error('CSS dev-card (nightMode) ausente');
 		if (!model.tmpls[0].qfmt.includes('anki-wrapper dev-card')) throw new Error('plantilla front dev-card ausente');
 		if (!model.tmpls[0].afmt.includes('prism-java.min.js')) throw new Error('plantilla back sin Prism (fix cara B ausente)');
+		if (!model.tmpls[0].qfmt.includes('{{Leccion}}')) throw new Error('píldora de lección ({{Leccion}}) ausente');
+		const flds = model.flds.map((f) => f.name);
+		if (JSON.stringify(flds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente'])) throw new Error('campos incorrectos: ' + flds.join(','));
 		const deckNames = Object.values(decks).map((d) => d.name);
-		if (!deckNames.some((n) => n.includes('::'))) throw new Error('mazo sin subnivel Curso::Lección: ' + deckNames.join(', '));
+		if (!deckNames.includes('Udemy Bridge') || !deckNames.some((n) => n.startsWith('Udemy Bridge::Courses::'))) {
+			throw new Error('árbol de mazos de la extensión ausente: ' + deckNames.join(', '));
+		}
+		const dconf = JSON.parse(db.exec('SELECT dconf FROM col LIMIT 1')[0].values[0][0]);
+		const presetNames = Object.values(dconf).map((c) => c.name);
+		if (!presetNames.includes('Udemy Bridge · Cursos') || !presetNames.includes('Udemy Bridge · Vocabulario')) {
+			throw new Error('presets propios ausentes: ' + presetNames.join(', '));
+		}
+		const lessonDeck = Object.values(decks).find((d) => d.name.startsWith('Udemy Bridge::Courses::') && d.name.split('::').length === 4);
+		if (lessonDeck && lessonDeck.conf === 1) throw new Error('mazo apunta al preset Default (id 1) en vez del propio');
 		const notes = db.exec('SELECT guid, flds FROM notes')[0]?.values || [];
 		if (notes.length < 3) throw new Error('solo ' + notes.length + ' notas');
 		const guids = notes.map((n) => n[0]);
