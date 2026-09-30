@@ -1,110 +1,142 @@
 # Udemy Subtitle Bridge
 
-Planned scope (not fully implemented yet):
+A Chrome (MV3) extension that turns any Udemy course into a learning system:
+it captures the English subtitles, translates them into a Spanish overlay
+synced with the video, generates full study sessions from each lecture, and
+exports the result to **Anki** (concept cards + language vocabulary) and
+**Obsidian** — all through your own AI provider, with nothing sent to third
+parties beyond the AI endpoint you configure.
 
-1. detect EN/ES caption state on Udemy lecture pages,
-2. auto-capture EN subtitles on lecture load (when native ES is missing),
-3. auto-download EN subtitles to SRT (one file per lecture, when ES native is missing),
-4. export EN subtitles to SRT instantly from local cache,
-5. import translated ES SRT,
-6. render ES subtitles as a local overlay synced with the video,
-7. paste translated ES SRT directly in popup (no file upload required),
-8. disable Export/Import when native ES captions exist (as requested),
-9. generate a study guide (simple explanation, examples, mini quiz) from lecture transcript using a local AI API,
-10. auto-translate EN SRT to ES and load ES overlay automatically when native ES does not exist.
+## Features
 
-## Current status (May 2026)
+### Subtitles (EN capture → ES overlay)
 
-- In-page learning panel injected under the Udemy video container (no popup required).
-- Network capture bridge can intercept VTT/GraphQL responses when subtitles are loaded.
-- Manual "Retry translation" attempts to build EN SRT from captured VTT and send it to the local AI API.
-- Background script includes SRT parsing + translation flow (single AI call per request).
+- Auto-captures EN captions on lecture load (network bridge + transcript
+  fallback; storyboard/sprite VTTs are rejected automatically).
+- Downloads/exports the EN track as `.srt` per lecture, deduplicated.
+- Auto-translates EN → ES block-by-block through the configured AI provider
+  and validates the block count before applying; manual import/paste of an
+  ES SRT is also available.
+- Renders the ES overlay synced with the video: position (free drag or
+  presets), text size, background, text color, shadow, sync offset, and it
+  only hides native captions while the overlay is on.
+- If the course already has native ES captions, the pipeline steps down by
+  design (no capture, export/import disabled).
 
-## Missing / Incomplete
+### Study Agent (in-page dock)
 
-- Automatic EN subtitle capture on lecture load and caching.
-- Automatic EN SRT download per lecture.
-- Export EN as SRT (panel and popup actions).
-- Import ES SRT / paste-to-apply flow.
-- ES overlay rendering and settings (offset, font size, opacity).
-- Popup UI actions wired to content script.
-- Study guide generation UI and transcript extraction.
-- Auto EN -> ES translation on lecture load.
-- Storage cleanup, lecture cache limits, and retry logic.
+- Resizable, collapsible in-page dock (scales with the browser font size;
+  wheel over the dock never scrolls the Udemy page).
+- Generates objectives per course and a full study session per lecture from
+  the real transcript: relevance score, key concepts, 4 questions calibrated
+  to your confidence level, an application challenge, an interview question,
+  and next actions.
+- Lecture history with Supabase sync option.
 
-## Load Extension
+### Anki export — two deck families
 
-1. Open Chrome and go to `chrome://extensions`.
+**Course concepts** (`<Root>::Courses::<Course>::<Lesson>`):
+
+- One `.apkg` with everything inside: the `Udemy Bridge Concept` note type
+  (developer-card design with Prism code highlighting, light/dark, lesson
+  pill and a back-to-lesson footer link) and the extension's **own deck
+  presets** — FSRS enabled automatically, 20 new/day, [1m 10m] steps,
+  30 % lapse retention, leech tagging, 0.9 desired retention. Your existing
+  decks and the `Default` preset are never touched; re-importing a lesson
+  updates its notes instead of duplicating (content-addressed GUIDs).
+- A legacy `.txt` path (CSS + templates) remains as a repair fallback.
+
+**Course vocabulary** (`<Root>::Vocabulary::<Language>::<Course>`):
+
+- Extracts words at your configured CEFR level (A2–C2, default B1+) from the
+  real lecture subtitles — English today, any language by config.
+- Each card ships with a purpose-built clean sentence (8–14 words, not the
+  raw subtitle), a faithful Spanish translation, POS-tagged meanings, an
+  AI-generated **phonetic** (IPA — kana readings for Japanese) and a simple
+  **monolingual definition** written in the target language.
+- The `Udemy Bridge Vocab` note type uses the same field names as the user's
+  `English Cards` type, so external pipelines (image generation, audio,
+  pronunciation) fill the remaining fields without changes.
+- Repeated lemmas across lessons are skipped (persistent registry + GUIDs by
+  `language|lemma`); the block hides itself when the lecture subtitles are
+  not in the target language.
+- Audio mode selector: quality files (`word audio` / `sentence audio`, e.g.
+  generated by the companion tool below) or instant system voices via
+  Anki-native `{{tts}}`.
+
+### Obsidian
+
+- Session notes and per-course MOCs created through `obsidian://` URIs (no
+  plugins, no servers), with frontmatter, flashcard sections, raw SRT under
+  `raw/`, a universal vault scaffold (`CLAUDE.md` + `AGENTS.md` mirror) and
+  a duplicate guard for re-exports. Optional auto-export after each session.
+- Contract for the AI-assistant integration: `docs/VAULT_INTEGRATION.md`.
+
+### AI providers
+
+- Bring your own OpenAI-compatible endpoint (local proxy, OpenRouter, etc.)
+  with a non-blocking validation probe, plus Gemini API fallback with key
+  rotation, cooldowns and quota/rate-limit reporting. A local AI endpoint is
+  also supported. Provider config always saves, even if the probe fails.
+
+## Load the extension
+
+1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the built folder, not the repo root:
+3. **Load unpacked** → select the built folder, not the repo root:
 
-   `d:\Proyectos\OTROS\udemy-subtitle-bridge\dist`
+   `dist/`
 
-If you load the root folder, Chrome will try to open the source manifest and fail on TypeScript scripts. The extension must be loaded from `dist/`.
+Loading the root fails: Chrome would read the source manifest/TypeScript.
+After pulling changes, rebuild (`npm run build`) and reload the extension.
+
+## Typical session
+
+1. Open a Udemy lecture; the dock mounts under the video player.
+2. Pick an objective (or type your own) and generate the session.
+3. Work the concepts → questions → application challenge; mark your
+   confidence as you go.
+4. Export: **.apkg** (concepts), **Vocabulary .apkg**, **.txt**, or
+   **Obsidian** — the ES overlay keeps running the whole time.
+
+## Companion: ANKI-IMAGE-SENTENCE
+
+The companion tool at `D:\Proyectos\OTROS\ANKI-IMAGE-SENTENCE` completes the
+vocabulary decks automatically (listen mode): AI-verified translations and
+bilingual definitions, generated images, and quality neural TTS
+(`word audio` / `sentence audio`, mp3 24 kHz 48 kbps, silence-trimmed) with
+configurable voices per language and a batch "Generar Audio TTS" mode
+(`python main.py tts --deck "…"`) plus media audit/compression utilities.
 
 ## Automated QA
 
 | Command | What it does |
-|---------|--------------|
-| `npm run qa:extension` | Full E2E against the built extension: loads `dist/` in Chromium, serves a local Udemy-shaped fixture under `https://www.udemy.com` (host mapping + throwaway cert), drives the real dock with real AI (provider at 127.0.0.1:6660), audits the exported `.apkg` (unzip + SQLite), captures the Obsidian `obsidian://` URIs, verifies the duplicate guard and the typography scales (550px / 660px). Exit 0 = all green. |
-| `node scripts/qa-udemy-real.mjs` | Same flow against a REAL Udemy lecture using exported session cookies (`USB_COOKIES`, default `%TEMP%/usb-qa-udemy-cookies.json`). Requires the provider proxy running. |
-| `node scripts/prompt-harness.mjs` | 12 prompt behaviours (SRT translation, objectives, refine, study session) against the live provider, including the Anki card format contract. |
-| `node scripts/test-obsidian-export.mjs` | Unit asserts for the Obsidian export builders (note, MOC, scaffold, URI). |
+|---|---|
+| `npm run qa:extension` | Full 12-phase E2E against `dist/`: local Udemy-shaped fixture over HTTPS, real AI through the configured provider, session render, scroll-boundary assertion, real `.apkg` audit (unzip + SQLite: deck tree, presets, note type), Obsidian URIs + duplicate guard, clipboard, typography scaling. Exit 0 = all green. |
+| `node scripts/qa-anki-all.mjs N` | Anki suite ×N runs: structural `.apkg` assertions against production modules (`qa-anki-decks.mjs`), real import into desktop Anki via AnkiConnect with preset/FSRS verification, screenshots and cleanup (`qa-anki-import-verify.mjs`), and model-in-the-loop vocabulary quality via the local proxy (`qa-vocab-ai.mjs`). |
+| `node scripts/qa-udemy-real.mjs` | Same E2E flow against a REAL Udemy lecture using exported session cookies (`USB_COOKIES`). Requires the provider proxy running. |
+| `node scripts/prompt-harness.mjs` | Prompt behaviours (SRT translation, objectives, refine, study session, vocabulary) against the live provider. |
+| `node scripts/test-obsidian-export.mjs` | Unit asserts for the Obsidian builders (session note, MOC, scaffold, raw SRT, URIs). |
 
-Artifacts land in the repo root as `qa-*.png` (gitignored). The real-Udemy run needs the
-provider proxy at `127.0.0.1:6660` and valid session cookies; see
-`docs/obsidian-integration.md` for the Obsidian integration contract and
-`CHANGELOG.md` for the latest changes.
+QA fixtures live under `tmp/` (gitignored); reports as `qa-*.png`.
 
-## Current Manual Flow (What Works Now)
+## Documentation
 
-1. Open a Udemy lecture page.
-2. Wait for the in-page panel to appear under the video container.
-3. Turn on English subtitles once in the Udemy player (to trigger VTT fetch).
-4. Click **Retry translation** in the panel.
-5. Ensure the local AI API is running at `http://127.0.0.1:8010` with `/sessions/*` endpoints.
+- [`CHANGELOG.md`](CHANGELOG.md) — detailed change history.
+- [`docs/ANKI_PEDAGOGY.md`](docs/ANKI_PEDAGOGY.md) — design rationale for
+  both deck families with a Scopus-verified bibliography (DOIs).
+- [`docs/obsidian-integration.md`](docs/obsidian-integration.md) — Obsidian
+  vault contract and note formats.
+- [`docs/VAULT_INTEGRATION.md`](docs/VAULT_INTEGRATION.md) — tools contract
+  for the AI-assistant vault integration.
+- Architecture notes: `docs/00…07-*.md` (plan, stack, dock/Shadow DOM,
+  Udemy page integration).
 
-## Planned Usage Flow
+## Scope and privacy
 
-1. Open a Udemy lecture page.
-2. Open the extension popup.
-3. Click **Refresh status**.
-4. Wait a few seconds while **Auto EN cues** fills in.
-5. The extension auto-downloads EN SRT in your Downloads folder when native ES is missing.
-6. EN auto-download is deduplicated per lecture, so the same lecture is not downloaded repeatedly.
-7. If needed, you can still click **Export EN as SRT** (same cached result).
-8. Translate that file externally and click **Import ES SRT**.
-9. Or paste the translated ES SRT into **Paste ES SRT** and click **Apply Pasted ES SRT**.
-10. Imported ES overlay is auto-enabled and rendered over the video.
-11. Optionally tune offset/font/opacity.
-12. In **Study Agent**, choose level/language and click **Generate Study Guide + Mini Quiz**.
-13. If native ES is missing and EN SRT is available, the extension auto-translates EN -> ES through local API and applies ES overlay automatically.
-14. If local API was temporarily unavailable, click **Retry Auto EN -> ES Translation** in popup.
-15. You can manage subtitle automation directly in-course with the floating **Subtitles AI** panel (top-right), including overlay toggle and retry button.
-
-## Notes
-
-- This extension keeps everything local in browser storage.
-- Imported subtitles are stored per lecture key (`courseSlug::lectureId`).
-- Auto-captured EN subtitles are also stored per lecture key and reused instantly on next open.
-- Auto-downloaded EN files are saved by the extension under `Downloads/UdemySubtitleBridge/`.
-- Automatic EN download is marked per lecture to avoid duplicate file downloads.
-- Pasted ES SRT text is saved per lecture in extension storage for quick reuse.
-- Native captions are hidden only while ES overlay is enabled.
-- On lecture load, the extension checks native ES first; if ES exists, EN auto-capture is skipped by rule.
-- Export uses auto-cached EN first, then falls back to transcript/textTrack/live capture only if needed.
-- If textTracks are not yet loaded and no VTT URL appears yet, live EN playback for 20-40 seconds improves fallback capture.
-- If transcript timing attributes are missing, transcript export uses click-to-time mapping.
-- Network bridge injection is CSP-safe (external extension file, not inline script), so Udemy inline-script restrictions do not block it.
-- Storyboard/thumbnail VTT files (e.g. thumb-sprites.jpg#xywh=...) are automatically rejected and never cached/exported as subtitles.
-- After importing ES SRT, overlay is enabled automatically so translated subtitles appear immediately.
-- Study Agent uses local API endpoints at `http://127.0.0.1:8010` (fallback `http://localhost:8010`) with sequence: bootstrap -> conversation/new -> message.
-- Automatic EN -> ES subtitle translation also uses the same local API sequence: bootstrap -> conversation/new -> message.
-- Auto-translation enforces block-by-block SRT translation and validates output block counts before importing.
-
-## Current Scope
-
-- No upload to Udemy servers.
-- No translation API integration.
-- SRT only.
+- Everything runs locally in browser storage; no Udemy servers are touched
+  and nothing is uploaded.
+- The only network traffic beyond Udemy itself goes to the AI provider and
+  the services you configure (Supabase sync, local proxy, AnkiConnect at
+  `127.0.0.1:8765` for QA/companion tooling).
+- SRT only for subtitle exchange.
