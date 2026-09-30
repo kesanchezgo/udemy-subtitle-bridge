@@ -45,3 +45,4 @@ dist/
 .env
 .env.local
 theme-*.png
+tmp/
