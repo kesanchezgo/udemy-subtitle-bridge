@@ -44,8 +44,16 @@ export interface ConceptCardInput {
 	guid: string;
 	tags: string[];
 	/** Tipo de tarjeta (concepto/codigo/entrevista/comparacion/proceso/aplicacion):
-	 *  se muestra como píldora diseñada en la tarjeta, junto a la lección. */
+	 *  se muestra como píldora de color en la tarjeta, junto a la lección
+	 *  (señalización por tipo — ver docs/ANKI_PEDAGOGY.md §color). */
 	type?: string;
+}
+
+/** Valor del campo Tipo: span con data-tp para que el CSS de la tarjeta le
+ *  dé color por tipo (la plantilla no puede condicionar por VALOR de campo). */
+export function tipoFieldValue(type?: string): string {
+	const clean = String(type ?? '').trim().toLowerCase().replace(/[^a-z]/g, '');
+	return clean ? `<span data-tp="${clean}">${clean}</span>` : '';
 }
 
 /**
@@ -91,7 +99,7 @@ export function buildConceptSpec(
 			modelName: CONCEPT_MODEL.name,
 			deck: lessonPath,
 			guid: card.guid,
-			fields: [card.front, card.back, safeLesson, fuente, card.type ?? ''],
+			fields: [card.front, card.back, safeLesson, fuente, tipoFieldValue(card.type)],
 			tags: card.tags,
 		})),
 	};
@@ -332,6 +340,22 @@ hr#answer {
   color: var(--text-muted);
   border: 1px solid var(--block-border);
 }
+
+/* ── Color por tipo de tarjeta (señalización consistente, docs/ANKI_PEDAGOGY.md §color).
+   Claro: variantes oscuras AA sobre #f8fafc. Oscuro: pastel AA sobre #181c26. ── */
+.tipo-pill [data-tp] { font-weight: 700; }
+.tipo-pill [data-tp="concepto"]    { color: #6d4aff; }
+.tipo-pill [data-tp="aplicacion"]  { color: #0f766e; }
+.tipo-pill [data-tp="codigo"]      { color: #047857; }
+.tipo-pill [data-tp="entrevista"]  { color: #0369a1; }
+.tipo-pill [data-tp="comparacion"] { color: #b45309; }
+.tipo-pill [data-tp="proceso"]     { color: #be123c; }
+.nightMode .tipo-pill [data-tp="concepto"]    { color: #8463ff; }
+.nightMode .tipo-pill [data-tp="aplicacion"]  { color: #2dd4bf; }
+.nightMode .tipo-pill [data-tp="codigo"]      { color: #34d399; }
+.nightMode .tipo-pill [data-tp="entrevista"]  { color: #38bdf8; }
+.nightMode .tipo-pill [data-tp="comparacion"] { color: #fbbf24; }
+.nightMode .tipo-pill [data-tp="proceso"]     { color: #fb7185; }
 
 .context-pill, .type-pill {
   font-family: "SF Mono", "Fira Code", "JetBrains Mono", Consolas, monospace;
