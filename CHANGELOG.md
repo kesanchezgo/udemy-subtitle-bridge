@@ -2,6 +2,30 @@
 
 All notable changes to the Udemy Subtitle Bridge extension are documented here.
 
+## [1.3.0] — 2026-10-01
+
+### Added — Kinema v2 "Precisión cinematográfica" (rediseño visual completo)
+
+- **Rebranding a Kinema — by Kivara**: nombre en manifest y notificaciones, logo K
+  violeta (`#6d4aff`) con iconos regenerados (16/32/48/128 + store), y firma de marca
+  en cabecera, login y dock contraído.
+- **Sistema de diseño v2**: escala violeta de marca `--kinema-50…950` mapeada a los
+  colores de Tailwind dentro del dock; neutros con matiz violeta en ambos temas;
+  CTA sólidos sin degradados bicolor; tokens v2 en `sepia-overrides` (§26–§29,
+  incluido el pulido WCAG AA del tema claro).
+- **Set de iconos propio** (`components/icons.tsx`, Solar + Phosphor): adiós a Lucide
+  y a los emojis de UI; los prompts de objetivos ahora piden nombres de icono
+  semánticos y el legado se traduce con `resolveIconName`.
+- **Navegación segmentada por iconos** y stepper de estudio reordenado
+  (Nivel → Repaso → Recordar → Práctica → Anki) con navegación Anterior/Siguiente.
+- **Nuevas funcionalidades**: panel de progreso y racha (`services/progress.ts`,
+  `streak.ts`, `sounds.ts` + `ProgressPanel`), tarjetas de memoria con marcas de
+  exportación/repaso (`study/MemoryCard.tsx` + `historyService.markExported/
+  markReviewed`), módulo de exportación unificado (`study/ExportModule.tsx`) y
+  fuentes web Plus Jakarta Sans + JetBrains Mono inyectadas en el documento anfitrión.
+- **Dock**: ancho por defecto 540px (rango 380–720) y escala tipográfica con piso
+  mínimo de 9.5–11px.
+
 ## [1.2.0] — 2026-09-23
 
 ### Fixed

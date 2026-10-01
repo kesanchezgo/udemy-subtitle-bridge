@@ -46,3 +46,4 @@ dist/
 .env.local
 theme-*.png
 tmp/
+.mock/

@@ -151,6 +151,10 @@ export interface LectureHistoryRecord {
   deletedAt?: number;
   /** Monotonic edit counter — survives clock skew. Higher wins on merge. */
   version: number;
+  /** Primera exportación a Anki/Obsidian (unix ms) — alimenta el panel de memoria. */
+  exportedAt?: number;
+  /** Última auto-evaluación de repaso marcada por el estudiante (unix ms). */
+  reviewedAt?: number;
 }
 
 export interface CourseHistorySummary {
@@ -297,6 +301,8 @@ export const historyService = {
         : (partial.studyContent || partial.confidence || partial.questions?.length || partial.codeChallenge || partial.ankiCards?.length || partial.status === "completed")
           ? undefined
           : prev?.deletedAt,
+      exportedAt: clearProgress ? partial.exportedAt : (prev?.exportedAt ?? partial.exportedAt),
+      reviewedAt: partial.reviewedAt ?? (clearProgress ? undefined : prev?.reviewedAt),
       version:      (prev?.version ?? 0) + 1,
     };
 
@@ -311,6 +317,26 @@ export const historyService = {
     if (rec.status === "completed") return;
     rec.status = "completed";
     rec.completedAt = Date.now();
+    rec.updatedAt = Date.now();
+    rec.version = (rec.version ?? 0) + 1;
+    await sSet(lectureKey(courseId, lectureId), rec);
+  },
+
+  /** Stamp lectures as exported (fixed in Anki/Obsidian). */
+  async markExported(courseId: string, lectureId: string): Promise<void> {
+    const rec = await this.getLecture(courseId, lectureId);
+    if (!rec) return;
+    rec.exportedAt = rec.exportedAt ?? Date.now();
+    rec.updatedAt = Date.now();
+    rec.version = (rec.version ?? 0) + 1;
+    await sSet(lectureKey(courseId, lectureId), rec);
+  },
+
+  /** Self-reported Anki review for a lecture. */
+  async markReviewed(courseId: string, lectureId: string): Promise<void> {
+    const rec = await this.getLecture(courseId, lectureId);
+    if (!rec) return;
+    rec.reviewedAt = Date.now();
     rec.updatedAt = Date.now();
     rec.version = (rec.version ?? 0) + 1;
     await sSet(lectureKey(courseId, lectureId), rec);

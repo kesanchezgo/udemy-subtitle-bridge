@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Session } from '@supabase/supabase-js';
 import {
-  Loader2, Mail, Key, Eye, EyeOff, Cloud, HardDrive, ArrowRight,
+  Loader2, Mail, Key, Eye, EyeOff, HardDrive, Cloud, Check, ArrowRight,
   CheckCircle2, LogIn, UserPlus,
-} from 'lucide-react';
+} from './icons';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 import { motion, AnimatePresence } from 'motion/react';
-import { AppLogo } from './AppLogo';
+import { KinemaBrand } from './AppLogo';
 import { toast } from 'sonner';
+import { GoogleLogo } from '@phosphor-icons/react';
 import { celebrate } from './CelebrationOverlay';
 import { useDockTheme } from '../contexts/ThemeContext';
 import {
@@ -178,8 +179,7 @@ async function migrateLocalDataToCloud(session: Session) {
     celebrate({
       type: 'cloud_synced',
       title: `${uploaded} elemento${uploaded !== 1 ? 's' : ''} en la nube`,
-      subtitle: 'Tu configuración local ya está respaldada ☁️',
-      icon: '☁️',
+      subtitle: 'Tu configuración local ya está respaldada',
     });
   }
 }
@@ -228,8 +228,7 @@ export function AuthGuard({
           if (count > 0) celebrate({
             type: 'cloud_synced',
             title: `${count} elemento${count !== 1 ? 's' : ''} restaurado${count !== 1 ? 's' : ''}`,
-            subtitle: 'Configuración sincronizada desde la nube ☁️',
-            icon: '⬇️',
+            subtitle: 'Configuración sincronizada desde la nube',
           });
         }
         setSession(s); setLoading(false); onSessionResolved?.(s);
@@ -251,8 +250,7 @@ export function AuthGuard({
           celebrate({
             type: 'login_welcome',
             title: `¡Bienvenido, ${name}!`,
-            subtitle: 'Tu configuración y tarjetas están sincronizadas en la nube ☁️',
-            icon: '👋',
+            subtitle: 'Tu configuración y tarjetas están sincronizadas en la nube',
           });
         }
       }
@@ -368,8 +366,8 @@ export function AuthGuard({
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className={`flex-1 flex items-center justify-center ${t("bg-[#1a1b1d]", "bg-[#f7f9fa]")}`}>
-        <Loader2 className="animate-spin text-violet-500" size={20} />
+      <div className="flex-1 flex items-center justify-center bg-[var(--usb-bg-2)]">
+        <Loader2 className="animate-spin text-[#6d4aff]" size={20} />
       </div>
     );
   }
@@ -377,180 +375,187 @@ export function AuthGuard({
   // ── Authenticated / Guest → render children ───────────────────────────────
   if (session || isGuest) return <>{children(session, requestLogin, signOut)}</>;
 
-  // ── Auth screen — fills the extension sidebar panel completely ────────────
+  // ── Auth screen — mismo lenguaje que el resto del dock ────────────────────
+  const fieldCls = "kx-field w-full h-11 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[12.5px] text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] focus:outline-none focus:border-[#6d4aff] focus:ring-2 focus:ring-[#6d4aff]/25 transition-colors font-medium";
+  const iconCls = "absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--usb-fg-lo)] pointer-events-none transition-colors group-focus-within:text-[#6d4aff]";
+  const violetInk = t("#b7a6ff", "#5b37e8");
+  const rise = (i: number) => ({
+    initial: { opacity: 0, y: 14 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const, delay: 0.06 * i },
+  });
+  const isLogin = tab === 'login';
+  const features: Array<[string, boolean]> = [
+    ['Traducción en vivo', true],
+    ['Overlay en Udemy', true],
+    ['Tarjetas Anki', true],
+    ['Sync entre dispositivos', false],
+    ['Backup en la nube', false],
+  ];
+
   return (
-    <div className={`flex flex-col h-full w-full overflow-y-auto custom-scrollbar ${t("bg-[#0f1012]", "bg-[#f7f9fa]")}`}>
-      {/* Brand header */}
-      <div className="flex flex-col items-center pt-7 pb-3 px-5">
-        <div className="w-11 h-11 rounded-2xl bg-violet-600/15 border border-violet-500/20 flex items-center justify-center mb-3 shadow-[0_0_28px_rgba(139,92,246,0.18)]">
-          <AppLogo size={22} iconOnly />
-        </div>
-        <h2 className="text-white text-[15px] tracking-tight" style={{ fontWeight: 700 }}>
-          Subtitle Bridge
-        </h2>
-        <p className="text-white/35 text-[11px] mt-1 text-center leading-relaxed">
-          Accede para sincronizar tu progreso<br />en todos tus dispositivos
-        </p>
-      </div>
-
-      {/* Feature comparison */}
-      <div className="px-3 mb-3 grid grid-cols-2 gap-2">
-        {/* Guest */}
-        <div className="rounded-xl border border-white/6 bg-white/[0.03] p-2.5 flex flex-col gap-1.5">
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <HardDrive size={9} className="text-white/30" />
-            <span className="text-white/40 text-[9px]" style={{ fontWeight: 600 }}>Sin cuenta</span>
+    <div className="kx-page flex flex-col h-full w-full overflow-y-auto custom-scrollbar p-4 space-y-4 bg-[var(--usb-bg-2)]">
+      {/* Hero */}
+      <motion.div {...rise(0)} className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5" style={{ ["--kinema-wordmark" as string]: "#fff", ["--kinema-signature" as string]: "#e4dcff" }}>
+        <span className="kx-ring kx-ring-1" aria-hidden="true" />
+        <div className="relative">
+          <KinemaBrand dense />
+          <p className="kx-hero-t1 text-[21px] font-extrabold tracking-tight leading-tight mt-5">
+            Tu progreso, en cada pantalla
+          </p>
+          <p className="kx-hero-t2 text-[12px] leading-relaxed mt-1.5">
+            Sincroniza tu historial, tus tarjetas y tu XP entre dispositivos.
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-3.5">
+            {([[Cloud, 'Sync'], [Check, 'Backup'], [HardDrive, 'Funciona sin cuenta']] as const).map(([Ico, label]) => (
+              <span key={label} className="kx-hero-chip text-[10.5px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                <Ico size={12} />{label}
+              </span>
+            ))}
           </div>
-          {['Traducción en vivo', 'Overlay en Udemy', 'Tarjetas Anki (local)'].map(f => (
-            <div key={f} className="flex items-center gap-1.5">
-              <CheckCircle2 size={8} className="text-emerald-500/60 shrink-0" />
-              <span className="text-white/30 text-[10px]">{f}</span>
-            </div>
-          ))}
-          {['Sync cross-device', 'Backup nube'].map(f => (
-            <div key={f} className="flex items-center gap-1.5">
-              <div className="w-2 h-px bg-white/15 shrink-0 ml-px" />
-              <span className="text-white/18 text-[10px]">{f}</span>
-            </div>
-          ))}
         </div>
-        {/* Account */}
-        <div className="rounded-xl border border-violet-500/22 bg-violet-500/[0.05] p-2.5 flex flex-col gap-1.5">
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <Cloud size={9} className="text-violet-400" />
-            <span className="text-violet-300/70 text-[9px]" style={{ fontWeight: 600 }}>Con cuenta</span>
-          </div>
-          {['Traducción en vivo', 'Overlay en Udemy', 'Tarjetas Anki (local)'].map(f => (
-            <div key={f} className="flex items-center gap-1.5">
-              <CheckCircle2 size={8} className="text-emerald-500/60 shrink-0" />
-              <span className="text-white/30 text-[10px]">{f}</span>
-            </div>
-          ))}
-          {['Sync cross-device', 'Backup nube'].map(f => (
-            <div key={f} className="flex items-center gap-1.5">
-              <CheckCircle2 size={8} className="text-violet-400 shrink-0" />
-              <span className="text-white/45 text-[10px]">{f}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      </motion.div>
 
-      {/* Auth card — full width */}
-      <div className="mx-3 bg-[#141416] border border-white/8 rounded-2xl overflow-hidden">
-        {/* Tabs */}
-        <div className="flex border-b border-white/6">
-          {(['login', 'signup'] as const).map(tabId => (
-            <button
-              key={tabId}
-              onClick={() => { setTab(tabId); setError(''); setSignupSuccess(false); }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] transition-all relative ${
-                tab === tabId ? 'text-white' : 'text-white/30 hover:text-white/60'
-              }`}
-              style={{ fontWeight: tab === tabId ? 600 : 400 }}
-            >
-              {tabId === 'login' ? <LogIn size={11} /> : <UserPlus size={11} />}
-              {tabId === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
-              {tab === tabId && (
-                <motion.div
-                  layoutId="authTabLine"
-                  className="absolute bottom-0 left-0 right-0 h-[2px] bg-violet-500 rounded-t-full"
-                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                />
-              )}
-            </button>
-          ))}
+      {/* Auth card */}
+      <motion.div {...rise(1)} className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl p-4 pt-5 space-y-4">
+        <div>
+          <span className="kx-slate block" style={{ color: violetInk }}>{isLogin ? 'Bienvenido de vuelta' : 'Empieza gratis'}</span>
+          <h2 className="mt-1 text-[16px] font-extrabold tracking-tight text-[var(--usb-fg-hi)]">
+            {isLogin ? 'Inicia sesión' : 'Crea tu cuenta'}
+          </h2>
         </div>
 
-        <div className="p-4 space-y-3">
-          {/* Banners */}
-          <AnimatePresence>
-            {signupSuccess && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2.5 flex items-start gap-2">
-                <CheckCircle2 size={12} className="text-emerald-400 mt-0.5 shrink-0" />
-                <p className="text-emerald-300 text-[11px] leading-relaxed">¡Cuenta creada! Inicia sesión.</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <AnimatePresence>
-            {error && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5">
-                <p className="text-red-400 text-[11px] leading-relaxed">{error}</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+        <div className="kx-seg" role="tablist">
+          {(['login', 'signup'] as const).map(tabId => {
+            const active = tab === tabId;
+            return (
+              <button
+                key={tabId}
+                role="tab"
+                aria-selected={active}
+                onClick={() => { setTab(tabId); setError(''); setSignupSuccess(false); }}
+                className={`relative flex-1 flex items-center justify-center gap-1.5 py-2 text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${active ? 'kx-tab-on' : 'text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)]'}`}
+              >
+                {active && (
+                  <motion.span layoutId="authTabPill" className="kx-seg-pill"
+                    transition={{ type: 'spring', stiffness: 460, damping: 36 }} />
+                )}
+                <span className="relative">{tabId === 'login' ? <LogIn size={13} /> : <UserPlus size={13} />}</span>
+                <span className="relative" style={{ fontWeight: active ? 600 : 500 }}>{tabId === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</span>
+              </button>
+            );
+          })}
+        </div>
 
-          {/* Google */}
-          <button type="button" onClick={handleGoogleOAuth} disabled={authLoading}
-            className="w-full flex items-center justify-center gap-2 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/12 hover:border-white/20 text-white/70 hover:text-white text-[11px] transition-all disabled:opacity-40"
-            style={{ fontWeight: 500 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-            </svg>
-            Continuar con Google
-          </button>
+        <AnimatePresence>
+          {signupSuccess && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              role="status" className="kx-ok-strip rounded-xl p-3 flex items-start gap-2 overflow-hidden">
+              <CheckCircle2 size={14} className="text-emerald-500 mt-0.5 shrink-0" />
+              <p className="text-[12px] leading-relaxed text-[var(--usb-fg)]">Cuenta creada. Inicia sesión para continuar.</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {error && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              role="alert" className="rounded-xl p-3 border border-rose-500/30 bg-rose-500/10 overflow-hidden">
+              <p className="text-[12px] leading-relaxed" style={{ color: t("#fda4af", "#be123c") }}>{error}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-px bg-white/6" />
-            <span className="text-white/20 text-[10px]">o con email</span>
-            <div className="flex-1 h-px bg-white/6" />
-          </div>
+        <button type="button" onClick={handleGoogleOAuth} disabled={authLoading}
+          className="w-full h-11 rounded-xl border border-[#747775] bg-white text-[13px] font-medium text-[#1f1f1f] flex items-center justify-center gap-3 transition-colors hover:bg-[#f1f3f4] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          </svg>
+          Continuar con Google
+        </button>
 
-          <form onSubmit={handleAuth} className="space-y-2">
-            <div className="relative">
-              <Mail size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-[var(--usb-divider)]" />
+          <span className="kx-slate text-[var(--usb-fg-mid)]">o con email</span>
+          <div className="flex-1 h-px bg-[var(--usb-divider)]" />
+        </div>
+
+        <form onSubmit={handleAuth} className="space-y-3">
+          <label className="block space-y-1.5">
+            <span className="kx-slate block text-[var(--usb-fg-mid)]">Correo</span>
+            <div className="relative group">
+              <Mail size={15} className={iconCls} />
               <input type="email" required autoComplete="email" value={email}
                 onChange={e => { setEmail(e.target.value); setError(''); }}
-                className="w-full bg-white/5 border border-white/8 rounded-lg py-2 pl-8 pr-3 text-[12px] text-white placeholder:text-white/20 focus:outline-none focus:border-violet-500/60 focus:bg-white/7 transition-all"
+                className={`${fieldCls} pl-10 pr-3.5`}
                 placeholder="correo@ejemplo.com" />
             </div>
-            <div className="relative">
-              <Key size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="kx-slate block text-[var(--usb-fg-mid)]">Contraseña</span>
+            <div className="relative group">
+              <Key size={15} className={iconCls} />
               <input type={showPassword ? 'text' : 'password'} required
-                autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
-                minLength={tab === 'signup' ? 6 : undefined}
+                autoComplete={isLogin ? 'current-password' : 'new-password'}
+                minLength={!isLogin ? 6 : undefined}
                 value={password} onChange={e => { setPassword(e.target.value); setError(''); }}
-                className="w-full bg-white/5 border border-white/8 rounded-lg py-2 pl-8 pr-8 text-[12px] text-white placeholder:text-white/20 focus:outline-none focus:border-violet-500/60 focus:bg-white/7 transition-all"
-                placeholder={tab === 'signup' ? 'Mínimo 6 caracteres' : 'Contraseña'} />
+                className={`${fieldCls} pl-10 pr-11`}
+                placeholder={!isLogin ? 'Mínimo 6 caracteres' : 'Tu contraseña'} />
               <button type="button" onClick={() => setShowPassword(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/25 hover:text-white/50 transition-colors">
-                {showPassword ? <EyeOff size={12} /> : <Eye size={12} />}
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors p-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
-            <button type="submit" disabled={authLoading}
-              className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 text-white text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-900/25 active:scale-[0.98] disabled:opacity-50">
-              {authLoading ? <Loader2 size={13} className="animate-spin" /> : (tab === 'login' ? <LogIn size={13}/> : <UserPlus size={13}/>)}
-              {tab === 'login' ? 'Iniciar sesión' : 'Crear cuenta gratis'}
-              {!authLoading && <ArrowRight size={13}/>}
-            </button>
-          </form>
+          </label>
+          <button type="submit" disabled={authLoading}
+            className="kx-on-solid kx-cta w-full h-11 rounded-xl text-[13px] font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--usb-bg-3)]">
+            {authLoading ? <Loader2 size={15} className="animate-spin" /> : (isLogin ? <LogIn size={15}/> : <UserPlus size={15}/>)}
+            {isLogin ? 'Iniciar sesión' : 'Crear cuenta gratis'}
+            {!authLoading && <ArrowRight size={15}/>}
+          </button>
+        </form>
+      </motion.div>
+
+      {/* Qué incluye cada modo */}
+      <motion.div {...rise(2)} className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl p-4 space-y-2.5">
+        <div className="grid grid-cols-[1fr_64px_64px] items-center gap-2">
+          <span className="kx-slate text-[var(--usb-fg-mid)]">Qué incluye</span>
+          <span className="kx-slate text-center text-[var(--usb-fg-mid)]">Invitado</span>
+          <span className="kx-slate text-center" style={{ color: violetInk }}>Cuenta</span>
         </div>
-      </div>
+        {features.map(([f, guest]) => (
+          <div key={f} className="grid grid-cols-[1fr_64px_64px] items-center gap-2 py-1.5 border-t border-[var(--usb-divider)]">
+            <span className="text-[11.5px] font-medium text-[var(--usb-fg)]">{f}</span>
+            <span className="flex justify-center">
+              {guest
+                ? <Check size={14} strokeWidth={2.8} className="text-emerald-500" aria-label="Incluido" />
+                : <span className="h-px w-3 bg-[var(--usb-fg-dim)]" aria-label="No incluido" />}
+            </span>
+            <span className="flex justify-center">
+              <span className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'color-mix(in srgb, #6d4aff 16%, var(--usb-bg-3))', color: violetInk }}>
+                <Check size={12} strokeWidth={3} aria-label="Incluido" />
+              </span>
+            </span>
+          </div>
+        ))}
+      </motion.div>
 
       {/* Guest CTA */}
-      <div className="flex items-center gap-2 mx-3 my-3">
-        <div className="flex-1 h-px bg-white/6" />
-        <span className="text-white/20 text-[10px]">sin cuenta</span>
-        <div className="flex-1 h-px bg-white/6" />
-      </div>
-
-      <div className="mx-3 mb-5">
-        <button onClick={handleGuest}
-          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-white/7 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/12 text-white/45 hover:text-white/70 transition-all group">
-          <div className="flex items-center gap-2.5">
-            <HardDrive size={12} className="shrink-0" />
-            <div className="text-left">
-              <p className="text-[11px]" style={{ fontWeight: 500 }}>Continuar sin cuenta</p>
-              <p className="text-[10px] text-white/25 mt-0.5">Datos solo en este dispositivo</p>
-            </div>
-          </div>
-          <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform shrink-0" />
-        </button>
-      </div>
+      <motion.button {...rise(3)} onClick={handleGuest}
+        className="group w-full flex items-center gap-3 px-4 py-3.5 text-left rounded-2xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] transition-colors hover:border-[#6d4aff]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+        <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-[var(--usb-bg-2)] border border-[var(--usb-border)] text-[var(--usb-fg-mid)]">
+          <HardDrive size={17} />
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-bold tracking-tight text-[var(--usb-fg-hi)]">Continuar sin cuenta</p>
+          <p className="text-[11.5px] text-[var(--usb-fg-mid)] mt-0.5 font-medium">Tus datos se quedan en este dispositivo</p>
+        </div>
+        <ArrowRight size={16} className="text-[var(--usb-fg-mid)] group-hover:translate-x-1 group-hover:text-[var(--usb-fg-hi)] transition-all shrink-0" />
+      </motion.button>
+      <div className="h-1 shrink-0" />
     </div>
   );
 }

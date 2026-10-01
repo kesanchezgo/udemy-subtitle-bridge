@@ -26,6 +26,7 @@ export interface DebugRequest {
 }
 
 export interface CacheEntry {
+  id?: string;
   en: string;
   es: string;
   latencyMs: number;
