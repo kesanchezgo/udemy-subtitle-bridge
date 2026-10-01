@@ -26,6 +26,17 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
 - **Dock**: ancho por defecto 540px (rango 380–720) y escala tipográfica con piso
   mínimo de 9.5–11px.
 
+### Changed — Tarjetas Anki con identidad Kinema (solo cosmético)
+
+- Las tarjetas exportadas adoptan el violeta de marca en sus acentos
+  (claro `#5b37e8`, oscuro `#9a83ff` — ambos WCAG AA, medidos) y los
+  iconos de los bloques peek de vocabulario pasan a Phosphor, en línea
+  con el set de iconos de la extensión. Estructura, campos, contenido y
+  reglas de generación: intactos (el limpiador del prefijo «💻» se
+  conserva porque el prompt lo sigue prohibiendo).
+- Contraste verificado: 6.65:1 (claro) y 6.14:1 (oscuro), frente al
+  4.83:1 del morado nativo de Udemy.
+
 ## [1.2.0] — 2026-09-23
 
 ### Fixed
