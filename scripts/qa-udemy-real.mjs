@@ -324,13 +324,16 @@ if (!sessionOk) {
 await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-study.png') });
 console.log('   ✅ sesión de estudio generada con la transcripción REAL → qa-udemy-study.png');
 
-step('Driving the stepper to step 5 (No olvidar) for the export');
+step('Driving the stepper to step 5 (Anki) for the export — flujo Kinema');
 try {
+	// 1) Nivel: elegir confianza (auto-avanza a Repaso, 2/5).
 	await page.locator('[id^="usb-dock-host-"] button:has-text("Entendido")').first().click({ timeout: 15000 });
-	await page.locator('[id^="usb-dock-host-"] button:has-text("Verificar mi comprensión")').first().click({ timeout: 15000 });
+	// 2) Avanzar a Recordar (preguntas).
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 15000 });
+	// 3) Recordar: escape hatch que completa las preguntas (→ Práctica, 4/5).
 	await page.locator('[id^="usb-dock-host-"] button:has-text("Saltar a la práctica")').first().click({ timeout: 15000 });
-	await sleep(600);
-	await page.locator('[id^="usb-dock-host-"] button[title="No olvidar"]').first().click({ timeout: 10000 });
+	// 4) Práctica → Anki (5/5).
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 15000 });
 } catch (e) {
 	await fail(`stepper did not reach the export step: ${String(e).slice(0, 140)}`, page, 'stepper');
 }
@@ -366,8 +369,13 @@ try {
 	const deckNames = Object.values(decks).map((d) => d.name);
 	const realDeck = deckNames.find((n) => n.includes('::') && /Java In-Depth/i.test(n));
 	if (!realDeck) throw new Error('mazo del curso real ausente: ' + deckNames.join(', '));
-	const model = Object.values(models).find((m) => m.name === 'Subtitle Bridge Basic');
-	if (!model?.tmpls?.[0]?.qfmt?.includes('anki-wrapper dev-card')) throw new Error('plantilla dev-card ausente');
+	const model = Object.values(models).find((m) => m.name === 'Udemy Bridge Concept');
+	if (!model) throw new Error('modelo Udemy Bridge Concept ausente: ' + Object.values(models).map((m) => m.name).join(', '));
+	if (!model.tmpls[0].qfmt.includes('anki-wrapper dev-card')) throw new Error('plantilla dev-card ausente');
+	const conceptFlds = model.flds.map((f) => f.name);
+	if (JSON.stringify(conceptFlds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente'])) throw new Error('campos incorrectos: ' + conceptFlds.join(','));
+	const rootDeckName = deckNames.find((n) => n === 'Udemy Bridge');
+	if (!rootDeckName) throw new Error('árbol Udemy Bridge ausente');
 	const notes = db.exec('SELECT guid, sfld FROM notes')[0]?.values || [];
 	const guids = notes.map((n) => n[0]);
 	if (new Set(guids).size !== guids.length) throw new Error('GUIDs duplicados');

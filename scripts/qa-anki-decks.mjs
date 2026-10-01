@@ -145,7 +145,7 @@ console.log(`  → tmp/qa-concept.apkg (${conceptApkg.length} bytes)`);
 	const lessonDeck = Object.values(col.decks).find((d) => d.name === lessonPath);
 	check('mazo de lección apunta al preset de Cursos', lessonDeck?.conf === COURSES_PRESET.id);
 	const rootDeck = Object.values(col.decks).find((d) => d.name === ROOT);
-	check('raíz con descripción de la extensión', Boolean(rootDeck?.desc?.includes('Kinema')));
+	check('raíz con descripción de la extensión', Boolean(rootDeck?.desc?.includes('Udemy Subtitle Bridge')));
 
 	const model = col.models[String(CONCEPT_MODEL.id)];
 	check('note type "Udemy Bridge Concept" embebido', model?.name === 'Udemy Bridge Concept');
