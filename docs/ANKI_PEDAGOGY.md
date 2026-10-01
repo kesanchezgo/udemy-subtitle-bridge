@@ -210,6 +210,33 @@ Consultada 2026-09-28 vía Scopus API (queries §5), ordenada por citas:
 > concretas; sus hallazgos están representados por 8, 10 y 12. La lista usa
 > EXCLUSIVAMENTE resultados reales de Scopus con DOI verificable.
 
+## 6. Color por tipo de tarjeta (señalización)
+
+La píldora de tipo de cada tarjeta de concepto usa un color por tipo
+(concepto=violeta, código=verde, entrevista=azul, comparación=ámbar,
+proceso=rosa, aplicación=verde azulado; variantes claro/oscuro con contraste
+AA medido). Base de investigación (Scopus, 2026-09-29):
+
+- **Principio de señalización**: las señales visuales que destacan la
+  ESTRUCTURA del material mejoran el aprendizaje — dos meta-análisis lo
+  confirman (Richter, Scheiter & Eitel 2016, 10.1016/j.edurev.2015.12.003;
+  Xie et al. 2020, 10.1007/s11423-020-09748-7).
+- **Color-codificación con significado**: el eye-tracking de Ozcelik et al.
+  (2009, 10.1016/j.compedu.2009.03.002) muestra que el color reduce la
+  búsqueda visual y mejora el aprendizaje CUANDO codifica información
+  relevante (aquí: qué tipo de práctica toca — oral, predecir código,
+  comparar), no cuando es decorativo.
+- **Condiciones aplicadas**: color consistente por tipo (mismo color siempre),
+  aplicación sutil (solo la píldora; el resto de la tarjeta idéntica — evitar
+  sobrecarga), y el texto del tipo sigue legible (la señal es redundante con
+  la etiqueta textual, doble canal).
+- **Reversal por expertise**: la señal ayuda más a quien está aprendiendo;
+  no perjudica al avanzado (10.1007/s11251-019-09492-3).
+
+Conclusión: píldora coloreada por tipo = señalización significativa y
+consistente, dentro de lo que la literatura respalda; el resto de la tarjeta
+permanece idéntico para no fragmentar la atención.
+
 ## 5. Queries Scopus usadas (2026-09-28)
 
 `TITLE-ABS-KEY` con `sort=citedby-count`, count=6, sobre:

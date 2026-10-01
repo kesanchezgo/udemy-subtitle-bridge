@@ -17,7 +17,7 @@ const JSZip = require('jszip');
 
 const NEW = await import('../src/app/services/ankiDesign.ts');
 const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
-const { stableGuid } = await import('../src/app/services/ankiDesign.ts');
+const { stableGuid, tipoFieldValue } = await import('../src/app/services/ankiDesign.ts');
 
 async function call(action, params = {}) {
 	const res = await fetch('http://127.0.0.1:8765', { method: 'POST', body: JSON.stringify({ action, version: 6, params }) });
@@ -91,7 +91,7 @@ const spec = {
 		modelName: NEW.CONCEPT_MODEL.name,
 		deck: DECK,
 		guid: stableGuid(`cmp-tipos|${c.front}`),
-		fields: [c.front, c.back, '12. Transacciones y @Transactional', `<a href="${lessonUrl}">▶ Repasar esta lección</a>`, c.type],
+		fields: [c.front, c.back, '12. Transacciones y @Transactional', `<a href="${lessonUrl}">▶ Repasar esta lección</a>`, tipoFieldValue(c.type)],
 		tags: c.tags,
 	})),
 };

@@ -45,7 +45,9 @@ const page = await browser.newPage({ viewport: { width: 880, height: 980 } });
 
 for (const info of infos) {
 	const fields = fieldsOf(info);
-	const tipo = fields.Tipo ?? 'tipo';
+	// El campo Tipo ahora trae <span data-tp="tipo">…</span> — extraer el valor limpio
+	const tpMatch = /data-tp="(\w+)"/.exec(fields.Tipo ?? '');
+	const tipo = tpMatch ? tpMatch[1] : 'tipo';
 	for (const face of ['front', 'back']) {
 		const tmpl = face === 'front' ? templates[tKey].Front : templates[tKey].Back;
 		const html = `<!doctype html><html><head><meta charset="utf-8"><style>${styling.css}</style></head><body class="card">${render(tmpl, fields)}</body></html>`;
