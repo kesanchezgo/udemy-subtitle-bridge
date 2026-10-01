@@ -43,6 +43,9 @@ export interface ConceptCardInput {
 	back: string;
 	guid: string;
 	tags: string[];
+	/** Tipo de tarjeta (concepto/codigo/entrevista/comparacion/proceso/aplicacion):
+	 *  se muestra como píldora diseñada en la tarjeta, junto a la lección. */
+	type?: string;
 }
 
 /**
@@ -88,7 +91,7 @@ export function buildConceptSpec(
 			modelName: CONCEPT_MODEL.name,
 			deck: lessonPath,
 			guid: card.guid,
-			fields: [card.front, card.back, safeLesson, fuente],
+			fields: [card.front, card.back, safeLesson, fuente, card.type ?? ''],
 			tags: card.tags,
 		})),
 	};
@@ -323,6 +326,12 @@ hr#answer {
 .terminal-dots .dot.red { background-color: #ef4444; }
 .terminal-dots .dot.yellow { background-color: #f59e0b; }
 .terminal-dots .dot.green { background-color: #10b981; }
+
+.tipo-pill {
+  background: var(--block-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--block-border);
+}
 
 .context-pill, .type-pill {
   font-family: "SF Mono", "Fira Code", "JetBrains Mono", Consolas, monospace;
@@ -585,7 +594,10 @@ const CONCEPT_FRONT_TEMPLATE = `<div class="anki-wrapper dev-card">
         <span class="dot yellow"></span>
         <span class="dot green"></span>
       </div>
-      <div class="type-pill context-pill">{{Leccion}}</div>
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        {{#Tipo}}<div class="type-pill tipo-pill">{{Tipo}}</div>{{/Tipo}}
+        <div class="type-pill context-pill">{{Leccion}}</div>
+      </div>
     </header>
 
     <main class="qa-container">
@@ -630,7 +642,10 @@ const CONCEPT_BACK_TEMPLATE = `<div class="anki-wrapper dev-card">
         <span class="dot yellow"></span>
         <span class="dot green"></span>
       </div>
-      <div class="type-pill context-pill">{{Leccion}}</div>
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        {{#Tipo}}<div class="type-pill tipo-pill">{{Tipo}}</div>{{/Tipo}}
+        <div class="type-pill context-pill">{{Leccion}}</div>
+      </div>
     </header>
 
     <div class="qa-header-back" id="qaBack">
@@ -675,7 +690,7 @@ export const CONCEPT_MODEL: import('./ankiApkgCore').ApkgModelSpec = {
 	id: CONCEPT_MODEL_ID,
 	name: CONCEPT_MODEL_NAME,
 	sortf: 0,
-	fields: ['Front', 'Back', 'Leccion', 'Fuente'],
+	fields: ['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'],
 	templates: [{ name: 'Concepto', qfmt: CONCEPT_FRONT_TEMPLATE, afmt: CONCEPT_BACK_TEMPLATE }],
 	css: CONCEPT_MODEL_CSS,
 };

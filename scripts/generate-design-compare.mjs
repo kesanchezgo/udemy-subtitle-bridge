@@ -72,7 +72,7 @@ function buildSpec(modelConcept, modelVocab, branchLabel) {
 			{
 				modelName: modelConcept.name, deck: cDeck,
 				guid: stableGuid(`cmp-${branchLabel}|concepto|${conceptCard.front}`),
-				fields: [conceptCard.front, conceptCard.back, '01 · Lección de prueba', '<a href="#">▶ Repasar esta lección</a>'],
+				fields: [conceptCard.front, conceptCard.back, '01 · Lección de prueba', '<a href="#">▶ Repasar esta lección</a>', 'concepto'],
 				tags: conceptCard.tags,
 			},
 			{

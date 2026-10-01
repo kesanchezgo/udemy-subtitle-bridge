@@ -58,11 +58,13 @@ const notes = [
 		front: 'Tarjeta 1 · El violeta: ¿cambió mucho?',
 		back: `<p>No — <b>es un ajuste de tono</b>, no un rediseño. Estos son los dos violetas reales, lado a lado:</p>${swatches}<p><b>Conclusión:</b> la diferencia existe (marca) pero es sutil a propósito. Contenido, estructura y campos: cero cambios.</p>`,
 		leccion: '1 · El violeta',
+		tipo: 'Concepto',
 	},
 	{
 		front: 'Tarjeta 2 · Los iconitos de las esquinas',
 		back: `<p>Los dos iconitos de la tarjeta de vocabulario cambiaron de estilo (no de función):</p>${iconsDemo}<p><b>Conclusión:</b> mismo significado, mismo sitio, mismo tamaño — solo el estilo del trazo cambió, coherente con los iconos nuevos de la extensión.</p>`,
 		leccion: '2 · Los iconos',
+		tipo: 'Concepto',
 	},
 	{
 		// El campo Front CONTIENE el prefijo "💻 CÓDIGO" a propósito:
@@ -70,6 +72,7 @@ const notes = [
 		front: '💻 CÓDIGO ¿Qué imprime <code>System.out.println(1 + 2 + 3)</code> y por qué?',
 		back: `<p>Si lees esta pregunta <b>sin ningún "💻 CÓDIGO" delante</b>, el limpiador funcionó.</p><p>Lo que pasó: el campo de esta tarjeta <b>contiene literalmente</b> «💻 CÓDIGO ¿Qué imprime…?» — pero la plantilla de la tarjeta elimina ese prefijo al renderizar.</p><div class="warning-box">¿Y por qué existe ese limpiador? Porque la IA está <b>prohibida</b> (por el prompt) de decorar las tarjetas con rótulos como «💻 CÓDIGO» — el diseño de la tarjeta ya pone su propia cabecera. La IA no genera emojis en las tarjetas: genera la pregunta/respuesta limpia, y el marco lo pone la plantilla. El limpiador es el plan B si la IA desobedece.</div>`,
 		leccion: '3 · El limpiador de 💻',
+		tipo: 'Código',
 	},
 ];
 
@@ -78,13 +81,13 @@ const spec = {
 		{ name: 'Udemy Bridge', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
 		{ name: DECK, conf: NEW.COURSES_PRESET.id, desc: 'Demostración de qué cambió entre el diseño anterior y el nuevo. Borrar tras revisar.' },
 	],
-	models: [{ id: NEW.stableNumericId(MODEL, 1_660_000_000_000), name: MODEL, sortf: 0, fields: ['Front', 'Back', 'Leccion', 'Fuente'], templates: [{ name: 'Concepto', qfmt: NEW.CONCEPT_MODEL.templates[0].qfmt, afmt: NEW.CONCEPT_MODEL.templates[0].afmt }], css: NEW.CONCEPT_MODEL.css }],
+	models: [{ id: NEW.stableNumericId(MODEL, 1_660_000_000_000), name: MODEL, sortf: 0, fields: [...NEW.CONCEPT_MODEL.fields], templates: [{ name: 'Concepto', qfmt: NEW.CONCEPT_MODEL.templates[0].qfmt, afmt: NEW.CONCEPT_MODEL.templates[0].afmt }], css: NEW.CONCEPT_MODEL.css }],
 	dconfs: [NEW.COURSES_PRESET, NEW.VOCAB_PRESET],
 	notes: notes.map((n, i) => ({
 		modelName: MODEL,
 		deck: DECK,
 		guid: NEW.stableGuid(`cmp-demo|${i}`),
-		fields: [n.front, n.back, n.leccion, ''],
+		fields: [n.front, n.back, n.leccion, '', n.tipo],
 		tags: ['prueba-diseno'],
 	})),
 };

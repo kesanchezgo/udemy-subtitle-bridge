@@ -373,7 +373,7 @@ try {
 	if (!model) throw new Error('modelo Udemy Bridge Concept ausente: ' + Object.values(models).map((m) => m.name).join(', '));
 	if (!model.tmpls[0].qfmt.includes('anki-wrapper dev-card')) throw new Error('plantilla dev-card ausente');
 	const conceptFlds = model.flds.map((f) => f.name);
-	if (JSON.stringify(conceptFlds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente'])) throw new Error('campos incorrectos: ' + conceptFlds.join(','));
+	if (JSON.stringify(conceptFlds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'])) throw new Error('campos incorrectos: ' + conceptFlds.join(','));
 	const rootDeckName = deckNames.find((n) => n === 'Udemy Bridge');
 	if (!rootDeckName) throw new Error('árbol Udemy Bridge ausente');
 	const notes = db.exec('SELECT guid, sfld FROM notes')[0]?.values || [];

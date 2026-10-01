@@ -512,7 +512,7 @@ if (ev.d) {
 		if (!model.tmpls[0].afmt.includes('prism-java.min.js')) throw new Error('plantilla back sin Prism (fix cara B ausente)');
 		if (!model.tmpls[0].qfmt.includes('{{Leccion}}')) throw new Error('píldora de lección ({{Leccion}}) ausente');
 		const flds = model.flds.map((f) => f.name);
-		if (JSON.stringify(flds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente'])) throw new Error('campos incorrectos: ' + flds.join(','));
+		if (JSON.stringify(flds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'])) throw new Error('campos incorrectos: ' + flds.join(','));
 		const deckNames = Object.values(decks).map((d) => d.name);
 		if (!deckNames.includes('Udemy Bridge') || !deckNames.some((n) => n.startsWith('Udemy Bridge::Courses::'))) {
 			throw new Error('árbol de mazos de la extensión ausente: ' + deckNames.join(', '));
