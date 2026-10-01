@@ -1208,6 +1208,9 @@ ${[
   letter-spacing: -0.025em;
   line-height: 1.15;
 }
+/* Color por defecto de kx-slate, theme-aware y con especificidad cero
+   (:where) para no vencer los text-* explícitos de cada componente. */
+.usb-dock :where(.kx-slate):not([class*="text-"]) { color: var(--usb-fg-mid); }
 .usb-dock .kx-slate {
   font-family: var(--kinema-mono);
   font-size: calc(10px * var(--usb-scale, 1));
