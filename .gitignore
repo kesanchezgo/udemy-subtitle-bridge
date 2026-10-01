@@ -47,3 +47,5 @@ dist/
 theme-*.png
 tmp/
 .mock/
+AGENTS.md
+udemy_curse_page_v2.html
