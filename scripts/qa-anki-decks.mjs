@@ -106,18 +106,21 @@ const conceptCards = [
 		back: '<p><b>Bytecode</b> en archivos <code>.class</code>, no código máquina nativo.</p>',
 		guid: '',
 		tags: ['java', 'compilacion', 'Tag Con Espacios'],
+		type: 'concepto',
 	},
 	{
 		front: '¿Por qué el mismo <code>.class</code> corre en Windows y Linux?',
 		back: '<p>La <b>JVM</b> de cada plataforma interpreta el mismo bytecode.</p>',
 		guid: '',
 		tags: [],
+		type: 'concepto',
 	},
 	{
 		front: 'Papel del JIT',
 		back: '<p>Compila <b>hot spots</b> a nativo en caliente.</p>',
 		guid: '',
 		tags: ['java'],
+		type: 'concepto',
 	},
 ];
 
@@ -149,7 +152,7 @@ console.log(`  → tmp/qa-concept.apkg (${conceptApkg.length} bytes)`);
 
 	const model = col.models[String(CONCEPT_MODEL.id)];
 	check('note type "Udemy Bridge Concept" embebido', model?.name === 'Udemy Bridge Concept');
-	check('campos Front/Back/Leccion/Fuente', JSON.stringify(model?.flds?.map((f) => f.name)) === '["Front","Back","Leccion","Fuente"]');
+	check('campos Front/Back/Leccion/Fuente', JSON.stringify(model?.flds?.map((f) => f.name)) === '["Front","Back","Leccion","Fuente","Tipo"]');
 	check('plantilla usa {{Leccion}} en la píldora', model?.tmpls?.[0]?.qfmt.includes('{{Leccion}}'));
 	check('plantilla usa {{Fuente}} en el reverso', model?.tmpls?.[0]?.afmt.includes('{{#Fuente}}'));
 
@@ -164,7 +167,7 @@ console.log(`  → tmp/qa-concept.apkg (${conceptApkg.length} bytes)`);
 	check('3 tarjetas, ord 0, type new', col.cards.length === 3 && col.cards.every((c) => c.ord === 0 && c.type === 0 && c.queue === 0));
 	const note = col.notes[0];
 	const fields = note.flds.split('\x1f');
-	check('nota con 4 campos y Fuente con enlace a la lección', fields.length === 4 && fields[3].includes(lessonUrl));
+	check('nota con 5 campos, Fuente con enlace y Tipo relleno', fields.length === 5 && fields[3].includes(lessonUrl) && fields[4] === 'concepto');
 	check('tags sanitizadas (espacios → guiones)', note.tags === 'java compilacion Tag-Con-Espacios', note.tags);
 	check('GUID usb* por contenido', /^usb[a-z0-9]{4,8}$/.test(note.guid), note.guid);
 

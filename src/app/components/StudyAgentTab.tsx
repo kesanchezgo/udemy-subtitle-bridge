@@ -914,6 +914,7 @@ async function exportApkgFile(
       back: cardTextToHtml(c.back),
       // GUID probado: hash de curso|lección|front — reimportar ACTUALIZA en vez de duplicar.
       guid: stableAnkiGuid(course, lesson, c),
+      type: c.type,
       tags: [...c.tags, c.type].map((t) => t.replace(/\s+/g, "_")),
     })),
     course,
