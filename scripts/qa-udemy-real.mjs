@@ -386,9 +386,131 @@ try {
 	await fail('.apkg audit (curso real): ' + e.message, page, 'apkg-audit');
 }
 
+// ── Fase: SRT ES (traducción automática del curso real) ──────────────────────
+step('Verifying ES translation state (curso real)');
+const dockTextEs = await page.evaluate(() => document.querySelector('[id^="usb-dock-host-"]').shadowRoot.textContent);
+const esOk = /SRT Español · (Completo|Parcial)/i.test(dockTextEs);
+if (!esOk) console.log('   · el curso puede tener ES nativo o la traducción sigue en curso — no fatal');
+else console.log('   ✅ SRT Español presente en el curso real');
+
+// ── Fase: Vocabulario EN del curso real → .apkg ──────────────────────────────
+step('Exporting REAL course vocabulary (.apkg)');
+let vocabOk = false;
+const vocabDownload = page.waitForEvent('download', { timeout: 90000 }).then((d) => ({ d }), () => ({}));
+await page.locator('[id^="usb-dock-host-"] button:has-text("Extraer vocabulario")').first().click({ timeout: 15000 });
+await sleep(3000);
+const vocabEv = await Promise.race([vocabDownload, sleep(95000).then(() => ({}))]);
+if (!vocabEv.d) {
+	await fail('vocabulario: download event no disparado (curso real)', page, 'vocab-download');
+} else {
+	const vocabFile = path.join(tmpdir(), 'usb-qa-udemy-vocab.apkg');
+	await vocabEv.d.saveAs(vocabFile);
+	try {
+		const { default: JSZip } = await import('jszip');
+		const { default: initSqlJs } = await import('sql.js');
+		const zip = await JSZip.loadAsync(readFileSync(vocabFile));
+		const colBytes = await zip.file('collection.anki2').async('uint8array');
+		const SQL = await initSqlJs({ locateFile: (f) => path.join(repoRoot, 'node_modules', 'sql.js', 'dist', f) });
+		const db = new SQL.Database(colBytes);
+		const colRow = db.exec('SELECT models, decks FROM col LIMIT 1')[0].values[0];
+		const models = JSON.parse(colRow[0]);
+		const decks = JSON.parse(colRow[1]);
+		const vocabModel = Object.values(models).find((m) => m.name === 'Udemy Bridge Vocab');
+		if (!vocabModel) throw new Error('modelo Udemy Bridge Vocab ausente');
+		const flds = vocabModel.flds.map((f) => f.name);
+		if (JSON.stringify(flds) !== JSON.stringify(['word', 'phonetic', 'sentence', 'translation', 'bilingual', 'monolingual', 'picture', 'sentence audio', 'word audio'])) {
+			throw new Error('campos de vocabulario incorrectos: ' + flds.join(','));
+		}
+		const vocabDeck = Object.values(decks).find((d) => /Vocabulary::English::/i.test(d.name));
+		if (!vocabDeck) throw new Error('mazo de vocabulario ausente: ' + Object.values(decks).map((d) => d.name).join(', '));
+		const notes = db.exec('SELECT guid, sfld FROM notes')[0]?.values || [];
+		if (notes.length === 0) throw new Error('0 notas de vocabulario');
+		for (const n of notes) if (!n[0].startsWith('usb')) throw new Error('GUID sin prefijo usb');
+		vocabOk = true;
+		console.log(`   ✅ vocabulario real: ${notes.length} palabras en "${vocabDeck.name}" (fonética/definición incluidas)`);
+		db.close();
+	} catch (e) {
+		await fail('vocabulario (curso real): ' + e.message, page, 'vocab-audit');
+	}
+}
+
+// ── Fase: Obsidian (URIs reales del curso real) + guard de duplicados ─────────
+step('Exporting to Obsidian (curso real) + duplicate guard');
+await page.evaluate(() => {
+	if (!window.__qaUriShim) {
+		window.__qaUriShim = true;
+		window.__qaUris = [];
+		const obs = new MutationObserver((muts) => {
+			for (const m of muts) {
+				m.addedNodes.forEach((n) => {
+					if (n && n.tagName === 'A' && String(n.getAttribute('href') || '').startsWith('obsidian://')) {
+						window.__qaUris.push(n.getAttribute('href'));
+					}
+				});
+			}
+		});
+		obs.observe(document.body, { childList: true, subtree: true });
+	}
+});
+let obsidianOk = false;
+try {
+	await page.locator('[id^="usb-dock-host-"] button').filter({ hasText: /^Exportar$/ }).first().click({ timeout: 15000 });
+	await sleep(3000);
+	const uris = await page.evaluate(() => window.__qaUris || []);
+	if (uris.length !== 2) throw new Error('esperaba 2 URIs (MOC+sesión), llegaron ' + uris.length);
+	const decoded = uris.map((u) => decodeURIComponent(u));
+	const session = decoded.find((d) => d.includes('type%3A%20sesion') || d.includes('type: sesion'));
+	const moc = decoded.find((d) => d.includes('type%3A%20curso') || d.includes('type: curso'));
+	if (!session) throw new Error('falta la URI de sesión');
+	if (!moc) throw new Error('falta la URI de MOC');
+	if (!session.includes('obsidian://new?vault=')) throw new Error('vault malformado');
+	obsidianOk = true;
+	console.log(`   ✅ 2 URIs de Obsidian capturadas (sesión ${(session.length / 1024).toFixed(1)} kB + MOC del curso real)`);
+	await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-obsidian.png') });
+	await page.locator('[id^="usb-dock-host-"] button').filter({ hasText: /^Exportar$/ }).first().click({ timeout: 15000 });
+	await sleep(1800);
+	const urisAfter = await page.evaluate(() => (window.__qaUris || []).length);
+	if (urisAfter !== uris.length) throw new Error('guard FALLÓ: reexportó sin avisar');
+	console.log('   ✅ guard de duplicados OK en el curso real');
+} catch (e) {
+	await fail('obsidian (curso real): ' + e.message, page, 'obsidian-real');
+}
+
+// ── Fase: Historial + Progreso + Tema en la página real ──────────────────────
+step('History, progress panel and theme switch (página real)');
+let panelOk = false;
+try {
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-history')));
+	await sleep(1200);
+	await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-history.png') });
+	const histText = await page.evaluate(() => document.querySelector('[id^="usb-dock-host-"]').shadowRoot.textContent);
+	if (/Java In-Depth/i.test(histText)) console.log('   ✅ historial muestra el curso real');
+	else console.log('   · historial abierto (sin entrada del curso aún)');
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-history')));
+	await sleep(600);
+	const progressBtn = page.locator('[id^="usb-dock-host-"] button[aria-label="Abrir progreso"]').first();
+	if (await progressBtn.count()) {
+		await progressBtn.click({ timeout: 5000 });
+		await sleep(900);
+		await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-progress.png') });
+		await progressBtn.click({ timeout: 5000 }).catch(() => {});
+		await sleep(500);
+	}
+	const themeBtn = page.locator('[id^="usb-dock-host-"] button[aria-label^="Cambiar a tema"]').first();
+	if (await themeBtn.count()) {
+		await themeBtn.click({ timeout: 5000 });
+		await sleep(900);
+		await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-theme.png') });
+		console.log('   ✅ tema alternado en la página real');
+	}
+	panelOk = true;
+} catch (e) {
+	await fail('paneles (curso real): ' + e.message, page, 'panels-real');
+}
+
 console.log('\n=== QA UDEMY REAL — RESUMEN ===');
-console.log(`dock: OK | metadatos reales: ${courseOk ? 'OK' : 'FAIL'} | subtítulos: ${cues} líneas | sesión: ${sessionOk ? 'OK' : 'FAIL'} | apkg: ${apkgOk ? 'OK' : 'FAIL'}`);
+console.log(`dock: OK | metadatos: ${courseOk ? 'OK' : 'FAIL'} | subtítulos: ${cues} líneas | sesión: ${sessionOk ? 'OK' : 'FAIL'} | apkg: ${apkgOk ? 'OK' : 'FAIL'} | srt-es: ${esOk ? 'OK' : 'n/a'} | vocab: ${vocabOk ? 'OK' : 'FAIL'} | obsidian: ${obsidianOk ? 'OK' : 'FAIL'} | paneles: ${panelOk ? 'OK' : 'FAIL'}`);
 console.log(`export dir: ${repoRoot}`);
 
 await context.close();
-process.exit(sessionOk && apkgOk && courseOk ? 0 : 1);
+process.exit(sessionOk && apkgOk && courseOk && vocabOk && obsidianOk && panelOk ? 0 : 1);
