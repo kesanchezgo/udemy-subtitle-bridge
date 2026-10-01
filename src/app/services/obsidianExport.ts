@@ -443,7 +443,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'<!-- Formato: ## [YYYY-MM-DD] operacion | Detalle -->',
 		'<!-- Parseable: grep "^## \\[" log.md | tail -10 -->',
 		'',
-		`## [${todayIso()}] init | Vault creado desde Kinema`,
+		`## [${todayIso()}] init | Vault creado desde la extensión Udemy Subtitle Bridge`,
 		'- Estructura de carpetas + CLAUDE.md + index.md + plantillas creados',
 		'- Dominio: aprendizaje universal (cursos, libros, habilidades)',
 	].join('\n');
@@ -612,7 +612,7 @@ export function exportSessionToObsidian(
 	},
 ): { notePath: string; mocPath: string | null } {
 	if (!config.vaultName.trim()) {
-		throw new Error('Configura el nombre del vault en Ajustes antes de exportar.');
+		throw new Error('Configura el nombre del vault en ⚙ antes de exportar.');
 	}
 	const courseSlug = slugifyVault(data.courseName);
 	let mocPath: string | null = null;
