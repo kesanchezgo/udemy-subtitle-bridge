@@ -608,7 +608,7 @@ ${PRISM_HEAD}
 
   var qaContainer = document.getElementById('qa');
   if (qaContainer) {
-    qaContainer.innerHTML = qaContainer.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
+    qaContainer.innerHTML = qaContainer.innerHTML.replace(/^\\s*(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
   }
 
   document.querySelectorAll('#qa code, .qa-container code').forEach(function(el) {
@@ -658,7 +658,7 @@ ${PRISM_HEAD}
 (function initDevBack() {
   var qaBack = document.getElementById('qaBack');
   if (qaBack) {
-    qaBack.innerHTML = qaBack.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
+    qaBack.innerHTML = qaBack.innerHTML.replace(/^\\s*(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
   }
 
   document.querySelectorAll('.answer code, pre code').forEach(function(el) {
