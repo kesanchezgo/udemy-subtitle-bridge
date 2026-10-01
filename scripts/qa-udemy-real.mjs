@@ -374,8 +374,8 @@ try {
 	if (!model.tmpls[0].qfmt.includes('anki-wrapper dev-card')) throw new Error('plantilla dev-card ausente');
 	const conceptFlds = model.flds.map((f) => f.name);
 	if (JSON.stringify(conceptFlds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'])) throw new Error('campos incorrectos: ' + conceptFlds.join(','));
-	const rootDeckName = deckNames.find((n) => n === 'Udemy Bridge');
-	if (!rootDeckName) throw new Error('árbol Udemy Bridge ausente');
+	const rootDeckName = deckNames.find((n) => n === 'Kinema');
+	if (!rootDeckName) throw new Error('árbol Kinema ausente');
 	const notes = db.exec('SELECT guid, sfld FROM notes')[0]?.values || [];
 	const guids = notes.map((n) => n[0]);
 	if (new Set(guids).size !== guids.length) throw new Error('GUIDs duplicados');

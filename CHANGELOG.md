@@ -37,6 +37,18 @@ All notable changes to the Udemy Subtitle Bridge extension are documented here.
 - Contraste verificado: 6.65:1 (claro) y 6.14:1 (oscuro), frente al
   4.83:1 del morado nativo de Udemy.
 
+### Changed — Raíz de mazos renombrada a Kinema
+
+- El mazo raíz de la extensión pasa de «Udemy Bridge» a **«Kinema»**
+  (config por defecto + descripción del mazo + fallback del TXT). La config
+  guardada con el nombre legacy se migra automáticamente a «Kinema» al
+  cargar; los valores personalizados del usuario no se tocan.
+- Los nombres de note types y presets («Udemy Bridge Concept/Vocab»,
+  «Udemy Bridge · Cursos/Vocabulario») se conservan como identificadores
+  estables — renombrarlos duplicaría note types en las colecciones
+  existentes. La píldora de tipo de cada tarjeta ahora tiene un color por
+  tipo (señalización — ver docs/ANKI_PEDAGOGY.md §6).
+
 ## [1.2.0] — 2026-09-23
 
 ### Fixed

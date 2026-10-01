@@ -8,7 +8,7 @@
  *      (NO "Default"), campos y notas, y que NADA ajeno cambió.
  *   D. Renderiza las tarjetas con el CSS/plantillas reales del note type
  *      importado y captura PNGs (claro/oscuro, anverso/reverso).
- *   E. Limpieza: borra SOLO el árbol "Udemy Bridge" de prueba (notas + mazos).
+ *   E. Limpieza: borra SOLO el árbol "Kinema" de prueba (notas + mazos).
  *
  * Uso: node scripts/qa-anki-import-verify.mjs [--keep]
  */
@@ -53,7 +53,7 @@ console.log('  ✓ qa-vocab.apkg importado');
 
 // ── C. verificación en colección viva ───────────────────────────────────────
 console.log('\n══ C. Verificación en Anki ══');
-const ROOT = 'Udemy Bridge';
+const ROOT = 'Kinema';
 const COURSE = 'USB QA — Curso de Prueba';
 const LESSON = '01 — Lección de Prueba';
 const lessonDeck = `${ROOT}::Courses::${COURSE}::${LESSON}`;

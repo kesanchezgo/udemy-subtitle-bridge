@@ -29,7 +29,7 @@ function render(tmpl, fields) {
 	return out;
 }
 
-const DECK = 'Udemy Bridge::(prueba) Ejemplos por tipo';
+const DECK = 'Kinema::(prueba) Ejemplos por tipo';
 const MODEL = 'Udemy Bridge Concept';
 
 const templates = await call('modelTemplates', { modelName: MODEL });

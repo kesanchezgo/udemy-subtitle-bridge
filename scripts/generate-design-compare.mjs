@@ -3,8 +3,8 @@
  * Genera dos mazos de prueba con el MISMO contenido (1 concepto con código
  * + 1 vocabulario) pero dos diseños de nota, para ver la diferencia en Anki:
  *
- *   Udemy Bridge::(prueba) Diseño ANTERIOR
- *   Udemy Bridge::(prueba) Diseño NUEVO (Kinema)
+ *   Kinema::(prueba) Diseño ANTERIOR
+ *   Kinema::(prueba) Diseño NUEVO (Kinema)
  *
  * Uso: node --import ./scripts/register-ts-resolve.mjs scripts/generate-design-compare.mjs
  */
@@ -36,8 +36,8 @@ async function zipApkg(sqliteData) {
 }
 
 const COURSE = 'Comparación de diseño de tarjetas';
-const CONCEPT_DECK = (v) => `Udemy Bridge::(prueba) ${v}::Concepto`;
-const VOCAB_DECK = (v) => `Udemy Bridge::(prueba) ${v}::Vocabulario`;
+const CONCEPT_DECK = (v) => `Kinema::(prueba) ${v}::Concepto`;
+const VOCAB_DECK = (v) => `Kinema::(prueba) ${v}::Vocabulario`;
 
 // ── Contenido IDÉNTICO para ambos diseños ────────────────────────────────────
 const conceptCard = {
@@ -61,8 +61,8 @@ function buildSpec(modelConcept, modelVocab, branchLabel) {
 	const vDeck = VOCAB_DECK(branchLabel);
 	return {
 		decks: [
-			{ name: 'Udemy Bridge', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
-			{ name: `Udemy Bridge::(prueba) ${branchLabel}`, conf: NEW.COURSES_PRESET.id, desc: `Tarjetas con el diseño ${branchLabel}. Borrar tras comparar.` },
+			{ name: 'Kinema', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
+			{ name: `Kinema::(prueba) ${branchLabel}`, conf: NEW.COURSES_PRESET.id, desc: `Tarjetas con el diseño ${branchLabel}. Borrar tras comparar.` },
 			{ name: cDeck, conf: NEW.COURSES_PRESET.id, desc: 'Concepto de prueba.' },
 			{ name: vDeck, conf: NEW.VOCAB_PRESET.id, desc: 'Vocabulario de prueba.' },
 		],
@@ -113,6 +113,6 @@ for (const v of variants) {
 }
 
 console.log('\nAbre en Anki:');
-console.log('  Udemy Bridge::(prueba) Diseño ANTERIOR       ← diseño que ya conocías');
-console.log('  Udemy Bridge::(prueba) Diseño NUEVO (Kinema) ← diseño actual');
+console.log('  Kinema::(prueba) Diseño ANTERIOR       ← diseño que ya conocías');
+console.log('  Kinema::(prueba) Diseño NUEVO (Kinema) ← diseño actual');
 console.log('Borra ambos mazos cuando termines de comparar.');

@@ -167,7 +167,7 @@ console.log(`  → tmp/qa-concept.apkg (${conceptApkg.length} bytes)`);
 	check('3 tarjetas, ord 0, type new', col.cards.length === 3 && col.cards.every((c) => c.ord === 0 && c.type === 0 && c.queue === 0));
 	const note = col.notes[0];
 	const fields = note.flds.split('\x1f');
-	check('nota con 5 campos, Fuente con enlace y Tipo relleno', fields.length === 5 && fields[3].includes(lessonUrl) && fields[4] === 'concepto');
+	check('nota con 5 campos, Fuente con enlace y Tipo relleno', fields.length === 5 && fields[3].includes(lessonUrl) && fields[4].includes('data-tp="concepto"'));
 	check('tags sanitizadas (espacios → guiones)', note.tags === 'java compilacion Tag-Con-Espacios', note.tags);
 	check('GUID usb* por contenido', /^usb[a-z0-9]{4,8}$/.test(note.guid), note.guid);
 

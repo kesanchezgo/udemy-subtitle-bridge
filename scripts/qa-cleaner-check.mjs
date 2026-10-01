@@ -19,7 +19,7 @@ function fieldsOf(info) {
 	return Object.fromEntries(Object.entries(info.fields).map(([name, f]) => [name, f.value]));
 }
 
-const nids = await call('findNotes', { query: `note:"${MODEL}" deck:"Udemy Bridge::(prueba) Qué cambió exactamente"` });
+const nids = await call('findNotes', { query: `note:"${MODEL}" deck:"Kinema::(prueba) Qué cambió exactamente"` });
 const infos = await call('notesInfo', { notes: nids });
 const target = infos.find((n) => fieldsOf(n).Front.includes('💻'));
 if (!target) throw new Error('no encontré la nota demo del limpiador');

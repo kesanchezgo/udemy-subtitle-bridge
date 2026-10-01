@@ -9,7 +9,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 
 const MODEL = 'UB Concept · diseño nuevo';
-const DECK = 'Udemy Bridge::(prueba) Qué cambió exactamente';
+const DECK = 'Kinema::(prueba) Qué cambió exactamente';
 
 async function call(action, params = {}) {
 	const res = await fetch('http://127.0.0.1:8765', { method: 'POST', body: JSON.stringify({ action, version: 6, params }) });

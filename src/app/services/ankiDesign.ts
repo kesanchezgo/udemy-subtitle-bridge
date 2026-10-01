@@ -126,7 +126,7 @@ export function sanitizeDeckSegment(name: string): string {
 		.trim();
 }
 
-export const DEFAULT_ROOT_DECK = 'Udemy Bridge';
+export const DEFAULT_ROOT_DECK = 'Kinema';
 
 export const ROOT_DECK_DESCRIPTION =
 	'Mazos generados por Kinema a partir de las lecciones que estudias. ' +

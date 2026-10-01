@@ -3,7 +3,7 @@
  * entrevista/aplicacion) con datos reales de un curso de Spring Boot, cada una
  * con su píldora de tipo — para ver cómo se identifica cada tipo en Anki.
  *
- *   Udemy Bridge::(prueba) Ejemplos por tipo   (6 tarjetas, borrar al terminar)
+ *   Kinema::(prueba) Ejemplos por tipo   (6 tarjetas, borrar al terminar)
  *
  * Uso: node --import ./scripts/register-ts-resolve.mjs scripts/generate-type-examples.mjs
  */
@@ -28,7 +28,7 @@ async function call(action, params = {}) {
 
 const COURSE = 'Spring Boot: De Cero a Senior [2026]';
 const LESSON = '12. Transacciones y @Transactional';
-const DECK = 'Udemy Bridge::(prueba) Ejemplos por tipo';
+const DECK = 'Kinema::(prueba) Ejemplos por tipo';
 
 const cards = [
 	{
@@ -82,7 +82,7 @@ public class Servicio {
 const lessonUrl = 'https://www.udemy.com/course/spring-boot-demo/learn/lecture/1';
 const spec = {
 	decks: [
-		{ name: 'Udemy Bridge', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
+		{ name: 'Kinema', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
 		{ name: DECK, conf: NEW.COURSES_PRESET.id, desc: 'Una tarjeta por cada tipo de tarjeta de concepto. Borrar tras revisar.' },
 	],
 	models: [{ ...NEW.CONCEPT_MODEL, fields: [...NEW.CONCEPT_MODEL.fields] }],
