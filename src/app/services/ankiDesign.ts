@@ -23,6 +23,10 @@
 
 import type { ApkgSpec } from './ankiApkgCore';
 
+// Iconos Phosphor (MIT) en línea: el HTML de la tarjeta Anki no puede usar React.
+const PEEK_INFO = '<svg class="peek-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="13" height="13" fill="currentColor"><path d="M108,84a16,16,0,1,1,16,16A16,16,0,0,1,108,84Zm128,44A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Zm-72,36.68V132a20,20,0,0,0-20-20,12,12,0,0,0-4,23.32V168a20,20,0,0,0,20,20,12,12,0,0,0,4-23.32Z"/></svg>';
+const PEEK_EYE = '<svg class="peek-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="13" height="13" fill="currentColor"><path d="M251,123.13c-.37-.81-9.13-20.26-28.48-39.61C196.63,57.67,164,44,128,44S59.37,57.67,33.51,83.52C14.16,102.87,5.4,122.32,5,123.13a12.08,12.08,0,0,0,0,9.75c.37.82,9.13,20.26,28.49,39.61C59.37,198.34,92,212,128,212s68.63-13.66,94.48-39.51c19.36-19.35,28.12-38.79,28.49-39.61A12.08,12.08,0,0,0,251,123.13Zm-46.06,33C183.47,177.27,157.59,188,128,188s-55.47-10.73-76.91-31.88A130.36,130.36,0,0,1,29.52,128,130.45,130.45,0,0,1,51.09,99.89C72.54,78.73,98.41,68,128,68s55.46,10.73,76.91,31.89A130.36,130.36,0,0,1,226.48,128,130.45,130.45,0,0,1,204.91,156.12ZM128,84a44,44,0,1,0,44,44A44.05,44.05,0,0,0,128,84Zm0,64a20,20,0,1,1,20-20A20,20,0,0,1,128,148Z"/></svg>';
+
 /** FNV-1a 32-bit → bandas de ID numérico estables entre exportaciones. */
 function fnv1a(input: string): number {
 	let hash = 2166136261;
@@ -114,7 +118,7 @@ export function sanitizeDeckSegment(name: string): string {
 export const DEFAULT_ROOT_DECK = 'Udemy Bridge';
 
 export const ROOT_DECK_DESCRIPTION =
-	'Mazos generados por la extensión Udemy Subtitle Bridge a partir de las lecciones que estudias. ' +
+	'Mazos generados por Kinema a partir de las lecciones que estudias. ' +
 	'Usa presets propios (Udemy Bridge · Cursos / Vocabulario); no modifica otros mazos de tu colección.';
 
 /** Rama de conceptos: <Root>::Courses::<Curso>::<Lección>. */
@@ -178,7 +182,7 @@ export const CONCEPT_MODEL_CSS = `/* ===========================================
   --text-muted: #64748b;
   --text-dim: #94a3b8;
 
-  --accent: #6d28d9;           /* Violeta técnico */
+  --accent: #5b37e8;           /* Violeta técnico */
   --accent-light: #f5f3ff;
   --accent-glow: rgba(109, 40, 217, 0.15);
 
@@ -193,7 +197,7 @@ export const CONCEPT_MODEL_CSS = `/* ===========================================
   --code-text: #0f172a;
 
   --inline-bg: #f1f5f9;
-  --inline-fg: #6d28d9;
+  --inline-fg: #5b37e8;
   --inline-border: #e2e8f0;
 
   --callout-tip-bg: #ecfdf5;
@@ -221,7 +225,7 @@ export const CONCEPT_MODEL_CSS = `/* ===========================================
   --text-muted: #94a3b8;
   --text-dim: #64748b;
 
-  --accent: #a78bfa;           /* Púrpura pastel */
+  --accent: #9a83ff;           /* Púrpura pastel */
   --accent-light: rgba(167, 139, 250, 0.12);
   --accent-glow: rgba(167, 139, 250, 0.25);
 
@@ -604,7 +608,7 @@ ${PRISM_HEAD}
 
   var qaContainer = document.getElementById('qa');
   if (qaContainer) {
-    qaContainer.innerHTML = qaContainer.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
+    qaContainer.innerHTML = qaContainer.innerHTML.replace(/^(CÓDIGO)\\s*/i, '');
   }
 
   document.querySelectorAll('#qa code, .qa-container code').forEach(function(el) {
@@ -654,7 +658,7 @@ ${PRISM_HEAD}
 (function initDevBack() {
   var qaBack = document.getElementById('qaBack');
   if (qaBack) {
-    qaBack.innerHTML = qaBack.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
+    qaBack.innerHTML = qaBack.innerHTML.replace(/^(CÓDIGO)\\s*/i, '');
   }
 
   document.querySelectorAll('.answer code, pre code').forEach(function(el) {
@@ -1310,11 +1314,7 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     {{#monolingual}}
     <section class="section-block peek-block" tabindex="0">
       <div class="peek-badge">
-        <svg class="peek-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="12" y1="16" x2="12" y2="12"></line>
-          <line x1="12" y1="8" x2="12.01" y2="8"></line>
-        </svg>
+        ${PEEK_INFO}
         <span>Definición monolingüe</span>
       </div>
       <div class="peek-content mono-text">{{monolingual}}</div>
@@ -1341,10 +1341,7 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
       {{#translation}}
       <div class="peek-translation" tabindex="0">
         <div class="peek-badge">
-          <svg class="peek-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-            <circle cx="12" cy="12" r="3"/>
-          </svg>
+          ${PEEK_EYE}
           <span>Traducción</span>
         </div>
         <div class="translation-text">{{translation}}</div>
