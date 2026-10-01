@@ -4,7 +4,7 @@
  * y muestran: los dos violetas, los iconos antes/después a 48px, y el
  * limpiador del prefijo "💻 CÓDIGO" en acción.
  *
- *   Udemy Bridge::(prueba) Qué cambió exactamente
+ *   Kinema::(prueba) Qué cambió exactamente
  *
  * Uso: node --import ./scripts/register-ts-resolve.mjs scripts/generate-design-demo.mjs
  */
@@ -27,7 +27,7 @@ async function call(action, params = {}) {
 }
 
 const MODEL = 'UB Concept · diseño nuevo';
-const DECK = 'Udemy Bridge::(prueba) Qué cambió exactamente';
+const DECK = 'Kinema::(prueba) Qué cambió exactamente';
 
 // Los dos iconos peek reales, a 48px para que se vean
 const ICON_OLD = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
@@ -78,7 +78,7 @@ const notes = [
 
 const spec = {
 	decks: [
-		{ name: 'Udemy Bridge', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
+		{ name: 'Kinema', conf: NEW.COURSES_PRESET.id, desc: 'Mazos de prueba de diseño — borrar libremente.' },
 		{ name: DECK, conf: NEW.COURSES_PRESET.id, desc: 'Demostración de qué cambió entre el diseño anterior y el nuevo. Borrar tras revisar.' },
 	],
 	models: [{ id: NEW.stableNumericId(MODEL, 1_660_000_000_000), name: MODEL, sortf: 0, fields: [...NEW.CONCEPT_MODEL.fields], templates: [{ name: 'Concepto', qfmt: NEW.CONCEPT_MODEL.templates[0].qfmt, afmt: NEW.CONCEPT_MODEL.templates[0].afmt }], css: NEW.CONCEPT_MODEL.css }],

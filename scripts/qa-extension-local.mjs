@@ -514,7 +514,7 @@ if (ev.d) {
 		const flds = model.flds.map((f) => f.name);
 		if (JSON.stringify(flds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'])) throw new Error('campos incorrectos: ' + flds.join(','));
 		const deckNames = Object.values(decks).map((d) => d.name);
-		if (!deckNames.includes('Udemy Bridge') || !deckNames.some((n) => n.startsWith('Udemy Bridge::Courses::'))) {
+		if (!deckNames.includes('Kinema') || !deckNames.some((n) => n.startsWith('Kinema::Courses::'))) {
 			throw new Error('árbol de mazos de la extensión ausente: ' + deckNames.join(', '));
 		}
 		const dconf = JSON.parse(db.exec('SELECT dconf FROM col LIMIT 1')[0].values[0][0]);
@@ -522,7 +522,7 @@ if (ev.d) {
 		if (!presetNames.includes('Udemy Bridge · Cursos') || !presetNames.includes('Udemy Bridge · Vocabulario')) {
 			throw new Error('presets propios ausentes: ' + presetNames.join(', '));
 		}
-		const lessonDeck = Object.values(decks).find((d) => d.name.startsWith('Udemy Bridge::Courses::') && d.name.split('::').length === 4);
+		const lessonDeck = Object.values(decks).find((d) => d.name.startsWith('Kinema::Courses::') && d.name.split('::').length === 4);
 		if (lessonDeck && lessonDeck.conf === 1) throw new Error('mazo apunta al preset Default (id 1) en vez del propio');
 		const notes = db.exec('SELECT guid, flds FROM notes')[0]?.values || [];
 		if (notes.length < 3) throw new Error('solo ' + notes.length + ' notas');

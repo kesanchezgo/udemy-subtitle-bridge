@@ -22,7 +22,7 @@ const templates = await call('modelTemplates', { modelName: MODEL });
 const styling = await call('modelStyling', { modelName: MODEL });
 const tKey = Object.keys(templates)[0];
 
-const nids = await call('findNotes', { query: `note:"${MODEL}" deck:"Udemy Bridge::(prueba) Qué cambió exactamente"` });
+const nids = await call('findNotes', { query: `note:"${MODEL}" deck:"Kinema::(prueba) Qué cambió exactamente"` });
 const infos = await call('notesInfo', { notes: nids });
 const target = infos.find((n) => Object.values(n.fields).some((f) => f.value.includes('💻')));
 const fields = Object.fromEntries(Object.entries(target.fields).map(([name, f]) => [name, f.value]));

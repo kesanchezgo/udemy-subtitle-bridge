@@ -906,7 +906,7 @@ async function exportApkgFile(
   rootDeck: string,
   onProgress?: (msg: string) => void,
 ): Promise<string> {
-  const root = rootDeck.trim() || "Udemy Bridge";
+  const root = rootDeck.trim() || "Kinema";
   const lessonUrl = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
   const spec = buildConceptSpec(
     cards.map((c) => ({
@@ -4167,7 +4167,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 <label className="block">
                                   <p className={exportLabelCls}>Mazo raíz</p>
                                   <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
-                                    placeholder="Udemy Bridge" className={exportFieldCls}/>
+                                    placeholder="Kinema" className={exportFieldCls}/>
                                 </label>
                               </div>
                               <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">

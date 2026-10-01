@@ -74,11 +74,18 @@ export async function loadVocabConfig(): Promise<VocabConfig> {
 		const raw = stored[VOCAB_CONFIG_KEY];
 		if (raw && typeof raw === 'object') {
 			const saved = raw as Partial<VocabConfig>;
-			return {
+			const merged: VocabConfig = {
 				...DEFAULT_VOCAB_CONFIG,
 				...saved,
 				maxWords: Math.min(20, Math.max(3, Number(saved.maxWords) || DEFAULT_VOCAB_CONFIG.maxWords)),
 			};
+			// Migración de marca una vez: el default legacy 'Udemy Bridge' pasa a 'Kinema'
+			// (los valores personalizados del usuario no se tocan).
+			if (merged.rootDeck === 'Udemy Bridge') {
+				merged.rootDeck = DEFAULT_VOCAB_CONFIG.rootDeck;
+				void saveVocabConfig(merged).catch(() => {});
+			}
+			return merged;
 		}
 	} catch {
 		/* defaults */
