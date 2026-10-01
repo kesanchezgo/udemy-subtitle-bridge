@@ -96,7 +96,7 @@ function setDockActionState(tabId: number, enabled: boolean) {
 	chromeApi.action?.setBadgeBackgroundColor?.({ tabId, color: enabled ? '#7c3aed' : '#52525b' });
 	chromeApi.action?.setTitle?.({
 		tabId,
-		title: enabled ? 'Ocultar Subtitle Bridge' : 'Mostrar Subtitle Bridge'
+		title: enabled ? 'Ocultar Kinema' : 'Mostrar Kinema'
 	});
 }
 
@@ -173,7 +173,7 @@ async function toggleDockForTab(tab: { id?: number }) {
 		chromeApi.action?.setBadgeText?.({ tabId: tab.id, text: '' });
 		chromeApi.action?.setTitle?.({
 			tabId: tab.id,
-			title: `Subtitle Bridge no está activo en esta pestaña: ${toErrorMessage(error)}`
+			title: `Kinema no está activo en esta pestaña: ${toErrorMessage(error)}`
 		});
 	}
 }
@@ -856,7 +856,7 @@ function humanizeGeminiErrorClass(cls: GeminiErrorClass): string {
 		case 'rate_limit':   return 'Gemini está limitando las peticiones (cuota alcanzada). Espera unos segundos y reintenta.';
 		case 'overloaded':   return 'Gemini está saturado por alta demanda (HTTP 503). Reintenta en 1-2 minutos.';
 		case 'server_error': return 'Error temporal en los servidores de Gemini. Reintenta en unos segundos.';
-		case 'invalid_key':  return 'La API key de Gemini no es válida o no tiene permisos. Verifícala en ⚙️ → API keys.';
+		case 'invalid_key':  return 'La API key de Gemini no es válida o no tiene permisos. Verifícala en Ajustes → API keys.';
 		case 'bad_request':  return 'Gemini rechazó la petición (formato del prompt). Revisa los logs del Service Worker.';
 		case 'unknown':      return 'Error desconocido al hablar con Gemini. Revisa los logs del Service Worker.';
 	}
@@ -957,7 +957,7 @@ async function requestGeminiText(
 					continue;
 				}
 				if (finishReason === 'MAX_TOKENS') {
-					console.warn(`[USG][gemini] ⚠️ Response was truncated by MAX_TOKENS (got ${text.length} chars). Caller should increase maxOutputTokens.`);
+					console.warn(`[USG][gemini] Response was truncated by MAX_TOKENS (got ${text.length} chars). Caller should increase maxOutputTokens.`);
 				}
 
 				return String(text);
@@ -1147,7 +1147,7 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 			console.groupEnd();
 			return { payload: parsed, raw: cleaned };
 		}
-		console.warn('[USG][study] ⚠️ Provider response could not be parsed as JSON object.');
+		console.warn('[USG][study] Provider response could not be parsed as JSON object.');
 	} catch (providerError) {
 		console.warn('[USG][study] provider error:', providerError);
 	}
@@ -1315,7 +1315,7 @@ function parseObjectivesJSON(raw: string): GeneratedObjective[] | null {
 				.slice(0, 4)
 				.map((o: { id?: string; icon?: string; title?: string; sub?: string }, i: number) => ({
 					id: (o.id ?? o.title ?? `obj-${i}`).toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40),
-					icon: (o.icon ?? '🎯').toString().slice(0, 4),
+					icon: (o.icon ?? 'target').toString().slice(0, 16),
 					title: (o.title ?? 'Objetivo').toString().slice(0, 60),
 					sub: (o.sub ?? '').toString().slice(0, 60)
 				}))
@@ -1525,7 +1525,7 @@ async function requestConfiguredProviderText(
 	await initAiProviderConfig().catch(() => undefined);
 	const cfg = getAiProviderConfig();
 	if (!canServeWithConfiguredProvider(cfg)) {
-		throw new Error(`Proveedor sin configurar (kind=${cfg.kind}, baseUrl=${cfg.baseUrl || 'vacío'}). Configúralo en ⚙ → Proveedor.`);
+		throw new Error(`Proveedor sin configurar (kind=${cfg.kind}, baseUrl=${cfg.baseUrl || 'vacío'}). Configúralo en Ajustes → Proveedor.`);
 	}
 
 	const messages = [{ role: 'user' as const, content: prompt }];
@@ -1599,11 +1599,11 @@ async function generateObjectivesViaGemini(
 			console.log('[USG][objectives] Local AI raw response:', text);
 			const parsed = parseObjectivesJSON(text);
 			if (parsed) {
-				console.log('[USG][objectives] ✅ Local AI parsed successfully', parsed);
+				console.log('[USG][objectives] Local AI parsed successfully', parsed);
 				console.groupEnd();
 				return { objectives: parsed, isMock: false, source: 'local' };
 			}
-			console.warn('[USG][objectives] ⚠️ Local AI response could not be parsed as JSON array.');
+			console.warn('[USG][objectives] Local AI response could not be parsed as JSON array.');
 		} else {
 			console.log('[USG][objectives] Local AI health check failed — skipping.');
 		}
@@ -1618,11 +1618,11 @@ async function generateObjectivesViaGemini(
 		const text = await requestConfiguredProviderText(prompt, 0.5, 1500);
 		const parsed = parseObjectivesJSON(text);
 		if (parsed) {
-			console.log('[USG][objectives] ✅ Provider parsed successfully', parsed);
+			console.log('[USG][objectives] Provider parsed successfully', parsed);
 			console.groupEnd();
 			return { objectives: parsed, isMock: false, source: 'local' };
 		}
-		console.warn('[USG][objectives] ⚠️ Provider response could not be parsed as JSON array.');
+		console.warn('[USG][objectives] Provider response could not be parsed as JSON array.');
 	} catch (err) {
 		providerError = err;
 		console.warn('[USG][objectives] provider error:', err);
@@ -1642,18 +1642,18 @@ async function generateObjectivesViaGemini(
 				broadcastRetryNotice('objectives', notice);
 			});
 			rawResponse = text;
-			console.log('[USG][objectives] 🤖 Gemini raw response (full):');
+			console.log('[USG][objectives] Gemini raw response (full):');
 			console.log(text);
 			console.log('[USG][objectives] response length:', text.length, 'chars');
 			const parsed = parseObjectivesJSON(text);
 			if (parsed) {
-				console.log('[USG][objectives] ✅ Gemini parsed successfully', parsed);
+				console.log('[USG][objectives] Gemini parsed successfully', parsed);
 				console.groupEnd();
 				return { objectives: parsed, isMock: false, source: 'gemini' };
 			}
 			// Detect a truncated response (response body looks unfinished).
 			const looksTruncated = !/\]\s*$/.test(text.trim()) || text.split('"id"').length < 4;
-			console.error('[USG][objectives] ❌ Failed to parse Gemini response as JSON');
+			console.error('[USG][objectives] Failed to parse Gemini response as JSON');
 			console.error('[USG][objectives] Looks truncated?', looksTruncated);
 			console.error('[USG][objectives] Last 80 chars:', JSON.stringify(text.slice(-80)));
 			geminiError = looksTruncated
@@ -1661,11 +1661,11 @@ async function generateObjectivesViaGemini(
 				: `Failed to parse objectives JSON. Raw response (first 240 chars): ${text.slice(0, 240)}`;
 		} else {
 			geminiError = 'No Gemini API keys configured.';
-			console.warn('[USG][objectives] ⚠️ ' + geminiError);
+			console.warn('[USG][objectives] ' + geminiError);
 		}
 	} catch (err) {
 		geminiError = toErrorMessage(err);
-		console.error('[USG][objectives] ❌ Gemini error:', err);
+		console.error('[USG][objectives] Gemini error:', err);
 	}
 
 	console.warn('[USG][objectives] No real objectives generated. Reason:', geminiError);

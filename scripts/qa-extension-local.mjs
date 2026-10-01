@@ -379,15 +379,17 @@ console.log('   study session rendered → qa-extension-study.png');
 // que las señales se leen del DOM compartido (data-usb-qa-last breadcrumb,
 // MutationObserver para hrefs obsidian://) y de CDP para las descargas.
 
-step('Driving the full stepper to step 5 (No olvidar)');
+step('Driving the full stepper to step 5 (Anki)');
 try {
+	// Flujo Kinema v2: Nivel (confianza) → Repaso → Recordar → Práctica → Anki.
+	// 1) Nivel: elegir confianza (auto-avanza a Repaso, 2/5).
 	await page.locator('[id^="usb-dock-host-"] button:has-text("Entendido")').first().click({ timeout: 15000 });
-	await page.locator('[id^="usb-dock-host-"] button:has-text("Verificar mi comprensión")').first().click({ timeout: 15000 });
+	// 2) Avanzar a Recordar (preguntas).
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 15000 });
+	// 3) Recordar: escape hatch que completa las preguntas (→ Práctica, 4/5).
 	await page.locator('[id^="usb-dock-host-"] button:has-text("Saltar a la práctica")').first().click({ timeout: 15000 });
-	await sleep(600);
-	// Los dots del stepper son clickeables cuando el paso está desbloqueado
-	// (title = label del paso). Directo al paso 5 tras el force-complete.
-	await page.locator('[id^="usb-dock-host-"] button[title="No olvidar"]').first().click({ timeout: 10000 });
+	// 4) Práctica → Anki (5/5).
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 15000 });
 } catch (e) {
 	await fail(`stepper did not reach the export step: ${String(e).slice(0, 140)}`, page, 'stepper');
 }
@@ -560,7 +562,7 @@ await page.evaluate(() => {
 		obs.observe(document.body, { childList: true, subtree: true });
 	}
 });
-await page.locator('[id^="usb-dock-host-"] button:has-text("Exportar")').first().click({ timeout: 10000 });
+await page.locator('[id^="usb-dock-host-"] button').filter({ hasText: /^Exportar$/ }).first().click({ timeout: 10000 });
 await sleep(2500);
 const uris = await page.evaluate(() => window.__qaUris || []);
 let obsidianOk = false;
@@ -586,7 +588,7 @@ try {
 }
 
 step('Verifying duplicate guard (second export warns instead of duplicating)');
-await page.locator('[id^="usb-dock-host-"] button:has-text("Exportar")').first().click({ timeout: 10000 });
+await page.locator('[id^="usb-dock-host-"] button').filter({ hasText: /^Exportar$/ }).first().click({ timeout: 10000 });
 await sleep(1500);
 const urisAfter = await page.evaluate(() => (window.__qaUris || []).length);
 if (urisAfter !== uris.length) {

@@ -7,6 +7,7 @@ export type DockTheme = "dark" | "sepia";
 interface ThemeContextValue {
   theme:       DockTheme;
   isSepia:     boolean;
+  isDark:      boolean;
   toggleTheme: () => void;
   /** Devuelve `dark` cuando el tema es oscuro, `light` cuando es claro/sepia */
   t: (dark: string, light: string) => string;
@@ -17,6 +18,7 @@ const THEME_STORAGE_KEY = "usb_dock_theme";
 const ThemeContext = createContext<ThemeContextValue>({
   theme:       "dark",
   isSepia:     false,
+  isDark:      true,
   toggleTheme: () => {},
   t:           (dark) => dark,
 });
@@ -60,7 +62,7 @@ export const DARK = {
 
 /** Paleta Light / Pure White — Udemy-style cool neutral */
 export const SEPIA = {
-  pageBg:      "#f7f9fa",
+  pageBg:      "#f6f7f9",
   headerBg:    "#f3f4f6",
   tabBarBg:    "#f1f3f5",
   cardBg:      "#ffffff",
@@ -98,6 +100,7 @@ export function ThemeProvider({
 }) {
   const [theme, setTheme] = useState<DockTheme>(() => resolveInitialTheme());
   const isSepia = theme === "sepia";
+  const isDark = theme === "dark";
 
   const toggleTheme = () => {
     setTheme((prev) => {
@@ -153,7 +156,7 @@ export function ThemeProvider({
   }, [injectGlobalCss]);
 
   return (
-    <ThemeContext.Provider value={{ theme, isSepia, toggleTheme, t }}>
+    <ThemeContext.Provider value={{ theme, isSepia, isDark, toggleTheme, t }}>
       {children}
     </ThemeContext.Provider>
   );

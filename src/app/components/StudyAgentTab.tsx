@@ -5,8 +5,11 @@ import {
   ChevronLeft, ChevronRight, Info, FileDown, FolderPlus,
   FolderSync, Send, Loader2, Wifi, WifiOff, Star, BookOpen,
   Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History,
-  BookMarked, Settings2, ClipboardCopy, ExternalLink, Languages
-} from "lucide-react";
+  BookMarked, Settings2, ClipboardCopy, ExternalLink, Languages,
+  Icon, Glyph, splitLeadingMarker
+} from "./icons";
+import type { IconName } from "./icons";
+import { FrameMarks } from "./AppLogo";
 import { motion, AnimatePresence } from "motion/react";
 import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
 import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
@@ -18,12 +21,14 @@ import {
   type VocabConfig,
 } from "../services/vocabularyService";
 import { cefrLevels } from "../../shared/prompts";
+import { Collapse, ExportModule, exportFieldCls, exportGhostBtnCls, exportLabelCls, exportPrimaryBtnCls } from "./study/ExportModule";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
 import { HistoryPanel } from "./HistoryPanel";
 import { projectId } from "../../../utils/supabase/info";
 import { usePersistedState } from "../hooks/usePersistedState";
+import { useDockTheme } from "../contexts/ThemeContext";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import {
@@ -37,9 +42,11 @@ import {
   type ObsidianExportConfig, type ObsidianSessionData,
 } from "../services/obsidianExport";
 import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
-import confetti from "canvas-confetti";
 import { toast } from "sonner";
 import { celebrate } from "./CelebrationOverlay";
+import { getStreak } from "../services/streak";
+import { MemoryCard } from "./study/MemoryCard";
+import { getProgress, recordActivity } from "../services/progress";
 
 import { Session } from "@supabase/supabase-js";
 
@@ -101,11 +108,94 @@ type LearningPanelResponse = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CONFIDENCE = [
-  { id: "confused" as ConfidenceLevel,  emoji: "😕", label: "Confuso",       desc: "No quedó claro",    ring: "ring-red-500/40",     bg: "bg-red-500/10",     border: "border-red-500/25",     label_c: "text-red-400"     },
-  { id: "partial"  as ConfidenceLevel,  emoji: "🤔", label: "Más o menos",  desc: "Algunos gaps",      ring: "ring-amber-500/40",   bg: "bg-amber-500/10",   border: "border-amber-500/25",   label_c: "text-amber-400"   },
-  { id: "clear"    as ConfidenceLevel,  emoji: "👍", label: "Entendido",    desc: "Lo capté bien",     ring: "ring-emerald-500/40", bg: "bg-emerald-500/10", border: "border-emerald-500/25", label_c: "text-emerald-400" },
-  { id: "mastered" as ConfidenceLevel,  emoji: "🔥", label: "Lo domino",    desc: "Sin dudas",         ring: "ring-violet-500/40",  bg: "bg-violet-500/10",  border: "border-violet-500/25",  label_c: "text-violet-400"  },
+  {
+    id: "confused" as ConfidenceLevel,
+    emoji: "😵‍💫",
+    bars: 1,
+    tag: "Dominio 1",
+    label: "Confuso",
+    desc: "Reforzar desde la base",
+    ring: "ring-rose-500/40",
+    bg: "bg-rose-500/8 dark:bg-rose-500/10",
+    border: "border-rose-500/30",
+    color: "#f43f5e",
+    label_c: "text-rose-500 dark:text-rose-400",
+  },
+  {
+    id: "partial" as ConfidenceLevel,
+    emoji: "🤔",
+    bars: 2,
+    tag: "Dominio 2",
+    label: "Más o menos",
+    desc: "Cerrar dudas puntuales",
+    ring: "ring-amber-500/40",
+    bg: "bg-amber-500/8 dark:bg-amber-500/10",
+    border: "border-amber-500/30",
+    color: "#f59e0b",
+    label_c: "text-amber-500 dark:text-amber-400",
+  },
+  {
+    id: "clear" as ConfidenceLevel,
+    emoji: "😊",
+    bars: 3,
+    tag: "Dominio 3",
+    label: "Entendido",
+    desc: "Comprobar y afianzar",
+    ring: "ring-emerald-500/40",
+    bg: "bg-emerald-500/8 dark:bg-emerald-500/10",
+    border: "border-emerald-500/30",
+    color: "#10b981",
+    label_c: "text-emerald-500 dark:text-emerald-400",
+  },
+  {
+    id: "mastered" as ConfidenceLevel,
+    emoji: "😎",
+    bars: 4,
+    tag: "Dominio 4",
+    label: "Lo domino",
+    desc: "Desafío de alto nivel",
+    ring: "ring-violet-500/40",
+    bg: "bg-violet-500/8 dark:bg-violet-500/10",
+    border: "border-violet-500/30",
+    color: "#8b5cf6",
+    label_c: "text-violet-500 dark:text-violet-400",
+  },
 ];
+
+const STEP_META: { hue: string; inkDark: string; inkLight: string; icon: IconName; title: string; sub: string }[] = [
+  { hue: "#6d4aff", inkDark: "#b7a6ff", inkLight: "#5b37e8", icon: "compass",   title: "Calibra tu sesión",       sub: "Dinos cómo te fue en la clase" },
+  { hue: "#0284c7", inkDark: "#5cc8fb", inkLight: "#0369a1", icon: "lightbulb", title: "Lo esencial de la clase", sub: "Marca lo que ya tienes claro" },
+  { hue: "#d97706", inkDark: "#fbbf45", inkLight: "#a15207", icon: "brain",     title: "Recupera de memoria",     sub: "Responde sin mirar, ahí se aprende" },
+  { hue: "#059669", inkDark: "#4ade9f", inkLight: "#047857", icon: "rocket",    title: "Llévalo a la práctica",   sub: "Un caso real para aplicar lo visto" },
+  { hue: "#e11d48", inkDark: "#fb7185", inkLight: "#be123c", icon: "layers",    title: "Fíjalo en memoria",       sub: "Tarjetas listas para repasar" },
+];
+
+function SectionTitle({ icon, hue, children }: { icon: IconName; hue: number; children: React.ReactNode }) {
+  const { t } = useDockTheme();
+  const m = STEP_META[hue];
+  return (
+    <div className="flex items-center gap-2" style={{ "--kx-step": m.hue, "--kx-ink": t(m.inkDark, m.inkLight) } as React.CSSProperties}>
+      <span className="kx-obj-tile w-7 h-7 rounded-lg flex items-center justify-center shrink-0"><Icon name={icon} size={15} weight="duotone" /></span>
+      <span className="text-[12.5px] font-bold text-[var(--usb-fg-hi)] tracking-tight">{children}</span>
+    </div>
+  );
+}
+
+function StepBanner({ step }: { step: number }) {
+  const m = STEP_META[step];
+  return (
+    <div className="kx-step-banner relative overflow-hidden flex items-center gap-3 rounded-2xl p-3 mb-3">
+      <div className="kx-step-tile w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 relative">
+        <Icon name={m.icon} size={24} weight="duotone" />
+      </div>
+      <div className="min-w-0 relative">
+        <span className="kx-step-eyebrow text-[9.5px] font-extrabold tracking-[0.14em] uppercase">Paso {step + 1} de 5</span>
+        <p className="kx-step-title text-[14px] font-bold leading-tight mt-0.5">{m.title}</p>
+        <p className="kx-step-sub text-[11px] leading-snug mt-0.5">{m.sub}</p>
+      </div>
+    </div>
+  );
+}
 
 const CONFIDENCE_HINT: Record<ConfidenceLevel, string> = {
   confused:  "Sin problema — empezamos desde los fundamentos. El 80% de los expertos también lo vivió así al inicio.",
@@ -115,22 +205,22 @@ const CONFIDENCE_HINT: Record<ConfidenceLevel, string> = {
 };
 
 // Coach bubble post-selection (motivational, personalized per level)
-const COACH_BUBBLE: Record<ConfidenceLevel, { emoji: string; title: string; tip: string }> = {
-  confused:  { emoji: "💪", title: "¡La honestidad es el primer paso real!", tip: "Cada experto que conoces pasó exactamente por aquí. Las preguntas están calibradas para tu nivel — sin saltos abruptos." },
-  partial:   { emoji: "🎯", title: "Ya tienes la base.", tip: "Solo necesitas conectar los puntos. Las preguntas cerrarán exactamente los gaps que detectaste." },
-  clear:     { emoji: "⚡", title: "Buen nivel de comprensión.", tip: "Ahora viene la prueba real: aplicarlo sin mirar. Eso es lo que separa entender de dominar." },
-  mastered:  { emoji: "🔥", title: "¡Nivel alto, vamos a confirmarlo!", tip: "Te espera un análisis en profundidad. Demuestra que no solo sabes — sabes por qué funciona." },
+const COACH_BUBBLE: Record<ConfidenceLevel, { icon: IconName; title: string; tip: string }> = {
+  confused:  { icon: "flame", title: "¡La honestidad es el primer paso real!", tip: "Cada experto que conoces pasó exactamente por aquí. Las preguntas están calibradas para tu nivel — sin saltos abruptos." },
+  partial:   { icon: "target", title: "Ya tienes la base.", tip: "Solo necesitas conectar los puntos. Las preguntas cerrarán exactamente los gaps que detectaste." },
+  clear:     { icon: "zap", title: "Buen nivel de comprensión.", tip: "Ahora viene la prueba real: aplicarlo sin mirar. Eso es lo que separa entender de dominar." },
+  mastered:  { icon: "flame", title: "¡Nivel alto, vamos a confirmarlo!", tip: "Te espera un análisis en profundidad. Demuestra que no solo sabes — sabes por qué funciona." },
 };
 
 
 
-const CARD_META: Record<CardType, { label: string; icon: string; color: string; accent: string }> = {
-  concepto:    { label: "Concepto",    icon: "🎯", color: "text-violet-400",  accent: "#a78bfa" },
-  aplicacion:  { label: "Aplicación",  icon: "🧩", color: "text-emerald-400", accent: "#34d399" },
-  codigo:      { label: "Código",      icon: "💻", color: "text-emerald-400", accent: "#86efac" },
-  entrevista:  { label: "Entrevista",  icon: "💼", color: "text-sky-400",     accent: "#93c5fd" },
-  comparacion: { label: "Comparación", icon: "🔄", color: "text-amber-400",   accent: "#fcd34d" },
-  proceso:     { label: "Proceso",     icon: "📋", color: "text-fuchsia-400", accent: "#e879f9" },
+const CARD_META: Record<CardType, { label: string; icon: IconName; color: string; accent: string }> = {
+  concepto:    { label: "Concepto",    icon: "target", color: "text-violet-400",  accent: "#9a83ff" },
+  aplicacion:  { label: "Aplicación",  icon: "puzzle", color: "text-emerald-400", accent: "#34d399" },
+  codigo:      { label: "Código",      icon: "code", color: "text-emerald-400", accent: "#86efac" },
+  entrevista:  { label: "Entrevista",  icon: "briefcase", color: "text-sky-400",     accent: "#93c5fd" },
+  comparacion: { label: "Comparación", icon: "compare", color: "text-amber-400",   accent: "#fcd34d" },
+  proceso:     { label: "Proceso",     icon: "steps", color: "text-fuchsia-400", accent: "#e879f9" },
 };
 const ANKI_NOTE_TYPE = "Subtitle Bridge Basic";
 
@@ -440,8 +530,8 @@ function humanizeObjectivesError(error: string | null | undefined): string {
   }
   if (msg.includes("rate") && msg.includes("limit")) return "Gemini está limitando peticiones. Espera unos segundos y vuelve a intentarlo.";
   if (msg.includes("quota") || msg.includes("resource_exhausted")) return "Tu cuota de Gemini se agotó por hoy. Añade otra clave o espera al reset.";
-  if (msg.includes("no gemini api keys")) return "No has configurado tu API key de Gemini. Ábrela en ⚙️ → API keys e inténtalo de nuevo.";
-  if (msg.includes("api key") || msg.includes("api_key") || (msg.includes("invalid") && msg.includes("key"))) return "La API key de Gemini parece inválida. Verifícala en ⚙️ → API keys.";
+  if (msg.includes("no gemini api keys")) return "No has configurado tu API key de Gemini. Ábrela en Ajustes → API keys e inténtalo de nuevo.";
+  if (msg.includes("api key") || msg.includes("api_key") || (msg.includes("invalid") && msg.includes("key"))) return "La API key de Gemini parece inválida. Verifícala en Ajustes → API keys.";
   if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red al hablar con la IA. Revisa tu conexión y reintenta.";
   if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página de Udemy.";
   if (msg.includes("parse") || msg.includes("json") || msg.includes("formato no era válido")) return "La IA respondió pero el formato no era válido. Pulsa Regenerar para reintentar.";
@@ -474,24 +564,24 @@ function StepHeader({
     >
       <motion.div 
         animate={status === "active" ? { scale: [1, 1.1, 1] } : {}}
-        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-        className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all duration-500 shadow-sm ${
-        status === "done"    ? "bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.15)]" :
-        status === "active"  ? "bg-gradient-to-br from-violet-500/30 to-violet-500/10 border border-violet-400/40 text-violet-300 shadow-[0_0_15px_rgba(139,92,246,0.2)]" :
-                               "bg-white/5 border border-white/10 text-white/20"
+        transition={{ duration: 0.6, ease: "easeInOut" }}
+        className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 transition-all duration-500 ${
+        status === "done"    ? "bg-emerald-500/12 border border-emerald-500/30 text-emerald-400" :
+        status === "active"  ? "kx-step-num border" :
+                               "bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg-lo)]"
       }`}>
         <AnimatePresence mode="wait">
           {status === "done"
             ? <motion.div key="done" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Check size={12} strokeWidth={3} /></motion.div>
-            : <motion.span key="num" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[10px] font-semibold leading-none">{n}</motion.span>
+            : <motion.span key="num" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex" data-n={n}><Icon name={status === "active" ? "sparkles" : "lock"} size={12} weight="fill" /></motion.span>
           }
         </AnimatePresence>
       </motion.div>
       <div className="flex flex-col min-w-0">
-        <span className={`text-[12px] tracking-wide transition-colors ${status === "pending" ? "text-white/30" : "text-white/85"}`} style={{ fontWeight: 600 }}>{label}</span>
-        {subLabel && <span className={`text-[10px] mt-0.5 transition-colors ${status === "pending" ? "text-white/20" : "text-white/40"}`}>{subLabel}</span>}
+        <span className={`text-[12px] tracking-wide transition-colors ${status === "pending" ? "text-[var(--usb-fg-lo)]" : "text-[var(--usb-fg-hi)]"}`} style={{ fontWeight: 600 }}>{label}</span>
+        {subLabel && <span className={`text-[10px] mt-0.5 transition-colors ${status === "pending" ? "text-[var(--usb-fg-lo)]" : "text-[var(--usb-fg-mid)]"}`}>{subLabel}</span>}
       </div>
-      {status === "pending" && <Lock size={11} className="text-white/10 ml-auto shrink-0" />}
+      {status === "pending" && <Lock size={12} className="text-[var(--usb-fg-lo)] ml-auto shrink-0" />}
     </motion.div>
   );
 }
@@ -499,9 +589,9 @@ function StepHeader({
 // ── AI Analyzing Loader — own component so hooks are valid (no early-return conflict) ──
 function AIAnalyzingLoader() {
   const STEPS = [
-    { label: "Leyendo tu respuesta…",             icon: "📖" },
-    { label: "Comparando con los conceptos…",     icon: "🧠" },
-    { label: "Generando feedback personalizado…",  icon: "✍️" },
+    { label: "Leyendo tu respuesta…",             icon: "bookOpen" as IconName },
+    { label: "Comparando con los conceptos…",     icon: "brain" as IconName },
+    { label: "Generando feedback personalizado…",  icon: "edit3" as IconName },
   ];
   const [step, setStep] = useState(0);
   useEffect(() => {
@@ -516,8 +606,8 @@ function AIAnalyzingLoader() {
     >
       <div className="h-[2px] bg-violet-500/8 overflow-hidden">
         <motion.div
-          className="h-full bg-gradient-to-r from-transparent via-violet-400 to-transparent"
-          style={{ width: "50%" }}
+          className="h-full bg-violet-400"
+          style={{ width: "35%" }}
           initial={{ x: "-100%" }}
           animate={{ x: "300%" }}
           transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
@@ -532,7 +622,7 @@ function AIAnalyzingLoader() {
               exit={{ scale: 0.4, opacity: 0, rotate: 10 }}
               transition={{ duration: 0.22 }}
               className="text-[15px]"
-            >{STEPS[step].icon}</motion.span>
+            ><Icon name={STEPS[step].icon} size={17} /></motion.span>
           </AnimatePresence>
         </div>
         <div className="flex-1 min-w-0 space-y-2">
@@ -606,343 +696,241 @@ function AIFeedback({
 
   // ── Verdict config ────────────────────────────────────────────────────────
   const VERDICT = {
-    correct:   { heroText: "text-emerald-300", heroBg: "bg-emerald-500/10", heroBorder: "border-emerald-500/20", heroIconBg: "bg-emerald-500/18 border-emerald-500/30", icon: "✅", label: "Correcto",    sublabel: "Tu comprensión está en el camino correcto.", ring: "border-emerald-500/22 shadow-[0_0_24px_rgba(16,185,129,0.07)]",   cardBg: "bg-gradient-to-b from-emerald-500/5 to-transparent" },
-    excellent: { heroText: "text-violet-300",  heroBg: "bg-violet-500/10",  heroBorder: "border-violet-500/20",  heroIconBg: "bg-violet-500/18 border-violet-500/30",  icon: "🎯", label: "Excelente",   sublabel: "Dominas este concepto. Respuesta completa.",       ring: "border-violet-500/22 shadow-[0_0_24px_rgba(139,92,246,0.09)]", cardBg: "bg-gradient-to-b from-violet-500/5 to-transparent"  },
-    partial:   { heroText: "text-amber-300",   heroBg: "bg-amber-500/8",    heroBorder: "border-amber-500/18",   heroIconBg: "bg-amber-500/15 border-amber-500/28",    icon: "⚡", label: "Parcial",     sublabel: "Vas bien — hay algunos gaps por cerrar.",          ring: "border-amber-500/20 shadow-[0_0_24px_rgba(245,158,11,0.07)]", cardBg: "bg-gradient-to-b from-amber-500/5 to-transparent"   },
-    wrong:     { heroText: "text-rose-300",    heroBg: "bg-rose-500/7",     heroBorder: "border-rose-500/16",    heroIconBg: "bg-rose-500/14 border-rose-500/25",      icon: "💬", label: "Revisemos",   sublabel: "Todavía no llegaste. La IA te explica por qué.",  ring: "border-rose-500/18 shadow-[0_0_24px_rgba(239,68,68,0.05)]",   cardBg: "bg-gradient-to-b from-rose-500/4 to-transparent"    },
-    unknown:   { heroText: "text-violet-300",  heroBg: "bg-violet-500/7",   heroBorder: "border-violet-500/15",  heroIconBg: "bg-violet-500/14 border-violet-500/25",  icon: "✦", label: "Evaluando…",  sublabel: "",                                                  ring: "border-violet-500/15",                                         cardBg: "bg-gradient-to-b from-violet-500/4 to-transparent"  },
+    correct:   { heroText: "text-emerald-300", heroBg: "bg-emerald-500/10", heroBorder: "border-emerald-500/20", heroIconBg: "bg-emerald-500/18 border-emerald-500/30", icon: "checkCircle2" as IconName, label: "Correcto",    sublabel: "Tu comprensión está en el camino correcto.", ring: "border-emerald-500/22",   cardBg: "bg-emerald-500/[0.04]" },
+    excellent: { heroText: "text-violet-300",  heroBg: "bg-violet-500/10",  heroBorder: "border-violet-500/20",  heroIconBg: "bg-violet-500/18 border-violet-500/30",  icon: "target" as IconName, label: "Excelente",   sublabel: "Dominas este concepto. Respuesta completa.",       ring: "border-violet-500/22", cardBg: "bg-violet-500/[0.05]"  },
+    partial:   { heroText: "text-amber-300",   heroBg: "bg-amber-500/8",    heroBorder: "border-amber-500/18",   heroIconBg: "bg-amber-500/15 border-amber-500/28",    icon: "zap" as IconName, label: "Parcial",     sublabel: "Vas bien — hay algunos gaps por cerrar.",          ring: "border-amber-500/20", cardBg: "bg-amber-500/[0.04]"   },
+    wrong:     { heroText: "text-rose-300",    heroBg: "bg-rose-500/7",     heroBorder: "border-rose-500/16",    heroIconBg: "bg-rose-500/14 border-rose-500/25",      icon: "messageSquare" as IconName, label: "Revisemos",   sublabel: "Todavía no llegaste. La IA te explica por qué.",  ring: "border-rose-500/18",   cardBg: "bg-rose-500/[0.04]"    },
+    unknown:   { heroText: "text-violet-300",  heroBg: "bg-violet-500/7",   heroBorder: "border-violet-500/15",  heroIconBg: "bg-violet-500/14 border-violet-500/25",  icon: "sparkles" as IconName, label: "Evaluando…",  sublabel: "",                                                  ring: "border-violet-500/15",                                         cardBg: "bg-violet-500/[0.04]"  },
   } as const;
   const v = VERDICT[isStreaming ? "unknown" : (rating as keyof typeof VERDICT)] ?? VERDICT.unknown;
 
-  // ── Sound effect ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (fb.status !== "done") return;
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator(); const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      if (rating === "correct" || rating === "excellent") {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.12);
-        gain.gain.setValueAtTime(0.07, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.38);
-        osc.start(); osc.stop(ctx.currentTime + 0.38);
-      } else if (rating === "partial") {
-        osc.type = "triangle";
-        osc.frequency.setValueAtTime(440, ctx.currentTime);
-        gain.gain.setValueAtTime(0.07, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(); osc.stop(ctx.currentTime + 0.3);
-      } else if (rating === "wrong") {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(260, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(210, ctx.currentTime + 0.28);
-        gain.gain.setValueAtTime(0.05, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
-        osc.start(); osc.stop(ctx.currentTime + 0.28);
-      }
-    } catch (_) {}
-  }, [fb.status, rating]);
-
-  // ── Per-line parser ───────────────────────────────────────────────────────
-  type LineMeta = { text: string; color: string; bg: string; border: string; highlight: boolean; isFirst: boolean };
-  const rawLines = fb.content.split("\n").filter(Boolean);
-  const parseLine = (l: string, idx: number): LineMeta => {
-    const isFirst = idx === 0;
-    if (l.startsWith("✅")) return { text: l, color: isFirst ? "text-emerald-200" : "text-emerald-300/85", bg: isFirst ? "bg-emerald-500/12" : "bg-emerald-500/7",  border: "border-l-emerald-500/55", highlight: true, isFirst };
-    if (l.startsWith("❌")) return { text: l, color: isFirst ? "text-red-200"     : "text-red-300/85",     bg: isFirst ? "bg-red-500/10"     : "bg-red-500/6",      border: "border-l-red-500/55",     highlight: true, isFirst };
-    if (l.startsWith("⚠️"))return { text: l, color: isFirst ? "text-amber-200"   : "text-amber-300/85",   bg: isFirst ? "bg-amber-500/12"   : "bg-amber-500/7",    border: "border-l-amber-500/55",   highlight: true, isFirst };
-    if (l.startsWith("💡")) return { text: l, color: "text-sky-300/85",    bg: "bg-sky-500/7",      border: "border-l-sky-500/50",    highlight: true, isFirst };
-    if (l.startsWith("🎯")) return { text: l, color: "text-violet-300/85", bg: "bg-violet-500/7",   border: "border-l-violet-500/50", highlight: true, isFirst };
-    if (l.startsWith("🔁")) return { text: l, color: "text-fuchsia-300/85",bg: "bg-fuchsia-500/7",  border: "border-l-fuchsia-500/50",highlight: true, isFirst };
-    if (l.startsWith("🚀")) return { text: l, color: "text-emerald-400/85",bg: "bg-emerald-500/7",  border: "border-l-emerald-400/50",highlight: true, isFirst };
-    return { text: l, color: "text-white/50", bg: "", border: "", highlight: false, isFirst };
-  };
-
-  const isLast = (i: number) => i === rawLines.length - 1;
-  const cursor = (
-    <motion.span
-      className="inline-block ml-[2px] w-[2px] h-[12px] bg-violet-400 rounded-sm align-middle"
-      animate={{ opacity: [1, 0, 1] }}
-      transition={{ duration: 0.5, repeat: Infinity }}
-    />
-  );
+  const showActions = fb.status === "done";
+  const needsWork = rating === "partial" || rating === "wrong" || rating === "unknown";
+  const paragraphs = (fb.content || "").split(/\n{2,}|\n(?=\s*[-*•]\s)/).map(p => p.trim()).filter(Boolean);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 320, damping: 26 }}
-      className={`rounded-xl border overflow-hidden ${v.ring}`}
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      className={`rounded-xl border overflow-hidden ${v.ring} ${v.cardBg}`}
     >
-      {/* ── Streaming top bar ── */}
-      {isStreaming && (
-        <div className="flex items-center gap-2.5 px-3 py-2 bg-violet-500/8 border-b border-violet-500/15">
-          <Loader2 size={9} className="text-violet-400 animate-spin shrink-0" />
-          <span className="text-violet-400/65 text-[9px] uppercase tracking-widest flex-1" style={{ fontWeight: 700 }}>
-            IA evaluando tu respuesta
-          </span>
-          <span className="flex gap-[3px] items-center shrink-0">
-            {[0,1,2].map(i => (
-              <motion.div key={i} className="w-[3px] h-[3px] rounded-full bg-violet-400/70"
-                animate={{ opacity: [0.2, 1, 0.2], y: [0, -2, 0] }}
-                transition={{ duration: 0.55, repeat: Infinity, delay: i * 0.18 }} />
-            ))}
-          </span>
+      {/* ── Verdict hero band ── */}
+      <div className={`flex items-center gap-3 px-3.5 py-3 ${v.heroBg} border-b ${v.heroBorder}`}>
+        <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${v.heroIconBg} ${v.heroText}`}>
+          {isStreaming
+            ? <Loader2 size={15} className="animate-spin" />
+            : <Icon name={v.icon} size={18} />}
         </div>
-      )}
+        <div className="flex-1 min-w-0">
+          <p className={`text-[13px] ${v.heroText}`} style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{v.label}</p>
+          {v.sublabel && <p className="text-white/45 text-[10.5px] mt-0.5 leading-snug">{v.sublabel}</p>}
+        </div>
+        {fb.isMock && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300 shrink-0">Local</span>
+        )}
+      </div>
 
-      {/* ── Verdict Hero Band (done only) ── */}
-      {!isStreaming && (
-        <motion.div
-          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.26 }}
-          className={`flex items-center gap-3 px-3.5 py-3 ${v.heroBg} border-b ${v.heroBorder}`}
-        >
-          <motion.div
-            initial={{ scale: 0, rotate: -18 }} animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: "spring", stiffness: 420, damping: 20, delay: 0.06 }}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${v.heroIconBg}`}
-          >
-            <span className="text-[20px]">{v.icon}</span>
-          </motion.div>
-          <div className="flex-1 min-w-0">
-            <motion.p initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.1 }}
-              className={`text-[14px] ${v.heroText}`} style={{ fontWeight: 700, letterSpacing: "-0.01em" }}
-            >{v.label}</motion.p>
-            {v.sublabel && (
-              <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.18 }}
-                className="text-white/32 text-[10px] mt-0.5 leading-snug"
-              >{v.sublabel}</motion.p>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <span className="text-white/14 text-[8px] font-mono tracking-wider uppercase">IA</span>
-            {fb.isMock && (
-              <span className="flex items-center gap-0.5 bg-amber-500/8 border border-amber-500/18 rounded px-1.5 py-0.5 text-[7px] text-amber-400/60">
-                <WifiOff size={6} />demo
-              </span>
-            )}
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── Content lines ── */}
-      <div className={`px-3 py-3 space-y-1.5 ${v.cardBg}`}>
-        {rawLines.map((l, i) => {
-          const m = parseLine(l, i);
-          return (
-            <motion.div key={i}
-              initial={{ opacity: 0, x: -5 }} animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.16, delay: isStreaming ? 0 : i * 0.05, ease: "easeOut" }}
-            >
-              {m.highlight ? (
-                <div className={`border-l-[3px] rounded-r-xl px-2.5 ${m.isFirst ? "py-2" : "py-1.5"} ${m.bg} ${m.border}`}>
-                  <p className={`leading-relaxed ${m.color} ${m.isFirst ? "text-[12px]" : "text-[11px]"}`}
-                    style={m.isFirst ? { fontWeight: 500 } : {}}>
-                    {m.text}{isStreaming && isLast(i) && cursor}
-                  </p>
-                </div>
-              ) : (
-                <p className={`text-[10px] leading-relaxed px-1.5 ${m.color}`}>
-                  {m.text}{isStreaming && isLast(i) && cursor}
-                </p>
+      {/* ── Structured content ── */}
+      <div className="px-3.5 py-3 space-y-2">
+        {paragraphs.length === 0 && isStreaming && (
+          <p className="text-white/35 text-[11px]">Analizando tu respuesta…</p>
+        )}
+        {paragraphs.map((p, i) => {
+          const isBullet = /^\s*[-*•]\s+/.test(p);
+          const textOnly = p.replace(/^\s*[-*•]\s+/, "");
+          return isBullet ? (
+            <div key={i} className="flex items-start gap-2">
+              <span className="mt-[7px] h-1 w-1 rounded-full bg-violet-400/70 shrink-0" aria-hidden="true" />
+              <p className="text-white/70 text-[11.5px] leading-relaxed">{renderInline(textOnly)}</p>
+            </div>
+          ) : (
+            <p key={i} className="text-white/70 text-[11.5px] leading-relaxed">
+              {renderInline(textOnly)}
+              {isStreaming && i === paragraphs.length - 1 && (
+                <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70 animate-pulse" />
               )}
-            </motion.div>
+            </p>
           );
         })}
       </div>
 
-      {/* ── Contextual action strip ── */}
-      {!isStreaming && (rating === "wrong" || rating === "partial") && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
-          transition={{ delay: 0.32, duration: 0.22 }}
-          className="border-t border-[var(--usb-border)] px-3 py-2.5 flex items-center gap-2"
-        >
-          <span className="text-white/20 text-[9px] uppercase tracking-wider shrink-0" style={{ fontWeight: 600 }}>
-            Siguiente paso
-          </span>
-          <div className="flex gap-1.5 ml-auto flex-wrap justify-end">
-            {rating === "wrong" && onClearAnswer && (
-              <button onClick={onClearAnswer}
-                className="flex items-center gap-1.5 text-[9px] border border-white/10 text-white/35 hover:text-white/60 hover:border-white/22 px-2.5 py-1 rounded-lg transition-all">
-                <RotateCcw size={8}/> Reintentar
-              </button>
-            )}
-            {onShowModel && (
-              <button onClick={onShowModel}
-                className="flex items-center gap-1.5 text-[9px] border border-sky-500/20 bg-sky-500/5 text-sky-300/65 hover:text-sky-300 hover:border-sky-500/38 px-2.5 py-1 rounded-lg transition-all">
-                <BookOpen size={8}/> Ver respuesta
-              </button>
-            )}
-          </div>
-        </motion.div>
+      {/* ── Contextual actions ── */}
+      {showActions && (onRetry || onShowHint || onShowModel || onClearAnswer) && (
+        <div className="px-3.5 pb-3 flex flex-wrap gap-1.5">
+          {needsWork && onClearAnswer && (
+            <button onClick={onClearAnswer}
+              className="flex items-center gap-1.5 text-[10px] text-white/60 hover:text-white border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all">
+              <Edit3 size={10} />Reescribir
+            </button>
+          )}
+          {needsWork && onShowHint && (
+            <button onClick={onShowHint}
+              className="flex items-center gap-1.5 text-[10px] text-amber-300/80 hover:text-amber-300 border border-amber-500/20 hover:border-amber-500/35 px-2.5 py-1.5 rounded-lg transition-all">
+              <Zap size={10} />Ver pista
+            </button>
+          )}
+          {onShowModel && (
+            <button onClick={onShowModel}
+              className="flex items-center gap-1.5 text-[10px] text-violet-300/80 hover:text-violet-300 border border-violet-500/20 hover:border-violet-500/35 px-2.5 py-1.5 rounded-lg transition-all">
+              <BookOpen size={10} />Respuesta modelo
+            </button>
+          )}
+          {onRetry && fb.isMock && (
+            <button onClick={onRetry}
+              className="flex items-center gap-1.5 text-[10px] text-white/60 hover:text-white border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all">
+              <RotateCcw size={10} />Reevaluar con IA
+            </button>
+          )}
+        </div>
       )}
     </motion.div>
   );
 }
 
-// Anki card flip preview
-function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
-  const [idx, setIdx] = useState(0);
-  const [flipped, setFlipped] = useState(false);
-  const card = cards[idx];
-  const meta = CARD_META[card.type];
-  const strip = (h: string) =>
-    h.replace(/<pre[^>]*>[\s\S]*?<\/pre>/gi, "[ código ]").replace(/<[^>]+>/g, "")
-     .replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&amp;/g,"&").trim().slice(0, 200);
-  const go = (d: 1|-1) => { setFlipped(false); setTimeout(() => setIdx(i => (i+d+cards.length)%cards.length), 130); };
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between text-[11px] font-medium tracking-wide">
-        <span className="text-white/30 bg-white/5 px-2 py-0.5 rounded-full border border-[var(--usb-divider)] shadow-inner">
-          {idx+1} de {cards.length}
-        </span>
-        <motion.span
-          key={card.type}
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className={`${meta.color} flex items-center gap-1.5 bg-white/5 px-2 py-0.5 rounded-full border`}
-          style={{ borderColor: `${meta.accent}38`, boxShadow: `0 0 10px ${meta.accent}26` }}
-        >
-          <span style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{meta.icon}</span> {meta.label}
-        </motion.span>
-      </div>
-      <div className="relative cursor-pointer select-none group" style={{ perspective:"1200px" }} onClick={() => setFlipped(v => !v)}>
-        <motion.div animate={{ rotateY: flipped ? 180 : 0 }} transition={{ duration: 0.4, type: "spring", stiffness: 260, damping: 20 }} style={{ transformStyle:"preserve-3d" }}>
-          {/* Front */}
-          <div className="bg-gradient-to-b from-[#18181b] to-[#121214] border border-white/10 rounded-xl p-4 min-h-[100px] flex flex-col justify-between shadow-[0_8px_30px_rgba(0,0,0,0.4)] group-hover:border-white/20 transition-colors" style={{ backfaceVisibility:"hidden" }}>
-            <p className="text-white/80 text-[12px] leading-relaxed font-medium">{strip(card.front)}</p>
-            <div className="flex items-center justify-center gap-1.5 mt-3 pt-3 border-t border-[var(--usb-divider)]">
-              <FlipHorizontal size={11} className="text-white/30 group-hover:text-white/60 transition-colors" />
-              <span className="text-white/30 text-[10px] tracking-wide font-medium group-hover:text-white/60 transition-colors">Toca para voltear</span>
-            </div>
-            <div className="absolute inset-0 rounded-xl pointer-events-none bg-gradient-to-tr from-transparent via-white/[0.03] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-          </div>
-          {/* Back */}
-          <div className="absolute inset-0 bg-gradient-to-b from-[#121214] to-[#0a0a0c] rounded-xl p-4 overflow-auto custom-scrollbar-thin shadow-[0_8px_30px_rgba(0,0,0,0.6)]"
-            style={{ backfaceVisibility:"hidden", transform:"rotateY(180deg)", borderWidth:1, borderStyle:"solid", borderColor: meta.accent+"66", boxShadow: `inset 0 0 40px ${meta.accent}10, 0 8px 30px rgba(0,0,0,0.6)` }}>
-            <p className="text-white/80 text-[12px] leading-relaxed">{strip(card.back)}</p>
-            <div className="absolute inset-0 pointer-events-none rounded-xl" style={{ boxShadow: `inset 0 1px 0 ${meta.accent}33` }}/>
-          </div>
-        </motion.div>
-      </div>
-      <div className="flex items-center justify-between pt-1">
-        <button onClick={() => go(-1)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-transparent hover:border-white/10 text-white/40 hover:text-white/80 flex items-center justify-center transition-all shadow-sm"><ChevronLeft size={14}/></button>
-        <div className="flex gap-2 items-center">
-          {cards.map((_,i) => (
-            <button key={i} onClick={() => { setFlipped(false); setIdx(i); }}
-              className={`rounded-full transition-all duration-300 ${i===idx ? "w-6 h-1.5 bg-violet-400 shadow-[0_0_8px_#a78bfa]" : "w-1.5 h-1.5 bg-white/20 hover:bg-white/40"}`}/>
-          ))}
-        </div>
-        <button onClick={() => go(1)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-transparent hover:border-white/10 text-white/40 hover:text-white/80 flex items-center justify-center transition-all shadow-sm"><ChevronRight size={14}/></button>
-      </div>
-    </div>
-  );
-}
-
-// Progress stepper
-function ProgressStepper({ steps }: { steps: { label: string; done: boolean; active: boolean }[] }) {
-  return (
-    <div className="flex items-center gap-0 w-full mb-2">
-      {steps.map((s, i) => (
-        <React.Fragment key={s.label}>
-          <div className="flex flex-col items-center gap-1.5 flex-1 group relative">
-            {s.active && (
-              <motion.div 
-                layoutId="activeStepGlow"
-                className="absolute top-0 w-8 h-8 rounded-full bg-violet-500/20 blur-xl pointer-events-none"
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              />
-            )}
-            <motion.div 
-              animate={s.active ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
-              transition={{ duration: 2, repeat: s.active ? Infinity : 0, ease: "easeInOut" }}
-              className={`w-5 h-5 rounded-full flex items-center justify-center transition-all duration-500 shadow-sm z-10 relative ${
-              s.done ? "bg-gradient-to-b from-emerald-400/20 to-emerald-500/10 border border-emerald-400/30 shadow-[0_0_10px_rgba(52,211,153,0.15)]" : 
-              s.active ? "bg-gradient-to-b from-violet-400/20 to-violet-500/10 border border-violet-400/40 shadow-[0_0_12px_rgba(139,92,246,0.2)]" : 
-              "bg-white/5 border border-white/10"
-            }`}>
-              <AnimatePresence mode="wait">
-                {s.done
-                  ? <motion.div key="done" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Check size={10} className="text-emerald-400" strokeWidth={3}/></motion.div>
-                  : <motion.span key="num" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className={`text-[9px] font-semibold leading-none ${s.active ? "text-violet-300" : "text-white/20"}`}>{i+1}</motion.span>
-                }
-              </AnimatePresence>
-            </motion.div>
-            <span className={`text-[9px] leading-none tracking-wide text-center whitespace-nowrap transition-colors relative z-10 ${
-              s.done ? "text-emerald-400/70 font-medium" : 
-              s.active ? "text-violet-300/90 font-medium" : 
-              "text-white/20 group-hover:text-white/30"
-            }`}>{s.label}</span>
-          </div>
-          {i < steps.length - 1 && (
-            <div className="flex-1 mx-1 mb-4 h-px relative overflow-hidden bg-white/5">
-               <motion.div 
-                 initial={{ scaleX: 0 }} 
-                 animate={{ scaleX: s.done ? 1 : 0 }} 
-                 className="absolute inset-0 bg-gradient-to-r from-emerald-500/50 to-emerald-400/80 origin-left"
-                 transition={{ duration: 0.6, ease: "easeInOut" }}
-               />
-            </div>
-          )}
-        </React.Fragment>
-      ))}
-    </div>
-  );
-}
-
-// ─── Anki builders ────────────────────────────────────────────────────────────
-function toPrism(html: string, defaultLang = "java"): string {
-  // Preserva una clase language-* explícita del modelo (p. ej. sql, markup,
-  // properties); solo cae al default cuando el bloque no trae lenguaje.
-  const langOf = (...attrs: string[]): string => {
-    for (const attr of attrs) {
-      const m = /language-([\w+#.-]+)/i.exec(attr);
-      if (m) return m[1];
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={i} className="text-white/90" style={{ fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
     }
-    return defaultLang;
-  };
-  return html
-    .replace(/<pre([^>]*)>\s*<code([^>]*)>/gi, (_m, preAttrs: string, codeAttrs: string) => {
-      const lang = langOf(codeAttrs, preAttrs);
-      return `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`;
-    })
-    .replace(/<pre([^>]*)>(?!\s*<code)/gi, (_m, preAttrs: string) => {
-      const lang = langOf(preAttrs);
-      return `<pre class="language-${lang}" data-lang="${lang.toUpperCase()}"><code class="language-${lang}">`;
-    })
-    .replace(/(?<!<\/code>)\s*<\/pre>/gi, "</code></pre>");
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return <code key={i} className="px-1 py-0.5 rounded bg-white/8 text-violet-300 text-[10.5px] font-mono">{part.slice(1, -1)}</code>;
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
 }
-/** La plantilla Anki limpia badges al inicio del campo; no enviarlos nunca. */
-function stripCodeBadge(html: string): string {
-  return String(html || "").replace(/^(💻\s*CÓDIGO|CÓDIGO)\s*/i, "");
+
+// ─── Utility helpers ──────────────────────────────────────────────────────────
+function markQa(marker: string): void {
+  try {
+    const w = window as unknown as { __usgQa?: string[] };
+    (w.__usgQa ??= []).push(marker);
+    if (w.__usgQa.length > 200) w.__usgQa.shift();
+  } catch {}
 }
-// La plantilla del note type ya dibuja el marco (terminal bar, píldora, tipografía).
-// Los campos llevan SOLO el contenido: cualquier chrome aquí se duplicaría.
-function buildCardFront(card: AnkiCard): string {
-  return toPrism(stripCodeBadge(card.front));
+
+function downloadFile(content: string, filename: string, mime = "text/plain;charset=utf-8"): void {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function buildCardBack(card: AnkiCard): string {
-  return toPrism(stripCodeBadge(card.back));
+
+function detectTranscriptLang(text: string): "en" | "es" | null {
+  const sample = text.slice(0, 4000).toLowerCase();
+  const words = sample.match(/[a-záéíóúñ]+/g) ?? [];
+  if (words.length < 20) return null;
+  const en = new Set(["the", "and", "is", "of", "to", "in", "that", "it", "you", "we", "this", "for", "with", "are", "on", "can", "have"]);
+  const es = new Set(["el", "la", "los", "las", "de", "que", "y", "en", "un", "una", "es", "por", "con", "para", "se", "lo", "como", "del"]);
+  let e = 0, s = 0;
+  for (const w of words) { if (en.has(w)) e++; if (es.has(w)) s++; }
+  if (e === s) return null;
+  return e > s ? "en" : "es";
 }
-function normalizeAnkiTag(tag: string): string {
-  return String(tag || "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[,\t\r\n]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function toAnkiImportField(html: string): string {
-  return String(html || "").replace(/\t/g, "  ").replace(/\r?\n/g, "<br>");
+
+function cardTextToHtml(s: string): string {
+  return escapeHtml(s)
+    .replace(/```([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\n/g, "<br>");
 }
-// GUID por contenido (curso|lección|front): re-importar la misma lección
-// actualiza las notas en vez de duplicarlas, aunque el orden o la cantidad de
-// tarjetas cambie entre exportaciones.
-function stableAnkiGuid(course: string, lesson: string, card: AnkiCard): string {
+
+function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
+  const cell = (s: string) => cardTextToHtml(s).replace(/\t/g, " ");
+  const lines = [
+    "#separator:tab",
+    "#html:true",
+    "#tags column:3",
+    `#notetype:${ANKI_NOTE_TYPE}`,
+    `#deck:${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}`,
+  ];
+  for (const c of cards) {
+    const tags = [...c.tags, c.type].map(t => t.replace(/\s+/g, "_")).join(" ");
+    lines.push(`${cell(c.front)}\t${cell(c.back)}\t${tags}`);
+  }
+  return lines.join("\n");
+}
+
+const ANKI_CSS = `.card {
+  font-family: "Plus Jakarta Sans", -apple-system, "Segoe UI", sans-serif;
+  font-size: 18px;
+  line-height: 1.55;
+  text-align: left;
+  color: #1c1b22;
+  background: #f7f6fb;
+  padding: 20px;
+}
+.nightMode .card, .night_mode .card { color: #ecebf3; background: #17161d; }
+.front { font-weight: 600; }
+.back { margin-top: 12px; }
+hr#answer { border: 0; border-top: 1px solid #d4c9ff; margin: 16px 0; }
+code { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 0.9em; padding: 1px 6px; border-radius: 6px; background: rgba(109, 74, 255, 0.12); color: #6d4aff; }
+pre { padding: 12px 14px; border-radius: 10px; background: rgba(109, 74, 255, 0.08); overflow-x: auto; }
+pre code { background: transparent; padding: 0; }
+`;
+
+function buildTemplateGuide(course: string, lesson: string): string {
+  return [
+    `PLANTILLA ANKI — ${ANKI_NOTE_TYPE}`,
+    `Curso: ${course}`,
+    `Lección: ${lesson}`,
+    "",
+    "1. En Anki: Herramientas → Gestionar tipos de nota → Añadir → «Básico».",
+    `2. Nómbralo exactamente: ${ANKI_NOTE_TYPE}`,
+    "3. Campos: Front, Back.",
+    "4. Tarjetas → Plantilla frontal:",
+    '   <div class="front">{{Front}}</div>',
+    "5. Plantilla trasera:",
+    '   {{FrontSide}}<hr id="answer"><div class="back">{{Back}}</div>',
+    "6. Estilo: pega el contenido de anki-card-styles.css.",
+    "7. Archivo → Importar → selecciona el .txt de tarjetas.",
+    "",
+    "Consejo: el paquete .apkg instala todo esto automáticamente.",
+  ].join("\n");
+}
+
+async function exportApkgFile(
+  cards: AnkiCard[],
+  course: string,
+  lesson: string,
+  rootDeck: string,
+  onProgress?: (msg: string) => void,
+): Promise<string> {
+  const root = rootDeck.trim() || "Udemy Bridge";
+  const lessonUrl = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
+  const spec = buildConceptSpec(
+    cards.map((c) => ({
+      front: cardTextToHtml(c.front),
+      back: cardTextToHtml(c.back),
+      // GUID probado: hash de curso|lección|front — reimportar ACTUALIZA en vez de duplicar.
+      guid: stableAnkiGuid(course, lesson, c),
+      tags: [...c.tags, c.type].map((t) => t.replace(/\s+/g, "_")),
+    })),
+    course,
+    lesson,
+    root,
+    lessonUrl,
+  );
+  onProgress?.("Empaquetando tarjetas…");
+  const apkg = await buildAnkiApkg(spec, onProgress);
+  const safe = (s: string) => s.replace(/[^a-z0-9]/gi, "_");
+  downloadApkg(apkg, `${safe(lesson)}_conceptos.apkg`);
+  return `${sanitizeDeckSegment(root)}::${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}`;
+}
+
+// GUID por contenido (curso|lección|front): reimportar la misma lección
+// actualiza las notas en vez de duplicarlas aunque cambie el orden o la cantidad.
+function stableAnkiGuid(course: string, lesson: string, card: { front: string }): string {
   const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.front}`;
   let hash = 2166136261;
   for (let i = 0; i < source.length; i += 1) {
@@ -951,872 +939,275 @@ function stableAnkiGuid(course: string, lesson: string, card: AnkiCard): string 
   }
   return `usb${hash.toString(36)}`;
 }
-const FRONT_TEMPLATE = `<div class="anki-wrapper dev-card">
-  <div class="card-box front-layout">
 
-    <header class="terminal-bar">
-      <div class="terminal-dots">
-        <span class="dot red"></span>
-        <span class="dot yellow"></span>
-        <span class="dot green"></span>
-      </div>
-      <div class="type-pill context-pill">Java / Backend</div>
-    </header>
-
-    <main class="qa-container">
-      <div id="qa" class="qa-question">
-        {{Front}}
-      </div>
-    </main>
-
-  </div>
-</div>
-
-<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-properties.min.js"></script>
-
-<script>
-(function initDevFront() {
-  var pill = document.querySelector('.context-pill, .type-pill');
-  if (pill && pill.innerText) {
-    pill.innerText = pill.innerText.replace(/_/g, ' ').trim();
-  }
-
-  var qaContainer = document.getElementById('qa');
-  if (qaContainer) {
-    qaContainer.innerHTML = qaContainer.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
-  }
-
-  document.querySelectorAll('#qa code, .qa-container code').forEach(function(el) {
-    el.innerHTML = el.innerHTML.replace(/<br\\s*\\/?>/gi, '\\n');
-  });
-
-  setTimeout(function() {
-    if (window.Prism) window.Prism.highlightAll();
-  }, 30);
-})();
-</script>`;
-const BACK_TEMPLATE = `<div class="anki-wrapper dev-card">
-  <div class="card-box back-layout">
-
-    <header class="terminal-bar">
-      <div class="terminal-dots">
-        <span class="dot red"></span>
-        <span class="dot yellow"></span>
-        <span class="dot green"></span>
-      </div>
-      <div class="type-pill context-pill">Solución / Concepto</div>
-    </header>
-
-    <div class="qa-header-back" id="qaBack">
-      {{Front}}
-    </div>
-
-    <div class="soft-divider"></div>
-
-    <main class="answer-section answer">
-      {{Back}}
-    </main>
-
-  </div>
-</div>
-
-<!-- La cara B no hereda los scripts del anverso en Anki: sin estas líneas
-     Prism no existe al mostrar la respuesta y el código no se resalta. -->
-<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-properties.min.js"></script>
-
-<script>
-(function initDevBack() {
-  var qaBack = document.getElementById('qaBack');
-  if (qaBack) {
-    qaBack.innerHTML = qaBack.innerHTML.replace(/^(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
-  }
-
-  document.querySelectorAll('.answer code, pre code').forEach(function(el) {
-    el.innerHTML = el.innerHTML.replace(/<br\\s*\\/?>/gi, '\\n');
-  });
-
-  setTimeout(function() {
-    if (window.Prism) window.Prism.highlightAll();
-  }, 30);
-})();
-</script>`;
-const ANKI_CSS = `/* ==========================================================
-   SISTEMA DE DISEÑO DEVELOPER / INGENIERÍA DE SOFTWARE
-   ========================================================== */
-
-/* --- TEMA CLARO (Clean IDE / GitHub Light) --- */
-:root {
-  --bg-app: #f4f5f7;
-  --card-bg: #ffffff;
-  --card-border: rgba(0, 0, 0, 0.08);
-  --card-shadow: 0 20px 40px -12px rgba(15, 23, 42, 0.08),
-                 0 6px 16px -4px rgba(15, 23, 42, 0.03);
-
-  --text-main: #0f172a;
-  --text-sub: #334155;
-  --text-muted: #64748b;
-  --text-dim: #94a3b8;
-
-  --accent: #6d28d9;           /* Violeta técnico */
-  --accent-light: #f5f3ff;
-  --accent-glow: rgba(109, 40, 217, 0.15);
-
-  --block-bg: #f8fafc;
-  --block-border: #e2e8f0;
-  --divider: #edf2f7;
-
-  /* Terminal & Code Blocks en Modo Claro (Integrados y Suaves) */
-  --code-bg: #f8fafc;
-  --code-head: #f1f5f9;
-  --code-border: #e2e8f0;
-  --code-text: #0f172a;
-
-  --inline-bg: #f1f5f9;
-  --inline-fg: #6d28d9;
-  --inline-border: #e2e8f0;
-
-  --callout-tip-bg: #ecfdf5;
-  --callout-tip-border: #10b981;
-  --callout-tip-text: #065f46;
-
-  --callout-warn-bg: #fffbeb;
-  --callout-warn-border: #f59e0b;
-  --callout-warn-text: #92400e;
-
-  --callout-info-bg: #f0f9ff;
-  --callout-info-border: #0ea5e9;
-  --callout-info-text: #0369a1;
-}
-
-/* --- TEMA OSCURO (OneDark / Dracula Slate) --- */
-.nightMode, .card.night_mode {
-  --bg-app: #090a0f;
-  --card-bg: #12151d;
-  --card-border: rgba(255, 255, 255, 0.08);
-  --card-shadow: 0 24px 48px -15px rgba(0, 0, 0, 0.7);
-
-  --text-main: #f8fafc;
-  --text-sub: #cbd5e1;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
-
-  --accent: #a78bfa;           /* Púrpura pastel */
-  --accent-light: rgba(167, 139, 250, 0.12);
-  --accent-glow: rgba(167, 139, 250, 0.25);
-
-  --block-bg: #181c26;
-  --block-border: #262c3b;
-  --divider: #1f2533;
-
-  /* Terminal & Code Blocks en Modo Noche */
-  --code-bg: #0d1117;
-  --code-head: #161b22;
-  --code-border: #30363d;
-  --code-text: #e6edf3;
-
-  --inline-bg: rgba(167, 139, 250, 0.14);
-  --inline-fg: #c4b5fd;
-  --inline-border: rgba(167, 139, 250, 0.25);
-
-  --callout-tip-bg: rgba(16, 185, 129, 0.1);
-  --callout-tip-border: #34d399;
-  --callout-tip-text: #6ee7b7;
-
-  --callout-warn-bg: rgba(245, 158, 11, 0.1);
-  --callout-warn-border: #fbbf24;
-  --callout-warn-text: #fde68a;
-
-  --callout-info-bg: rgba(14, 165, 233, 0.1);
-  --callout-info-border: #38bdf8;
-  --callout-info-text: #7dd3fc;
-}
-
-/* --- RESET Y BASE --- */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-.card {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  font-size: 16px;
-  line-height: 1.6;
-  background-color: var(--bg-app);
-  color: var(--text-main);
-  min-height: 100vh;
-  margin: 0;
-  padding: 40px 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-font-smoothing: antialiased;
-}
-
-hr#answer {
-  display: none !important;
-}
-
-/* --- CONTENEDOR ANCHO PARA FIRMAS DE CÓDIGO --- */
-.anki-wrapper.dev-card {
-  width: 100%;
-  max-width: 720px;
-  margin: auto;
-}
-
-.card-box {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 22px;
-  padding: 34px 32px;
-  box-shadow: var(--card-shadow);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-/* --- BARRA SUPERIOR DE VENTANA (TERMINAL MINIMAL) --- */
-.terminal-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--divider);
-}
-
-.terminal-dots {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.terminal-dots .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.terminal-dots .dot.red { background-color: #ef4444; }
-.terminal-dots .dot.yellow { background-color: #f59e0b; }
-.terminal-dots .dot.green { background-color: #10b981; }
-
-.context-pill, .type-pill {
-  font-family: "SF Mono", "Fira Code", "JetBrains Mono", Consolas, monospace;
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  background: var(--accent-light);
-  padding: 4px 12px;
-  border-radius: 999px;
-  user-select: none;
-}
-
-/* --- PREGUNTA / HERO FRONT --- */
-.front-layout {
-  min-height: 300px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-}
-
-.qa-container {
-  margin: 16px 0;
-  padding: 8px 0;
-}
-
-.qa-question {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.4;
-  letter-spacing: -0.015em;
-  color: var(--text-main);
-  text-align: left;
-}
-
-.qa-header-back {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-.soft-divider {
-  height: 1px;
-  background: var(--divider);
-  margin: 20px 0 24px;
-}
-
-/* --- SECCIÓN DE RESPUESTA --- */
-.answer-section {
-  font-size: 1.05rem;
-  line-height: 1.7;
-  color: var(--text-sub);
-}
-
-/* --- BLOQUES DE CÓDIGO (ADAPTABLES A LIGHT/DARK) --- */
-pre {
-  background-color: var(--code-bg) !important;
-  color: var(--code-text) !important;
-  border: 1px solid var(--code-border);
-  border-radius: 12px;
-  margin: 16px 0 !important;
-  padding: 14px 18px !important;
-  overflow-x: auto;
-  font-family: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace !important;
-  font-size: 0.92rem !important;
-  line-height: 1.6 !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-pre code {
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  font-family: inherit !important;
-  font-size: inherit !important;
-  color: inherit !important;
-  text-shadow: none !important;
-}
-
-/* Código Inline (inline code) */
-code, p > code, li > code, td > code {
-  font-family: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace;
-  font-size: 0.88em;
-  color: var(--inline-fg);
-  background-color: var(--inline-bg);
-  border: 1px solid var(--inline-border);
-  padding: 2px 7px;
-  border-radius: 6px;
-  vertical-align: baseline;
-}
-
-/* --- CAJAS DE ALERTA Y CONCEPTOS (CALLOUTS) --- */
-.tip-box, .warning-box, .concept-box, .interview-box {
-  border-radius: 12px;
-  padding: 14px 18px;
-  margin: 16px 0;
-  font-size: 0.96rem;
-  line-height: 1.55;
-}
-
-.tip-box {
-  background: var(--callout-tip-bg);
-  border-left: 4px solid var(--callout-tip-border);
-  color: var(--callout-tip-text);
-}
-
-.warning-box {
-  background: var(--callout-warn-bg);
-  border-left: 4px solid var(--callout-warn-border);
-  color: var(--callout-warn-text);
-}
-
-.concept-box {
-  background: var(--callout-info-bg);
-  border-left: 4px solid var(--callout-info-border);
-  color: var(--callout-info-text);
-}
-
-.interview-box {
-  background: var(--block-bg);
-  border: 1px solid var(--accent);
-  border-left: 4px solid var(--accent);
-}
-
-.interview-box .label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  margin-bottom: 6px;
-}
-
-/* --- TABLAS COMPARATIVAS --- */
-table {
-  border-collapse: separate;
-  border-spacing: 0;
-  width: 100%;
-  margin: 18px 0;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--block-border);
-  background: var(--card-bg);
-}
-
-th {
-  background: var(--block-bg);
-  color: var(--accent);
-  font-size: 0.82rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 10px 16px;
-  text-align: left;
-  border-bottom: 1px solid var(--block-border);
-}
-
-td {
-  padding: 10px 16px;
-  font-size: 0.92rem;
-  color: var(--text-sub);
-  border-bottom: 1px solid var(--block-border);
-}
-
-tr:last-child td {
-  border-bottom: none;
-}
-
-/* --- LISTAS Y ENFASIS --- */
-ul, ol {
-  padding-left: 22px;
-  margin: 12px 0;
-}
-
-li {
-  margin-bottom: 6px;
-  color: var(--text-sub);
-}
-
-b, strong {
-  font-weight: 700;
-  color: var(--text-main);
-}
-
-blockquote {
-  border-left: 3px solid var(--accent);
-  background: var(--accent-light);
-  padding: 12px 18px;
-  border-radius: 0 12px 12px 0;
-  margin: 16px 0;
-  font-style: italic;
-  color: var(--text-sub);
-}
-
-/* --- RESPONSIVE EN MÓVILES --- */
-@media (max-width: 600px) {
-  .card {
-    padding: 14px 10px;
-    font-size: 15px;
-  }
-
-  .card-box {
-    padding: 24px 18px;
-    border-radius: 18px;
-  }
-
-  .qa-question {
-    font-size: 1.3rem;
-  }
-
-  .front-layout {
-    min-height: 250px;
-  }
-
-  pre {
-    padding: 12px 14px !important;
-    font-size: 0.84rem !important;
-  }
-
-  table {
-    font-size: 0.82rem;
-  }
-
-  th, td {
-    padding: 8px 10px;
-  }
-}`;
-
-// sanitizeDeckSegment vive en services/ankiDesign.ts (fuente única compartida
-// con el builder .apkg y el servicio de vocabulario).
-
-// Detección ligera del idioma de la transcripción con palabras funcionales
-// distintivas: evita ofrecer vocabulario del idioma objetivo cuando la lección
-// no tiene subtítulos en ese idioma (p. ej. cursos grabados en español).
-const LANG_MARKERS: Record<"en" | "es", string[]> = {
-  en: ["the", "and", "of", "to", "is", "are", "that", "this", "you", "we", "it's", "i'm", "let's", "going", "want", "know", "right", "okay", "welcome", "because", "which", "there", "here", "just", "really", "actually", "section", "lesson"],
-  es: ["que", "de", "los", "las", "una", "por", "para", "con", "del", "se", "su", "como", "más", "pero", "este", "esta", "vamos", "entonces", "porque", "también", "muy", "ya", "está", "eso", "aquí", "cuando", "todos", "lección", "entonces"],
-};
-
-function detectTranscriptLang(text: string): "en" | "es" | null {
-  const words = String(text || "").toLowerCase().match(/[a-záéíóúüñ']+/g) ?? [];
-  let en = 0;
-  let es = 0;
-  for (const word of words) {
-    if (LANG_MARKERS.en.includes(word)) en += 1;
-    else if (LANG_MARKERS.es.includes(word)) es += 1;
-  }
-  if (en === es) return null;
-  if (en > es * 1.4) return "en";
-  if (es > en * 1.4) return "es";
-  return null;
-}
-
-function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
-  let out = [
-    "#separator:Tab",
-    "#html:true",
-    `#deck:${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}`,
-    `#notetype:${ANKI_NOTE_TYPE}`,
-    "#columns:Front\tBack\tTags",
-    "#tags column:3",
-    "",
-    "",
-  ].join("\n");
-  cards.forEach(c => {
-    const tags = c.tags.map(normalizeAnkiTag).filter(Boolean).join(" ");
-    out += `${toAnkiImportField(buildCardFront(c))}\t${toAnkiImportField(buildCardBack(c))}\t${tags}\n`;
-  });
-  return out;
-}
-function buildTemplateGuide(course: string, lesson: string): string {
-  const safe = lesson.replace(/[^a-z0-9]/gi,"_");
-  return `SUBTITLE BRIDGE - PLANTILLA ANKI
-Setup unico para importacion TXT manual
-Curso: ${course}
-
-Ruta recomendada: importa el archivo .apkg desde Anki Desktop. Incluye mazo, diseno y tarjetas.
-Ruta manual TXT: usa estos 3 archivos solo si quieres importar texto con el tipo "${ANKI_NOTE_TYPE}".
-
-ARCHIVO 1 - ${safe}_tarjetas.txt - Tarjetas
-  1. En Anki: Archivo -> Importar
-  2. Selecciona el archivo "_tarjetas.txt"
-  3. Verifica: Separador = Tabulador | HTML = activado
-  4. Verifica columnas: Front, Back, Tags
-  5. Deck destino = ${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}
-  6. Clic en "Importar"
-
-ARCHIVO 2 - anki-card-styles.css - Estilo visual
-  1. Abre "anki-card-styles.css" con cualquier editor de texto
-  2. Selecciona todo (Ctrl+A) y copialo
-  3. En Anki: Herramientas -> Tipos de notas -> ${ANKI_NOTE_TYPE} -> Tarjetas/Cards -> Styling
-  4. Selecciona todo el texto del editor (Ctrl+A) y pega el CSS
-  5. Clic en "Guardar"
-  Sin este paso las tarjetas se veran sin el diseno visual.
-
-ARCHIVO 3 - PLANTILLA-ANKI.txt - Plantillas
-  1. Si no existe, crea un tipo nuevo clonando "Basic" y llamalo "${ANKI_NOTE_TYPE}".
-  2. En Anki: Herramientas -> Tipos de notas -> ${ANKI_NOTE_TYPE} -> Tarjetas
-  3. Pestana "Plantilla del anverso (Front)":
-     selecciona todo -> pega el bloque FRONT al final de este archivo.
-  4. Pestana "Plantilla del reverso (Back)":
-     selecciona todo -> pega el bloque BACK al final de este archivo.
-  5. Clic en "Guardar"
-  Sin este paso el resaltado de codigo (Prism.js) no funcionara.
-
-Listo. Las exportaciones TXT futuras de este curso solo necesitan el archivo de tarjetas.
-Si borras el estilo o la plantilla en Anki, puedes volver a descargar CSS + plantilla desde la extension.
-
-PLANTILLA FRONT - copiar todo hasta "FIN FRONT"
-
-${FRONT_TEMPLATE}
-
-FIN FRONT
-
-PLANTILLA BACK - copiar todo hasta "FIN BACK"
-
-${BACK_TEMPLATE}
-
-FIN BACK
-`;
-}
-/**
- * Breadcrumb de diagnóstico en el DOM compartido: el dock corre en el mundo
- * aislado del content script y su `console` no siempre es observable desde
- * fuera (QA/harness). Un data-attribute en el mount sí lo es. Invisible en
- * producción; cero efectos.
- */
-function markQa(tag: string) {
-	try {
-		const mount = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector("#usb-dock-root");
-		mount?.setAttribute("data-usb-qa-last", tag);
-	} catch { /* noop */ }
-}
-
-function downloadFile(content: string, name: string, mime = "text/plain;charset=utf-8") {  const b = new Blob([content], { type: mime }); const u = URL.createObjectURL(b);
-  const a = document.createElement("a"); a.href = u; a.download = name;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u);
-}
-
-// ── .apkg async export helper ──────────────────────────────────────────────────
-// Árbol <Root>::Courses::<Curso>::<Lección> + note type/presets propios de la
-// extensión (buildConceptSpec). El preset viaja dentro del .apkg con ID único:
-// se instala en la primera importación y NUNCA toca el preset "Default" (ni
-// ningún otro mazo).
-async function exportApkgFile(
-  cards: AnkiCard[],
-  courseName: string,
-  lessonName: string,
-  rootDeck: string,
-  onProgress: (msg: string) => void,
-): Promise<string> {
-  const safe = lessonName.replace(/[^a-z0-9]/gi, "_");
-  const lessonUrl = typeof window !== "undefined" ? window.location.href : "";
-  const spec = buildConceptSpec(
-    cards.map((c) => ({
-      front: buildCardFront(c),
-      back: buildCardBack(c),
-      guid: stableAnkiGuid(courseName, lessonName, c),
-      tags: c.tags.map(normalizeAnkiTag).filter(Boolean),
-    })),
-    courseName,
-    lessonName,
-    rootDeck,
-    lessonUrl,
-  );
-  const data = await buildAnkiApkg(spec, onProgress);
-  downloadApkg(data, `${safe}.apkg`);
-  return spec.decks[spec.decks.length - 1].name;
-}
-
-// ─── Mock content ────────────────────────────────────────────��────────────────
 function generateContent(objectiveId: string, custom: string, course: string, lesson: string): StudyContent {
-  const blob = `${objectiveId} ${custom} ${course} ${lesson}`.toLowerCase();
-  const isJavaLike = /java|spring|jvm|boot|backend|programaci[oó]n|programming|code|software/.test(blob);
-  const genericTags = [course.toLowerCase().replace(/[^a-z0-9]+/g,"-"), lesson.toLowerCase().replace(/[^a-z0-9]+/g,"-"), "study-agent"].filter(Boolean);
-  if (!isJavaLike) {
-    const topic = lesson || course || "esta lección";
-    const objective = custom || objectiveId || "aplicar lo aprendido";
-    return {
-      relevance: { score: 74, reason: `Esta lección aporta contexto práctico para ${objective}. Úsala para convertir conceptos en acciones observables.` },
-      keyConcepts: [
-        `Idea central de "${topic}": identifica qué problema resuelve y cuándo aplicarla.`,
-        "Criterios de decisión: distingue cuándo una respuesta es suficiente y cuándo necesita más evidencia.",
-        "Aplicación práctica: transforma la explicación de la lección en un ejemplo o caso real propio.",
-      ],
-      quickWin: "Resume la lección en 3 bullets: concepto, ejemplo y error común a evitar.",
-      questions: [
-        { difficulty: "confused" as ConfidenceLevel, bloom: "comprender", conceptRefs: [0], q: `¿Cuál es la idea principal de "${topic}" y por qué importa?`, hint: "Piensa en el problema que intenta resolver la lección.", answer: "La respuesta debe nombrar la idea central, explicar su utilidad y conectarla con un ejemplo simple del curso." },
-        { difficulty: "partial" as ConfidenceLevel, bloom: "aplicar", conceptRefs: [2], q: "Describe una situación real donde aplicarías este concepto.", hint: "Usa un caso concreto: antes, acción y resultado esperado.", answer: "Una buena respuesta plantea un caso específico, aplica el concepto paso a paso y explica qué mejora o evita." },
-        { difficulty: "clear" as ConfidenceLevel, bloom: "analizar", conceptRefs: [1, 2], q: "¿Qué error común podría cometer alguien al aplicar esta lección?", hint: "Busca una confusión, exceso, omisión o mal criterio de uso.", answer: "Debe identificar un error plausible, explicar por qué ocurre y proponer una forma de detectarlo o corregirlo." },
-        { difficulty: "mastered" as ConfidenceLevel, bloom: "evaluar", conceptRefs: [1, 2], q: "Compara dos formas de aplicar esta idea y decide cuál usarías.", hint: "Define criterios: precisión, costo, riesgo, tiempo o impacto.", answer: "La respuesta debe comparar alternativas con criterios claros y justificar una decisión según el objetivo del curso." },
-      ],
-      application: {
-        isCode: false,
-        setup: "Caso práctico basado en la lección actual:",
-        challenge: `Diseña una mini-aplicación de "${topic}" para tu contexto real. Incluye: objetivo, pasos, criterio de éxito y riesgo principal.`,
-        solution: "Una solución sólida define un objetivo medible, 3-5 pasos accionables, un criterio de validación y una forma de manejar el riesgo principal.",
-      },
-      interviewQ: {
-        q: `¿Cómo explicarías "${topic}" a alguien que está empezando?`,
-        idealAnswer: "Primero daría una definición simple, luego un ejemplo concreto, después un contraejemplo y cerraría con cuándo conviene aplicarlo.",
-      },
-      nextAction: "Convierte esta lección en una acción pequeña que puedas completar hoy y valida el resultado.",
-      ankiCards: [
-        { id:"g1", type:"concepto" as CardType, front:`¿Cuál es la idea central de "${topic}"?`, back:"La idea central debe explicar qué problema resuelve, cuándo se usa y qué resultado permite conseguir.", tags: genericTags },
-        { id:"g2", type:"comparacion" as CardType, front:"¿Cómo decidir si estás aplicando bien un concepto?", back:"Define un criterio observable: resultado esperado, evidencia, límite de uso y error común a evitar.", tags: genericTags },
-        { id:"g3", type:"proceso" as CardType, front:"Proceso para estudiar una lección de Udemy", back:"1. Resume la idea. 2. Crea un ejemplo propio. 3. Detecta un error común. 4. Aplica en un caso real. 5. Repasa con una tarjeta.", tags: genericTags },
-        { id:"g4", type:"entrevista" as CardType, front:`Explica "${topic}" en 60 segundos.`, back:"Usa esta estructura: definición simple, ejemplo, contraejemplo y cuándo aplicarlo.", tags: genericTags },
-        { id:"g5", type:"concepto" as CardType, front:"¿Qué hace que una respuesta sea de nivel avanzado?", back:"No solo define: compara, justifica decisiones, reconoce límites y adapta el concepto al contexto.", tags: genericTags },
-      ],
-    };
-  }
-
-  const isSp = objectiveId.includes("spring") || custom.toLowerCase().includes("spring") || course.toLowerCase().includes("spring");
-  const isInterview = objectiveId.includes("spring") || objectiveId.includes("cert");
-  const tags = [course.toLowerCase().replace(/[^a-z0-9]+/g,"-"), lesson.toLowerCase().replace(/[^a-z0-9]+/g,"-"), isSp ? "spring-boot" : "java"];
+  const goal = (custom || objectiveId || "dominar el tema").trim();
+  const topic = lesson.trim() || "esta lección";
+  const tag = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const tags = [tag(course) || "curso", tag(lesson) || "leccion"];
   return {
-    relevance: { score: isSp ? 88 : 74, reason: isSp ? "Cimientos críticos. Spring Boot vive dentro de la JVM — sin esto, el resto del curso es memorizar sin entender." : "Alta. Estos fundamentos aparecerán en CADA clase del curso. Entenderlos hoy multiplica lo que aprendas mañana." },
-    keyConcepts: isSp ? [
-      "La JVM ejecuta Spring Boot: el ApplicationContext vive en el heap. Si el heap se llena → OutOfMemoryError.",
-      "int (primitivo) nunca es null. Integer (wrapper) sí puede serlo. Con @Value: int falla rápido si la propiedad no existe.",
-      "== compara referencias en memoria, .equals() compara valores. Con @Value Strings, == siempre falla en producción.",
-    ] : [
-      "La JVM convierte bytecode (.class) a código nativo. El mismo .jar funciona en Windows, Mac y Linux sin recompilar.",
-      "int vive en el stack (nunca null). Integer vive en el heap (puede ser null, necesario para colecciones genéricas).",
-      "== compara si son el mismo objeto en memoria. .equals() compara contenido. Para Strings: usa siempre .equals().",
+    relevance: {
+      score: 76,
+      reason: `Plantilla local: «${topic}» sostiene lo que viene después en «${course}». Conectarlo con tu objetivo hoy evita releerlo mañana.`,
+    },
+    keyConcepts: [
+      `Idea central de «${topic}»: qué problema resuelve y en qué contexto se usa.`,
+      `Cómo funciona por dentro: las piezas o pasos que hacen que «${topic}» haga lo que hace.`,
+      `Cuándo aplicarlo y cuándo no: límites, errores comunes y alternativas.`,
     ],
-    quickWin: isSp ? "Abre tu último PR y busca cualquier if con == comparando Strings. Cámbialo a .equals() ahora mismo." : "En tu próximo snippet Java, usa int en lugar de Integer cuando el valor no puede ser null.",
+    quickWin: `Explica «${topic}» en dos frases, sin mirar, como si se lo contaras a un colega.`,
     questions: [
-      { difficulty: "confused" as ConfidenceLevel, bloom: "comprender", conceptRefs: [0], q: isSp ? "¿Qué es la JVM y qué tiene que ver con Spring Boot? Explícalo en tus propias palabras, sin leer nada." : "¿Cuál es la diferencia entre compilar y ejecutar un programa Java? ¿Qué produce cada paso?", hint: isSp ? "Piensa: ¿dónde viven los objetos de Spring en memoria? ¿Qué pasa si ese espacio se llena?" : "Hay dos herramientas separadas: javac y java. ¿Qué hace cada una y qué archivo produce?", answer: isSp ? "La JVM es el motor de ejecución de Java. Spring Boot arranca dentro de la JVM: crea el ApplicationContext en el heap, escanea beans y levanta Tomcat. Si el heap se llena de objetos sin liberar → OutOfMemoryError → app caída." : "Compilar (javac): convierte .java → bytecode (.class). Detecta errores de sintaxis y tipos. Ejecutar (java): la JVM carga el .class, el JIT lo optimiza a código máquina del SO y lo corre. El bytecode es portátil; el código máquina no." },
-      { difficulty: "partial" as ConfidenceLevel, bloom: "aplicar", conceptRefs: [1], q: isSp ? "@Value(\"${app.timeout}\") private int timeout; — la propiedad no existe en application.properties. ¿Qué pasa y cómo lo corriges?" : "¿En qué situación concreta preferirías usar Integer en vez de int? Da al menos 2 ejemplos reales.", hint: isSp ? "int no puede ser null. ¿Qué hace Spring cuando intenta asignarle null a un primitivo al arrancar?" : "Piensa en colecciones como ArrayList<> o métodos que devuelven null si no encuentran nada.", answer: isSp ? "Con int: Spring lanza BeanCreationException al arrancar (no puede asignar null a primitivo). Bueno, falla rápido. Con Integer: asigna null silenciosamente y el NPE aparece más tarde. Fix: @Value(\"${app.timeout:30}\") para int con default." : "Usas Integer cuando: (1) el valor puede ser null (campo opcional de BD), (2) necesitas usarlo en List<Integer> o Map<String,Integer>, (3) el tipo retorno de un método que puede no encontrar el valor. Usas int cuando el valor siempre existe (velocidad 5x)." },
-      { difficulty: "clear" as ConfidenceLevel, bloom: "analizar", conceptRefs: [2], q: isSp ? "¿Por qué este método siempre retorna false en producción?\n\n@Value(\"${app.role}\") private String role;\npublic boolean check(String r) { return r == role; }" : "El GC libera objetos automáticamente, pero sigues teniendo un memory leak. ¿Cómo es posible? Da un ejemplo.", hint: isSp ? "Piensa: ¿dónde vive el String que inyecta @Value vs. el String Pool de la JVM?" : "El GC solo libera objetos SIN referencias activas. Memory leak = referencia activa que nadie limpia.", answer: isSp ? "@Value inyecta el String desde el heap (no del String Pool). == compara referencias de memoria, no valores. role y r apuntan a objetos distintos en el heap aunque el texto sea igual → false siempre. Fix: return role.equals(r);" : "El GC no puede liberar objetos con referencias activas aunque nunca los uses. Ejemplo: List estática que acumula objetos en cada request sin limpiarla. La List mantiene referencias → GC no puede actuar → heap crece → OutOfMemoryError." },
-      { difficulty: "mastered" as ConfidenceLevel, bloom: "evaluar", conceptRefs: [0, 1, 2], q: isSp ? "@Service singleton con private int count = 0 y trackLogin() { count++; }. Tu app tiene 50 usuarios concurrentes. Identifica el bug y corrígelo correctamente." : "Integer.valueOf(200) == Integer.valueOf(200) es false. ¿Por qué? ¿Qué rango sí daría true? ¿Qué implica para código de producción?", hint: isSp ? "Bean singleton = una instancia compartida entre TODOS los threads. ¿Qué pasa con count++ cuando 2 threads la ejecutan al mismo tiempo?" : "La JVM tiene una optimización de cache para ciertos valores Integer frecuentes.", answer: isSp ? "Race condition: count++ no es atómica. Con 50 threads simultáneos, varios leen el mismo valor, lo incrementan y el resultado es incorrecto. Fix correcto: private final AtomicInteger count = new AtomicInteger(0); y count.incrementAndGet();" : "La JVM cachea Integer.valueOf() para -128 a 127 (spec Java). Fuera de ese rango, cada autoboxing crea un nuevo objeto en el heap → == compara referencias distintas → false. Implicación: NUNCA uses == para comparar Integer. Siempre .equals() o desempaqueta a int primero." },
+      { q: `¿Qué problema resuelve «${topic}» y por qué importa?`, bloom: "recordar", difficulty: "confused", hint: "Piensa en qué pasaría si no existiera.", answer: `Debe nombrar el problema central de «${topic}» y una consecuencia concreta de no resolverlo.`, conceptRefs: [0] },
+      { q: `Describe con tus palabras cómo funciona «${topic}».`, bloom: "comprender", difficulty: "partial", hint: "Recorre el proceso de principio a fin.", answer: `Una explicación ordenada de las piezas o pasos clave, sin saltos.`, conceptRefs: [1] },
+      { q: `Dado tu objetivo («${goal}»), ¿en qué situación aplicarías «${topic}» y en cuál no?`, bloom: "aplicar", difficulty: "clear", hint: "Da un caso concreto y un contraejemplo.", answer: `Un caso de uso realista más un límite claro, justificado.`, conceptRefs: [2] },
+      { q: `Compara «${topic}» con la alternativa más común. ¿Qué decisión tomarías y por qué?`, bloom: "evaluar", difficulty: "mastered", hint: "Compara costo, riesgo y mantenimiento.", answer: `Una comparación con criterios explícitos y una decisión defendida.`, conceptRefs: [1, 2] },
     ],
     application: {
-      isCode: true,
-      setup: isSp ? "Estás en code review de un PR. El código pasa todos los tests locales pero falla en producción de forma intermitente. Identifica los 2 bugs:" : "Encuentra los 2 bugs de tipo relacionados con lo que aprendiste hoy:",
-      challenge: isSp
-        ? `@Service\npublic class AuthService {\n    @Value("\${app.admin.role}")\n    private String adminRole;\n\n    private int failedAttempts = 0; // Bug #1\n\n    public boolean isAdmin(String role) {\n        return role == adminRole;   // Bug #2\n    }\n\n    public void registerFail() {\n        failedAttempts++;\n    }\n}`
-        : `public class TypeDemo {\n    public static void main(String[] args) {\n        // Bug #1\n        Integer x = 200, y = 200;\n        System.out.println(x == y);\n\n        // Bug #2\n        List<Integer> nums = Arrays.asList(1, null, 3);\n        int total = nums.stream()\n                        .mapToInt(Integer::intValue)\n                        .sum();\n    }\n}`,
-      solution: isSp
-        ? "Bug #1: failedAttempts es estado mutable en singleton compartido entre threads → race condition. Fix: private final AtomicInteger failedAttempts = new AtomicInteger(0);\nBug #2: == compara referencias, no valores. Fix: return adminRole.equals(role);"
-        : "Bug #1: Integer cache va de -128 a 127. Con 200, == compara objetos distintos del heap → false. Fix: x.equals(y).\nBug #2: mapToInt hace unboxing de Integer a int. Si el Integer es null → NullPointerException. Fix: .filter(Objects::nonNull).mapToInt(Integer::intValue).sum();",
+      setup: `Imagina que debes aplicar «${topic}» en un proyecto real alineado con: ${goal}.`,
+      challenge: `Escribe un breve plan o fragmento que demuestre «${topic}» en ese contexto y explica una decisión clave.`,
+      solution: `Una solución válida aplica la idea central, respeta los límites del tema y justifica al menos una decisión con un criterio claro.`,
+      isCode: false,
     },
-    interviewQ: isInterview ? {
-      q: isSp ? "¿Qué diferencia real hay entre @Component, @Service y @Repository en Spring? ¿Cuándo importa esa diferencia?" : "¿Cuál es la diferencia entre int e Integer en Java y por qué es importante para el examen OCP?",
-      idealAnswer: isSp ? "Las tres registran un bean en el IoC. La diferencia real está en @Repository: activa Exception Translation automática (SQLException → DataAccessException). Esto desacopla el código de la BD concreta. @Service es semántico: comunica intención al equipo. Respuesta que demuestra nivel senior." : "int es primitivo (stack, default 0, nunca null). Integer es objeto wrapper (heap, puede ser null). El examen pregunta: autoboxing/unboxing, NPE al desempaquetar null, Integer cache -128/127, y que Collections solo aceptan objetos. El cache es pregunta frecuente.",
-    } : null,
-    nextAction: isSp ? "Crea un Spring Boot project, reproduce el Bug #2 del desafío y verifica que con .equals() funciona en producción (no en test)." : "Escribe 5 líneas que demuestren la diferencia entre int e Integer con null y con colecciones.",
-    ankiCards: isSp ? [
-      { id:"a1", type:"concepto" as CardType, front:"¿Qué pasa en el heap de la JVM cuando Spring Boot arranca?", back:`<b>Arranque de Spring Boot en la JVM:</b><ol><li>JVM carga el classpath</li><li>Spring crea el <b>ApplicationContext</b> en el <b>heap</b></li><li>Component Scan: detecta @Service, @Repository, etc.</li><li>Instancia beans singleton</li><li>Tomcat embebido arranca</li></ol><div class="tip-box">💡 OutOfMemoryError = heap lleno. Ajuste: <code>-Xmx512m</code></div>`, tags },
-      { id:"a2", type:"codigo" as CardType, front:`¿Por qué este código siempre retorna false en producción?<br><br><pre>@Value("\${app.role}")\nprivate String role;\n\nreturn userRole == role;</pre>`, back:`<b>Bug:</b> <code>==</code> compara referencias, no valores.<br><br><code>@Value</code> inyecta un String desde el <b>heap</b> (no del String Pool), siempre objeto distinto.<br><br><b>Fix:</b><pre>return role.equals(userRole);</pre><div class="warning-box">⚠️ Regla: nunca <code>==</code> con Strings de @Value</div>`, tags },
-      { id:"a3", type:"comparacion" as CardType, front:"int vs Integer en @Value de Spring Boot — ¿cuándo usar cada uno?", back:`<table><tr><th>int</th><th>Integer</th></tr><tr><td>Primitivo</td><td>Objeto wrapper</td></tr><tr><td>Nunca null</td><td>Puede ser null</td></tr><tr><td>Propiedad faltante → <b>BeanCreationException</b> (falla rápido ✅)</td><td>Propiedad faltante → <b>null silencioso</b> ⚠️</td></tr></table>`, tags },
-      { id:"a4", type:"entrevista" as CardType, front:"¿Qué hace @Repository diferente a @Component en Spring?", back:`<div class="interview-box"><div class="label">Respuesta de nivel senior</div>Ambas registran un bean. La diferencia real:<br><br><b>@Repository activa Exception Translation:</b><br><code>SQLException</code> (JDBC) → <code>DataAccessException</code> (Spring)<br><br>Resultado: tu código de negocio no se acopla a la BD concreta.</div>`, tags },
-      { id:"a5", type:"concepto" as CardType, front:"¿Por qué un bean @Singleton con estado mutable es peligroso en Spring?", back:`Los beans singleton son <b>compartidos entre todos los threads</b>.<br><br>Estado mutable (<code>int count</code>) + múltiples threads = <b>race condition</b> → resultado incorrecto.<br><br><b>Fix:</b><pre>// Mal:\nprivate int count = 0;\n\n// Bien:\nprivate final AtomicInteger count =\n    new AtomicInteger(0);</pre>`, tags },
-      { id:"a6", type:"codigo" as CardType, front:`¿Cuál es el output y por qué?<br><br><pre>Integer a = 127, b = 127;\nSystem.out.println(a == b);\n\nInteger c = 200, d = 200;\nSystem.out.println(c == d);</pre>`, back:`<code>a == b</code> → <b>true</b> (JVM cachea Integer -128 a 127)<br><code>c == d</code> → <b>false</b> (200 crea objetos nuevos en el heap)<br><br><div class="warning-box">���️ Siempre <code>.equals()</code> para comparar Integer</div>`, tags },
-    ] : [
-      { id:"b1", type:"concepto" as CardType, front:"¿Qué es la JVM y por qué hace que Java sea especial?", back:`<b>JVM = Java Virtual Machine</b><br><br>Traduce bytecode a código máquina del SO actual.<br><br><b>Ciclo:</b><pre>MiClase.java → javac → MiClase.class\n             → JVM  → ejecuta</pre><div class="concept-box">🌐 "Write Once, Run Anywhere" — mismo .class en Windows, Linux y Mac.</div>`, tags },
-      { id:"b2", type:"comparacion" as CardType, front:"¿Cuál es la diferencia clave entre int e Integer en Java?", back:`<table><tr><th>Aspecto</th><th>int</th><th>Integer</th></tr><tr><td>Tipo</td><td>Primitivo</td><td>Objeto</td></tr><tr><td>Memoria</td><td>Stack</td><td>Heap</td></tr><tr><td>Default</td><td>0</td><td>null</td></tr><tr><td>¿Null?</td><td>❌</td><td>✅</td></tr><tr><td>En List&lt;&gt;</td><td>❌</td><td>✅</td></tr><tr><td>Performance</td><td>⚡ 5x más rápido</td><td>Normal</td></tr></table>`, tags },
-      { id:"b3", type:"codigo" as CardType, front:`¿Cuál es el output y por qué?<br><br><pre>String a = "hola";\nString b = new String("hola");\nSystem.out.println(a == b);\nSystem.out.println(a.equals(b));</pre>`, back:`<code>a == b</code> → <b>false</b> (<code>new String()</code> crea objeto nuevo en el heap)<br><code>a.equals(b)</code> → <b>true</b> (mismo contenido)<br><br><div class="warning-box">⚠️ Siempre <code>.equals()</code> para comparar Strings</div>`, tags },
-      { id:"b4", type:"concepto" as CardType, front:"¿Qué es el Garbage Collector y cuándo NO puede liberar memoria?", back:`El GC libera objetos del <b>heap</b> sin referencias activas.<br><br><b>Cuándo NO actúa (memory leak):</b><ul><li>Lista estática que crece sin límite</li><li>Listeners registrados pero nunca removidos</li><li>Cache que acumula sin expirar</li></ul><div class="warning-box">⚠️ <code>System.gc()</code> solo es sugerencia</div>`, tags },
-      { id:"b5", type:"proceso" as CardType, front:"¿Cuáles son los 3 pasos del ciclo de vida de un programa Java?", back:`<ol><li><b>Escritura:</b> código fuente <code>.java</code></li><li><b>Compilación:</b> <code>javac</code> → bytecode <code>.class</code></li><li><b>Ejecución:</b> JVM carga el <code>.class</code>, JIT compila a código nativo y ejecuta</li></ol><div class="tip-box">💡 El bytecode es portable. El JIT lo optimiza para CADA plataforma.</div>`, tags },
+    interviewQ: {
+      q: `Si te preguntaran sobre «${topic}» en una entrevista, ¿cómo lo explicarías en 60 segundos?`,
+      idealAnswer: `1) Qué es y qué problema resuelve. 2) Cómo funciona en una frase. 3) Un ejemplo real. 4) Un límite o trade-off.`,
+    },
+    nextAction: `Antes de la siguiente clase, vuelve a explicar «${topic}» sin apuntes y anota lo que dudaste.`,
+    ankiCards: [
+      { id: "card-001", type: "concepto", front: `¿Qué problema resuelve «${topic}»?`, back: `Resuelve la necesidad central del tema dentro de «${course}». Explícalo con un ejemplo propio.`, tags },
+      { id: "card-002", type: "proceso", front: `¿Cómo funciona «${topic}», paso a paso?`, back: `Piezas clave en orden: entrada, transformación y resultado. Di qué hace cada una.`, tags },
+      { id: "card-003", type: "comparacion", front: `¿Cuándo usar «${topic}» y cuándo evitarlo?`, back: `Úsalo cuando encaja con tu objetivo (${goal}); evítalo cuando sus límites lo hacen costoso o frágil.`, tags },
     ],
   };
 }
 
-// ─── VerifyDoneReview — shown in step 2 when questionsComplete ───────────────
+// ─── Progress stepper ─────────────────────────────────────────────────────────
+function ProgressStepper({ steps, focus }: { steps: { label: string; done: boolean; active: boolean }[]; focus: number }) {
+  return (
+    <div className="flex items-start" role="list" aria-label="Progreso de la sesión">
+      {steps.map((s, i) => {
+        const m = STEP_META[i];
+        const cur = i === focus;
+        const state = s.done && !cur ? "done" : cur ? "cur" : "todo";
+        const stepColor = m.hue;
+        return (
+          <div
+            key={s.label}
+            role="listitem"
+            className="flex-1 min-w-0 flex flex-col items-center gap-1.5 relative"
+            style={{ "--kx-step-color": stepColor } as React.CSSProperties}
+          >
+            {i > 0 && (
+              <span
+                className="kx-node-line"
+                data-on={steps[i - 1].done ? "1" : "0"}
+                style={steps[i - 1].done ? { background: STEP_META[i - 1].hue } : undefined}
+                aria-hidden="true"
+              />
+            )}
+            <motion.span
+              animate={cur ? { scale: [1, 1.08, 1] } : s.done ? { scale: [1, 1.15, 1] } : { scale: 1 }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              className="kx-node relative z-10 w-7 h-7 rounded-full flex items-center justify-center shadow-xs"
+              data-st={state}
+              style={
+                state === "cur"
+                  ? {
+                      backgroundColor: stepColor,
+                      borderColor: stepColor,
+                      boxShadow: `0 0 0 3.5px color-mix(in srgb, ${stepColor} 26%, transparent)`,
+                    }
+                  : state === "done"
+                    ? {
+                        borderColor: stepColor,
+                        color: stepColor,
+                      }
+                    : undefined
+              }
+            >
+              {state === "done" ? (
+                <Check size={13} strokeWidth={2.8} style={{ color: stepColor }} />
+              ) : (
+                <Icon
+                  name={m.icon}
+                  size={13}
+                  weight={cur ? "fill" : "duotone"}
+                  style={{ color: cur ? "#fff" : undefined }}
+                />
+              )}
+            </motion.span>
+            <span
+              className="text-[10px] truncate max-w-full leading-none transition-colors"
+              style={{
+                color: cur ? stepColor : s.done ? "var(--usb-fg-hi)" : "var(--usb-fg-lo)",
+                fontWeight: cur ? 700 : 500,
+              }}
+            >
+              {s.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Review of answered questions ─────────────────────────────────────────────
 function VerifyDoneReview({
   questions, answers, feedbacks, onGoApply,
 }: {
-  questions: { q: string; answer: string }[];
+  questions: StudyContent["questions"];
   answers: Record<number, string>;
   feedbacks: Record<number, FeedbackState>;
   onGoApply: () => void;
 }) {
-  const [openIdx, setOpenIdx] = React.useState<number | null>(null);
-  const correctCount = Object.values(feedbacks).filter(f => f?.rating === "correct" || f?.rating === "excellent").length;
-  const total = questions.length;
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
   return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-      {/* Compact success badge */}
-      <div className="flex items-center gap-2.5 bg-emerald-500/8 border border-emerald-500/18 rounded-xl px-3 py-2.5">
-        <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-emerald-300/90 text-[11px]" style={{ fontWeight: 600 }}>
-            Verificación revisada · {correctCount}/{total} correctas
-          </p>
-          <p className="text-white/28 text-[9px] mt-0.5">Toca cada pregunta para revisar tu respuesta y el feedback.</p>
+    <div className="space-y-2">
+      {questions.map((q, i) => {
+        const fb = feedbacks[i];
+        const open = openIdx === i;
+        const rating = fb?.rating ?? "unknown";
+        const tone =
+          rating === "correct" || rating === "excellent" ? "bg-emerald-400"
+          : rating === "partial" ? "bg-amber-400"
+          : rating === "wrong" ? "bg-red-400"
+          : "bg-white/25";
+        return (
+          <div key={i} className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+            <button
+              onClick={() => setOpenIdx(open ? null : i)}
+              aria-expanded={open}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
+            >
+              <span className={`h-2 w-2 rounded-full shrink-0 ${tone}`} />
+              <span className="flex-1 min-w-0 text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{q.q}</span>
+              <ChevronDown size={13} className={`text-[var(--usb-fg-lo)] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
+            <AnimatePresence initial={false}>
+              {open && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="px-3 pb-3 space-y-2">
+                    {answers[i] ? (
+                      <div className="rounded-xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] px-3 py-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--usb-fg-lo)] mb-1">Tu respuesta</p>
+                        <p className="text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">{answers[i]}</p>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-[var(--usb-fg-lo)]">Sin respuesta registrada.</p>
+                    )}
+                    {fb && fb.status === "done" && <AIFeedback fb={fb} />}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })}
+      <button
+        onClick={onGoApply}
+        className="w-full flex items-center justify-center gap-1.5 text-[11px] text-violet-200 bg-violet-500/14 hover:bg-violet-500/22 border border-violet-500/28 py-2.5 rounded-xl transition-all"
+        style={{ fontWeight: 600 }}
+      >
+        Continuar a practicar<ArrowRight size={12} />
+      </button>
+    </div>
+  );
+}
+
+// ─── Anki flip-card preview ───────────────────────────────────────────────────
+function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
+  const [idx, setIdx] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  if (!cards.length) return null;
+  const card = cards[Math.min(idx, cards.length - 1)];
+  const meta = CARD_META[card.type] ?? CARD_META.concepto;
+  const go = (d: number) => { setFlipped(false); setIdx((i) => (i + d + cards.length) % cards.length); };
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={() => setFlipped((f) => !f)}
+        aria-label={flipped ? "Ver frente de la tarjeta" : "Ver reverso de la tarjeta"}
+        className="w-full text-left rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-3.5 py-3.5 min-h-[112px] transition-colors hover:border-[#6d4aff]/40"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <span className={`flex items-center gap-1.5 text-[9.5px] ${meta.color}`} style={{ fontWeight: 600 }}>
+            <Icon name={meta.icon} size={11} />{meta.label}
+          </span>
+          <span className="flex items-center gap-1 text-[var(--usb-fg-lo)] text-[9.5px] font-medium">
+            <FlipHorizontal size={10} />{flipped ? "Reverso" : "Frente"}
+          </span>
         </div>
-        <button onClick={onGoApply}
-          className="shrink-0 flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] px-2.5 py-1.5 rounded-lg transition-all"
-          style={{ fontWeight: 600 }}>
-          Practícalo <ArrowRight size={9}/>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.p
+            key={`${card.id}-${flipped}`}
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.16 }}
+            className={`text-[12px] leading-relaxed whitespace-pre-wrap ${flipped ? "text-[var(--usb-fg-mid)]" : "text-[var(--usb-fg-hi)]"}`}
+            style={{ fontWeight: flipped ? 400 : 600 }}
+          >
+            {flipped ? card.back : card.front}
+          </motion.p>
+        </AnimatePresence>
+      </button>
+      <div className="flex items-center justify-between">
+        <button onClick={() => go(-1)} aria-label="Tarjeta anterior" className="p-1.5 rounded-lg text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-2)] transition-colors">
+          <ChevronLeft size={13} />
+        </button>
+        <span className="text-[var(--usb-fg-lo)] text-[10px] font-medium">{idx + 1} / {cards.length}</span>
+        <button onClick={() => go(1)} aria-label="Tarjeta siguiente" className="p-1.5 rounded-lg text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-2)] transition-colors">
+          <ChevronRight size={13} />
         </button>
       </div>
-      {/* Answers review list */}
-      <div className="space-y-1.5">
-        {questions.map((q, i) => {
-          const fb = feedbacks[i];
-          const ratingColor = !fb ? "text-white/20" :
-            fb.rating === "correct" || fb.rating === "excellent" ? "text-emerald-400" :
-            fb.rating === "partial" ? "text-amber-400" :
-            fb.rating === "wrong" ? "text-rose-400" : "text-white/20";
-          const ratingDot = !fb ? "bg-white/10" :
-            fb.rating === "correct" || fb.rating === "excellent" ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]" :
-            fb.rating === "partial" ? "bg-amber-400" :
-            fb.rating === "wrong" ? "bg-rose-400" : "bg-white/10";
-          const isOpen = openIdx === i;
-          return (
-            <div key={i} className="border border-[var(--usb-border)] rounded-xl overflow-hidden">
-              <button onClick={() => setOpenIdx(isOpen ? null : i)}
-                className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-white/3 transition-colors">
-                <div className={`mt-[3px] w-2 h-2 rounded-full shrink-0 ${ratingDot}`} />
-                <p className={`text-[10px] leading-snug flex-1 ${ratingColor !== "text-white/20" ? "text-white/60" : "text-white/35"}`}>
-                  {q.q.slice(0, 88)}{q.q.length > 88 ? "…" : ""}
-                </p>
-                <ChevronDown size={9} className={`text-white/20 shrink-0 mt-0.5 transition-transform ${isOpen ? "rotate-180" : ""}`}/>
-              </button>
-              <AnimatePresence>
-                {isOpen && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                    <div className="border-t border-[var(--usb-divider)] px-3 py-2.5 space-y-2.5 bg-black/15">
-                      {answers[i] && (
-                        <div>
-                          <p className="text-white/20 text-[8px] uppercase tracking-widest mb-1">Tu respuesta</p>
-                          <p className="text-white/50 text-[10px] leading-relaxed">{answers[i]}</p>
-                        </div>
-                      )}
-                      {fb?.content && (
-                        <div className="border-t border-[var(--usb-divider)] pt-2">
-                          <p className="text-white/20 text-[8px] uppercase tracking-widest mb-1">Feedback IA</p>
-                          <p className={`text-[10px] leading-relaxed ${ratingColor}`}>{fb.content.split("\n").filter(Boolean)[0]}</p>
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          );
-        })}
-      </div>
-    </motion.div>
+    </div>
   );
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; apiKeys?: string[] }) {
+  const { t } = useDockTheme();
   const [phase, setPhase]             = useState<Phase>("objective");
-  // Persisted: objective, course and lesson survive tab reloads
-  const [selectedObj, setSelectedObj] = usePersistedState("agent_selected_obj", "spring-senisenior");
+  const [selectedObj, setSelectedObj] = usePersistedState<string>("agent_selected_obj", "custom");
   const [customObj, setCustomObj]     = usePersistedState<string>("agent_custom_obj", "");
   const [refinedObj, setRefinedObj]   = useState("");
-  // Track the source text used for the current refinement so we can detect edits.
   const [refinedFromText, setRefinedFromText] = useState("");
   const [isRefining, setIsRefining]   = useState(false);
-  const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "Java In-Depth - Udemy");
+  const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "");
+  const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "");
   const [courseDescription, setCourseDescription] = usePersistedState<string>("agent_course_description", "");
-  const [courseAIContext, setCourseAIContext] = useState("");
+  const [courseAIContext, setCourseAIContext]           = useState("");
+  const [courseAIContextSlug, setCourseAIContextSlug]   = useState("");
   const [courseAIContextTitle, setCourseAIContextTitle] = useState("");
-  const [courseAIContextSlug, setCourseAIContextSlug] = useState("");
-  const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "02 - JVM y Tipos de Datos");
   const [genStep, setGenStep]         = useState(0);
-  const selectedObjRef = useRef(selectedObj);
 
-  // ── Dynamic AI-generated objectives (per course) ─────────────────────────
-  const [dynamicObjectives, setDynamicObjectives] = useState<GeneratedObjective[] | null>(null);
-  const [objectivesLoading, setObjectivesLoading] = useState(false);
-  const [objectivesMock, setObjectivesMock]       = useState(false);
-  const [objectivesError, setObjectivesError]     = useState<string | null>(null);
+  const [dynamicObjectives, setDynamicObjectives]   = useState<GeneratedObjective[] | null>(null);
+  const [objectivesLoading, setObjectivesLoading]   = useState(false);
+  const [objectivesError, setObjectivesError]       = useState<string | null>(null);
+  const [objectivesMock, setObjectivesMock]         = useState(false);
   const [lastUsedObjectiveId, setLastUsedObjectiveId] = useState<string | null>(null);
-  const [objectivesExpanded, setObjectivesExpanded]   = useState(false);
-  // Bumped on every regenerate so the grid remounts even if the AI returns identical ids.
+  const [objectivesExpanded, setObjectivesExpanded] = useState(false);
   const [objectivesRegenCount, setObjectivesRegenCount] = useState(0);
-  const objectivesForRef = useRef<string>(""); // courseId the current objectives were generated/loaded for
+  const [activeSessionObjective, setActiveSessionObjective] = useState<string | null>(null);
 
   const [content, setContent]                       = useState<StudyContent | null>(null);
-  const [activeSessionObjective, setActiveSessionObjective] = useState<string | null>(null);
   const [confidence, setConfidence]                 = useState<ConfidenceLevel | null>(null);
   const [conceptsChecked, setConceptsChecked]       = useState<Record<number, boolean>>({});
   const [conceptsAcknowledged, setConceptsAcknowledged] = useState(false);
   const [appAnswer, setAppAnswer]                   = useState("");
   const [appFeedback, setAppFeedback]               = useState<FeedbackState>(IDLE_FB);
   const [showAppSolution, setShowAppSolution]       = useState(false);
-  const [txtSetupCourses, setTxtSetupCourses]       = useState<Set<string>>(new Set());
   const [ankiExported, setAnkiExported]             = useState(false);
+  const [appAttempts, setAppAttempts]               = useState(0);
+  const appRewardedRef = useRef(false);
+  const [showAppHint, setShowAppHint]               = useState(false);
   const [showAnkiGuide, setShowAnkiGuide]           = useState(false);
+  const [showCardPreview, setShowCardPreview]       = useState(false);
   const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
   const [apkgProgress, setApkgProgress]             = useState("");
-
-  // ── Vocabulario del curso (idiomas) ─────────────────────────────────────────
-  const [vocabCfg, setVocabCfg]                     = useState<VocabConfig>(DEFAULT_VOCAB_CONFIG);
-  const [vocabPanelOpen, setVocabPanelOpen]         = useState(false);
-  const [vocabStatus, setVocabStatus]               = useState<"idle" | "loading" | "done" | "error">("idle");
-  const [vocabProgress, setVocabProgress]           = useState("");
-  // true = subtítulos en el idioma objetivo; false = lección en otro idioma
-  // (se oculta el bloque); null = desconocido (se muestra y valida al exportar).
-  const [vocabLangOk, setVocabLangOk]               = useState<boolean | null>(null);
-
-  // ── Obsidian export ─────────────────────────────────────────────────────────
-  const [obsidianCfg, setObsidianCfg]               = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
-  const [obsidianPanelOpen, setObsidianPanelOpen]   = useState(false);
-  const [obsidianHelpOpen, setObsidianHelpOpen]     = useState(false);
-  const [obsidianStatus, setObsidianStatus]         = useState<"idle" | "done" | "error">("idle");
-  const [createdMocs, setCreatedMocs]               = useState<string[]>([]);
-  const [exportedNotes, setExportedNotes]           = useState<string[]>([]);
-  const exportedNotesRef                            = useRef<string[]>([]);
-  const obsidianAutoRef                             = useRef(false);
+  const [txtSetupCourses, setTxtSetupCourses]       = useState<Set<string>>(new Set());
   const [showHint, setShowHint]                     = useState(false);
   const [showModelAnswer, setShowModelAnswer]       = useState(false);
   const [questionAnswers, setQuestionAnswers]       = useState<Record<number, string>>({});
@@ -1825,240 +1216,133 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [questionsComplete, setQuestionsComplete]   = useState(false);
   const [sessionComplete, setSessionComplete]       = useState(false);
   const [showInterviewAnswer, setShowInterviewAnswer] = useState(false);
+  const [oralAnswer, setOralAnswer]                 = useState("");
+  const [oralFeedback, setOralFeedback]             = useState<FeedbackState>(IDLE_FB);
+  const [oralSkipped, setOralSkipped]               = useState(false);
+  const [recallRevealed, setRecallRevealed]         = useState(false);
+  const [recallNotes, setRecallNotes]               = useState("");
+  const [historyOpen, setHistoryOpen]               = useState(false);
 
-  // ── Focus navigator state (1 paso a la vez) ────────────────────────────────
+  // Vocabulary export
+  const [vocabCfg, setVocabCfg]             = useState<VocabConfig>(DEFAULT_VOCAB_CONFIG);
+  const [vocabPanelOpen, setVocabPanelOpen] = useState(false);
+  const [vocabStatus, setVocabStatus]       = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [vocabProgress, setVocabProgress]   = useState("");
+  const [vocabLangOk, setVocabLangOk]       = useState<boolean | null>(null);
+
+  // Obsidian export
+  const [obsidianCfg, setObsidianCfg]             = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
+  const [obsidianPanelOpen, setObsidianPanelOpen] = useState(false);
+  const [obsidianHelpOpen, setObsidianHelpOpen]   = useState(false);
+  const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
+  const [createdMocs, setCreatedMocs]             = useState<string[]>([]);
+  const [, setExportedNotes]                      = useState<string[]>([]);
+
+  // Focus navigator (one step at a time)
   const [focusStep, setFocusStep] = useState(0);
   const [focusDir,  setFocusDir]  = useState(1);
 
-  // ── Session timing ────────────────────────────────────────────────────────
-  const sessionStartRef = useRef<number>(Date.now());
+  // Gamification & Dopamine state
+  const [sessionXp, setSessionXp]       = useState(0);
+  const [streakCount, setStreakCount]   = useState(() => getStreak());
+  const [userProgress, setUserProgress] = useState(() => getProgress());
+  const [consecutiveStreak, setConsecutiveStreak] = useState(0); // combo aciertos seguidos
+  const [floatingXp, setFloatingXp]     = useState<{ id: number; amount: number; text?: string; combo?: number } | null>(null);
+  const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);
+  const [shakeQuestionIdx, setShakeQuestionIdx] = useState<number | null>(null);
+  const [glintQuestionIdx, setGlintQuestionIdx] = useState<number | null>(null);
 
-  // ── History drawer ────────────────────────────────────────────────────────
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const rehydratedKeyRef = useRef<string>("");
-  const activeStudyKeyRef = useRef<string>("");
-
-  useEffect(() => {
-    selectedObjRef.current = selectedObj;
-  }, [selectedObj]);
-
-  // ── Obsidian: carga inicial de config y MOCs ya creados ────────────────────
-  useEffect(() => {
-    void loadObsidianExportConfig().then(setObsidianCfg);
-    void loadCreatedMocs().then(setCreatedMocs);
-    void loadObsidianExportedNotes().then((notes) => {
-      exportedNotesRef.current = notes;
-      setExportedNotes(notes);
-    });
-    void loadVocabConfig().then(setVocabCfg);
-  }, []);
-
-  // Guarda el ajuste de vocabulario en cada cambio (debounce implícito: cada
-  // pulsación escribe, pero chrome.storage es barato y evita perder el último).
-  const handleSaveVocabCfg = useCallback((patch: Partial<VocabConfig>) => {
-    setVocabCfg((prev) => {
-      const next = { ...prev, ...patch };
-      void saveVocabConfig(next).catch(() => {});
-      return next;
-    });
-  }, []);
-
-  // ── Contexto real de la lección: auto-rellenar curso/lección ───────────────
-  // El content script envía LECTURE_CONTEXT_UPDATE con los metadatos raspados
-  // de la página de Udemy. Sin esto, el dock queda con los nombres demo y el
-  // mazo Anki / notas de Obsidian se crean con un curso inventado.
+  // Refs
+  const sessionStartRef    = useRef<number>(Date.now());
+  const selectedObjRef     = useRef(selectedObj);
   const courseNameEditedRef = useRef(false);
-  useEffect(() => {
-    const cleanup = contentBridge.onMessageFromContent((message: BridgeMessage) => {
-      if (message.type !== "LECTURE_CONTEXT_UPDATE") return;
-      const payload = (message.payload ?? {}) as { courseTitle?: string; lectureTitle?: string; courseDescription?: string };
-      if (!courseNameEditedRef.current && payload.courseTitle?.trim()) {
-        setCourseName(payload.courseTitle.trim());
+  const objectivesForRef   = useRef<string>("");
+  const rehydratedKeyRef   = useRef<string>("");
+  const obsidianAutoRef    = useRef(false);
+  const exportedNotesRef   = useRef<string[]>([]);
+  const sessionCelebratedRef = useRef(false);
+  const qRewardedRef       = useRef<Set<string>>(new Set());
+  const conceptRewardedRef = useRef<Set<number>>(new Set());
+  const scrollRef          = useRef<HTMLDivElement>(null);
+  const conceptsRef        = useRef<HTMLDivElement>(null);
+  const questionsRef       = useRef<HTMLDivElement>(null);
+  const applyRef           = useRef<HTMLDivElement>(null);
+  const ankiRef            = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { selectedObjRef.current = selectedObj; }, [selectedObj]);
+
+  const triggerXpGain = useCallback((amount: number, text?: string, activityType?: string, comboBonus?: number) => {
+    setSessionXp(prev => prev + amount);
+    // Gains that come with a celebration card show their XP inside it; the pill is only for quiet gains.
+    if (activityType !== "question_correct" && activityType !== "code_challenge") {
+      setFloatingXp({ id: Date.now(), amount, text, combo: comboBonus });
+    }
+    
+    // question_correct is recorded by CelebrationOverlay (same moment, via celebrate), so skip it here to avoid double XP.
+    if (activityType && activityType !== "question_correct") {
+      const res = recordActivity(activityType);
+      if (res.unlocked && res.unlocked.length > 0) {
+        setUnlockedBadges(prev => [...prev, ...res.unlocked.map(u => u.title)]);
       }
-      if (payload.lectureTitle?.trim()) {
-        setLessonName(payload.lectureTitle.trim());
-      }
-      if (payload.courseDescription?.trim() && !courseDescription.trim()) {
-        setCourseDescription(payload.courseDescription.trim());
-      }
-    });
-    return cleanup;
-  }, [courseDescription]);
+      const queue: Parameters<typeof celebrate>[0][] = [];
+      if (res.levelUp) queue.push({ type: "level_up", title: `Nivel ${res.levelUp}`, subtitle: "Sigues subiendo." });
+      res.unlocked.forEach(u => queue.push({ type: "achievement", title: u.title, subtitle: `Logro desbloqueado · ${u.desc}` }));
+      queue.forEach(c => celebrate(c));
+    }
+    setUserProgress(getProgress());
 
-  useEffect(() => {
-    let cancelled = false;
-    void chromeLocalStorage.get(["agent_course_context", "agent_course_context_slug", "agent_course_context_title"]).then((items) => {
-      if (cancelled) return;
-      const value = typeof items.agent_course_context === "string" ? items.agent_course_context : "";
-      const slug = typeof items.agent_course_context_slug === "string" ? items.agent_course_context_slug : "";
-      const title = typeof items.agent_course_context_title === "string" ? items.agent_course_context_title : "";
-      setCourseAIContext(value);
-      setCourseAIContextSlug(slug);
-      setCourseAIContextTitle(title);
-    });
-
-    const unsubscribe = chromeLocalStorage.onChange((changes) => {
-      if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context")) {
-        setCourseAIContext(typeof changes.agent_course_context === "string" ? changes.agent_course_context : "");
-      }
-      if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context_slug")) {
-        setCourseAIContextSlug(typeof changes.agent_course_context_slug === "string" ? changes.agent_course_context_slug : "");
-      }
-      if (Object.prototype.hasOwnProperty.call(changes, "agent_course_context_title")) {
-        setCourseAIContextTitle(typeof changes.agent_course_context_title === "string" ? changes.agent_course_context_title : "");
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void chromeLocalStorage.get(["agent_anki_txt_setup_courses"]).then((items) => {
-      if (cancelled) return;
-      const raw = Array.isArray(items.agent_anki_txt_setup_courses)
-        ? items.agent_anki_txt_setup_courses.map(String)
-        : [];
-      setTxtSetupCourses(new Set(raw));
-    });
-
-    const unsubscribe = chromeLocalStorage.onChange((changes) => {
-      if (!Object.prototype.hasOwnProperty.call(changes, "agent_anki_txt_setup_courses")) return;
-      const raw = Array.isArray(changes.agent_anki_txt_setup_courses)
-        ? changes.agent_anki_txt_setup_courses.map(String)
-        : [];
-      setTxtSetupCourses(new Set(raw));
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
-
-  // Scroll refs
-  const scrollRef      = useRef<HTMLDivElement>(null);
-  const conceptsRef    = useRef<HTMLDivElement>(null);
-  const questionsRef   = useRef<HTMLDivElement>(null);
-  const applyRef       = useRef<HTMLDivElement>(null);
-  const ankiRef        = useRef<HTMLDivElement>(null);
-
-  const scrollTo = useCallback((ref: React.RefObject<HTMLDivElement | null>) => {
     setTimeout(() => {
-      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 200);
+      setFloatingXp(curr => (curr && Date.now() - curr.id >= 1900 ? null : curr));
+    }, 2100);
   }, []);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-      }
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }, 150);
   }, []);
 
-  const resetStudySessionState = useCallback(() => {
-    setContent(null);
-    setActiveSessionObjective(null);
-    setConfidence(null);
-    setConceptsChecked({});
-    setConceptsAcknowledged(false);
-    setAppAnswer("");
-    setAppFeedback(IDLE_FB);
-    setShowAppSolution(false);
-    setQuestionAnswers({});
-    setQuestionFeedbacks({});
-    setCurrentQIdx(0);
-    setQuestionsComplete(false);
-    setSessionComplete(false);
-    setAnkiExported(false);
-    setShowAnkiGuide(false);
-    setShowHint(false);
-    setShowModelAnswer(false);
-    setShowInterviewAnswer(false);
-    setApkgStatus("idle");
-    setApkgProgress("");
-    setFocusStep(0);
-    setFocusDir(1);
-    sessionStartRef.current = Date.now();
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, []);
-
+  // Load persisted export configuration once.
   useEffect(() => {
-    if (!courseName.trim() || !lessonName.trim()) return;
-    const key = `${slugify(courseName)}::${slugify(lessonName)}`;
-    if (!activeStudyKeyRef.current) {
-      activeStudyKeyRef.current = key;
-      return;
-    }
-    if (activeStudyKeyRef.current === key) return;
-
-    activeStudyKeyRef.current = key;
-    rehydratedKeyRef.current = "";
-    const hasActiveSession = phase !== "objective" || Boolean(content) || Boolean(confidence) || questionsComplete || sessionComplete || ankiExported;
-    if (hasActiveSession) {
-      resetStudySessionState();
-      setPhase("objective");
-    }
-  }, [
-    courseName,
-    lessonName,
-    phase,
-    content,
-    confidence,
-    questionsComplete,
-    sessionComplete,
-    ankiExported,
-    resetStudySessionState,
-  ]);
-
-  // Sound helpers
-  const playSound = useCallback((type: "pop" | "success" | "chord") => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      if (type === "pop") {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(400, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.05);
-        gain.gain.setValueAtTime(0, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.1);
-      } else if (type === "success") {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-        osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15); // C6
-        gain.gain.setValueAtTime(0, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.05);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.4);
-      } else if (type === "chord") {
-        [261.63, 329.63, 392.00, 523.25].forEach((freq, i) => {
-          const osc2 = ctx.createOscillator();
-          const gain2 = ctx.createGain();
-          osc2.connect(gain2);
-          gain2.connect(ctx.destination);
-          osc2.type = "sine";
-          osc2.frequency.value = freq;
-          gain2.gain.setValueAtTime(0, ctx.currentTime);
-          gain2.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 0.1);
-          gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-          osc2.start(ctx.currentTime + (i * 0.05));
-          osc2.stop(ctx.currentTime + 1.6);
-        });
-      }
-    } catch (e) {}
+    let alive = true;
+    void loadVocabConfig().then((cfg) => { if (alive) setVocabCfg(cfg); }).catch(() => undefined);
+    void loadObsidianExportConfig().then((cfg) => { if (alive) setObsidianCfg(cfg); }).catch(() => undefined);
+    void loadCreatedMocs().then((mocs) => { if (alive) setCreatedMocs(mocs); }).catch(() => undefined);
+    void loadObsidianExportedNotes().then((notes) => {
+      if (!alive) return;
+      exportedNotesRef.current = notes;
+      setExportedNotes(notes);
+    }).catch(() => undefined);
+    void chromeLocalStorage.get(["agent_anki_txt_setup_courses"]).then((data) => {
+      const stored = data.agent_anki_txt_setup_courses;
+      if (alive && Array.isArray(stored)) setTxtSetupCourses(new Set(stored.map(String)));
+    });
+    return () => { alive = false; };
   }, []);
+
+  // Hidden Udemy course context (written by the sidebar into local storage).
+  useEffect(() => {
+    const keys = ["agent_course_context", "agent_course_context_slug", "agent_course_context_title"];
+    const apply = (data: Record<string, unknown>) => {
+      if (typeof data.agent_course_context === "string") setCourseAIContext(data.agent_course_context);
+      if (typeof data.agent_course_context_slug === "string") setCourseAIContextSlug(data.agent_course_context_slug);
+      if (typeof data.agent_course_context_title === "string") setCourseAIContextTitle(data.agent_course_context_title);
+    };
+    void chromeLocalStorage.get(keys).then(apply);
+    return chromeLocalStorage.onChange((changes) => {
+      const relevant: Record<string, unknown> = {};
+      for (const k of keys) if (k in changes) relevant[k] = changes[k] ?? "";
+      if (Object.keys(relevant).length) apply(relevant);
+    });
+  }, []);
+
+  const handleSaveVocabCfg = (patch: Partial<VocabConfig>) => {
+    const next = { ...vocabCfg, ...patch };
+    setVocabCfg(next);
+    void saveVocabConfig(next);
+  };
+
+  // ── Verdict sound is handled centrally by celebrate() ──────────────────────
 
   // ── Auto-advance focus navigator when steps complete ─────────────────────
   useEffect(() => {
@@ -2071,18 +1355,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       setFocusDir(1);
       setFocusStep(3);
       // Victory sound
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.05);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
-      } catch (e) {}
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questionsComplete]);
@@ -2106,20 +1378,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   // Add sound on phase transitions to keep it interesting
   useEffect(() => {
     if (phase === "result") {
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(440, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.2);
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.4);
-      } catch(e) {}
     }
   }, [phase]);
 
@@ -2185,6 +1443,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       }
     } catch {}
 
+    sessionCelebratedRef.current = false;
     setPhase("generating"); setGenStep(0);
     sessionStartRef.current = Date.now();
     const sessionObjective = getActiveObjectiveText();
@@ -2303,7 +1562,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         }).catch(err => console.error("Failed to sync Anki cards", err));
       }
 
-      toast("¡Material de estudio listo!", {
+      toast.message("¡Material de estudio listo!", {
         description: usedFallback
           ? "Usamos una plantilla local porque no se pudo completar la generación con IA."
           : "Analizamos la lección y preparamos tu plan de dominio.",
@@ -2338,6 +1597,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const rehydrateFromRecord = useCallback((rec: import("../services/historyService").LectureHistoryRecord) => {
     // generateContent is deterministic on (objective, course, lesson)
     const obj = rec.objective || customObj || selectedObj;
+    sessionCelebratedRef.current = true;
     const rebuilt = generateContent(obj, obj, rec.courseName, rec.lectureName);
     const restored = rec.studyContent ? normalizeStudyContent(rec.studyContent, rebuilt) : rebuilt;
     setContent(restored);
@@ -2409,6 +1669,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     }
 
     const hasCodeChallenge = Boolean(rec.codeChallenge);
+    if (hasCodeChallenge) { setAppAttempts(2); appRewardedRef.current = true; }
     const hasAnkiExport = Boolean(rec.ankiCards && rec.ankiCards.length > 0);
     const done = rec.status === "completed" || hasAnkiExport;
     const restoredQuestionsComplete =
@@ -2418,7 +1679,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       rec.questions.some(q => q.rating === "correct" || q.rating === "excellent");
     setQuestionsComplete(restoredQuestionsComplete);
     setSessionComplete(done);
-    if (hasAnkiExport) setAnkiExported(true);
+    if (hasAnkiExport) { setAnkiExported(true); setOralSkipped(true); setRecallRevealed(true); }
     const restoredStep = typeof rec.focusStep === "number"
       ? Math.max(0, Math.min(4, Math.round(rec.focusStep)))
       : done
@@ -2512,14 +1773,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         setObjectivesMock(entry.isMock);
         setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
         setObjectivesExpanded(!lastUsedObjectiveId);
-        if (entry.isMock) {
-          const reason = humanizeObjectivesError(entry.error);
-          toast.warning("Objetivos pendientes de IA", {
-            description: reason,
-            icon: <Sparkles className="text-amber-400" size={18} />,
-            duration: 6000,
-          });
-        }
       } catch (err) {
         console.error("[objectives] auto-gen failed", err);
       } finally {
@@ -2554,14 +1807,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       setObjectivesError(entry.isMock ? (entry.error ?? null) : null);
       setObjectivesExpanded(true);
       setObjectivesRegenCount(c => c + 1);
-      if (entry.isMock) {
-        const reason = humanizeObjectivesError(entry.error);
-        toast.warning("Objetivos pendientes de IA", {
-          description: reason,
-          icon: <Sparkles className="text-amber-400" size={18} />,
-          duration: 6000,
-        });
-      } else {
+      if (!entry.isMock) {
         const sourceLabel = entry.source === "gemini" ? "Gemini" : entry.source === "local" ? "IA local" : "IA";
         toast.success(`Objetivos generados con ${sourceLabel}`, {
           icon: <Sparkles className="text-violet-400" size={18} />,
@@ -2627,12 +1873,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     setActiveSessionObjective(null);
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
     setConceptsAcknowledged(false);
-    setShowAppSolution(false); setQuestionAnswers({}); setQuestionFeedbacks({});
+    setShowAppSolution(false); setShowAppHint(false); setAppAttempts(0); appRewardedRef.current = false; setQuestionAnswers({}); setQuestionFeedbacks({});
     setCurrentQIdx(0); setQuestionsComplete(false); setSessionComplete(false);
     setAnkiExported(false); setShowAnkiGuide(false); setShowHint(false);
-    setShowModelAnswer(false); setShowInterviewAnswer(false);
+    setShowModelAnswer(false); setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setOralSkipped(false); setRecallRevealed(false); qRewardedRef.current.clear(); conceptRewardedRef.current.clear();
     setApkgStatus("idle"); setApkgProgress("");
     setFocusStep(0); setFocusDir(1);
+    sessionCelebratedRef.current = false;
     sessionStartRef.current = Date.now();
     // Mark the current lecture as already-handled so rehydration doesn't auto-reload it.
     // Switching to a different course/lecture produces a new key and rehydrates normally.
@@ -2646,7 +1893,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       checkedConceptIndexes: [],
       clearProgress: true,
     }).catch(err => console.error("[history] upsert reset", err));
-    toast("Sesión reiniciada", { icon: <RotateCcw className="text-violet-400" size={18} /> });
+    toast.message("Sesión reiniciada", { icon: <RotateCcw className="text-violet-400" size={18} /> });
   };
 
   // BUG FIX: reset question state when confidence changes
@@ -2668,7 +1915,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     setConceptsAcknowledged(false);
     toast.info("Adaptando las preguntas a tu nivel...", {
       icon: (
-        <div className="p-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 shadow-[0_0_12px_rgba(59,130,246,0.2)]">
+        <div className="p-1.5 rounded-full bg-blue-500/10 border border-blue-500/20">
           <Brain className="text-blue-400 w-4 h-4" />
         </div>
       )
@@ -2682,8 +1929,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
   const handleConceptToggle = (idx: number) => {
     if (questionsComplete) return;
+    const isNowChecked = !conceptsChecked[idx];
+    if (isNowChecked && !conceptRewardedRef.current.has(idx)) {
+      conceptRewardedRef.current.add(idx);
+      triggerXpGain(2, "+2 XP Concepto", "concept_ack");
+    }
     setConceptsChecked(p => {
-      const next = { ...p, [idx]: !p[idx] };
+      const next = { ...p, [idx]: isNowChecked };
       const checkedConceptIndexes = Object.entries(next)
         .filter(([, checked]) => checked)
         .map(([key]) => Number(key))
@@ -2770,6 +2022,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     if (!content || !visibleQuestions[idx]) return;
     const userAns = questionAnswers[idx] || "";
     if (!userAns.trim()) return;
+    const prevRating = questionFeedbacks[idx]?.rating;
     setQuestionFeedbacks(p => ({ ...p, [idx]: { status: "loading", content: "", rating: "unknown" } }));
     const q = visibleQuestions[idx];
     const aiContext = getStudyAIContext(content);
@@ -2801,38 +2054,49 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
     persistQuestionProgress(idx, fb);
     
-    if (res.rating === "correct" || res.rating === "excellent") {
+    const isGoodNow = res.rating === "correct" || res.rating === "excellent";
+    const alreadyRewarded = qRewardedRef.current.has(q.q) || prevRating === "correct" || prevRating === "excellent";
+    const improved = isGoodNow && (prevRating === "partial" || prevRating === "wrong");
+    if (isGoodNow && !alreadyRewarded) {
+      qRewardedRef.current.add(q.q);
+      const nextStreak = consecutiveStreak + 1;
+      setConsecutiveStreak(nextStreak);
+      setGlintQuestionIdx(idx);
+      setTimeout(() => setGlintQuestionIdx(null), 1200);
+
+      const comboBonus = nextStreak >= 2 ? nextStreak * 5 : 0;
+      const improveBonus = improved ? 5 : 0;
+      const totalGain = 10 + comboBonus + improveBonus;
+      const comboText = nextStreak >= 2 ? `+${totalGain} XP (Racha x${nextStreak})` : `+${totalGain} XP`;
+
+      triggerXpGain(totalGain, comboText, "question_correct", nextStreak >= 2 ? nextStreak : undefined);
+
       const praises = [
-        { title: "¡Excelente deducción!", subtitle: "Tu razonamiento es sólido", icon: <Target className="text-violet-400" /> },
+        { title: nextStreak >= 2 ? `¡Racha x${nextStreak}! Impecable` : "¡Excelente deducción!", subtitle: "Tu razonamiento es sólido", icon: <Target className="text-violet-400" /> },
         { title: "¡Impecable!", subtitle: "Eso es dominio real del tema", icon: <Zap className="text-amber-400" /> },
-        { title: "¡Muy bien respondido!", subtitle: "Bloom diría que vas a nivel 4", icon: <Rocket className="text-sky-400" /> },
+        { title: "¡Muy bien respondido!", subtitle: "Bloom diría que vas a nivel 4", icon: <Rocket className="text-violet-400" /> },
         { title: "¡Exacto! Sigue así", subtitle: "Cada respuesta correcta es progreso real", icon: <Sparkles className="text-emerald-400" /> },
-        { title: "¡Brillante!", subtitle: "Respuesta correcta al 100%", icon: <Diamond className="text-fuchsia-400" /> },
+        { title: "¡Brillante!", subtitle: "Respuesta correcta al 100%", icon: <Diamond className="text-violet-400" /> },
       ];
       const pick = praises[Math.floor(Math.random() * praises.length)];
-      celebrate({ type: "question_correct", title: pick.title, subtitle: pick.subtitle, icon: pick.icon });
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1);
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.3);
-      } catch(e){}
-    } else if (res.rating === "partial") {
-      toast.info("Vas por buen camino, veamos el detalle.", {
-        icon: (
-          <div className="p-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.2)]">
-            <Sparkles className="text-amber-400 w-4 h-4" />
-          </div>
-        )
-      });
+      celebrate(improved
+        ? { type: "question_correct", bonusXp: comboBonus + improveBonus, combo: nextStreak, title: "¡Lo corregiste!", subtitle: `${comboText} · de ${prevRating === "partial" ? "Parcial" : "Revisemos"} a ${res.rating === "excellent" ? "Excelente" : "Correcto"}`, icon: <Target className="text-violet-400" /> }
+        : { type: "question_correct", bonusXp: comboBonus + improveBonus, combo: nextStreak, title: pick.title, subtitle: `${comboText} · nivel «${q.bloom}» · ${(Object.values({ ...questionFeedbacks, [idx]: fb }) as FeedbackState[]).filter(f => f.rating === "correct" || f.rating === "excellent").length} de ${content?.questions.length ?? "?"} dominadas`, icon: pick.icon });
+    } else if (!isGoodNow) {
+      setConsecutiveStreak(0);
+      setShakeQuestionIdx(idx);
+      setTimeout(() => setShakeQuestionIdx(null), 600);
+
+      if (res.rating === "partial") {
+        triggerXpGain(5, "+5 XP", "question_combo");
+        toast.info("Vas por buen camino, veamos el detalle.", {
+          icon: (
+            <div className="p-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+              <Sparkles className="text-amber-400 w-4 h-4" />
+            </div>
+          )
+        });
+      }
     }
 
     // NO auto-advance — the user reads the feedback and clicks "Siguiente" manually
@@ -2857,6 +2121,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer, aiContext);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setAppFeedback(fb);
+      if (fb.status === "done") setAppAttempts(n => n + 1);
       historyService.upsertLecture({
         courseName,
         lectureName: lessonName,
@@ -2866,13 +2131,16 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         focusStep: 3,
       }).catch(err => console.error("[history] upsert code", err));
       if (fallback.success && (fallback.rating === "correct" || fallback.rating === "excellent")) {
-        confetti({ particleCount: 70, spread: 80, origin: { y: 0.7 }, colors: ["#8b5cf6", "#10b981", "#38bdf8", "#fcd34d"] });
+        const firstCode = !appRewardedRef.current;
+        if (firstCode) { appRewardedRef.current = true; triggerXpGain(50, "+50 XP Reto Código", "code_challenge"); }
+        celebrate({ type: "code_correct", title: "¡Código brillante!", subtitle: firstCode ? "Tu solución es correcta · +50 XP" : "Tu solución es correcta", icon: <Flame className="text-orange-400" /> });
       }
       if (fallback.success && !sessionComplete) setTimeout(() => setSessionComplete(true), 800);
       return;
     }
 
     setAppFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
+    setAppAttempts(n => n + 1);
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
@@ -2883,26 +2151,14 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     }).catch(err => console.error("[history] upsert code", err));
     
     if (res.rating === "correct" || res.rating === "excellent") {
-      celebrate({ type: "export_done", title: "¡Código brillante!", subtitle: "Tu solución es correcta. Sesión completada con éxito.", icon: <Flame className="text-orange-400" /> });
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime);
-        osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.1);
-        osc.frequency.setValueAtTime(1046.50, ctx.currentTime + 0.2);
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.4);
-      } catch(e){}
+      const firstCode = !appRewardedRef.current;
+        if (firstCode) { appRewardedRef.current = true; triggerXpGain(50, "+50 XP Reto Código", "code_challenge"); }
+      celebrate({ type: "code_correct", title: "¡Código brillante!", subtitle: firstCode ? "Tu solución es correcta · +50 XP" : "Tu solución es correcta", icon: <Flame className="text-orange-400" /> });
     } else if (res.rating === "partial") {
+      triggerXpGain(15, "+15 XP Progreso", "question_combo");
       toast.info("Buena aproximación, revisemos el feedback.", {
         icon: (
-          <div className="p-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.2)]">
+          <div className="p-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
             <Wand2 className="text-amber-400 w-4 h-4" />
           </div>
         )
@@ -2922,7 +2178,28 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       questionsComplete: true,
       focusStep: 3,
     }).catch(err => console.error("[history] upsert force complete", err));
-    toast("Evaluación saltada", { icon: <FastForward className="text-violet-400" size={18} /> });
+    toast.message("Evaluación saltada", { icon: <FastForward className="text-violet-400" size={18} /> });
+  };
+
+  // The export that closes the lesson hands the stage to the session-complete celebration.
+  const completesSession = () => !sessionCelebratedRef.current && oralDone && steps.slice(0, 4).every(s => s.done);
+
+  const handleEvaluateOral = async () => {
+    if (!content?.interviewQ || !oralAnswer.trim() || oralFeedback.status === "loading" || oralFeedback.status === "streaming") return;
+    const q = content.interviewQ;
+    const aiContext = getStudyAIContext(content);
+    setOralFeedback({ status: "loading", content: "", rating: "unknown" });
+    const res = await evaluateActiveAnswerStream(
+      q.q, q.idealAnswer, oralAnswer, "aplicar",
+      (_, acc) => setOralFeedback({ status: "streaming", content: acc, rating: "unknown" }),
+      aiContext,
+    );
+    if (res.success && res.content.trim()) {
+      setOralFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
+      return;
+    }
+    const fallback = await evaluateActiveAnswer(q.q, q.idealAnswer, oralAnswer, "aplicar", aiContext);
+    setOralFeedback({ status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock });
   };
 
   const handleExport = () => {
@@ -2940,7 +2217,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     }
     setAnkiExported(true);
     persistAnkiAndComplete();
-    celebrate({ type: "export_done", title: "¡Tarjetas exportadas!", subtitle: "Archivo TXT listo para importar en Anki", icon: <Download className="text-emerald-400" /> });
+    celebrate({ type: "export_done", silent: completesSession(), rewardKey: `anki-txt::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Tarjetas exportadas!", subtitle: "Archivo TXT listo para importar en Anki", icon: <Download className="text-emerald-400" /> });
   };
 
   const handleDownloadTxtSetup = () => {
@@ -2971,6 +2248,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       conceptsAcknowledged: true,
       focusStep: 4,
       status: "completed",
+      exportedAt: Date.now(),
     }).then(() => historyService.markCompleted(slugify(courseName), slugify(lessonName)))
       .catch(err => console.error("[history] complete", err));
   };
@@ -2989,7 +2267,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       setAnkiExported(true);
       markQa("apkg-done:" + deckName.slice(0, 60));
       persistAnkiAndComplete();
-      celebrate({ type: "anki_export", title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
+      celebrate({ type: "anki_export", silent: completesSession(), rewardKey: `anki-apkg::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
       setTimeout(() => setApkgStatus("idle"), 4000);
     } catch (err) {
       console.error("[apkg export]", err);
@@ -2998,7 +2276,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       setApkgProgress("Error al generar el .apkg. Revisa la consola.");
       toast.error("Hubo un error al generar el paquete .apkg", {
         icon: (
-          <div className="p-1.5 rounded-full bg-red-500/10 border border-red-500/20 shadow-[0_0_12px_rgba(239,68,68,0.2)]">
+          <div className="p-1.5 rounded-full bg-red-500/10 border border-red-500/20">
             <X className="text-red-400 w-4 h-4" />
           </div>
         )
@@ -3065,6 +2343,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       markQa("vocab-done:" + fresh.length);
       celebrate({
         type: "anki_export",
+        rewardKey: `anki-vocab::${slugify(courseName)}::${slugify(lessonName)}::${vocabCfg.targetLang}`,
         title: "¡Vocabulario exportado!",
         subtitle: `${fresh.length} palabras → ${deckPath}${seen.length ? ` (${seen.length} repetidas saltadas)` : ""}`,
         icon: <Languages className="text-sky-400" />,
@@ -3134,6 +2413,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         },
       });
       setObsidianStatus("done");
+      setAnkiExported(true); persistAnkiAndComplete();
       toast.success("Exportado a Obsidian", {
         description: result.mocPath
           ? `Nota: ${result.notePath} · MOC: ${result.mocPath}`
@@ -3312,13 +2592,18 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const conceptsMarkedCount = Object.values(conceptsChecked).filter(Boolean).length;
   const conceptsDone = questionsComplete || conceptsAcknowledged || conceptsMarkedCount >= 2;
 
+  const oralDone = !content?.interviewQ || oralFeedback.status === "done" || oralSkipped;
+
+  // "Wrong" blocks the step until a 2nd attempt or until the reference solution was opened; an AI error never blocks.
+  const appPassed = appFeedback.status === "done" && (appFeedback.rating !== "wrong" || appAttempts >= 2 || showAppSolution);
+
   // Stepper state
   const steps = [
     { label: "Mi nivel",    done: confidence !== null,  active: confidence === null },
     { label: "Lo que vi",   done: conceptsDone,         active: confidence !== null && !conceptsDone },
     { label: "¿Lo sé?",    done: questionsComplete,    active: confidence !== null && !questionsComplete },
-    { label: "Practícalo", done: appFeedback.status === "done", active: showApply && appFeedback.status !== "done" },
-    { label: "No olvidar", done: ankiExported,         active: showApply },
+    { label: "Practícalo", done: appPassed, active: showApply && !appPassed },
+    { label: "No olvidar", done: ankiExported && oralDone, active: showApply },
   ];
 
   const allStepsComplete = steps.every(s => s.done);
@@ -3327,81 +2612,36 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     (dynamicObjectives?.some(o => o.id === selectedObj) && !objectivesMock)
   );
 
-  // Trigger confetti and toast when all steps complete
+  // Celebrate once per session when every step is done (not on rehydrate, not on re-toggle).
   useEffect(() => {
-    if (allStepsComplete) {
-      setTimeout(() => {
-        celebrate({
-          type: "session_complete",
-          title: "¡Lección Dominada! 🏆",
-          subtitle: "Has completado todos los pasos de esta sesión de estudio",
-          icon: "🎓",
-        });
-        const duration = 3000;
-        const end = Date.now() + duration;
-
-        const frame = () => {
-          confetti({
-            particleCount: 5,
-            angle: 60,
-            spread: 55,
-            origin: { x: 0 },
-            colors: ['#8b5cf6', '#10b981', '#fde047']
-          });
-          confetti({
-            particleCount: 5,
-            angle: 120,
-            spread: 55,
-            origin: { x: 1 },
-            colors: ['#8b5cf6', '#10b981', '#fde047']
-          });
-
-          if (Date.now() < end) {
-            requestAnimationFrame(frame);
-          }
-        };
-        frame();
-        
-        try {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          // Triumphant chord
-          [261.63, 329.63, 392.00, 523.25].forEach((freq, i) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.type = "sine";
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(0, ctx.currentTime);
-            gain.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 0.1);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-            osc.start(ctx.currentTime + (i * 0.05));
-            osc.stop(ctx.currentTime + 1.6);
-          });
-        } catch (e) {}
-
-        // Auto-scroll to the bottom a bit after it renders
-        setTimeout(() => scrollToBottom(), 300);
-      }, 500);
-    }
+    if (!allStepsComplete || sessionCelebratedRef.current) return;
+    const id = setTimeout(() => {
+      if (sessionCelebratedRef.current) return;
+      sessionCelebratedRef.current = true;
+      celebrate({
+        type: "session_complete",
+        rewardKey: `session::${slugify(courseName)}::${slugify(lessonName)}`,
+        title: "¡Lección Dominada!",
+        subtitle: `${lessonName ? `«${lessonName}»: ` : ""}evaluada, practicada y fijada en tu memoria`,
+        icon: <Icon name="graduation" size={24} />,
+      });
+      setTimeout(() => scrollToBottom(), 300);
+    }, 500);
+    return () => clearTimeout(id);
   }, [allStepsComplete, scrollToBottom]);
 
   // duplicate allStepsComplete effect removed — first useEffect above handles chord + scroll
 
+  // El botón de historial de las pestañas (ExtensionSidebar) abre el historial.
+  useEffect(() => {
+    const open = () => setHistoryOpen(true);
+    window.addEventListener("usb:open-history", open);
+    return () => window.removeEventListener("usb:open-history", open);
+  }, []);
+
   // ── Render ────────────────────────────────────────��─────────────────────────
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
-
-      {/* ── Floating Historial FAB (bottom-right, visible in every phase) ── */}
-      <motion.button
-        onClick={() => setHistoryOpen(true)}
-        title="Ver historial de estudio"
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        className="absolute bottom-3 right-3 z-30 w-10 h-10 flex items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-violet-700 hover:from-violet-500 hover:to-violet-600 border border-violet-400/30 shadow-lg shadow-violet-900/40 text-white transition-colors"
-      >
-        <History size={15} />
-      </motion.button>
 
       {/* ── History drawer ── */}
       <AnimatePresence>
@@ -3420,19 +2660,25 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
               className="absolute inset-y-0 right-0 z-50 w-[88%] max-w-[360px] bg-[var(--usb-bg-1)] border-l border-[var(--usb-border)] shadow-2xl flex flex-col"
             >
-              <div className="flex items-center justify-between px-3.5 py-3 border-b border-[var(--usb-border)] shrink-0">
-                <div className="flex items-center gap-2">
-                  <History size={13} className="text-violet-400" />
-                  <span className="text-white/80 text-[12px]" style={{ fontWeight: 600 }}>Historial de estudio</span>
-                </div>
+              <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--usb-divider)] shrink-0">
+                <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border shadow-sm"
+                  style={{
+                    background: "color-mix(in srgb, #6d4aff 12%, var(--usb-bg-3))",
+                    borderColor: "color-mix(in srgb, #6d4aff 24%, var(--usb-border))",
+                    color: t("#b7a6ff", "#5b37e8"),
+                  }}>
+                  <Icon name="history" size={15} weight="duotone" />
+                </span>
+                <span className="flex-1 text-[13px] font-bold tracking-tight text-[var(--usb-fg)]">Historial de estudio</span>
                 <button
                   onClick={() => setHistoryOpen(false)}
-                  className="w-6 h-6 flex items-center justify-center rounded-md text-white/40 hover:text-white hover:bg-white/8 transition-colors"
+                  aria-label="Cerrar historial"
+                  className="kx-chip w-7 h-7 flex items-center justify-center rounded-full"
                 >
                   <X size={13} />
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                 <HistoryPanel
                   hideToggle
                   defaultOpen
@@ -3461,29 +2707,61 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
         {/* ══ OBJECTIVE ══ */}
         {phase === "objective" && (
           <motion.div key="obj" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3 }}
-            className="flex-1 overflow-y-auto custom-scrollbar p-3.5 space-y-4">
+            className="kx-study flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
 
             {/* Hero header */}
-            <div className="bg-white/[0.03] border border-[var(--usb-border)] rounded-xl p-3.5">
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-6 h-6 rounded-lg bg-violet-500/12 flex items-center justify-center">
-                  <Brain size={13} className="text-violet-400"/>
+            <div className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5">
+              <span className="kx-ring kx-ring-1" aria-hidden="true" />
+              <span className="kx-ring kx-ring-2" aria-hidden="true" />
+              <Icon name="sparkles" size={16} weight="duotone" className="kx-spark kx-spark-a" />
+              <Icon name="star" size={12} weight="fill" className="kx-spark kx-spark-b" />
+              <Icon name="sparkles" size={12} weight="duotone" className="kx-spark kx-spark-c" />
+              <div className="relative flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="kx-hero-chip w-7 h-7 rounded-xl flex items-center justify-center">
+                    <Icon name="brain" size={18} weight="duotone" />
+                  </div>
+                  <span className="kx-hero-t2 text-[11px] font-bold tracking-wider uppercase">Study Agent</span>
                 </div>
-                <span className="text-white/85 text-[11px]" style={{ fontWeight: 600 }}>Tutor IA · Study Agent</span>
+                <span className="kx-hero-chip text-[10px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                  <span className="kx-live-dot" />Kinema AI
+                </span>
               </div>
-              <p className="text-white/55 text-[10px] leading-relaxed">5–8 min por video. Preguntas adaptadas a tu nivel. Retención garantizada con Anki.</p>
+              <p className="kx-hero-t1 relative text-[21px] font-extrabold tracking-tight leading-tight">
+                Aprende y domina cada clase
+              </p>
+              <p className="kx-hero-t2 relative text-[12px] leading-relaxed mt-1.5">
+                Evaluaciones interactivas por lección y tarjetas inteligentes de retención con Anki.
+              </p>
+              <div className="relative flex flex-wrap gap-1.5 mt-3.5">
+                {([["steps", "5 pasos"], ["timer", "~8 min"], ["zap", "+XP por clase"]] as const).map(([ic, label]) => (
+                  <span key={label} className="kx-hero-chip text-[10.5px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                    <Icon name={ic} size={13} weight="duotone" />{label}
+                  </span>
+                ))}
+              </div>
             </div>
+
+            <MemoryCard
+              onExportLesson={async (rec) => {
+                await exportApkgFile(
+                  (rec.ankiCards ?? []).map((c) => ({ ...c, tags: c.tags ?? [], type: c.type ?? "concept" })) as unknown as AnkiCard[],
+                  rec.courseName, rec.lectureName, vocabCfg.rootDeck,
+                );
+                await new Promise((r) => setTimeout(r, 600));
+              }}
+            />
 
             {/* Objectives — AI-generated per course, with fold-don't-hide disclosure */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-white/30 text-[10px] uppercase tracking-wider flex items-center gap-1"><Target size={9}/>¿Para qué estudias esto?</p>
+              <div className="flex items-center justify-between mb-3">
+                <SectionTitle icon="target" hue={0}>¿Para qué estudias esto?</SectionTitle>
                 {(dynamicObjectives || objectivesMock || objectivesError) && (
                   <button onClick={handleRegenerateObjectives} disabled={objectivesLoading}
-                    className="text-white/30 hover:text-violet-300 disabled:text-violet-400 disabled:cursor-wait text-[10px] flex items-center gap-1 transition-colors">
+                    className="kx-chip h-7 px-2.5 rounded-full disabled:cursor-wait text-[10.5px] font-semibold flex items-center gap-1.5 transition-colors">
                     {objectivesLoading
-                      ? <><Loader2 size={9} className="animate-spin"/>Regenerando…</>
-                      : <><Sparkles size={9}/>Regenerar</>}
+                      ? <><Loader2 size={11} className="animate-spin"/>Regenerando…</>
+                      : <><Sparkles size={11}/>Regenerar</>}
                   </button>
                 )}
               </div>
@@ -3491,32 +2769,32 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               {objectivesLoading && !dynamicObjectives && (
                 <div className="grid grid-cols-2 gap-2">
                   {[0,1,2,3].map(i => (
-                    <div key={i} className="h-[68px] rounded-xl bg-white/3 border border-[var(--usb-divider)] animate-pulse"/>
+                    <div key={i} className="h-[88px] rounded-2xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] animate-pulse"/>
                   ))}
                 </div>
               )}
 
               {!objectivesLoading && !dynamicObjectives && !courseName.trim() && (
-                <div className="rounded-xl bg-white/3 border border-dashed border-white/10 p-3 text-center">
-                  <p className="text-white/35 text-[11px]">Escribe el nombre del curso abajo para generar objetivos a medida.</p>
+                <div className="rounded-2xl bg-[var(--usb-bg-3)] border border-dashed border-[var(--usb-border)] p-4 text-center">
+                  <p className="text-[var(--usb-fg-mid)] text-[12px] font-medium">Escribe el nombre del curso abajo para generar objetivos a medida.</p>
                 </div>
               )}
 
               {!objectivesLoading && !dynamicObjectives && courseName.trim() && (objectivesMock || objectivesError) && (
-                <div className="rounded-xl bg-amber-500/8 border border-amber-500/22 p-3 flex items-start gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-                    <Sparkles size={13} className="text-amber-400" />
+                <div className="rounded-2xl bg-[color-mix(in_srgb,#d97706_9%,var(--usb-bg-3))] border border-[#d97706]/35 p-3.5 flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-[color-mix(in_srgb,#d97706_18%,var(--usb-bg-3))] border border-[#d97706]/40 flex items-center justify-center shrink-0">
+                    <Sparkles size={15} style={{ color: t("#fbbf45", "#a15207") }} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-amber-300/85 text-[11px] leading-snug" style={{ fontWeight: 600 }}>
+                    <p className="text-[var(--usb-fg-hi)] text-[12px] leading-snug font-bold">
                       Objetivos pendientes de IA real
                     </p>
-                    <p className="text-amber-300/55 text-[10px] mt-0.5 leading-relaxed">
+                    <p className="text-[var(--usb-fg-mid)] text-[11px] font-medium mt-0.5 leading-relaxed">
                       {humanizeObjectivesError(objectivesError)}
                     </p>
                     <button onClick={handleRegenerateObjectives}
-                      className="mt-2 h-7 px-2.5 rounded-lg bg-amber-500/10 border border-amber-500/22 text-amber-200 hover:bg-amber-500/15 text-[10px] flex items-center gap-1.5 transition-all">
-                      <Sparkles size={10}/>Regenerar con IA
+                      className="kx-chip mt-2.5 h-8 px-3 rounded-full text-[11px] font-semibold flex items-center gap-1.5 transition-all">
+                      <Sparkles size={12}/>Regenerar con IA
                     </button>
                   </div>
                 </div>
@@ -3533,22 +2811,25 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                   return (
                     <div className="space-y-2">
                       <button onClick={() => { setSelectedObj(hero.id); setCustomObj(""); setRefinedObj(""); }}
-                        className={`relative w-full text-left p-3.5 rounded-xl border transition-all overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/4 border-white/10 hover:bg-white/6"}`}>
+                        className={`kx-obj relative w-full text-left p-3.5 rounded-2xl border transition-all overflow-hidden ${active ? "" : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] hover:bg-[var(--usb-accent-soft)]"}`}
+                        data-on={active ? "1" : "0"}
+                        style={{ "--kx-step": STEP_META[0].hue, "--kx-ink": t(STEP_META[0].inkDark, STEP_META[0].inkLight) } as React.CSSProperties}
+                      >
                         <div className="flex items-start gap-2.5">
-                          <span className="text-[18px]" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{hero.icon}</span>
+                          <span className={`kx-obj-tile flex h-9 w-9 shrink-0 items-center justify-center rounded-xl`}><Glyph name={hero.icon} size={20} /></span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-0.5">
-                              <p className="text-white/85 text-[12px] leading-tight" style={{ fontWeight: 600 }}>{hero.title}</p>
-                              {active && <CheckCircle2 size={10} className="text-violet-300 shrink-0"/>}
+                              <p className="text-[13px] font-bold tracking-tight text-[var(--usb-fg-hi)] leading-tight">{hero.title}</p>
+                              {active && <CheckCircle2 size={12} className="text-[var(--kx-ink)] shrink-0"/>}
                             </div>
-                            <p className="text-violet-300/70 text-[10px]">{hero.sub}</p>
-                            <p className="text-white/30 text-[9px] mt-1.5 flex items-center gap-1"><History size={8}/>Tu enfoque actual en este curso</p>
+                            <p className="text-[11.5px] font-medium text-[var(--usb-fg-mid)]">{hero.sub}</p>
+                            <p className="kx-slate mt-2 flex items-center gap-1"><History size={10}/>Tu enfoque actual en este curso</p>
                           </div>
                         </div>
                       </button>
                       <button onClick={() => setObjectivesExpanded(true)}
-                        className="w-full h-7 rounded-lg bg-white/3 border border-[var(--usb-border)] text-white/45 hover:text-white/70 hover:bg-white/5 text-[10px] flex items-center justify-center gap-1 transition-all">
-                        Cambiar enfoque <ChevronDown size={10}/>
+                        className="kx-chip w-full h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1.5">
+                        Cambiar enfoque <ChevronDown size={12}/>
                       </button>
                     </div>
                   );
@@ -3563,10 +2844,10 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         {objectivesLoading && objectivesRegenCount > 0 && (
                           <motion.div key={`sweep-${objectivesRegenCount}`}
                             initial={{ left: "-40%", opacity: 0 }}
-                            animate={{ left: "100%", opacity: 1 }}
+                            animate={{ left: "100%", opacity: 0.6 }}
                             exit={{ opacity: 0 }}
                             transition={{ duration: 0.9, ease: "easeInOut" }}
-                            className="pointer-events-none absolute inset-y-0 w-1/3 z-10 bg-gradient-to-r from-transparent via-violet-400/30 to-transparent blur-md"/>
+                            className="pointer-events-none absolute inset-y-0 w-1/4 z-10 bg-[#6d4aff]/20 blur-sm"/>
                         )}
                       </AnimatePresence>
 
@@ -3576,44 +2857,40 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.2 }}
-                          className="grid grid-cols-2 gap-2">
+                          className="grid grid-cols-2 gap-2.5">
                           {objs.map((obj, i) => {
                             const active = selectedObj === obj.id;
+                            const om = STEP_META[i % STEP_META.length];
                             return (
                               <motion.button key={obj.id}
+                                data-on={active ? "1" : "0"}
+                                style={{ "--kx-step": om.hue, "--kx-ink": t(om.inkDark, om.inkLight) } as React.CSSProperties}
                                 initial={{ opacity: 0, y: 12, scale: 0.92 }}
                                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: -8, scale: 0.94 }}
                                 transition={{
-                                  duration: 0.45,
                                   delay: i * 0.08,
-                                  ease: [0.22, 1, 0.36, 1],
+                                  type: "spring",
+                                  stiffness: 300,
+                                  damping: 22,
                                 }}
                                 onClick={() => { setSelectedObj(obj.id); setCustomObj(""); setRefinedObj(""); }}
-                                className={`relative text-left p-3 rounded-xl border transition-colors overflow-hidden ${active ? "bg-violet-500/10 border-violet-500/35" : "bg-white/3 border-[var(--usb-border)] hover:bg-white/5 hover:border-white/12"}`}>
-                                {/* Per-card reveal flash on regenerate */}
-                                <motion.span
-                                  aria-hidden
-                                  initial={{ opacity: 0.6, scaleX: 0 }}
-                                  animate={{ opacity: 0, scaleX: 1 }}
-                                  transition={{ duration: 0.55, delay: i * 0.08 + 0.05, ease: "easeOut" }}
-                                  className="pointer-events-none absolute inset-0 origin-left bg-gradient-to-r from-violet-500/25 via-violet-400/10 to-transparent"/>
-                                {active && <div className="absolute top-2 right-2 z-10"><CheckCircle2 size={10} className="text-violet-300"/></div>}
+                                className={`kx-obj relative text-left p-3.5 rounded-2xl border transition-colors overflow-hidden ${active ? "" : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] hover:border-[#6d4aff]/50"}`}>
+                                {active && <div className="kx-obj-check absolute top-2 right-2 z-10 w-4 h-4 rounded-full flex items-center justify-center"><Check size={10} strokeWidth={3}/></div>}
                                 <motion.span
                                   initial={{ rotate: -18, scale: 0.6, opacity: 0 }}
                                   animate={{ rotate: 0, scale: 1, opacity: 1 }}
                                   transition={{ delay: i * 0.08 + 0.12, type: "spring", stiffness: 260, damping: 16 }}
-                                  className="relative text-[12px] block mb-1.5" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}>{obj.icon}</motion.span>
+                                  className="kx-obj-tile relative mb-2 flex h-8 w-8 items-center justify-center rounded-xl"><Glyph name={obj.icon} size={17} /></motion.span>
                                 <motion.p
                                   initial={{ opacity: 0, x: -4 }}
                                   animate={{ opacity: 1, x: 0 }}
                                   transition={{ duration: 0.3, delay: i * 0.08 + 0.18 }}
-                                  className={`relative text-[11px] leading-tight ${active ? "text-white/85" : "text-white/60"}`} style={{ fontWeight: 600 }}>{obj.title}</motion.p>
+                                  className="relative text-[12px] leading-tight font-bold tracking-tight text-[var(--usb-fg-hi)]">{obj.title}</motion.p>
                                 <motion.p
                                   initial={{ opacity: 0, x: -4 }}
                                   animate={{ opacity: 1, x: 0 }}
                                   transition={{ duration: 0.3, delay: i * 0.08 + 0.24 }}
-                                  className={`relative text-[9px] mt-0.5 ${active ? "text-violet-300" : "text-white/28"}`}>{obj.sub}</motion.p>
+                                  className="kx-obj-sub relative text-[10.5px] font-medium mt-1 leading-snug">{obj.sub}</motion.p>
                               </motion.button>
                             );
                           })}
@@ -3621,13 +2898,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       </AnimatePresence>
                     </div>
                     {objectivesMock && (
-                      <div className="rounded-lg bg-amber-500/8 border border-amber-500/22 px-2.5 py-1.5 flex items-start gap-1.5">
-                        <Sparkles size={10} className="text-amber-400 mt-px shrink-0" />
+                      <div className="rounded-xl bg-[color-mix(in_srgb,#d97706_9%,var(--usb-bg-3))] border border-[#d97706]/35 px-3 py-2 flex items-start gap-2">
+                        <Sparkles size={12} className="mt-px shrink-0" style={{ color: t("#fbbf45", "#a15207") }} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-amber-300/80 text-[10px] leading-snug">
+                          <p className="text-[var(--usb-fg-hi)] text-[11px] font-semibold leading-snug">
                             {humanizeObjectivesError(objectivesError)}
                           </p>
-                          <p className="text-amber-300/40 text-[9px] mt-0.5">
+                          <p className="text-[var(--usb-fg-mid)] text-[10.5px] font-medium mt-0.5">
                             Estos objetivos son plantillas heurísticas, no IA real.
                           </p>
                         </div>
@@ -3635,8 +2912,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     )}
                     {hero && objectivesExpanded && (
                       <button onClick={() => setObjectivesExpanded(false)}
-                        className="w-full h-6 rounded-lg text-white/35 hover:text-white/60 text-[10px] flex items-center justify-center gap-1 transition-colors">
-                        <ChevronDown size={10} className="rotate-180"/> Volver al enfoque actual
+                        className="w-full h-8 rounded-lg text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors">
+                        <ChevronDown size={12} className="rotate-180"/> Volver al enfoque actual
                       </button>
                     )}
                   </div>
@@ -3653,11 +2930,11 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               return (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-white/25 text-[10px] flex items-center gap-1"><Edit3 size={9}/>O escribe tu propio objetivo:</p>
+                    <SectionTitle icon="edit3" hue={1}>O escribe tu propio objetivo</SectionTitle>
                     {isCustomActive && (
                       <motion.span initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                        className="text-violet-300 text-[9px] flex items-center gap-1 bg-violet-500/15 border border-violet-500/25 rounded-full px-1.5 py-0.5">
-                        <CheckCircle2 size={8}/>Activo
+                        className="text-[10.5px] font-semibold flex items-center gap-1 bg-[#6d4aff]/15 border border-[#6d4aff]/35 rounded-full px-2.5 py-0.5" style={{ color: t("#b7a6ff", "#5b37e8") }}>
+                        <CheckCircle2 size={11}/>Activo
                       </motion.span>
                     )}
                   </div>
@@ -3669,53 +2946,53 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       else { setSelectedObj(fallbackId); setRefinedObj(""); setRefinedFromText(""); }
                     }}
                     placeholder="Ej: Conseguir trabajo en fintech como Java dev en 3 meses…"
-                    className={`w-full h-[44px] text-[11px] rounded-lg bg-black/25 border ${isCustomActive ? "border-violet-500/35" : "border-[var(--usb-border)]"} text-white/65 placeholder:text-white/16 p-2.5 resize-none outline-none focus:border-violet-500/30 transition-colors leading-relaxed`}/>
+                    className={`w-full h-[74px] text-[12.5px] rounded-2xl bg-[var(--usb-bg-3)] border ${isCustomActive ? "border-[#6d4aff]/60 ring-2 ring-[#6d4aff]/20" : "border-[var(--usb-border)]"} text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] px-4 py-3 resize-none outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors leading-relaxed`}/>
 
                   <AnimatePresence mode="wait">
                     {/* No refined version yet → primary CTA */}
                     {customObj.trim() && !refinedObj && (
                       <motion.button key="refine-cta" initial={{ opacity: 0, y: -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         onClick={handleRefine} disabled={isRefining}
-                        className="w-full h-7 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-300/80 hover:text-violet-200 hover:bg-violet-500/15 disabled:cursor-wait text-[11px] flex items-center justify-center gap-1.5 transition-all">
-                        {isRefining ? <><Loader2 size={10} className="animate-spin"/>Refinando con IA…</> : <><Sparkles size={10}/>Refinar con IA</>}
+                        className="kx-chip w-full h-10 rounded-2xl disabled:cursor-wait text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all">
+                        {isRefining ? <><Loader2 size={11} className="animate-spin"/>Refinando con IA…</> : <><Sparkles size={12}/>Refinar con IA</>}
                       </motion.button>
                     )}
 
                     {/* Refined card */}
                     {refinedObj && (
                       <motion.div key="refined-card" initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}
-                        className="space-y-1.5">
-                        <div className={`relative rounded-lg p-2.5 border transition-all ${isCustomActive ? "bg-violet-500/12 border-violet-500/30" : "bg-violet-500/6 border-violet-500/15"}`}>
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <Sparkles size={9} className="text-violet-300"/>
-                            <span className="text-violet-300/80 text-[9px] uppercase tracking-wider" style={{ fontWeight: 600 }}>Objetivo refinado</span>
-                            {isCustomActive && <CheckCircle2 size={9} className="text-violet-300 ml-auto"/>}
+                        className="space-y-2">
+                        <div className={`relative rounded-2xl p-3.5 border transition-all ${isCustomActive ? "bg-[#6d4aff]/14 border-[#6d4aff]/45" : "bg-[#6d4aff]/7 border-[#6d4aff]/25"}`}>
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <Sparkles size={12} style={{ color: t("#b7a6ff", "#5b37e8") }}/>
+                            <span className="kx-slate">Objetivo refinado</span>
+                            {isCustomActive && <CheckCircle2 size={13} className="ml-auto text-[#059669]"/>}
                           </div>
-                          <p className="text-white/80 text-[11px] leading-relaxed">{refinedObj}</p>
-                          <p className="text-white/30 text-[9px] mt-1.5 italic line-clamp-1">Basado en: "{refinedFromText}"</p>
+                          <p className="text-[12.5px] text-[var(--usb-fg-hi)] leading-relaxed font-medium pr-5">{refinedObj}</p>
+                          <p className="text-[11px] text-[var(--usb-fg-mid)] mt-1.5 italic line-clamp-1">Basado en: "{refinedFromText}"</p>
                           <button onClick={() => { setRefinedObj(""); setRefinedFromText(""); }}
-                            className="absolute top-1.5 right-1.5 text-white/25 hover:text-white/60 transition-colors" title="Descartar refinamiento">
-                            <X size={10}/>
+                            className="absolute top-2.5 right-2.5 text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg)] transition-colors" title="Descartar refinamiento">
+                            <X size={12}/>
                           </button>
                         </div>
 
-                        <div className="flex gap-1.5">
+                        <div className="flex gap-2">
                           {textChangedSinceRefine ? (
                             <button onClick={handleRefine} disabled={isRefining}
-                              className="flex-1 h-7 rounded-lg bg-violet-500/10 border border-violet-500/25 text-violet-200 hover:bg-violet-500/15 disabled:cursor-wait text-[10px] flex items-center justify-center gap-1 transition-all">
-                              {isRefining ? <><Loader2 size={9} className="animate-spin"/>Refinando…</> : <><Sparkles size={9}/>Refinar texto nuevo</>}
+                              className="kx-chip flex-1 h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all">
+                              {isRefining ? <><Loader2 size={11} className="animate-spin"/>Refinando…</> : <><Sparkles size={11}/>Refinar texto nuevo</>}
                             </button>
                           ) : (
                             <button onClick={handleRefine} disabled={isRefining}
-                              className="flex-1 h-7 rounded-lg bg-white/4 border border-white/10 text-white/55 hover:text-white/80 hover:bg-white/6 disabled:cursor-wait text-[10px] flex items-center justify-center gap-1 transition-all"
+                              className="kx-chip flex-1 h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all"
                               title="Pídele a la IA otra versión del mismo texto">
-                              {isRefining ? <><Loader2 size={9} className="animate-spin"/>Generando…</> : <><RotateCcw size={9}/>Otra variante</>}
+                              {isRefining ? <><Loader2 size={11} className="animate-spin"/>Generando…</> : <><RotateCcw size={11}/>Otra variante</>}
                             </button>
                           )}
                           <button onClick={() => { setCustomObj(refinedObj); setRefinedFromText(refinedObj); setSelectedObj("custom"); }}
-                            className="flex-1 h-7 rounded-lg bg-white/4 border border-white/10 text-white/55 hover:text-white/80 hover:bg-white/6 text-[10px] flex items-center justify-center gap-1 transition-all"
+                            className="kx-chip flex-1 h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all"
                             title="Reemplaza tu texto por la versión refinada">
-                            <Wand2 size={9}/>Usar como mi texto
+                            <Wand2 size={11}/>Usar como mi texto
                           </button>
                         </div>
                       </motion.div>
@@ -3726,83 +3003,192 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
             })()}
 
             {/* Course info */}
-            <div className="space-y-1.5">
-              <p className="text-white/20 text-[9px] uppercase tracking-wider">Datos del curso</p>
+            <div className="space-y-3">
+              <SectionTitle icon="bookOpen" hue={2}>Datos del curso</SectionTitle>
               <input value={courseName} onChange={e => { setCourseName(e.target.value); courseNameEditedRef.current = true; }} placeholder="Nombre del curso (para mazo Anki)"
-                className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
+                className="w-full h-11 text-[12.5px] rounded-2xl kx-field bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] px-4 outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors"/>
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
-                className="w-full h-8 text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 px-2.5 outline-none focus:border-violet-500/25 transition-colors"/>
+                className="w-full h-11 text-[12.5px] rounded-2xl kx-field bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] px-4 outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors"/>
               <textarea value={courseDescription} onChange={e => setCourseDescription(e.target.value)}
                 placeholder="Descripción breve del curso (ayuda a la IA a generar mejores objetivos)"
-                className="w-full h-[52px] text-[11px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/60 placeholder:text-white/18 p-2.5 resize-none outline-none focus:border-violet-500/25 transition-colors leading-relaxed custom-scrollbar-thin"/>
+                className="w-full h-[74px] text-[12px] rounded-2xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] p-3 resize-none outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors leading-relaxed custom-scrollbar-thin"/>
             </div>
 
             {/* Transcript indicator */}
-            <div className="flex items-center gap-2.5 bg-emerald-500/6 border border-emerald-500/12 rounded-lg px-3 py-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"/>
-              <span className="text-white/35 text-[11px]">Transcripción capturada</span>
-              <span className="text-emerald-400 text-[11px] font-mono ml-auto">248 líneas</span>
+            <div className="kx-ok-strip flex items-center gap-2.5 rounded-2xl px-3.5 py-3">
+              <span className="kx-ok-tile w-8 h-8 rounded-xl flex items-center justify-center shrink-0"><Icon name="fileText" size={17} weight="duotone"/></span>
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">Transcripción capturada</p>
+                <p className="text-[10.5px] text-[var(--usb-fg-lo)] font-medium">Lista para analizar</p>
+              </div>
+              <span className="kx-ok-pill text-[11px] font-bold tabular-nums ml-auto px-2.5 py-1 rounded-full">248 líneas</span>
+            </div>
+
+            {/* Preview de los 5 pasos */}
+            <div className="kx-card rounded-2xl p-4 space-y-3.5" style={{ "--kx-step": STEP_META[0].hue } as React.CSSProperties}>
+            <p className="kx-slate">Tu recorrido · 5 pasos</p>
+            <div className="relative grid grid-cols-5 gap-1.5">
+              <span className="absolute left-[10%] right-[10%] top-5 h-px bg-[var(--usb-border)]" aria-hidden="true" />
+              {STEP_META.map((m, i) => (
+                <div key={i} className="group flex flex-col items-center gap-2 min-w-0" style={{ "--kx-step": m.hue, "--kx-ink": t(m.inkDark, m.inkLight) } as React.CSSProperties}>
+                  <span className="relative w-10 h-10 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:-translate-y-0.5"
+                    style={{ background: `color-mix(in srgb, ${m.hue} 20%, var(--usb-bg-3))`, borderColor: `color-mix(in srgb, ${m.hue} 45%, var(--usb-border))`, color: t(m.inkDark, m.inkLight), boxShadow: `0 6px 12px -8px ${m.hue}` }}>
+                    <Icon name={m.icon} size={19} weight="duotone" />
+                  </span>
+                  <span className="text-[10.5px] font-bold tracking-tight text-[var(--usb-fg-hi)] leading-none truncate max-w-full">
+                    {["Nivel", "Repaso", "Recordar", "Práctica", "Anki"][i]}
+                  </span>
+                </div>
+              ))}
+            </div>
             </div>
 
             {/* Generate CTA */}
             <button onClick={handleGenerate} disabled={!hasUsableObjective}
-              className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-700 to-violet-600 hover:from-violet-600 hover:to-violet-500 disabled:from-white/8 disabled:to-white/8 disabled:text-white/25 disabled:shadow-none disabled:cursor-not-allowed text-white text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-900/25 active:scale-[0.98]">
-              <Wand2 size={13}/>Generar sesión de aprendizaje
-              <ArrowRight size={13}/>
+              className="kx-gen-cta w-full h-12 rounded-2xl disabled:cursor-not-allowed text-[12.5px] font-bold flex items-center justify-center gap-2 transition-all">
+              <Icon name="sparkles" size={17} weight="duotone"/>Generar sesión de aprendizaje
+              <ArrowRight size={14}/>
             </button>
           </motion.div>
         )}
 
         {/* ══ GENERATING ══ */}
         {phase === "generating" && (
-          <motion.div key="gen" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.05 }} transition={{ duration: 0.3 }}
-            className="flex-1 flex flex-col items-center justify-center p-6 gap-5">
-            {/* Pulsing brain */}
-            <div className="relative">
-              <div className="absolute inset-0 rounded-2xl bg-violet-500/15 animate-ping" style={{ animationDuration:"1.8s" }}/>
-              <div className="absolute inset-[-6px] rounded-2xl bg-violet-500/8 animate-ping" style={{ animationDuration:"2.4s", animationDelay:"0.3s" }}/>
-              <div className="relative w-14 h-14 rounded-2xl bg-violet-600/20 border border-violet-500/30 flex items-center justify-center">
-                <Brain size={24} className="text-violet-400"/>
-              </div>
-            </div>
-            <div className="text-center">
-              <p className="text-white/75 text-sm" style={{ fontWeight: 600 }}>Preparando tu sesión…</p>
-              <p className="text-white/25 text-[11px] mt-0.5">IA · calibrado a tu objetivo</p>
-            </div>
-            <div className="w-full space-y-2">
-              {GEN_STEPS.map((s, i) => (
-                <motion.div key={s} initial={{ opacity: 0.3 }} animate={{ opacity: i <= genStep ? 1 : 0.3 }} className="flex items-center gap-2.5">
-                  <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-all ${i < genStep ? "bg-emerald-500/15 border-emerald-500/30" : i === genStep ? "bg-violet-500/15 border-violet-500/30 animate-pulse" : "bg-white/4 border-[var(--usb-border)]"}`}>
-                    {i < genStep ? <Check size={8} className="text-emerald-400"/> : i === genStep ? <Loader2 size={8} className="text-violet-400 animate-spin"/> : <Circle size={6} className="text-white/15"/>}
+          <motion.div key="gen" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}
+            className="kx-study flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+            {(() => {
+              const cur = STEP_META[Math.min(genStep, STEP_META.length - 1)];
+              const pct = Math.round((Math.min(genStep, 5) / 5) * 100);
+              return (
+                <>
+                  <div className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5">
+                    <span className="kx-ring kx-ring-1" aria-hidden="true" />
+                    <span className="kx-ring kx-ring-2" aria-hidden="true" />
+                    <div className="relative flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="kx-hero-chip w-7 h-7 rounded-xl flex items-center justify-center">
+                          <Icon name="brain" size={18} weight="duotone" />
+                        </div>
+                        <span className="kx-hero-t2 text-[11px] font-bold tracking-wider uppercase">Study Agent</span>
+                      </div>
+                      <span className="kx-hero-chip text-[10px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                        <span className="kx-live-dot" />Paso {Math.min(genStep + 1, 5)} de 5
+                      </span>
+                    </div>
+                    <p className="kx-hero-t1 relative text-[21px] font-extrabold tracking-tight leading-tight">Preparando tu sesión</p>
+                    <p className="kx-hero-t2 relative text-[12px] leading-relaxed mt-1.5">Calibrando conceptos y práctica personalizada</p>
+                    <div className="relative mt-3.5 h-1.5 rounded-full bg-white/25 overflow-hidden">
+                      <div className="h-full rounded-full bg-white transition-all duration-500" style={{ width: `${Math.max(pct, 6)}%` }} />
+                    </div>
                   </div>
-                  <span className={`text-[11px] ${i <= genStep ? "text-white/65" : "text-white/20"}`}>{s}</span>
-                </motion.div>
-              ))}
-            </div>
+
+                  <div className="kx-card rounded-2xl p-2 space-y-0.5" style={{ "--kx-step": cur.hue } as React.CSSProperties}>
+                    {GEN_STEPS.map((label, i) => {
+                      const m = STEP_META[i];
+                      const st = i < genStep ? "done" : i === genStep ? "now" : "todo";
+                      return (
+                        <div key={label} style={{ "--kx-step": m.hue, "--kx-ink": t(m.inkDark, m.inkLight) } as React.CSSProperties}
+                          className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-colors duration-300 ${st === "now" ? "bg-[var(--usb-bg-2)]" : ""} ${st === "todo" ? "opacity-55" : ""}`}>
+                          <span className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border transition-all duration-300"
+                            style={{
+                              background: `color-mix(in srgb, ${m.hue} ${st === "todo" ? 12 : 20}%, var(--usb-bg-3))`,
+                              borderColor: `color-mix(in srgb, ${m.hue} ${st === "now" ? 70 : 45}%, var(--usb-border))`,
+                              color: t(m.inkDark, m.inkLight),
+                              boxShadow: st === "now" ? `0 0 0 3px color-mix(in srgb, ${m.hue} 18%, transparent), 0 6px 12px -8px ${m.hue}` : st === "done" ? `0 6px 12px -8px ${m.hue}` : "none",
+                            }}>
+                            {st === "done" ? <Check size={17} strokeWidth={3} /> : st === "now" ? <Loader2 size={17} className="animate-spin" /> : <Icon name={m.icon} size={19} weight="duotone" />}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="kx-slate">Paso {i + 1}</p>
+                            <p className={`truncate text-[12.5px] mt-0.5 ${st === "now" ? "font-bold text-[var(--usb-fg-hi)]" : "font-medium text-[var(--usb-fg-mid)]"}`}>{label}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
           </motion.div>
         )}
 
         {/* ══ RESULT ══ */}
         {phase === "result" && content && (
           <motion.div key="result" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.4, ease: "easeOut" }}
-            ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar">
+            ref={scrollRef} className="kx-study flex-1 overflow-y-auto custom-scrollbar" style={{ "--kx-step": STEP_META[focusStep].hue, "--kx-btn": t(STEP_META[focusStep].inkLight, STEP_META[focusStep].inkLight), "--kx-ink": t(STEP_META[focusStep].inkDark, STEP_META[focusStep].inkLight) } as React.CSSProperties}>
 
             {/* Sticky header — solid bg (no backdrop-filter) so its text and
                 icons stay crisp instead of being rasterized into a blur layer. */}
-            <div className="sticky top-0 z-20 bg-[var(--usb-bg-2)] border-b border-[var(--usb-border)] px-3.5 py-2">
+            <div className="sticky top-0 z-20 bg-[var(--usb-bg-2)] border-b border-[var(--usb-border)] px-4 py-3 relative">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <BookOpen size={10} className="text-violet-400 shrink-0"/>
-                  <span className="text-white/50 text-[10px] truncate" style={{ fontWeight: 500 }}>{lessonName}</span>
+                  <BookOpen size={12} className="text-violet-400 shrink-0"/>
+                  <span className="text-[11px] font-semibold text-[var(--usb-fg-hi)] truncate">{lessonName}</span>
                 </div>
-                <button onClick={handleReset} className="flex items-center gap-1 text-[9px] text-white/20 hover:text-violet-400 transition-colors shrink-0 ml-2">
-                  <RotateCcw size={8}/>Reiniciar
-                </button>
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  {consecutiveStreak >= 2 && (
+                    <motion.span
+                      key={consecutiveStreak}
+                      initial={{ scale: 0.8 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: "spring", stiffness: 420, damping: 14 }}
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[10px] font-bold"
+                    >
+                      <Flame size={10} className="fill-orange-400" />
+                      x{consecutiveStreak}
+                    </motion.span>
+                  )}
+                  {sessionXp > 0 && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[10px] font-semibold tracking-tight">
+                      <Zap size={10} className="fill-amber-400 text-amber-400" />
+                      +{sessionXp} XP
+                    </span>
+                  )}
+                  <button onClick={handleReset} className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)] hover:text-violet-400 transition-colors font-medium">
+                    <RotateCcw size={10}/>Reiniciar
+                  </button>
+                </div>
               </div>
-              <ProgressStepper steps={steps}/>
+
+              {/* Live Level & XP Progress bar */}
+              <div className="flex items-center gap-2 mb-2 px-0.5">
+                <div className="flex items-center gap-1 text-[9.5px] font-semibold text-white/50 shrink-0">
+                  <span className="text-violet-300 font-bold">Nv. {userProgress.level}</span>
+                </div>
+                <div className="h-1 flex-1 bg-white/6 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-violet-500 via-amber-400 to-emerald-400 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${Math.min(100, Math.max(5, (userProgress.into / userProgress.span) * 100))}%` }}
+                    transition={{ duration: 0.6, ease: "easeOut" }}
+                  />
+                </div>
+                <span className="text-[9px] font-mono text-white/35 tabular-nums shrink-0">
+                  {userProgress.into}/{userProgress.span} XP
+                </span>
+              </div>
+
+              {/* Floating XP Toast / Pill */}
+              <AnimatePresence>
+                {floatingXp && (
+                  <motion.div
+                    key={floatingXp.id}
+                    initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                    animate={{ opacity: 1, y: -2, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.85 }}
+                    transition={{ duration: 0.25 }}
+                    className="absolute right-4 top-full mt-2 pointer-events-none z-30 flex items-center gap-1 px-2.5 py-1 rounded-full kx-on-solid kx-cta text-[10px] font-extrabold"
+                  >
+                    <Zap size={11} />
+                    <span>{floatingXp.text || `+${floatingXp.amount} XP`}</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <ProgressStepper steps={steps} focus={focusStep}/>
             </div>
 
-            <div className="p-3 space-y-3">
+            <div className="p-4 space-y-4">
 
               {/* Session complete banner */}
               <AnimatePresence>
@@ -3810,17 +3196,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                   <motion.div initial={{ opacity: 0, scale: 0.95, y: -6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -6 }}
                     transition={{ type: "spring", stiffness: 400, damping: 25 }}
                     className="bg-emerald-500/8 border border-emerald-500/22 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden">
-                    <motion.div 
-                      className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent skew-x-12"
-                      animate={{ x: ["-100%", "200%"] }}
-                      transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
-                    />
                     <motion.span 
                       animate={{ rotate: [0, -10, 10, -10, 10, 0] }}
                       transition={{ duration: 0.5, delay: 0.2 }}
                       className="text-2xl shrink-0 relative z-10"
                     >
-                      🎓
+                      <Icon name="graduation" size={26} />
                     </motion.span>
                     <div className="relative z-10">
                       <p className="text-white/80 text-[11px]" style={{ fontWeight: 600 }}>¡Sesión completada!</p>
@@ -3831,42 +3212,29 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               </AnimatePresence>
 
               {/* ── Relevance bar ── */}
-              <div className="flex items-center gap-2 bg-white/3 border border-[var(--usb-border)] rounded-lg px-3 py-2">
-                <div className="h-1 flex-1 bg-white/6 rounded-full overflow-hidden">
+              {focusStep === 0 && (
+              <div className="kx-card-flat flex items-center gap-2.5 rounded-xl px-3 py-2.5">
+                <Icon name="target" size={15} weight="duotone" className="text-emerald-400 shrink-0" />
+                <span className="text-white/55 text-[10.5px] font-semibold shrink-0">Relevancia</span>
+                <div className="h-1.5 flex-1 bg-white/6 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${content.relevance.score}%` }}
                     transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full"/>
                 </div>
-                <span className="text-emerald-400 text-[10px] font-mono shrink-0">{content.relevance.score}%</span>
-                <span className="text-white/20 text-[9px] shrink-0">relevancia</span>
+                <span className="text-emerald-400 text-[11px] font-bold tabular-nums shrink-0">{content.relevance.score}%</span>
               </div>
+              )}
 
-              {/* ── FOCUS NAV: dots ── */}
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 flex-1">
-                  {steps.map((s, i) => {
-                    const unlocked = stepUnlocked[i as 0|1|2|3|4];
-                    const isCurrent = i === focusStep;
-                    return (
-                      <button key={i} onClick={() => goToStep(i)} disabled={!unlocked} title={s.label}
-                        className={`rounded-full transition-all duration-300 outline-none ${isCurrent ? "w-6 h-2 bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.5)]" : s.done ? "w-2 h-2 bg-emerald-400/65 hover:bg-emerald-400 cursor-pointer" : unlocked ? "w-2 h-2 bg-white/25 hover:bg-white/45 cursor-pointer" : "w-2 h-2 bg-white/8 cursor-not-allowed"}`}
-                      />
-                    );
-                  })}
-                </div>
-                <span className="text-[10px] text-white/30 font-mono tabular-nums shrink-0">{focusStep + 1} / 5</span>
-              </div>
-
-              {/* ── FOCUS NAV: label + prev/next ── */}
-              <div className="flex items-center justify-between">
+              {/* ── FOCUS NAV ── */}
+              <div className="flex items-center justify-between gap-2">
                 <button onClick={() => goToStep(focusStep - 1)} disabled={!canGoPrev}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] transition-all ${canGoPrev ? "text-white/50 hover:bg-white/8 cursor-pointer" : "text-white/15 cursor-not-allowed"}`}>
-                  <ChevronLeft size={12} /> Anterior
+                  className={`kx-nav-btn flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoPrev ? "text-white/60 hover:bg-white/8 cursor-pointer" : "text-white/15 cursor-not-allowed"}`}>
+                  <ChevronLeft size={13} /> Anterior
                 </button>
-                <p className="text-white/50 text-[10px]" style={{ fontWeight: 600 }}>{steps[focusStep]?.label}</p>
+                <span className="kx-step-count text-[10px] font-bold tabular-nums px-2.5 py-1 rounded-full">{focusStep + 1} / 5</span>
                 <button onClick={() => goToStep(focusStep + 1)} disabled={!canGoNext}
                   title={!canGoNext && focusStep < 4 ? "Completa este paso primero" : ""}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] transition-all ${canGoNext ? "text-violet-400 hover:bg-violet-500/10 cursor-pointer" : "text-white/15 cursor-not-allowed"}`}>
-                  Siguiente <ChevronRight size={12} />
+                  className={`kx-nav-btn flex items-center gap-1 pl-3 pr-2 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoNext ? "kx-next cursor-pointer" : "text-white/15 cursor-not-allowed"}`}>
+                  Siguiente <ChevronRight size={13} />
                 </button>
               </div>
 
@@ -3881,53 +3249,80 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 initial="enter" animate="center" exit="exit"
                 transition={{ type: "spring", stiffness: 380, damping: 34 }}>
 
+              <StepBanner step={focusStep} />
+
               {/* ── Step 0: Confidence ── */}
               {focusStep === 0 && (
-              <div className="space-y-2.5">
-                {/* Intro micro-copy */}
-                <div className="flex items-start gap-2 px-1 pb-1">
-                  <span className="text-[13px] shrink-0 mt-0.5">🧭</span>
-                  <p className="text-white/35 text-[11px] leading-relaxed">Sé honesto — calibra todo lo que sigue. No hay respuesta incorrecta ni buena ni mala.</p>
-                </div>
-
-                <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-3.5">
+              <div className="space-y-3.5">
+                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-4">
                   <StepHeader n={1} label="¿Cómo llegaste al video?" subLabel="mi nivel" status={confidence ? "done" : "active"}/>
-                  <div className="grid grid-cols-2 gap-2">
-                    {CONFIDENCE.map(c => (
-                      <motion.button
-                        key={c.id}
-                        onClick={() => handleConfidenceChange(c.id)}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.96 }}
-                        className={`relative flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all overflow-hidden ${
-                          confidence === c.id
-                            ? `${c.bg} ${c.border} shadow-[0_0_18px_rgba(0,0,0,0.3)] ring-1 ${c.ring}`
-                            : "bg-white/3 border-[var(--usb-border)] hover:bg-white/6 hover:border-white/14"
-                        }`}>
-                        {/* Shimmer on selected */}
-                        {confidence === c.id && (
-                          <motion.div
-                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent skew-x-12 pointer-events-none"
-                            animate={{ x: ["-100%", "200%"] }}
-                            transition={{ duration: 1.8, repeat: Infinity, repeatDelay: 3 }}
-                          />
-                        )}
-                        <motion.span
-                          animate={confidence === c.id ? { scale: [1, 1.2, 1] } : {}}
-                          transition={{ duration: 0.4 }}
-                          className="text-xl leading-none shrink-0 relative z-10"
-                        >{c.emoji}</motion.span>
-                        <div className="relative z-10">
-                          <p className={`text-[11px] leading-none transition-colors ${confidence === c.id ? c.label_c : "text-white/60"}`} style={{ fontWeight: 600 }}>{c.label}</p>
-                          <p className="text-white/22 text-[9px] mt-0.5">{c.desc}</p>
-                        </div>
-                        {confidence === c.id && (
-                          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute top-2 right-2 z-10">
-                            <CheckCircle2 size={10} className={c.label_c} />
-                          </motion.div>
-                        )}
-                      </motion.button>
-                    ))}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {CONFIDENCE.map(c => {
+                      const isSelected = confidence === c.id;
+                      return (
+                        <motion.button
+                          key={c.id}
+                          onClick={() => handleConfidenceChange(c.id)}
+                          whileHover={{ y: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                          className={`group relative flex flex-col p-3.5 rounded-2xl border text-left transition-all overflow-hidden ${
+                            isSelected
+                              ? `${c.bg} ${c.border} ring-1 ${c.ring} shadow-md`
+                              : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] hover:bg-[var(--usb-bg-2)]/70 hover:shadow-2xs"
+                          }`}>
+                          {/* Top indicator row: emoji badge + tag */}
+                          <div className="flex items-center justify-between w-full mb-3">
+                            <span
+                              className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs transition-all group-hover:scale-110 text-[20px] select-none"
+                              style={{
+                                background: `color-mix(in srgb, ${c.color} ${isSelected ? "18%" : "8%"}, var(--usb-bg-3))`,
+                                borderColor: `color-mix(in srgb, ${c.color} ${isSelected ? "40%" : "20%"}, var(--usb-border))`,
+                              }}
+                            >
+                              {c.emoji}
+                            </span>
+
+                            {/* Tag + Level meter */}
+                            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full border bg-[var(--usb-bg-2)]/90 border-[var(--usb-border)] shadow-2xs">
+                              <span className="text-[9.5px] font-bold tracking-tight text-[var(--usb-fg-lo)]">
+                                {c.tag}
+                              </span>
+                              <div className="flex items-end gap-0.5">
+                                {[1, 2, 3, 4].map(barIndex => (
+                                  <span
+                                    key={barIndex}
+                                    className={`w-1 rounded-full transition-all ${
+                                      barIndex <= c.bars
+                                        ? "bg-current"
+                                        : "bg-[var(--usb-border)]"
+                                    }`}
+                                    style={{
+                                      height: `${barIndex * 2.5 + 3}px`,
+                                      color: isSelected ? c.color : "var(--usb-fg-mid)",
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Label & Description */}
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <p className={`text-[13px] leading-tight font-bold transition-colors ${isSelected ? c.label_c : "text-[var(--usb-fg-hi)]"}`}>
+                                {c.label}
+                              </p>
+                              {isSelected && (
+                                <CheckCircle2 size={13} className={`${c.label_c} shrink-0`} />
+                              )}
+                            </div>
+                            <p className="text-[11px] text-[var(--usb-fg-mid)] mt-1 font-medium leading-snug">
+                              {c.desc}
+                            </p>
+                          </div>
+                        </motion.button>
+                      );
+                    })}
                   </div>
 
                   {/* Coach bubble — appears after selection */}
@@ -3938,16 +3333,16 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -4, scale: 0.97 }}
                         transition={{ type: "spring", stiffness: 380, damping: 28, delay: 0.15 }}
-                        className="mt-3 pt-3 border-t border-[var(--usb-border)] flex items-start gap-2.5"
+                        className="mt-3.5 pt-3.5 border-t border-[var(--usb-border)] flex items-start gap-3 bg-[var(--usb-bg-2)]/50 p-3 rounded-xl"
                       >
                         <motion.span
                           animate={{ rotate: [0, -8, 8, -4, 0] }}
                           transition={{ duration: 0.5, delay: 0.3 }}
-                          className="text-[18px] shrink-0 leading-none mt-0.5"
-                        >{COACH_BUBBLE[confidence].emoji}</motion.span>
+                          className="text-[20px] shrink-0 leading-none mt-0.5 text-violet-400"
+                        ><Icon name={COACH_BUBBLE[confidence].icon} size={22} weight="duotone" /></motion.span>
                         <div>
-                          <p className="text-white/75 text-[11px] leading-none mb-1" style={{ fontWeight: 600 }}>{COACH_BUBBLE[confidence].title}</p>
-                          <p className="text-white/38 text-[10px] leading-relaxed">{COACH_BUBBLE[confidence].tip}</p>
+                          <p className="text-[var(--usb-fg-hi)] text-[12px] leading-tight mb-1 font-bold">{COACH_BUBBLE[confidence].title}</p>
+                          <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{COACH_BUBBLE[confidence].tip}</p>
                         </div>
                       </motion.div>
                     )}
@@ -3962,18 +3357,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 const total = content.keyConcepts.length;
                 const isReady = checkedCount >= 2;
                 const isLocked = questionsComplete; // lock once questions are done
+                const recallOpen = recallRevealed || isLocked || checkedCount > 0 || conceptsAcknowledged;
                 return (
-                <div ref={conceptsRef} className="space-y-2.5">
-                  {/* Intro */}
-                  <div className="flex items-start gap-2 px-1 pb-1">
-                    <span className="text-[13px] shrink-0 mt-0.5">📌</span>
-                    <p className="text-white/35 text-[11px] leading-relaxed">Marca solo los que realmente entendiste. Usaremos eso para priorizar tus preguntas.</p>
-                  </div>
-
-                  <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+                <div ref={conceptsRef} className="space-y-3.5">
+                  <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
                     {/* Header with live counter */}
-                    <div className="flex items-center justify-between px-3.5 pt-3.5 pb-1">
-                      <StepHeader n={2} label="Lo que aprendiste" subLabel={isLocked ? "registrado ✓" : "marca los que te quedaron"} status={isReady ? "done" : "active"}/>
+                    <div className="flex items-center justify-between px-4 pt-4 pb-1">
+                      <StepHeader n={2} label="Lo que aprendiste" subLabel={isLocked ? "registrado" : recallOpen ? "marca los que ya tenías en mente" : "primero, recuerda"} status={isReady ? "done" : "active"}/>
                       <motion.div
                         key={checkedCount}
                         initial={{ scale: 0.8, opacity: 0 }}
@@ -3988,42 +3378,63 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       </motion.div>
                     </div>
 
+                    {/* Brain-dump gate: recall first, then compare with the list */}
+                    {!recallOpen && (
+                      <div className="px-4 pb-4 space-y-3">
+                        <p className="text-[var(--usb-fg-hi)] text-[12px] font-bold leading-snug">Antes de ver la lista, ¿qué recuerdas del video?</p>
+                        <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">Escribe 2 o 3 ideas con tus palabras. Recordar sin mirar es lo que más fija el aprendizaje.</p>
+                        <textarea
+                          value={recallNotes}
+                          onChange={(e) => setRecallNotes(e.target.value)}
+                          rows={3}
+                          placeholder="Lo que recuerdo es…"
+                          className="kx-field w-full resize-none rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 text-[11.5px] leading-relaxed text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] outline-none focus:border-[#6d4aff]/60 transition-colors"
+                        />
+                        <button onClick={() => setRecallRevealed(true)}
+                          className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]">
+                          {recallNotes.trim() ? "Comparar con los conceptos" : "Ver los conceptos"}<ArrowRight size={12}/>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Concept list */}
-                    <div className="px-3.5 pb-3 space-y-1.5">
+                    {recallOpen && (
+                    <div className="px-4 pb-3 space-y-2">
                       {content.keyConcepts.map((c, i) => (
                         <motion.button
                           key={i}
                           onClick={() => !isLocked && handleConceptToggle(i)}
                           whileHover={isLocked ? {} : { x: 2 }}
                           whileTap={isLocked ? {} : { scale: 0.98 }}
-                          className={`w-full flex items-start gap-2.5 text-left rounded-lg px-2 py-1.5 transition-all group ${
-                            isLocked ? "cursor-default" :
-                            conceptsChecked[i] ? "bg-emerald-500/5" : "hover:bg-white/3"
+                          className={`kx-row w-full flex items-start gap-2.5 text-left rounded-xl px-3 py-2.5 border transition-all group ${
+                            isLocked ? "cursor-default border-transparent" :
+                            conceptsChecked[i] ? "kx-row-on" : "border-[var(--usb-border)] hover:border-[var(--usb-border-mid)]"
                           }`}
                         >
-                          <div className={`mt-0.5 w-4 h-4 rounded-md border flex items-center justify-center shrink-0 transition-all ${
+                          <div className={`mt-0.5 w-[18px] h-[18px] rounded-md border flex items-center justify-center shrink-0 transition-all ${
                             conceptsChecked[i]
-                              ? "bg-emerald-500/20 border-emerald-500/40 shadow-[0_0_8px_rgba(52,211,153,0.2)]"
-                              : isLocked ? "border-[var(--usb-border)]" : "border-white/12 group-hover:border-white/25"
+                              ? "kx-check-on"
+                              : isLocked ? "border-[var(--usb-border)]" : "kx-check-off"
                           }`}>
                             <AnimatePresence mode="wait">
                               {conceptsChecked[i] && (
                                 <motion.div key="c" initial={{ scale: 0, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 500, damping: 22 }}>
-                                  <Check size={9} className="text-emerald-400" strokeWidth={3}/>
+                                  <Check size={10} strokeWidth={2.4}/>
                                 </motion.div>
                               )}
                             </AnimatePresence>
                           </div>
-                          <p className={`text-[11px] leading-relaxed transition-all ${
-                            conceptsChecked[i] ? "text-white/30 line-through decoration-white/20" : "text-white/70 group-hover:text-white/85"
+                          <p className={`text-[11.5px] leading-relaxed transition-all ${
+                            conceptsChecked[i] ? "text-white/85" : "text-white/65 group-hover:text-white/85"
                           }`}>{c}</p>
                         </motion.button>
                       ))}
                     </div>
+                    )}
 
                     {/* "Verificar mi comprensión" CTA */}
                     <AnimatePresence>
-                      {!isLocked && (
+                      {!isLocked && recallOpen && (
                         <motion.div
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: "auto" }}
@@ -4035,14 +3446,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                               ? "bg-emerald-500/8 border border-emerald-500/22"
                               : "bg-violet-500/7 border border-violet-500/18"
                           }`}>
-                            <motion.div
-                              className={`absolute inset-0 bg-gradient-to-r from-transparent ${isReady ? "via-emerald-400/8" : "via-violet-400/8"} to-transparent skew-x-12 pointer-events-none`}
-                              animate={{ x: ["-100%", "200%"] }}
-                              transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
-                            />
                             <div className="flex items-center gap-2.5 p-2.5 relative z-10">
                               <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 0.6, delay: 0.2 }} className="text-[16px] shrink-0">
-                                {isReady ? "✅" : checkedCount === 0 ? "🧭" : "🎯"}
+                                <Icon name={isReady ? "checkCircle2" : checkedCount === 0 ? "compass" : "target"} size={20} weight="duotone" className={isReady ? "text-emerald-400" : "text-violet-400"} />
                               </motion.span>
                               <div className="flex-1 min-w-0">
                                 <p className={`${isReady ? "text-emerald-300/90" : "text-violet-300/90"} text-[11px]`} style={{ fontWeight: 600 }}>
@@ -4060,8 +3466,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                             {/* CTA inline — no más scroll para buscar el botón */}
                             <button
                               onClick={handleGoVerify}
-                              className={`relative z-10 w-full flex items-center justify-center gap-2 transition-colors py-2 text-white text-[10px] ${
-                                isReady ? "bg-emerald-600 hover:bg-emerald-500" : "bg-violet-600 hover:bg-violet-500"
+                              className={`relative z-10 w-full flex items-center justify-center gap-2 transition-colors py-3 text-white text-[12px] ${
+                                "kx-on-solid kx-cta"
                               }`}
                               style={{ fontWeight: 600 }}
                             >
@@ -4083,15 +3489,10 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               {focusStep === 2 && confidence && visibleQuestions.length > 0 && (() => {
                 const doneCount = Object.values(questionFeedbacks).filter(f => f?.status === "done").length;
                 return (
-                <div ref={questionsRef} className="space-y-2.5">
-                  {/* Intro */}
-                  <div className="flex items-start gap-2 px-1 pb-1">
-                    <p className="text-white/35 text-[11px] leading-relaxed">
-                      {questionsComplete
-                        ? "Toca cada pregunta para revisar tu respuesta y el feedback de la IA."
-                        : "Escribe con tus propias palabras. Lo que recuerdes ahora es lo que realmente retiene tu cerebro."}
-                    </p>
-                  </div>
+                <div ref={questionsRef} className="space-y-3.5">
+                  {questionsComplete && (
+                    <p className="text-white/45 text-[11px] leading-relaxed px-1">Toca cada pregunta para revisar tu respuesta y el feedback de la IA.</p>
+                  )}
 
                 {/* Review mode — when questionsComplete, show the summary instead of the card */}
                 {questionsComplete && (
@@ -4102,11 +3503,11 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     onGoApply={() => goToStep(3)}
                   />
                 )}
-                <div className={`bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden ${questionsComplete ? "hidden" : ""}`}>
-                    <div className="px-3.5 pt-3.5 pb-2.5 border-b border-[var(--usb-divider)]">
+                <div className={`kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden ${questionsComplete ? "hidden" : ""}`}>
+                    <div className="px-4 pt-4 pb-2.5 border-b border-[var(--usb-divider)]">
                       <div className="flex items-center justify-between">
                         <StepHeader n={3} label="¿Cuánto retuviste?" status={questionsComplete ? "done" : "active"}/>
-                        <div className="flex items-center gap-1.5 shrink-0 ml-2 pb-3.5">
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2 pb-4">
                           {visibleQuestions.map((_, i) => {
                               const fb = questionFeedbacks[i];
                               const isDone = fb?.status === "done";
@@ -4114,14 +3515,14 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                               const rating = fb?.rating;
                               const dotColor = isDone
                                 ? rating === "correct" || rating === "excellent"
-                                  ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]"
+                                  ? "bg-emerald-400"
                                   : rating === "partial"
-                                    ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]"
+                                    ? "bg-amber-400"
                                     : rating === "wrong"
-                                      ? "bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]"
-                                      : "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]"
+                                      ? "bg-red-400"
+                                      : "bg-emerald-400"
                                 : isCurrent
-                                  ? "bg-violet-400 shadow-[0_0_8px_rgba(167,139,250,0.7)]"
+                                  ? "bg-violet-400"
                                   : "bg-white/15";
                               return (
                                 <motion.div key={i}
@@ -4136,7 +3537,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       {/* Progress bar */}
                       <div className="h-[2px] w-full bg-white/5 rounded-full overflow-hidden -mt-1">
                         <motion.div
-                          className="h-full bg-gradient-to-r from-violet-500 to-violet-400 rounded-full"
+                          className="h-full bg-violet-500 rounded-full"
                           initial={{ width: 0 }}
                           animate={{ width: questionsComplete ? "100%" : `${(doneCount / Math.max(visibleQuestions.length, 1)) * 100}%` }}
                           transition={{ duration: 0.5, ease: "easeOut" }}
@@ -4144,19 +3545,36 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       </div>
                     </div>
 
-                    <div className="p-3.5">
+                    <div className="p-4">
                       {questionsComplete ? (
                         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-4 space-y-2 relative">
-                          <div className="hidden">���</div>
                           <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>¡Comprensión verificada!</p>
                           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none animate-[spin_15s_linear_infinite]" />
-                          <div className="text-4xl relative z-10 animate-[bounce_2s_ease-in-out_infinite] mt-2" style={{ textShadow: "0 0 15px rgba(52,211,153,0.3)" }}>🚀</div>
+                          <div className="relative z-10 animate-[bounce_2s_ease-in-out_infinite] mt-2 text-emerald-300 drop-shadow-md"><Icon name="rocket" size={40} /></div>
                           <p className="text-white/40 text-[10px] relative z-10 pt-1">La IA confirmó que captaste los conceptos clave. Continúa con la práctica.</p>
                         </motion.div>
                       ) : (
                         <>
                           {visibleQuestions.map((q, i) => i !== currentQIdx ? null : (
-                            <motion.div key={`q-${i}-${confidence}`} initial={{ opacity: 0, x: 12, scale: 0.99 }} animate={{ opacity: 1, x: 0, scale: 1 }} transition={{ type: "spring", stiffness: 360, damping: 28 }} className="space-y-3">
+                            <motion.div
+                              key={`q-${i}-${confidence}`}
+                              initial={{ opacity: 0, x: 12, scale: 0.99 }}
+                              animate={{
+                                opacity: 1,
+                                x: shakeQuestionIdx === i ? [0, -6, 6, -4, 4, 0] : 0,
+                                scale: glintQuestionIdx === i ? [1, 1.02, 1] : 1,
+                              }}
+                              transition={{
+                                type: "spring", stiffness: 360, damping: 28,
+                                x: shakeQuestionIdx === i ? { type: "tween", duration: 0.4, ease: "easeInOut" } : { type: "spring", stiffness: 360, damping: 28 },
+                                scale: glintQuestionIdx === i ? { type: "tween", duration: 0.5, ease: "easeInOut" } : { type: "spring", stiffness: 360, damping: 28 },
+                              }}
+                              className={`space-y-3 transition-shadow duration-300 ${
+                                glintQuestionIdx === i ? "ring-2 ring-emerald-400/60 rounded-xl bg-emerald-500/5 p-1" : ""
+                              } ${
+                                shakeQuestionIdx === i ? "ring-2 ring-amber-400/50 rounded-xl" : ""
+                              }`}
+                            >
 
 
                               {/* Question header: number + bloom */}
@@ -4172,19 +3590,19 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
                               {/* Hint — collapsible callout */}
                               <button onClick={() => setShowHint(v => !v)}
-                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
+                                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
                                   showHint
-                                    ? "bg-amber-500/8 border-amber-500/20 text-amber-300/80"
-                                    : "bg-white/3 border-[var(--usb-border)] text-white/28 hover:text-white/50 hover:border-white/14"
+                                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                                    : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
                                 }`}>
-                                <Sparkles size={9} className="shrink-0 text-amber-400/60" />
-                                <span className="text-[10px] flex-1">{showHint ? "Ocultar pista" : "Ver pista"}</span>
-                                <ChevronDown size={9} className={`shrink-0 transition-transform ${showHint ? "rotate-180" : ""}`} />
+                                <Sparkles size={12} className="shrink-0 text-amber-400" />
+                                <span className="text-[11px] font-semibold flex-1">{showHint ? "Ocultar pista" : "Ver pista de apoyo"}</span>
+                                <ChevronDown size={12} className={`shrink-0 transition-transform ${showHint ? "rotate-180" : ""}`} />
                               </button>
                               <AnimatePresence>
                                 {showHint && (
                                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                                    <div className="bg-amber-500/6 border border-amber-500/14 rounded-xl px-3 py-2.5 text-[11px] text-amber-300/70 leading-relaxed">
+                                    <div className="bg-amber-500/8 border border-amber-500/25 rounded-2xl p-3 text-[11.5px] text-amber-200 leading-relaxed font-medium">
                                       {q.hint}
                                     </div>
                                   </motion.div>
@@ -4196,20 +3614,20 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 const qfb = questionFeedbacks[i];
                                 const ratingBorder =
                                   qfb?.status === "done" && (qfb.rating === "correct" || qfb.rating === "excellent")
-                                    ? "border-emerald-500/30 shadow-[0_0_14px_rgba(16,185,129,0.06)]"
+                                    ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
                                     : qfb?.status === "done" && qfb.rating === "partial"
-                                    ? "border-amber-500/25"
+                                    ? "border-amber-500/40 ring-1 ring-amber-500/20"
                                     : qfb?.status === "done" && qfb.rating === "wrong"
-                                    ? "border-rose-500/22"
-                                    : "border-[var(--usb-border)] focus:border-violet-500/35";
+                                    ? "border-rose-500/40 ring-1 ring-rose-500/20"
+                                    : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20";
                                 return (
                                   <div className="relative">
                                     <textarea value={questionAnswers[i] || ""}
                                       onChange={e => setQuestionAnswers(p => ({ ...p, [i]: e.target.value }))}
                                       placeholder="Escribe tu respuesta con tus propias palabras…"
-                                      className={`w-full h-[80px] text-[11px] rounded-xl bg-black/35 border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed text-white/72 placeholder:text-white/18 ${ratingBorder}`}/>
+                                      className={`w-full h-[92px] text-[12px] rounded-2xl bg-[var(--usb-bg-3)] border px-3.5 py-3 resize-none outline-none transition-all leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] ${ratingBorder}`}/>
                                     {(questionAnswers[i]?.length ?? 0) > 0 && (
-                                      <span className="absolute bottom-2 right-2.5 text-[9px] text-white/18 font-mono pointer-events-none">
+                                      <span className="absolute bottom-2.5 right-3 text-[10px] text-[var(--usb-fg-lo)] font-mono pointer-events-none">
                                         {questionAnswers[i].length}
                                       </span>
                                     )}
@@ -4221,14 +3639,14 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                               <div className="flex items-center gap-2">
                                 <button onClick={() => handleEvalQuestion(i)}
                                   disabled={!questionAnswers[i]?.trim() || questionFeedbacks[i]?.status === "loading"}
-                                  className={`flex items-center gap-1.5 text-[10px] text-white px-3 py-1.5 rounded-lg transition-all ${
+                                  className={`flex items-center gap-1.5 text-[10px] font-semibold text-white px-3 py-1.5 rounded-lg transition-all ${
                                     questionAnswers[i]?.trim()
-                                      ? "bg-violet-600 hover:bg-violet-500 shadow-md shadow-violet-900/30"
+                                      ? "kx-on-solid kx-cta"
                                       : "bg-white/8 opacity-40 cursor-not-allowed"
                                   }`}>
                                   {questionFeedbacks[i]?.status === "loading"
                                     ? <><Loader2 size={10} className="animate-spin"/>Analizando…</>
-                                    : <><Wifi size={10}/>Evaluar</>}
+                                    : <><Send size={11}/>Evaluar</>}
                                 </button>
 
                                 {/* Siguiente / Continuar — appears after feedback */}
@@ -4248,8 +3666,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                       }`}
                                     >
                                       {isLast
-                                        ? <>{isGood ? "✅" : "→"} Ir al desafío <ArrowRight size={9}/></>
-                                        : <>{isGood ? "✅" : "→"} Siguiente <ArrowRight size={9}/></>
+                                        ? <>Ir al desafío <ArrowRight size={9}/></>
+                                        : <>Siguiente <ArrowRight size={9}/></>
                                       }
                                     </motion.button>
                                   );
@@ -4307,79 +3725,85 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               {/* ── Step 3: Apply ── */}
               {focusStep === 3 && (
                 showApply ? (
-                <div className="space-y-2.5">
-                  {/* Intro motivational */}
-                  <div className="flex items-start gap-2 px-1 pb-1">
-                    <span className="text-[13px] shrink-0 mt-0.5">🛠️</span>
-                    <p className="text-white/35 text-[11px] leading-relaxed">
-                      {content.application.isCode
-                        ? "El código imperfecto que escribas ahora vale más que la solución perfecta que copiaste. Intenta, equivócate, aprende."
-                        : "Una respuesta imperfecta aplicada ahora vale más que una idea perfecta que no practicaste. Intenta, equivócate, aprende."}
-                    </p>
-                  </div>
-
-                  <div ref={applyRef} className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
-                    <div className="px-3.5 pt-3.5 pb-2">
+                <div className="space-y-3.5">
+                  <div ref={applyRef} className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+                    <div className="px-4 pt-4 pb-2">
                       <StepHeader
                         n={4}
                         label={content.application.isCode ? "Escribe código real" : "Aplica lo aprendido"}
                         subLabel={content.application.isCode ? "desafío práctico" : "ejercicio práctico"}
-                        status={appFeedback.status === "done" ? "done" : "active"}
+                        status={appPassed ? "done" : "active"}
                       />
                     </div>
 
                     {/* Setup context */}
-                    <div className="mx-3.5 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
-                      <span className="text-[12px] shrink-0">📋</span>
+                    <div className="mx-4 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
+                      <span className="shrink-0"><Icon name="steps" size={14} /></span>
                       <p className="text-white/50 text-[11px] leading-relaxed">{content.application.setup}</p>
                     </div>
 
                     {content.application.isCode ? (
-                      <pre className="mx-3.5 mb-3 bg-black/50 border border-[var(--usb-border)] rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
+                      <pre className="mx-4 mb-3 bg-black/50 border border-[var(--usb-border)] rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
                     ) : (
-                      <div className="mx-3.5 mb-3 bg-black/35 border border-[var(--usb-border)] rounded-xl p-3 text-[11px] text-white/68 overflow-x-auto leading-relaxed shadow-inner whitespace-pre-wrap">{content.application.challenge}</div>
+                      <div className="mx-4 mb-3 bg-black/35 border border-[var(--usb-border)] rounded-xl p-3 text-[11px] text-white/68 overflow-x-auto leading-relaxed shadow-inner whitespace-pre-wrap">{content.application.challenge}</div>
                     )}
 
-                    <div className="px-3.5 pb-3.5 space-y-2.5">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <Wifi size={9} className="text-violet-400/50"/>
-                        <p className="text-white/28 text-[10px]">
+                    <div className="px-4 pb-4 space-y-3.5">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Icon name="edit3" size={14} weight="duotone" className="kx-step-eyebrow text-violet-400"/>
+                        <p className="text-[var(--usb-fg-lo)] text-[11px] font-medium">
                           {content.application.isCode ? "Escribe tu implementación — la IA la revisará:" : "Escribe tu respuesta — la IA la revisará:"}
                         </p>
                       </div>
                       <div className="relative">
                         <textarea value={appAnswer} onChange={e => setAppAnswer(e.target.value)}
                           placeholder={content.application.isCode ? "// Tu solución aquí…" : "Tu respuesta aquí…"}
-                          className={`w-full h-[90px] text-[11px] rounded-xl bg-black/40 border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-white/14 ${
-                            content.application.isCode ? "font-mono text-emerald-300/80" : "text-white/72"
+                          className={`w-full h-[100px] text-[12px] rounded-2xl bg-[var(--usb-bg-3)] border px-3.5 py-3 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-[var(--usb-fg-lo)] ${
+                            content.application.isCode ? "font-mono text-emerald-400" : "text-[var(--usb-fg)]"
                           } ${
                             appFeedback.status === "done" && (appFeedback.rating === "correct" || appFeedback.rating === "excellent")
-                              ? "border-emerald-500/30 shadow-[0_0_14px_rgba(16,185,129,0.06)]"
+                              ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
                               : appFeedback.status === "done" && appFeedback.rating === "partial"
-                              ? "border-amber-500/25"
+                              ? "border-amber-500/40 ring-1 ring-amber-500/20"
                               : appFeedback.status === "done" && appFeedback.rating === "wrong"
-                              ? "border-rose-500/22"
-                              : "border-[var(--usb-border)] focus:border-violet-500/30"
+                              ? "border-rose-500/40 ring-1 ring-rose-500/20"
+                              : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
                           }`}/>
                         {appAnswer.length > 0 && (
-                          <span className="absolute bottom-2 right-2.5 text-[9px] text-white/18 font-mono pointer-events-none">{appAnswer.length}</span>
+                          <span className="absolute bottom-2.5 right-3 text-[10px] text-[var(--usb-fg-lo)] font-mono pointer-events-none">{appAnswer.length}</span>
                         )}
                       </div>
-                      <div className="flex gap-1.5">
+                      <div className="flex gap-2">
                         <button onClick={handleEvalApp} disabled={!appAnswer.trim() || appFeedback.status === "loading"}
-                          className={`flex items-center gap-1.5 text-[10px] text-white px-3 py-1.5 rounded-lg transition-all ${
+                          className={`flex items-center gap-1.5 text-[11px] font-semibold text-white px-3.5 py-2 rounded-xl transition-all ${
                             appAnswer.trim()
-                              ? "bg-violet-600 hover:bg-violet-500 shadow-md shadow-violet-900/30"
+                              ? "kx-on-solid kx-cta shadow-sm hover:brightness-105"
                               : "bg-white/8 opacity-40 cursor-not-allowed"
                           }`}>
-                          {appFeedback.status === "loading" ? <><Loader2 size={10} className="animate-spin"/>Revisando…</> : <><Send size={10}/>Revisar con IA</>}
+                          {appFeedback.status === "loading" ? <><Loader2 size={12} className="animate-spin"/>Revisando…</> : <><Send size={12}/>Revisar con IA</>}
                         </button>
-                        <button onClick={() => setShowAppSolution(v => !v)}
-                          className={`flex items-center gap-1.5 text-[10px] border px-2.5 py-1.5 rounded-lg transition-all ${showAppSolution ? "bg-white/5 border-white/12 text-white/55" : "border-[var(--usb-border)] text-white/25 hover:text-white/45 hover:border-white/14"}`}>
-                          <ChevronDown size={9} className={`transition-transform ${showAppSolution ? "rotate-180" : ""}`}/>
-                          {showAppSolution ? "Ocultar" : "Ver"} solución
+                        <button onClick={() => (showAppHint || showAppSolution || appFeedback.status === "done") ? setShowAppSolution(v => !v) : setShowAppHint(true)}
+                          className={`flex items-center gap-1.5 text-[11px] font-semibold border px-3 py-2 rounded-xl transition-all ${showAppSolution ? "bg-[var(--usb-bg-3)] border-violet-500/30 text-violet-300" : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"}`}>
+                          <ChevronDown size={11} className={`transition-transform ${showAppSolution ? "rotate-180" : ""}`}/>
+                          {showAppSolution ? "Ocultar solución" : (showAppHint || appFeedback.status === "done") ? "Ver solución" : "Pedir pista"}
                         </button>
                       </div>
+                      <AnimatePresence>
+                        {showAppHint && !showAppSolution && (
+                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                            <div className="bg-amber-500/6 border border-amber-500/20 rounded-xl p-2.5">
+                              <p className="text-[9px] uppercase tracking-wider text-amber-500 font-bold mb-1">Pista · por dónde empezar</p>
+                              <p className="text-[11px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">
+                                {(() => {
+                                  const first = content.application.solution.split(/\n|(?<=[.!?])\s/)[0].trim();
+                                  return first.length > 110 ? first.slice(0, 110).trimEnd() + "…" : first;
+                                })()}
+                              </p>
+                              <p className="text-[10px] text-[var(--usb-fg-lo)] mt-1.5">Intenta desde aquí; la solución completa aparece tras tu primer intento.</p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                       <AIFeedback
                         fb={appFeedback}
                         onRetry={handleEvalApp}
@@ -4411,11 +3835,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           transition={{ delay: 0.15 }}
                           className="relative overflow-hidden rounded-xl border border-amber-500/22 bg-amber-500/6"
                         >
-                          <motion.div
-                            className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-400/4 to-transparent skew-x-12 pointer-events-none"
-                            animate={{ x: ["-100%", "250%"] }}
-                            transition={{ duration: 3.5, repeat: Infinity, repeatDelay: 7 }}
-                          />
                           <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5 border-b border-amber-500/10 relative z-10">
                             <Zap size={10} className="text-amber-400 shrink-0" />
                             <span className="text-amber-400/75 text-[9px] uppercase tracking-widest" style={{ fontWeight: 700 }}>Llévalo al mundo real · bonus</span>
@@ -4430,7 +3849,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
                       {/* Ir a Anki — appears once evaluation is done */}
                       <AnimatePresence>
-                        {appFeedback.status === "done" && (
+                        {appFeedback.status === "done" && !appPassed && (
+                          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
+                            Aún no es suficiente. Usa el feedback, ajusta tu respuesta y vuelve a revisar; tras un segundo intento podrás continuar.
+                          </motion.p>
+                        )}
+                        {appPassed && (
                           <motion.button
                             initial={{ opacity: 0, y: 6 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -4438,12 +3862,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                             onClick={() => goToStep(4)}
                             className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl border text-[10px] transition-all ${
                               appFeedback.rating === "correct" || appFeedback.rating === "excellent"
-                                ? "bg-violet-600 hover:bg-violet-500 border-violet-500/40 text-white shadow-md shadow-violet-900/30"
+                                ? "kx-on-solid kx-cta border-transparent"
                                 : "border-white/10 text-white/40 hover:text-white/65 hover:border-white/20"
                             }`}
                           >
                             {appFeedback.rating === "correct" || appFeedback.rating === "excellent"
-                              ? <>🎯 Fíjalo en memoria <ArrowRight size={10}/></>
+                              ? <>Fíjalo en memoria <ArrowRight size={10}/></>
                               : <>Continuar de todas formas <ArrowRight size={10}/></>
                             }
                           </motion.button>
@@ -4453,7 +3877,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                   </div>
                 </div>
                 ) : (
-                  <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-divider)] rounded-xl p-3.5 opacity-35">
+                  <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-divider)] rounded-xl p-4 opacity-35">
                     <StepHeader
                       n={4}
                       label="Practícalo"
@@ -4468,64 +3892,123 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 )
               )}
 
-              {/* ── Step 4: Interview + Next action + Anki ── */}
+              {/* ── Step 5: calibración + práctica oral + fijar en memoria ── */}
               {focusStep === 4 && (() => {
                 const correctCount = Object.values(questionFeedbacks).filter(f => f?.rating === "correct" || f?.rating === "excellent").length;
                 const totalQ = visibleQuestions.length;
                 const elapsedMin = Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60000));
                 const oralPracticeMeta = getOralPracticeMeta(content, activeSessionObjective || getActiveObjectiveText());
+                const calibration = (() => {
+                  if (!confidence || totalQ === 0) return null;
+                  const order: ConfidenceLevel[] = ["confused", "partial", "clear", "mastered"];
+                  const ratio = correctCount / totalQ;
+                  const shown = ratio < 0.4 ? 0 : ratio < 0.65 ? 1 : ratio < 0.9 ? 2 : 3;
+                  const said = order.indexOf(confidence);
+                  const label = (i: number) => CONFIDENCE.find(c => c.id === order[i])?.label ?? "";
+                  const diff = shown - said;
+                  return {
+                    said: label(said), shown: label(shown),
+                    msg: diff === 0 ? "Tu autopercepción fue precisa. Eso también es aprender."
+                      : diff < 0 ? "Te sentías más seguro de lo que mostraste. Es normal: repasar con Anki cierra justo esa brecha."
+                      : "Sabes más de lo que creías. La próxima vez sube tu nivel de partida.",
+                  };
+                })();
                 return (
-              <div className="space-y-2.5">
+              <div className="space-y-3.5">
                 {/* Session achievement summary */}
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ type: "spring", stiffness: 340, damping: 28 }}
-                  className="bg-white/[0.04] border border-white/10 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden"
+                  className="kx-step-solid kx-on-solid rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden"
                 >
-                  <motion.div
-                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/3 to-transparent skew-x-12"
-                    animate={{ x: ["-100%", "200%"] }}
-                    transition={{ duration: 3, repeat: Infinity, repeatDelay: 4 }}
-                  />
-                  <motion.span animate={{ rotate: [0, -8, 8, 0] }} transition={{ duration: 0.6, delay: 0.3 }} className="text-2xl relative z-10">🏁</motion.span>
+                  <motion.span animate={{ rotate: [0, -8, 8, 0] }} transition={{ duration: 0.6, delay: 0.3 }} className="relative z-10 w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: "rgba(255,255,255,0.18)" }}><Icon name="flag" size={26} weight="duotone" /></motion.span>
                   <div className="flex-1 relative z-10">
-                    <p className="text-white/80 text-[11px]" style={{ fontWeight: 600 }}>¡Llegaste al último paso!</p>
+                    <p className="text-[13px]" style={{ fontWeight: 800 }}>¡Llegaste al último paso!</p>
                     <div className="flex items-center gap-3 mt-1">
-                      <span className="text-emerald-400/80 text-[10px] flex items-center gap-1"><Check size={8} strokeWidth={3}/>{Object.values(conceptsChecked).filter(Boolean).length} conceptos</span>
-                      {totalQ > 0 && <span className="text-violet-400/80 text-[10px] flex items-center gap-1"><Check size={8} strokeWidth={3}/>{correctCount}/{totalQ} correctas</span>}
-                      <span className="text-white/25 text-[10px]">~{elapsedMin} min</span>
+                      <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{Object.values(conceptsChecked).filter(Boolean).length} conceptos</span>
+                      {totalQ > 0 && <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{correctCount}/{totalQ} correctas</span>}
+                      <span className="text-[10.5px] font-semibold opacity-80">~{elapsedMin} min</span>
                     </div>
                   </div>
                 </motion.div>
 
-              {content.interviewQ && (
-                <div className="bg-[var(--usb-bg-3)] border border-sky-500/18 rounded-xl overflow-hidden">
-                  {/* Header */}
-                  <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-sky-500/6 border-b border-sky-500/12">
-                    <div className="w-7 h-7 rounded-lg bg-sky-500/12 border border-sky-500/22 flex items-center justify-center shrink-0">
-                      <Star size={11} className="text-sky-400"/>
+              {calibration && (
+                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+                  <div className="flex items-center gap-2.5 px-4 py-3 bg-[#6d4aff]/8 border-b border-[#6d4aff]/15">
+                    <div className="w-8 h-8 rounded-xl bg-[#6d4aff]/15 border border-[#6d4aff]/30 flex items-center justify-center shrink-0">
+                      <Target size={14} className="text-[#6d4aff]"/>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sky-300/90 text-[11px]" style={{ fontWeight: 600 }}>{oralPracticeMeta.title}</p>
-                      <p className="text-white/25 text-[9px]">{oralPracticeMeta.subtitle}</p>
+                      <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-bold">Tu nivel: creído vs. demostrado</p>
+                      <p className="text-[var(--usb-fg-lo)] text-[10px] font-medium">Saber cuánto sabes de verdad te ayuda a estudiar mejor</p>
                     </div>
                   </div>
-                  <div className="px-3.5 py-3 space-y-2.5">
-                    <p className="text-white/75 text-[12px] leading-relaxed">{content.interviewQ.q}</p>
+                  <div className="px-4 py-3.5 space-y-2.5">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2">
+                        <p className="text-[var(--usb-fg-lo)] text-[9px] font-semibold uppercase tracking-wider">Al empezar dijiste</p>
+                        <p className="text-[var(--usb-fg-hi)] text-[12px] font-bold mt-0.5">{calibration.said}</p>
+                      </div>
+                      <div className="rounded-xl border border-[#6d4aff]/35 bg-[#6d4aff]/10 px-3 py-2">
+                        <p className="text-[var(--usb-fg-lo)] text-[9px] font-semibold uppercase tracking-wider">Tus respuestas muestran</p>
+                        <p className="text-[var(--usb-fg-hi)] text-[12px] font-bold mt-0.5">{calibration.shown} <span className="text-[var(--usb-fg-lo)] font-medium">· {correctCount}/{totalQ}</span></p>
+                      </div>
+                    </div>
+                    <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{calibration.msg}</p>
+                  </div>
+                </div>
+              )}
+
+              {content.interviewQ && (
+                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+                  {/* Header */}
+                  <div className="flex items-center gap-2.5 px-4 py-3 bg-[#6d4aff]/8 border-b border-[#6d4aff]/15">
+                    <div className="w-8 h-8 rounded-xl bg-[#6d4aff]/15 border border-[#6d4aff]/30 flex items-center justify-center shrink-0">
+                      <Star size={14} className="text-[#6d4aff]"/>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-bold">{oralPracticeMeta.title}</p>
+                      <p className="text-[var(--usb-fg-lo)] text-[10px] font-medium">{oralPracticeMeta.subtitle}</p>
+                    </div>
+                  </div>
+                  <div className="px-4 py-3.5 space-y-3.5">
+                    <p className="text-[var(--usb-fg)] text-[12px] leading-relaxed font-medium">{content.interviewQ.q}</p>
+                    <textarea
+                      value={oralAnswer}
+                      onChange={(e) => { setOralAnswer(e.target.value); if (oralFeedback.status === "done" || oralFeedback.status === "error") setOralFeedback(IDLE_FB); }}
+                      placeholder="Escribe aquí lo que dirías en voz alta…"
+                      rows={3}
+                      className="kx-field w-full resize-none rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 text-[11.5px] leading-relaxed text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] outline-none focus:border-[#6d4aff]/60 transition-colors"
+                    />
+                    {oralFeedback.status === "idle" && (
+                      <button onClick={handleEvaluateOral} disabled={!oralAnswer.trim()}
+                        className="kx-on-solid kx-cta w-full h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed">
+                        <Sparkles size={12}/>Evaluar mi respuesta
+                      </button>
+                    )}
+                    <AIFeedback fb={oralFeedback} onRetry={handleEvaluateOral} />
+                    {oralFeedback.status !== "done" && !oralSkipped && (
+                      <button onClick={() => setOralSkipped(true)} className="w-full text-[10px] font-medium text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors">
+                        Omitir por ahora
+                      </button>
+                    )}
+                    {oralSkipped && oralFeedback.status !== "done" && (
+                      <p className="text-[10px] font-medium text-[var(--usb-fg-lo)] text-center">Omitida. Puedes responderla cuando quieras.</p>
+                    )}
                     <button onClick={() => setShowInterviewAnswer(v => !v)}
-                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
                         showInterviewAnswer
-                          ? "bg-sky-500/8 border-sky-500/20 text-sky-300/80"
-                          : "border-[var(--usb-border)] text-white/28 hover:text-white/50 hover:border-white/14"
+                          ? "bg-[#6d4aff]/10 border-[#6d4aff]/30 text-[var(--usb-fg-hi)]"
+                          : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
                       }`}>
-                      <span className="text-[10px] flex-1">{oralPracticeMeta.answerLabel}</span>
-                      <ChevronDown size={9} className={`shrink-0 transition-transform text-white/30 ${showInterviewAnswer ? "rotate-180" : ""}`}/>
+                      <span className="text-[10.5px] font-semibold flex-1">{oralPracticeMeta.answerLabel}</span>
+                      <ChevronDown size={11} className={`shrink-0 transition-transform text-[var(--usb-fg-lo)] ${showInterviewAnswer ? "rotate-180" : ""}`}/>
                     </button>
                     <AnimatePresence>
                       {showInterviewAnswer && (
                         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                          <div className="bg-sky-500/5 border border-sky-500/12 rounded-xl px-3 py-2.5 text-[11px] text-white/50 leading-relaxed">{content.interviewQ.idealAnswer}</div>
+                          <div className="bg-[#6d4aff]/6 border border-[#6d4aff]/18 rounded-2xl p-3.5 text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed">{content.interviewQ.idealAnswer}</div>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -4533,330 +4016,67 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 </div>
               )}
 
-              {showApply && focusStep === 4 && (
-                <div className="relative overflow-hidden rounded-xl border border-violet-500/22 bg-violet-500/6">
-                  <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5 border-b border-violet-500/10">
-                    <ArrowRight size={10} className="text-violet-400 shrink-0"/>
-                    <span className="text-violet-400/70 text-[9px] uppercase tracking-widest" style={{ fontWeight: 700 }}>Próximo paso concreto</span>
-                  </div>
-                  <div className="px-3 py-2.5">
-                    <p className="text-white/62 text-[11px] leading-relaxed">{content.nextAction}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Step 4 Anki ── */}
+              {/* ── Step 5: fíjalo en memoria ── */}
               {focusStep === 4 && confidence && (
-                  <div ref={ankiRef} className={`rounded-xl border overflow-hidden transition-all duration-500 ${showApply ? "border-violet-500/22" : "border-[var(--usb-border)] opacity-60"}`}>
-                    <div className={`px-3.5 py-2.5 flex items-center justify-between border-b transition-all ${showApply ? "bg-violet-500/8 border-violet-500/15" : "bg-white/3 border-[var(--usb-border)]"}`}>
-                      <div className="flex items-center gap-2">
-                        <Repeat2 size={12} className={showApply ? "text-violet-400" : "text-white/30"}/>
-                        <span className={`text-[11px] ${showApply ? "text-violet-300" : "text-white/40"}`} style={{ fontWeight: 600 }}>Fíjalo en memoria</span>
-                        {!showApply && <Lock size={9} className="text-white/18"/>}
-                      </div>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${showApply ? "text-violet-400/70 bg-violet-500/10 border-violet-500/20" : "text-white/20 bg-white/4 border-[var(--usb-border)]"}`}>{content.ankiCards.length} tarjetas</span>
+                  <div ref={ankiRef} className="space-y-3">
+                    <div className="px-0.5">
+                      <p className="kx-slate">Fíjalo en memoria · exportar</p>
+                      <p className="text-[var(--usb-fg-mid)] text-[11.5px] leading-relaxed mt-1.5">
+                        {showApply ? "Anki programa el repaso justo antes de que olvides. Elige a dónde llevar esta lección." : "Disponible cuando completes la práctica."}
+                      </p>
                     </div>
-                    <div className="p-3 space-y-3">
-                      <p className="text-white/28 text-[11px] leading-relaxed">
-                        {showApply ? "Exporta ahora estas tarjetas. Anki las programa automáticamente para que las repases justo antes de olvidarlas — así el conocimiento dura meses." : "Disponible una vez que completes la práctica."}
-                      </p>
-                      <AnkiFlipPreview cards={content.ankiCards}/>
 
-                      <div className="bg-violet-500/7 border border-violet-500/16 rounded-xl p-2.5">
-                        <div className="flex items-start gap-2">
-                          <Package size={12} className="text-violet-300 shrink-0 mt-0.5"/>
-                          <div>
-                            <p className="text-violet-200/85 text-[11px]" style={{ fontWeight: 600 }}>Recomendado: .apkg directo</p>
-                            <p className="text-white/32 text-[10px] leading-relaxed mt-0.5">Impórtalo desde Anki Desktop. Cada lección agrega sus tarjetas al mazo del curso con el diseño incluido.</p>
-                            <p className="text-white/24 text-[9px] leading-relaxed mt-1">Reimportar la misma lección usa IDs estables; revisa el resumen de Anki antes de confirmar.</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* File info */}
-                      {isFirstExport ? (
-                        <div className="bg-amber-500/7 border border-amber-500/16 rounded-xl p-2.5 space-y-2">
-                          <div className="flex items-center gap-1.5">
-                            <FolderPlus size={11} className="text-amber-400 shrink-0"/>
-                            <p className="text-amber-300/80 text-[11px]" style={{ fontWeight: 500 }}>TXT manual — setup una vez por curso</p>
-                          </div>
-                          <div className="space-y-1.5 pl-1 border-t border-amber-500/10 pt-1.5">
-                            {[
-                              { icon:"📄", name:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, desc:"→ Archivo → Importar en Anki" },
-                              { icon:"🎨", name:"anki-card-styles.css",  desc:`→ Tipo ${ANKI_NOTE_TYPE} → Styling` },
-                              { icon:"📋", name:"PLANTILLA-ANKI.txt",    desc:`→ Tipo ${ANKI_NOTE_TYPE} → Tarjetas` },
-                            ].map(f => (
-                              <div key={f.name} className="flex items-start gap-1.5">
-                                <span className="text-[10px] shrink-0 mt-0.5">{f.icon}</span>
-                                <p className="text-[10px] text-white/30"><span className="text-amber-300/60 font-mono">{f.name}</span><span className="text-white/22"> {f.desc}</span></p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 bg-emerald-500/7 border border-emerald-500/16 rounded-xl p-2.5">
-                          <FolderSync size={11} className="text-emerald-400 shrink-0"/>
-                          <div>
-                            <p className="text-emerald-300/75 text-[11px]" style={{ fontWeight: 500 }}>TXT manual — solo esta lección</p>
-                            <p className="text-white/25 text-[10px] mt-0.5 font-mono">{lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt <span className="font-sans">→ usa el setup ya creado</span></p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ── Export buttons row ── */}
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {/* TXT export (manual import) */}
-                        <button onClick={handleExport} disabled={!showApply}
-                          className={`h-9 rounded-xl text-white text-[10px] flex items-center justify-center gap-1.5 transition-all ${!showApply ? "bg-white/6 opacity-40 cursor-not-allowed" : "bg-white/8 hover:bg-white/12 border border-white/10 hover:border-white/18 active:scale-[0.98]"}`}>
-                          <FileDown size={11}/>.txt
-                        </button>
-
-                        {/* .apkg export (direct double-click import) */}
+                    <ExportModule
+                      icon={Package}
+                      title="Tarjetas de la lección"
+                      subtitle={`${content.ankiCards.length} tarjetas · .apkg se importa con doble clic`}
+                      badge={ankiExported ? <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
+                    >
+                      <div className="grid grid-cols-[1.4fr_1fr] gap-1.5">
                         <button onClick={handleExportApkg} disabled={!showApply || apkgStatus === "loading"}
-                          className={`h-9 rounded-xl text-white text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] ${
-                            !showApply || apkgStatus === "loading"
-                              ? "bg-white/6 opacity-40 cursor-not-allowed"
-                              : apkgStatus === "done"
-                                ? "bg-emerald-700 hover:bg-emerald-600"
-                                : apkgStatus === "error"
-                                  ? "bg-red-700/70 hover:bg-red-700"
-                                  : "bg-violet-700 hover:bg-violet-600"
-                          }`}>
+                          style={{ "--kx-btn": apkgStatus === "error" ? "#e11d48" : apkgStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
+                          className={exportPrimaryBtnCls}>
                           {apkgStatus === "loading"
-                            ? <><Loader2 size={10} className="animate-spin"/><span className="truncate max-w-[80px]">{apkgProgress}</span></>
+                            ? <><Loader2 size={12} className="animate-spin"/><span className="truncate max-w-[85px]">{apkgProgress}</span></>
                             : apkgStatus === "done"
-                              ? <><CheckCircle2 size={10}/>Exportado!</>
+                              ? <><CheckCircle2 size={12}/>Exportado</>
                               : apkgStatus === "error"
-                                ? <><X size={10}/>Error</>
-                                : <><Package size={10}/>.apkg</>
-                          }
+                                ? <><X size={12}/>Error</>
+                                : <><Package size={12}/>Exportar .apkg</>}
+                        </button>
+                        <button onClick={handleExport} disabled={!showApply} className={`${exportGhostBtnCls} h-9`}>
+                          <FileDown size={12}/>.txt
                         </button>
                       </div>
-
-                      {/* apkg description */}
-                      <p className="text-white/20 text-[9px] leading-relaxed px-0.5">
-                        <span className="text-violet-400/60">.apkg</span> = importar desde Anki, sin configuración.
-                        <span className="text-white/15"> .txt</span> = importación manual con CSS + plantilla.
+                      <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
+                        {isFirstExport
+                          ? ".txt es manual: la primera vez de cada curso incluye CSS y plantilla."
+                          : ".txt usa el setup que ya creaste para este curso."}
                       </p>
-
-                      {/* ── Vocabulario del curso (idiomas) ── */}
-                      {vocabLangOk === false ? (
-                        <div className="flex items-start gap-2 rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5">
-                          <Languages size={11} className="text-white/25 shrink-0 mt-0.5"/>
-                          <p className="text-white/25 text-[9.5px] leading-relaxed">
-                            Vocabulario no disponible aquí: los subtítulos de esta lección no están en
-                            {" "}{vocabCfg.targetLangLabel}. Las tarjetas de conceptos y Obsidian funcionan igual.
-                          </p>
-                        </div>
-                      ) : (
-                      <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-white/40 text-[9px] uppercase tracking-wider" style={{ fontWeight: 700 }}>
-                            Vocabulario {vocabCfg.targetLangLabel} · {vocabCfg.minLevel}+
-                          </p>
-                          <button onClick={() => setVocabPanelOpen(v => !v)}
-                            className="text-white/30 hover:text-white/60 text-[9px] flex items-center gap-1 transition-colors">
-                            <Settings2 size={9}/>{vocabPanelOpen ? "Cerrar" : "Configurar"}
-                          </button>
-                        </div>
-
-                        {vocabPanelOpen ? (
-                          <div className="space-y-2">
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div>
-                                <p className="text-white/30 text-[9px] mb-1">Nivel mínimo (CEFR)</p>
-                                <select value={vocabCfg.minLevel} onChange={(e) => handleSaveVocabCfg({ minLevel: e.target.value })}
-                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-1.5 outline-none focus:border-sky-500/30 transition-colors">
-                                  {cefrLevels().map((level) => (
-                                    <option key={level} value={level} className="bg-slate-900">{level}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div>
-                                <p className="text-white/30 text-[9px] mb-1">Máx. palabras/lección</p>
-                                <input type="number" min={3} max={20} value={vocabCfg.maxWords}
-                                  onChange={(e) => handleSaveVocabCfg({ maxWords: Math.min(20, Math.max(3, Number(e.target.value) || 8)) })}
-                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div>
-                                <p className="text-white/30 text-[9px] mb-1">Audio de las tarjetas</p>
-                                <select value={vocabCfg.audioMode} onChange={(e) => handleSaveVocabCfg({ audioMode: e.target.value as VocabConfig["audioMode"] })}
-                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-1.5 outline-none focus:border-sky-500/30 transition-colors">
-                                  <option value="field" className="bg-slate-900">Archivo de calidad</option>
-                                  <option value="tts" className="bg-slate-900">Voz del sistema</option>
-                                </select>
-                              </div>
-                              <div>
-                                <p className="text-white/30 text-[9px] mb-1">Mazo raíz de la extensión</p>
-                                <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
-                                  placeholder="Udemy Bridge"
-                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 placeholder:text-white/20 px-2 outline-none focus:border-sky-500/30 transition-colors"/>
-                              </div>
-                            </div>
-                            <p className="text-white/25 text-[9px] leading-relaxed">
-                              Palabras del idioma del curso con oración limpia creada para la tarjeta (no el subtítulo crudo).
-                              Repetidas de otras lecciones se saltan solas.
-                              <span className="text-white/35"> Audio «Archivo de calidad»:</span> la plantilla reproduce
-                              word audio / sentence audio (los genera HyperTTS o tu sistema externo);
-                              <span className="text-white/35"> «Voz del sistema»:</span> habla al instante con las voces de Anki.
-                              La imagen y la fonética las completa tu pipeline de imágenes.
-                            </p>
-                          </div>
-                        ) : null}
-
-                        <button onClick={handleExportVocabulary} disabled={vocabStatus === "loading"}
-                          className={`h-9 w-full rounded-xl text-white text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] ${
-                            vocabStatus === "loading"
-                              ? "bg-white/6 opacity-60 cursor-not-allowed"
-                              : vocabStatus === "done"
-                                ? "bg-sky-700 hover:bg-sky-600"
-                                : vocabStatus === "error"
-                                  ? "bg-red-700/70 hover:bg-red-700"
-                                  : "bg-sky-700 hover:bg-sky-600"
-                          }`}>
-                          {vocabStatus === "loading"
-                            ? <><Loader2 size={10} className="animate-spin"/><span className="truncate max-w-[150px]">{vocabProgress}</span></>
-                            : vocabStatus === "done"
-                              ? <><CheckCircle2 size={10}/>Exportado! {vocabProgress}</>
-                              : vocabStatus === "error"
-                                ? <><X size={10}/><span className="truncate max-w-[150px]">{vocabProgress}</span></>
-                                : <><Languages size={10}/>Extraer vocabulario (.apkg)</>
-                          }
+                      <div className="flex items-center gap-4">
+                        <button onClick={() => setShowCardPreview(v => !v)} aria-expanded={showCardPreview}
+                          className="text-[10px] font-medium text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
+                          <ChevronDown size={11} className={`transition-transform ${showCardPreview ? "rotate-180" : ""}`}/>{showCardPreview ? "Ocultar tarjetas" : "Ver tarjetas"}
+                        </button>
+                        <button onClick={() => setShowAnkiGuide(v => !v)} aria-expanded={showAnkiGuide}
+                          className="text-[10px] font-medium text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
+                          <Info size={10}/>{showAnkiGuide ? "Ocultar guía" : "Guía de importación"}
                         </button>
                       </div>
-                      )}
-
-                      {/* ── Obsidian export ── */}
-                      <div className="rounded-xl border border-[var(--usb-border)] bg-black/15 p-2.5 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-white/40 text-[9px] uppercase tracking-wider" style={{ fontWeight: 700 }}>Obsidian</p>
-                          <button onClick={() => setObsidianPanelOpen(v => !v)}
-                            className="text-white/30 hover:text-white/60 text-[9px] flex items-center gap-1 transition-colors">
-                            <Settings2 size={9}/>{obsidianPanelOpen ? "Cerrar" : "Configurar"}
-                          </button>
-                        </div>
-
-                        {obsidianPanelOpen ? (
-                          <div className="space-y-2">
-                            <div>
-                              <p className="text-white/30 text-[9px] mb-1">Nombre del vault (igual que en el selector de Obsidian)</p>
-                              <input value={obsidianCfg.vaultName} onChange={(e) => handleSaveObsidianCfg({ vaultName: e.target.value })}
-                                placeholder="Ej: Dev Courses"
-                                className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 placeholder:text-white/20 px-2 outline-none focus:border-violet-500/30 transition-colors"/>
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div>
-                                <p className="text-white/30 text-[9px] mb-1">Notas de sesión</p>
-                                <input value={obsidianCfg.sourcesFolder} onChange={(e) => handleSaveObsidianCfg({ sourcesFolder: e.target.value })}
-                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-violet-500/30 transition-colors"/>
-                              </div>
-                              <div>
-                                <p className="text-white/30 text-[9px] mb-1">MOCs de curso</p>
-                                <input value={obsidianCfg.mocsFolder} onChange={(e) => handleSaveObsidianCfg({ mocsFolder: e.target.value })}
-                                  className="w-full h-7 text-[10px] rounded-lg bg-black/25 border border-[var(--usb-border)] text-white/70 px-2 outline-none focus:border-violet-500/30 transition-colors"/>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <label className="flex items-center gap-1.5 text-white/40 text-[9px] cursor-pointer">
-                                <input type="checkbox" checked={obsidianCfg.includeCards} onChange={(e) => handleSaveObsidianCfg({ includeCards: e.target.checked })} className="accent-violet-500"/>
-                                Tarjetas #flashcards
-                              </label>
-                              <label className="flex items-center gap-1.5 text-white/40 text-[9px] cursor-pointer">
-                                <input type="checkbox" checked={obsidianCfg.autoExport} onChange={(e) => handleSaveObsidianCfg({ autoExport: e.target.checked })} className="accent-violet-500"/>
-                                Auto-exportar al generar
-                              </label>
-                              <label className="flex items-center gap-1.5 text-white/40 text-[9px] cursor-pointer">
-                                <input type="checkbox" checked={obsidianCfg.includeRawSrt} onChange={(e) => handleSaveObsidianCfg({ includeRawSrt: e.target.checked })} className="accent-violet-500"/>
-                                SRT crudo → raw/
-                              </label>
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <button onClick={handleTestObsidianVault}
-                                className="h-7 rounded-lg bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white/85 text-[9px] flex items-center justify-center gap-1 transition-all">
-                                <ExternalLink size={9}/>Probar vault
-                              </button>
-                              <button onClick={handleCreateVaultScaffold}
-                                className="h-7 rounded-lg bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white/85 text-[9px] flex items-center justify-center gap-1 transition-all">
-                                <FolderPlus size={9}/>Crear desde cero
-                              </button>
-                            </div>
-                            <p className="text-white/20 text-[9px] leading-relaxed">
-                              Obsidian debe estar instalado. La primera vez Chrome preguntará si abrir el enlace <span className="text-white/30">obsidian://</span> — marca "Siempre".
-                            </p>
-                          </div>
-                        ) : (
-                          <>
-                            {!obsidianCfg.vaultName.trim() && (
-                              <p className="text-amber-300/60 text-[9px] leading-relaxed">
-                                Pulsa <span className="text-amber-200/80">Configurar</span> y escribe el nombre de tu vault para exportar con un clic.
-                              </p>
-                            )}
-                            <div className="grid grid-cols-3 gap-1.5">
-                              <button onClick={handleExportObsidian} disabled={!showApply}
-                                className={`h-8 rounded-lg text-white text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] border ${
-                                  !showApply
-                                    ? "bg-white/6 opacity-40 cursor-not-allowed border-white/10"
-                                    : obsidianStatus === "done"
-                                      ? "bg-emerald-700 hover:bg-emerald-600 border-emerald-500/30"
-                                      : "bg-violet-600/80 hover:bg-violet-600 border-violet-400/30"
-                                }`}>
-                                {obsidianStatus === "done"
-                                  ? <><CheckCircle2 size={10}/>Listo</>
-                                  : <><BookMarked size={10}/>Exportar</>}
-                              </button>
-                              <button onClick={handleCopyObsidianMarkdown} disabled={!showApply}
-                                className={`h-8 rounded-lg text-white/70 text-[10px] flex items-center justify-center gap-1.5 transition-all border ${!showApply ? "bg-white/6 opacity-40 cursor-not-allowed border-white/10" : "bg-white/6 hover:bg-white/10 border-white/10"}`}>
-                                <ClipboardCopy size={10}/>Copiar
-                              </button>
-                              <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply}
-                                className={`h-8 rounded-lg text-white/70 text-[10px] flex items-center justify-center gap-1.5 transition-all border ${!showApply ? "bg-white/6 opacity-40 cursor-not-allowed border-white/10" : "bg-white/6 hover:bg-white/10 border-white/10"}`}>
-                                <FileDown size={10}/>.md
-                              </button>
-                            </div>
-                            <p className="text-white/20 text-[9px] leading-relaxed">
-                              <span className="text-violet-400/60">Exportar</span> crea la nota en <span className="font-mono">{obsidianCfg.sourcesFolder}/</span> y el MOC del curso en <span className="font-mono">{obsidianCfg.mocsFolder}/</span>.
-                              <span className="text-white/15"> Copiar y .md son respaldos manuales.</span>
-                            </p>
-                            <button onClick={() => setObsidianHelpOpen(v => !v)}
-                              className="text-white/25 hover:text-white/50 text-[9px] flex items-center gap-1 transition-colors">
-                              <Info size={9}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
-                            </button>
-                            {obsidianHelpOpen && (
-                              <div className="bg-black/25 border border-[var(--usb-border)] rounded-lg p-2 space-y-1">
-                                {[
-                                  "1. Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
-                                  "2. Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir.",
-                                  "3. Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, borra el bloqueo de obsidian.",
-                                  "4. Verifica el nombre del vault con Probar vault (en Configurar) — Obsidian avisa si no existe.",
-                                  "5. Como respaldo siempre queda Copiar (portapapeles) o .md (archivo descargado).",
-                                ].map((s, i) => (
-                                  <p key={i} className="text-white/35 text-[9px] leading-relaxed">{s}</p>
-                                ))}
-                              </div>
-                            )}
-                          </>
+                      <AnimatePresence initial={false}>
+                        {showCardPreview && (
+                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                            <AnkiFlipPreview cards={content.ankiCards}/>
+                          </motion.div>
                         )}
-                      </div>
-                      {!isFirstExport && (
-                        <button onClick={handleDownloadTxtSetup}
-                          className="w-full h-7 rounded-lg bg-amber-500/7 border border-amber-500/14 text-amber-300/70 hover:text-amber-200 hover:bg-amber-500/10 text-[10px] flex items-center justify-center gap-1.5 transition-all">
-                          <FolderPlus size={10}/>Recuperar setup TXT
-                        </button>
-                      )}
-
-                      <button onClick={() => setShowAnkiGuide(v => !v)}
-                        className="w-full text-[10px] text-white/22 hover:text-white/45 flex items-center justify-center gap-1 transition-colors">
-                        <Info size={9}/>{showAnkiGuide ? "Ocultar" : "Ver"} guía de importación paso a paso
-                      </button>
-                      <AnimatePresence>
+                      </AnimatePresence>
+                      <AnimatePresence initial={false}>
                         {showAnkiGuide && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <div className="bg-black/25 border border-[var(--usb-border)] rounded-xl p-3 space-y-3">
+                            <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 space-y-3">
                               {/* Qué configura la extensión en Anki (automático, primera importación) */}
                               <div className="space-y-1">
-                                <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Qué se configura solo en Anki (primera importación)</p>
+                                <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Qué se configura solo en Anki (primera importación)</p>
                                 {[
                                   `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → English → curso (vocabulario).`,
                                   "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
@@ -4864,32 +4084,32 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   "Tus demás mazos y tu preset Default NO se tocan nunca.",
                                   `Audio del vocabulario (${vocabCfg.audioMode === "tts" ? "voz del sistema" : "archivos de calidad"}): cambia el modo en Configurar. Imagen y fonética las completa tu sistema de imágenes.`,
                                 ].map((s, i) => (
-                                  <p key={i} className="text-white/28 text-[10px] leading-relaxed">{i + 1}. {s}</p>
+                                  <p key={i} className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed">{i + 1}. {s}</p>
                                 ))}
                               </div>
                               <div className="pt-2 border-t border-[var(--usb-divider)]" />
                               {isFirstExport ? (
                                 <>
-                                  <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>Guía TXT manual · solo si no usas .apkg</p>
+                                  <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Guía TXT manual · solo si no usas .apkg</p>
                                   {[
-                                    { file:"anki-card-styles.css", color:"text-amber-300/60", steps:[`Crea o selecciona el tipo ${ANKI_NOTE_TYPE}`,"Ábrelo con cualquier editor (Notepad, VS Code…)","Selecciona todo (Ctrl+A) y cópialo","En Anki: Cards → Styling","Selecciona todo, pega el CSS y guarda"] },
-                                    { file:"PLANTILLA-ANKI.txt",   color:"text-sky-300/60",   steps:[`En ${ANKI_NOTE_TYPE} → Cards`,"Ábrelo y ve al final del archivo","Anverso: selecciona todo → pega el bloque FRONT","Reverso: selecciona todo → pega el bloque BACK → guarda"] },
-                                    { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-emerald-300/60", steps:["En Anki: Archivo → Importar → selecciona este archivo","Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar"] },
+                                    { file:"anki-card-styles.css", color:"text-[#d97706]", steps:[`Crea o selecciona el tipo ${ANKI_NOTE_TYPE}`,"Ábrelo con cualquier editor (Notepad, VS Code…)","Selecciona todo (Ctrl+A) y cópialo","En Anki: Cards → Styling","Selecciona todo, pega el CSS y guarda"] },
+                                    { file:"PLANTILLA-ANKI.txt",   color:"text-[#6d4aff]",   steps:[`En ${ANKI_NOTE_TYPE} → Cards`,"Ábrelo y ve al final del archivo","Anverso: selecciona todo → pega el bloque FRONT","Reverso: selecciona todo → pega el bloque BACK → guarda"] },
+                                    { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-[#059669]", steps:["En Anki: Archivo → Importar → selecciona este archivo","Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar"] },
                                   ].map(({ file, color, steps }) => (
                                     <div key={file} className="space-y-1 pt-2 border-t border-[var(--usb-divider)]">
                                       <p className={`font-mono text-[10px] ${color}`}>{file}</p>
-                                      {steps.map((s,i) => <p key={i} className="text-white/28 text-[10px] leading-relaxed pl-2">{i+1}. {s}</p>)}
+                                      {steps.map((s,i) => <p key={i} className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed pl-2">{i+1}. {s}</p>)}
                                     </div>
                                   ))}
                                 </>
                               ) : (
                                 <>
-                                  <p className="text-white/45 text-[11px]" style={{ fontWeight: 600 }}>TXT manual · siguientes lecciones</p>
+                                  <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>TXT manual · siguientes lecciones</p>
                                   {["Archivo → Importar en Anki",`Selecciona "${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt"`,"Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar y revisa el resumen antes de confirmar"].map((s,i) => (
-                                    <p key={i} className="text-white/28 text-[10px] leading-relaxed">{i+1}. {s}</p>
+                                    <p key={i} className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed">{i+1}. {s}</p>
                                   ))}
                                   <button onClick={handleDownloadTxtSetup}
-                                    className="w-full h-7 rounded-lg bg-amber-500/7 border border-amber-500/14 text-amber-300/70 hover:text-amber-200 hover:bg-amber-500/10 text-[10px] flex items-center justify-center gap-1.5 transition-all">
+                                    className="w-full h-7 rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[10px] font-medium flex items-center justify-center gap-1.5 transition-all">
                                     <FolderPlus size={10}/>Descargar CSS + plantilla otra vez
                                   </button>
                                 </>
@@ -4898,8 +4118,190 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           </motion.div>
                         )}
                       </AnimatePresence>
-                    </div>
-                </div>
+                    </ExportModule>
+
+                      {/* ── Vocabulario del curso (idiomas) ── */}
+                      {vocabLangOk === false ? (
+                        <div className="flex items-start gap-2.5 rounded-xl border border-dashed border-[var(--usb-border-mid)] px-3 py-2.5">
+                          <Languages size={12} className="text-[var(--usb-fg-lo)] shrink-0 mt-0.5"/>
+                          <p className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed">
+                            <span className="text-[var(--usb-fg-hi)] font-semibold">Vocabulario no disponible en esta lección.</span>
+                            {" "}Los subtítulos no están en {vocabCfg.targetLangLabel}; conceptos y Obsidian funcionan igual.
+                          </p>
+                        </div>
+                      ) : (
+                        <ExportModule
+                          icon={Languages}
+                                          title={`Vocabulario · ${vocabCfg.targetLangLabel}`}
+                          subtitle={<>Nivel {vocabCfg.minLevel}+ · hasta {vocabCfg.maxWords} palabras · {vocabCfg.audioMode === "tts" ? "voz del sistema" : "audio de calidad"}</>}
+                          configOpen={vocabPanelOpen}
+                          onToggleConfig={() => setVocabPanelOpen(v => !v)}
+                        >
+                          <AnimatePresence initial={false}>
+                          {vocabPanelOpen && (
+                            <Collapse>
+                            <div className="space-y-2 pb-1">
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <label className="block">
+                                  <p className={exportLabelCls}>Nivel mínimo (CEFR)</p>
+                                  <select value={vocabCfg.minLevel} onChange={(e) => handleSaveVocabCfg({ minLevel: e.target.value })} className={exportFieldCls}>
+                                    {cefrLevels().map((level) => (
+                                      <option key={level} value={level}>{level}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <p className={exportLabelCls}>Máx. palabras / lección</p>
+                                  <input type="number" min={3} max={20} value={vocabCfg.maxWords}
+                                    onChange={(e) => handleSaveVocabCfg({ maxWords: Math.min(20, Math.max(3, Number(e.target.value) || 8)) })}
+                                    className={exportFieldCls}/>
+                                </label>
+                                <label className="block">
+                                  <p className={exportLabelCls}>Audio de las tarjetas</p>
+                                  <select value={vocabCfg.audioMode} onChange={(e) => handleSaveVocabCfg({ audioMode: e.target.value as VocabConfig["audioMode"] })} className={exportFieldCls}>
+                                    <option value="field">Archivo de calidad</option>
+                                    <option value="tts">Voz del sistema</option>
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <p className={exportLabelCls}>Mazo raíz</p>
+                                  <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
+                                    placeholder="Udemy Bridge" className={exportFieldCls}/>
+                                </label>
+                              </div>
+                              <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
+                                {vocabCfg.audioMode === "tts"
+                                  ? "Voz del sistema: Anki habla al instante con las voces del sistema operativo, sin archivos."
+                                  : "Archivo de calidad: la plantilla reproduce word audio / sentence audio, que genera HyperTTS o tu pipeline externo."}
+                                {" "}Cada tarjeta trae una oración limpia escrita para ella; las palabras repetidas de otras lecciones se saltan solas.
+                              </p>
+                            </div>
+                            </Collapse>
+                          )}
+                          </AnimatePresence>
+
+                          <button onClick={handleExportVocabulary} disabled={vocabStatus === "loading"}
+                            style={{ "--kx-btn": vocabStatus === "error" ? "#e11d48" : vocabStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
+                            className={`${exportPrimaryBtnCls} w-full`}>
+                            {vocabStatus === "loading"
+                              ? <><Loader2 size={11} className="animate-spin"/><span className="truncate max-w-[180px]">{vocabProgress}</span></>
+                              : vocabStatus === "done"
+                                ? <><CheckCircle2 size={12}/><span className="truncate max-w-[180px]">Exportado · {vocabProgress}</span></>
+                                : vocabStatus === "error"
+                                  ? <><X size={12}/><span className="truncate max-w-[180px]">{vocabProgress}</span></>
+                                  : <><Languages size={12}/>Extraer vocabulario (.apkg)</>
+                            }
+                          </button>
+                        </ExportModule>
+                      )}
+
+                      {/* ── Obsidian export ── */}
+                      <ExportModule
+                        icon={BookMarked}
+                                        title="Obsidian"
+                        subtitle={obsidianCfg.vaultName.trim()
+                          ? <>Vault «{obsidianCfg.vaultName}» · nota + MOC del curso</>
+                          : "Sin vault configurado"}
+                        configOpen={obsidianPanelOpen}
+                        onToggleConfig={() => setObsidianPanelOpen(v => !v)}
+                      >
+                        <AnimatePresence initial={false} mode="wait">
+                        {obsidianPanelOpen ? (
+                          <Collapse key="cfg">
+                          <div className="space-y-2">
+                            <label className="block">
+                              <p className={exportLabelCls}>Nombre del vault (igual que en el selector de Obsidian)</p>
+                              <input value={obsidianCfg.vaultName} onChange={(e) => handleSaveObsidianCfg({ vaultName: e.target.value })}
+                                placeholder="Ej: Dev Courses" className={exportFieldCls}/>
+                            </label>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <label className="block">
+                                <p className={exportLabelCls}>Notas de sesión</p>
+                                <input value={obsidianCfg.sourcesFolder} onChange={(e) => handleSaveObsidianCfg({ sourcesFolder: e.target.value })} className={`${exportFieldCls} font-mono`}/>
+                              </label>
+                              <label className="block">
+                                <p className={exportLabelCls}>MOCs de curso</p>
+                                <input value={obsidianCfg.mocsFolder} onChange={(e) => handleSaveObsidianCfg({ mocsFolder: e.target.value })} className={`${exportFieldCls} font-mono`}/>
+                              </label>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1">
+                              {([
+                                ["includeCards", "Incluir tarjetas #flashcards"],
+                                ["autoExport", "Auto-exportar al generar la sesión"],
+                                ["includeRawSrt", "Guardar SRT crudo en raw/"],
+                              ] as const).map(([key, label]) => (
+                                <label key={key} className="flex items-center gap-2 text-[var(--usb-fg-mid)] text-[10px] cursor-pointer py-0.5">
+                                  <input type="checkbox" checked={obsidianCfg[key]} onChange={(e) => handleSaveObsidianCfg({ [key]: e.target.checked } as Partial<ObsidianExportConfig>)} className="accent-[#6d4aff] w-3 h-3"/>
+                                  {label}
+                                </label>
+                              ))}
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button onClick={handleTestObsidianVault} className={exportGhostBtnCls}>
+                                <ExternalLink size={10}/>Probar vault
+                              </button>
+                              <button onClick={handleCreateVaultScaffold} className={exportGhostBtnCls}>
+                                <FolderPlus size={10}/>Crear desde cero
+                              </button>
+                            </div>
+                            <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
+                              Requiere Obsidian instalado. La primera vez Chrome pregunta si abrir <span className="font-mono text-[var(--usb-fg-hi)]">obsidian://</span>: marca «Siempre».
+                            </p>
+                          </div>
+                          </Collapse>
+                        ) : (
+                          <Collapse key="main">
+                          <>
+                            {!obsidianCfg.vaultName.trim() && (
+                              <button onClick={() => setObsidianPanelOpen(true)}
+                                className="w-full text-left rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:bg-[var(--usb-bg-2)] px-3 py-2 text-[var(--usb-fg-mid)] text-[10.5px] font-medium leading-relaxed transition-colors shadow-2xs">
+                                Configura el nombre de tu vault para exportar con un clic →
+                              </button>
+                            )}
+                            <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-1.5">
+                              <button onClick={handleExportObsidian} disabled={!showApply}
+                                style={{ "--kx-btn": obsidianStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
+                                className={exportPrimaryBtnCls}>
+                                {obsidianStatus === "done"
+                                  ? <><CheckCircle2 size={11}/>Listo</>
+                                  : <><BookMarked size={11}/>Exportar</>}
+                              </button>
+                              <button onClick={handleCopyObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
+                                <ClipboardCopy size={10}/>Copiar
+                              </button>
+                              <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
+                                <FileDown size={10}/>.md
+                              </button>
+                            </div>
+                            <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
+                              Crea la nota en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.sourcesFolder}/</span> y el MOC en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.mocsFolder}/</span>. Copiar y .md son respaldos manuales.
+                            </p>
+                            <button onClick={() => setObsidianHelpOpen(v => !v)}
+                              className="text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] text-[9.5px] flex items-center gap-1 transition-colors">
+                              <Info size={10}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
+                            </button>
+                            {obsidianHelpOpen && (
+                              <ol className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-2.5 space-y-1.5">
+                                {[
+                                  "Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
+                                  "Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir.",
+                                  "Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, y borra el bloqueo de obsidian.",
+                                  "Verifica el nombre con Probar vault (en Configurar): Obsidian avisa si no existe.",
+                                  "Como respaldo siempre quedan Copiar (portapapeles) o .md (archivo).",
+                                ].map((s, i) => (
+                                  <li key={i} className="flex gap-2 text-[var(--usb-fg-mid)] text-[9.5px] leading-relaxed">
+                                    <span className="w-3.5 h-3.5 rounded-full bg-[#6d4aff]/15 text-[#6d4aff] text-[8px] flex items-center justify-center shrink-0 mt-px" style={{ fontWeight: 700 }}>{i + 1}</span>
+                                    <span>{s}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            )}
+                          </>
+                          </Collapse>
+                        )}
+                        </AnimatePresence>
+                      </ExportModule>
+                  </div>
               )}
               </div>
               );
@@ -4907,58 +4309,42 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               </motion.div>
               </AnimatePresence>
 
-              {/* Grand 5/5 Completion Banner */}
+              {/* Completion recap — static; the one-time celebration lives in CelebrationOverlay */}
               <AnimatePresence>
-                {allStepsComplete && (() => {
+                {allStepsComplete && focusStep === 4 && (() => {
                   const correctFinal = Object.values(questionFeedbacks).filter(f => f?.rating === "correct" || f?.rating === "excellent").length;
                   const totalQFinal = visibleQuestions.length;
                   const elapsedFinal = Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60000));
                   const conceptsFinal = Object.values(conceptsChecked).filter(Boolean).length;
                   return (
                   <motion.div
-                    initial={{ opacity: 0, y: 30, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ type: "spring", damping: 20, stiffness: 300, delay: 0.2 }}
-                    className="relative mt-2 mb-6 rounded-[18px] overflow-hidden p-[1px] group mx-1"
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ type: "spring", damping: 24, stiffness: 300, delay: 0.1 }}
+                    className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5 mt-1"
                   >
-                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 via-violet-500 to-emerald-500 opacity-20 blur-xl group-hover:opacity-30 transition-opacity duration-1000 animate-[pulse_4s_cubic-bezier(0.4,0,0.6,1)_infinite]" />
-                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-400 via-violet-400 to-emerald-400 rounded-[18px] opacity-40" />
-                    <div className="relative bg-[var(--usb-bg-1)] rounded-[17px] p-5 text-center h-full border border-white/10 shadow-2xl">
-                      {/* Trophy */}
-                      <motion.div
-                        animate={{ scale: [1, 1.15, 1], rotate: [0, -8, 8, -4, 4, 0] }}
-                        transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 2.5 }}
-                        className="text-4xl mb-3 inline-block"
-                        style={{ textShadow: "0 0 20px rgba(167,139,250,0.5)" }}
-                      >🏆</motion.div>
-                      <h3 className="text-white text-[16px] mb-1 tracking-tight" style={{ fontWeight: 600 }}>¡Sesión 100% completada!</h3>
-                      <p className="text-white/40 text-[10px] mb-4 max-w-[200px] mx-auto leading-relaxed">Conocimiento consolidado y tarjetas listas. El instructor puede continuar.</p>
-
-                      {/* Stats row */}
-                      <div className="flex items-center justify-center gap-3 mb-4">
-                        {[
-                          { icon: "📌", value: conceptsFinal, label: "conceptos" },
-                          { icon: "✅", value: `${correctFinal}/${totalQFinal}`, label: "correctas" },
-                          { icon: "⏱️", value: `${elapsedFinal}m`, label: "sesión" },
-                        ].map(s => (
-                          <motion.div
-                            key={s.label}
-                            initial={{ scale: 0, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            transition={{ type: "spring", stiffness: 400, delay: 0.4 }}
-                            className="flex flex-col items-center gap-0.5 bg-white/5 border border-white/10 rounded-xl px-3 py-2"
-                          >
-                            <span className="text-[13px]">{s.icon}</span>
-                            <span className="text-white/80 text-[12px] font-mono" style={{ fontWeight: 600 }}>{s.value}</span>
-                            <span className="text-white/30 text-[9px]">{s.label}</span>
-                          </motion.div>
-                        ))}
+                    <div className="relative flex items-center gap-3 mb-3.5">
+                      <div className="kx-hero-chip w-11 h-11 rounded-2xl flex items-center justify-center shrink-0">
+                        <Icon name="trophy" size={24} weight="duotone" />
                       </div>
-
-                      <div className="inline-flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full px-4 py-1.5">
-                        <Loader2 size={10} className="text-violet-500 animate-spin" />
-                        <span className="text-violet-500 text-[10px] tracking-[0.12em] uppercase font-medium">Esperando siguiente video…</span>
+                      <div className="min-w-0">
+                        <p className="kx-hero-t1 text-[17px] font-extrabold tracking-tight leading-tight">Lección dominada</p>
+                        <p className="kx-hero-t2 text-[11.5px] leading-snug mt-0.5">Tarjetas listas. Puedes seguir con el video.</p>
                       </div>
+                    </div>
+                    <div className="relative grid grid-cols-4 gap-1.5">
+                      {[
+                        { icon: "pin" as IconName, value: conceptsFinal, label: "conceptos" },
+                        { icon: "checkCircle2" as IconName, value: `${correctFinal}/${totalQFinal}`, label: "correctas" },
+                        { icon: "zap" as IconName, value: `+${sessionXp || (correctFinal * 10)}`, label: "XP" },
+                        { icon: "timer" as IconName, value: `${elapsedFinal}m`, label: "tiempo" },
+                      ].map(st => (
+                        <div key={st.label} className="kx-hero-chip flex flex-col items-center gap-0.5 rounded-xl px-1.5 py-2">
+                          <Icon name={st.icon} size={14} />
+                          <span className="text-[11.5px] font-mono font-bold">{st.value}</span>
+                          <span className="text-[9.5px] font-medium opacity-80 truncate max-w-[56px]">{st.label}</span>
+                        </div>
+                      ))}
                     </div>
                   </motion.div>
                   );

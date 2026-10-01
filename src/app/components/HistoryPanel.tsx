@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   History, ChevronDown, ChevronRight, Trash2, BookOpen,
-  CheckCircle2, Circle, RefreshCw, Loader2, X, Layers, Award,
-} from "lucide-react";
+  CheckCircle2, Circle, RefreshCw, Loader2, X, Layers, Award, Icon, type IconName,
+} from "./icons";
 import { historyService, type CourseHistorySummary, type LectureHistoryRecord, type HistoryStats } from "../services/historyService";
 import { useDockTheme } from "../contexts/ThemeContext";
 
@@ -17,16 +17,29 @@ interface HistoryPanelProps {
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <div className={`kx-card rounded-2xl p-4 border border-[var(--usb-border)] ${className}`}>{children}</div>;
+}
+
+function Tile({ icon, hue = "#6d4aff", ink, size = 32 }: { icon: IconName; hue?: string; ink?: string; size?: number }) {
   const { t } = useDockTheme();
+  const iconColor = ink || t("#b7a6ff", "#5b37e8");
   return (
-    <div className={`border shadow-sm rounded-xl p-4 ${t(
-      "bg-gradient-to-b from-[#18181b] to-[#121214] border-white/5",
-      "bg-white border-black/7 shadow-[0_1px_4px_rgba(0,0,0,0.06)]"
-    )} ${className}`}>
-      {children}
-    </div>
+    <span
+      className="rounded-xl flex items-center justify-center shrink-0 border"
+      style={{
+        width: size,
+        height: size,
+        background: `color-mix(in srgb, ${hue} 18%, var(--usb-bg-3))`,
+        borderColor: `color-mix(in srgb, ${hue} 40%, var(--usb-border))`,
+        color: iconColor,
+      }}
+    >
+      <Icon name={icon} size={Math.round(size * 0.52)} weight="duotone" />
+    </span>
   );
 }
+
+const DOMINIO: Record<string, string> = { confused: "Dominio 1", partial: "Dominio 2", clear: "Dominio 3", mastered: "Dominio 4" };
 
 function formatDate(ms: number): string {
   const d = new Date(ms);
@@ -136,34 +149,20 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
     : "Sin historial aún";
 
   return (
-    <div className="space-y-2">
+    <div className="kx-cap space-y-2">
       {!hideToggle && (
       <button
         onClick={() => setExpanded(v => !v)}
-        className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border transition-all duration-200 ${
-          expanded
-            ? t("bg-violet-500/8 border-violet-500/22", "bg-violet-500/5 border-violet-500/20")
-            : t("bg-white/3 border-white/7 hover:bg-white/5 hover:border-white/12",
-                "bg-black/3 border-black/7 hover:bg-black/5 hover:border-black/12")
-        }`}
+        className="kx-card kx-toggle w-full flex items-center gap-2.5 px-4 py-3 text-left"
+        data-on={expanded ? "1" : undefined}
       >
-        <div className="flex items-center gap-2">
-          <History size={11} className={expanded ? "text-violet-400" : t("text-white/40", "text-[#3d3a38]/55")} />
-          <span
-            className={`text-[11px] ${expanded ? t("text-white", "text-[#1a1918]") : t("text-white/55", "text-[#3d3a38]/70")}`}
-            style={{ fontWeight: 500 }}
-          >
-            Historial de estudio
-          </span>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
-            t("bg-violet-500/10 border-violet-500/20 text-violet-400/80",
-              "bg-violet-500/8 border-violet-500/20 text-violet-600/80")
-          }`} style={{ fontWeight: 500 }}>
-            {summaryText}
-          </span>
-        </div>
-        <motion.div animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
-          <ChevronDown size={12} className={t("text-white/30", "text-[#3d3a38]/50")} />
+        <Tile icon="history" hue="#6d4aff" ink={t("#b7a6ff", "#5b37e8")} />
+        <span className="text-[12.5px] font-bold tracking-tight text-[var(--usb-fg-hi)]">Historial de estudio</span>
+        <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full truncate" style={{ background: "color-mix(in srgb, #6d4aff 14%, transparent)", color: t("#b7a6ff", "#5b37e8") }}>
+          {summaryText}
+        </span>
+        <motion.div className="ml-auto" animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
+          <ChevronDown size={14} className="text-[var(--usb-fg-lo)]" />
         </motion.div>
       </button>
       )}
@@ -177,61 +176,47 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
             transition={{ duration: 0.22, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="space-y-3 pt-1">
+            <div className="space-y-4 pt-1">
 
-              <Card className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className={`text-[10px] uppercase tracking-widest ${t("text-white/22", "text-[#3d3a38]/60")}`}
-                    style={{ fontWeight: 600 }}>
-                    Tu progreso
-                  </span>
+              <Card className="space-y-3.5">
+                <div className="flex items-center gap-2.5">
+                  <Tile icon="barChart2" hue="#6d4aff" ink={t("#b7a6ff", "#5b37e8")} />
+                  <div className="flex-1 min-w-0">
+                    <p className="kx-slate">Historial</p>
+                    <p className="text-[12.5px] font-bold tracking-tight text-[var(--usb-fg-hi)] mt-0.5">Resumen de estudio</p>
+                  </div>
                   <button
                     onClick={load}
                     disabled={loading}
                     title="Refrescar"
-                    className={`transition-colors ${t("text-white/20 hover:text-white/55", "text-[#3d3a38]/45 hover:text-[#1a1918]")}`}
+                    className="kx-chip w-7 h-7 rounded-full flex items-center justify-center"
                   >
-                    <RefreshCw size={10} className={loading ? "animate-spin" : ""} />
+                    <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
                   </button>
                 </div>
 
                 {stats ? (
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 gap-2.5">
                     {[
-                      { label: "Cursos",     value: String(stats.totalCourses),       icon: <Layers size={9} /> },
-                      { label: "Lecciones",  value: String(stats.totalLectures),      icon: <BookOpen size={9} /> },
-                      { label: "Completas",  value: String(stats.completedLectures),  icon: <CheckCircle2 size={9} /> },
-                      { label: "Anki",       value: String(stats.totalAnkiCards),     icon: <Award size={9} /> },
-                    ].map(({ label, value, icon }) => (
-                      <div key={label} className={`rounded-lg p-2 text-center border ${
-                        t("bg-white/3 border-white/6", "bg-black/3 border-black/6")
-                      }`}>
-                        <p className={`text-[13px] font-mono ${t("text-white/80", "text-[#1a1918]")}`} style={{ fontWeight: 600 }}>
-                          {value}
-                        </p>
-                        <p className={`text-[8px] mt-0.5 flex items-center justify-center gap-1 ${t("text-white/25", "text-[#3d3a38]/55")}`}>
-                          {icon}
-                          {label}
-                        </p>
+                      { label: "Cursos",     value: String(stats.totalCourses),       icon: "layers" as IconName,       hue: "#6d4aff", dk: "#b7a6ff", lt: "#5b37e8" },
+                      { label: "Lecciones",  value: String(stats.totalLectures),      icon: "bookOpen" as IconName,     hue: "#6d4aff", dk: "#b7a6ff", lt: "#5b37e8" },
+                      { label: "Completas",  value: String(stats.completedLectures),  icon: "checkCircle2" as IconName, hue: "#059669", dk: "#4ade9f", lt: "#047857" },
+                      { label: "Anki",       value: String(stats.totalAnkiCards),     icon: "award" as IconName,        hue: "#d97706", dk: "#fbbf45", lt: "#a15207" },
+                    ].map(({ label, value, icon, hue, dk, lt }) => (
+                      <div key={label} className="kx-card-flat rounded-2xl px-3.5 py-3 flex items-center gap-3 border border-[var(--usb-border)] hover:border-[#6d4aff]/50 transition-colors">
+                        <Tile icon={icon} hue={hue} ink={t(dk, lt)} size={34} />
+                        <div className="min-w-0">
+                          <p className="text-[22px] leading-none font-bold tabular-nums tracking-tight text-[var(--usb-fg-hi)]">{value}</p>
+                          <p className="kx-slate mt-1.5">{label}</p>
+                        </div>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="flex items-center justify-center py-3">
-                    <Loader2 size={14} className={`animate-spin ${t("text-white/20", "text-[#3d3a38]/35")}`} />
+                    <Loader2 size={16} className="animate-spin text-[var(--usb-fg-lo)]" />
                   </div>
                 )}
-
-                <button
-                  onClick={handleClearAll}
-                  className={`w-full flex items-center justify-center gap-1.5 h-7 rounded-lg text-[10px] border transition-all ${
-                    t("bg-red-500/5 hover:bg-red-500/10 border-red-500/10 hover:border-red-500/20 text-red-400/55 hover:text-red-400",
-                      "bg-red-500/4 hover:bg-red-500/8 border-red-500/10 hover:border-red-500/20 text-red-500/60 hover:text-red-600")
-                  }`}
-                >
-                  <Trash2 size={10} />
-                  Borrar todo el historial
-                </button>
 
                 <AnimatePresence>
                   {feedback && (
@@ -240,70 +225,60 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
                       initial={{ opacity: 0, y: -4 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
-                      className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-lg border ${
-                        t("bg-emerald-500/10 border-emerald-500/15 text-emerald-400",
-                          "bg-emerald-500/8 border-emerald-500/15 text-emerald-700")
-                      }`}
+                      className="kx-ok-strip flex items-center gap-2 text-[12px] font-semibold px-3 py-2 rounded-xl"
                     >
-                      <CheckCircle2 size={10} />
+                      <CheckCircle2 size={14} />
                       {feedback}
                     </motion.div>
                   )}
                 </AnimatePresence>
 
-                <p className={`text-[9.5px] leading-relaxed ${t("text-white/25", "text-[#3d3a38]/50")}`}>
-                  Este historial NO expira — guarda tus respuestas, evaluaciones y tarjetas Anki para que sepas qué ya estudiaste. No lo afecta la limpieza de caché.
+                <p className="text-[11.5px] font-medium leading-relaxed text-[var(--usb-fg-mid)]">
+                  Este historial no expira: guarda tus respuestas, evaluaciones y tarjetas Anki para que sepas qué ya estudiaste. No lo afecta la limpieza de caché.
                 </p>
+
+                <button
+                  onClick={handleClearAll}
+                  className="kx-chip w-full flex items-center justify-center gap-1.5 h-10 rounded-2xl text-[12px] font-semibold hover:!text-[#e11d48] hover:!border-[#e11d48]/40 transition-all"
+                >
+                  <Trash2 size={13} />
+                  Borrar todo el historial
+                </button>
               </Card>
 
               {courses.length > 0 ? (
-                <div className="space-y-1.5">
-                  <p className={`text-[9px] uppercase tracking-widest ${t("text-white/22", "text-[#3d3a38]/60")}`}
-                    style={{ fontWeight: 600 }}>
-                    Cursos estudiados
-                  </p>
+                <div className="space-y-3">
+                  <p className="kx-slate px-1">Cursos estudiados</p>
                   {courses.map((course) => {
                     const isOpen = openCourse === course.courseId;
                     const lectures = lecturesByCourse[course.courseId] ?? [];
                     return (
-                      <div key={course.courseId} className={`rounded-xl border overflow-hidden ${
-                        t("bg-white/3 border-white/6", "bg-black/2 border-black/6")
-                      }`}>
-                        <div className="flex items-center gap-2.5 px-3 py-2">
+                      <div key={course.courseId} className="kx-card rounded-2xl overflow-hidden border border-[var(--usb-border)]">
+                        <div className="flex items-center gap-2.5 px-4 py-3.5 bg-[var(--usb-bg-2)]/30">
                           <button
                             onClick={() => toggleCourse(course.courseId)}
-                            className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
+                            className="flex-1 flex items-center gap-3 min-w-0 text-left"
                           >
-                            <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.15 }}>
-                              <ChevronRight size={10} className={t("text-white/30", "text-[#3d3a38]/50")} />
-                            </motion.div>
-                            <div className={`shrink-0 w-5 h-5 rounded-md flex items-center justify-center ${
-                              t("bg-violet-500/15", "bg-violet-500/10")
-                            }`}>
-                              <BookOpen size={9} className="text-violet-400" />
-                            </div>
+                            <Tile icon="bookOpen" hue="#6d4aff" ink={t("#b7a6ff", "#5b37e8")} size={32} />
                             <div className="flex-1 min-w-0">
-                              <p className={`text-[10px] truncate ${t("text-white/75", "text-[#1a1918]")}`}
-                                style={{ fontWeight: 500 }}>
-                                {course.courseName}
-                              </p>
-                              <p className={`text-[9px] mt-0.5 ${t("text-white/28", "text-[#3d3a38]/50")}`}>
-                                {course.completedCount}/{course.lectureCount} completas · {course.totalAnkiCards} Anki · última {formatDate(course.lastSeenAt)}
+                              <p className="text-[13px] font-bold tracking-tight truncate text-[var(--usb-fg-hi)]">{course.courseName}</p>
+                              <p className="text-[11px] mt-0.5 leading-snug text-[var(--usb-fg-lo)] font-medium">
+                                {course.completedCount}/{course.lectureCount} completas · {course.totalAnkiCards} Anki · {formatDate(course.lastSeenAt)}
                               </p>
                             </div>
+                            <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.15 }}>
+                              <ChevronRight size={15} className="text-[var(--usb-fg-lo)]" />
+                            </motion.div>
                           </button>
                           <button
                             onClick={() => handleDeleteCourse(course.courseId)}
                             disabled={busyId === course.courseId}
                             title="Eliminar todo el curso del historial"
-                            className={`shrink-0 w-5 h-5 flex items-center justify-center rounded-md transition-all ${
-                              t("text-white/20 hover:text-red-400/80 hover:bg-red-500/10",
-                                "text-[#3d3a38]/40 hover:text-red-500/80 hover:bg-red-500/8")
-                            }`}
+                            className="kx-chip shrink-0 w-8 h-8 flex items-center justify-center rounded-full hover:!text-[#e11d48] transition-colors"
                           >
                             {busyId === course.courseId
-                              ? <Loader2 size={8} className="animate-spin" />
-                              : <X size={8} />}
+                              ? <Loader2 size={12} className="animate-spin" />
+                              : <X size={13} />}
                           </button>
                         </div>
 
@@ -316,46 +291,36 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
                               transition={{ duration: 0.18 }}
                               className="overflow-hidden"
                             >
-                              <div className={`px-3 pb-2 pt-0.5 space-y-1 border-t ${t("border-white/5", "border-black/5")}`}>
+                              <div className="px-3 pb-3 pt-1.5 border-t border-[var(--usb-divider)] space-y-1">
                                 {lectures.length === 0 ? (
-                                  <p className={`text-[9px] py-2 text-center ${t("text-white/25", "text-[#3d3a38]/50")}`}>
-                                    Cargando…
-                                  </p>
+                                  <p className="text-[11.5px] py-3 text-center text-[var(--usb-fg-lo)] font-medium">Cargando lecciones…</p>
                                 ) : lectures.map((rec) => {
                                   const id = `${rec.courseId}::${rec.lectureId}`;
                                   const done = rec.status === "completed";
                                   return (
                                     <div
                                       key={id}
-                                      className={`flex items-center gap-2 py-1.5 px-1.5 rounded-md transition-colors ${
-                                        onOpenLecture
-                                          ? t("hover:bg-white/4 cursor-pointer", "hover:bg-black/4 cursor-pointer")
-                                          : ""
-                                      }`}
+                                      className={`flex items-center gap-3 py-2.5 px-3 rounded-xl transition-all ${onOpenLecture ? "hover:bg-[var(--usb-accent-soft)] cursor-pointer" : ""}`}
                                       onClick={() => onOpenLecture?.(rec)}
                                     >
                                       {done
-                                        ? <CheckCircle2 size={10} className="text-emerald-400 shrink-0" />
-                                        : <Circle size={10} className={t("text-white/25", "text-[#3d3a38]/40") + " shrink-0"} />}
+                                        ? <CheckCircle2 size={16} className="shrink-0" style={{ color: t("#4ade9f", "#047857") }} />
+                                        : <Circle size={16} className="shrink-0 text-[var(--usb-fg-dim)]" />}
                                       <div className="flex-1 min-w-0">
-                                        <p className={`text-[10px] truncate ${t("text-white/70", "text-[#1a1918]")}`}>
-                                          {rec.lectureName}
-                                        </p>
-                                        <p className={`text-[8.5px] mt-0.5 ${t("text-white/22", "text-[#3d3a38]/45")}`}>
-                                          {rec.confidence ?? "sin nivel"} · {rec.questions.length}Q · {rec.ankiCardsCount} Anki · {formatDate(rec.updatedAt)}
+                                        <p className="text-[12px] font-bold truncate text-[var(--usb-fg-hi)]">{rec.lectureName}</p>
+                                        <p className="text-[10.5px] mt-0.5 text-[var(--usb-fg-lo)] font-medium">
+                                          {DOMINIO[rec.confidence ?? ""] ?? "Sin dominio"} · {rec.questions.length}Q · {rec.ankiCardsCount} Anki · {formatDate(rec.updatedAt)}
                                         </p>
                                       </div>
                                       <button
                                         onClick={(e) => { e.stopPropagation(); handleDeleteLecture(rec); }}
                                         disabled={busyId === id}
                                         title="Eliminar esta lección"
-                                        className={`shrink-0 w-4 h-4 flex items-center justify-center rounded ${
-                                          t("text-white/15 hover:text-red-400/80", "text-[#3d3a38]/30 hover:text-red-500/80")
-                                        }`}
+                                        className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-[var(--usb-fg-lo)] hover:text-[#e11d48] hover:bg-[#e11d48]/10 transition-colors"
                                       >
                                         {busyId === id
-                                          ? <Loader2 size={7} className="animate-spin" />
-                                          : <X size={7} />}
+                                          ? <Loader2 size={11} className="animate-spin" />
+                                          : <X size={12} />}
                                       </button>
                                     </div>
                                   );
@@ -369,14 +334,17 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
                   })}
                 </div>
               ) : stats && stats.totalLectures === 0 && (
-                <div className={`flex flex-col items-center gap-2 py-5 rounded-xl border ${
-                  t("border-white/5 bg-white/[0.015]", "border-black/5 bg-black/[0.015]")
-                }`}>
-                  <History size={16} className={t("text-white/15", "text-[#3d3a38]/30")} />
-                  <p className={`text-[10px] ${t("text-white/30", "text-[#3d3a38]/50")}`}>
-                    Sin historial aún
-                  </p>
-                  <p className={`text-[9px] text-center px-6 leading-relaxed ${t("text-white/18", "text-[#3d3a38]/38")}`}>
+                <div className="kx-card text-center py-8 px-4 space-y-2">
+                  <span className="w-11 h-11 rounded-2xl mx-auto flex items-center justify-center border"
+                    style={{
+                      background: "color-mix(in srgb, #6d4aff 20%, var(--usb-bg-3))",
+                      borderColor: "color-mix(in srgb, #6d4aff 45%, var(--usb-border))",
+                      color: t("#b7a6ff", "#5b37e8"),
+                    }}>
+                    <Icon name="history" size={22} weight="duotone" />
+                  </span>
+                  <p className="text-[13px] font-bold tracking-tight pt-1 text-[var(--usb-fg-hi)]">Sin historial aún</p>
+                  <p className="text-[12px] max-w-[240px] mx-auto leading-relaxed text-[var(--usb-fg-mid)]">
                     Cuando completes los 5 pasos de una lección, aparecerá aquí para que no la repitas sin darte cuenta.
                   </p>
                 </div>

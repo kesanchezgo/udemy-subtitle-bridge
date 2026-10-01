@@ -1709,6 +1709,17 @@ function handleDockBridgeEvent(event: Event) {
 	}
 }
 
+
+/** @font-face declared inside a ShadowRoot is ignored by Chrome; the family must be registered on the host document. */
+function ensureDockFonts(): void {
+	if (document.getElementById('usb-dock-fonts')) return;
+	const link = document.createElement('link');
+	link.id = 'usb-dock-fonts';
+	link.rel = 'stylesheet';
+	link.href = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap';
+	(document.head || document.documentElement).appendChild(link);
+}
+
 function initInPageDock() {
 	if (!dockEnabled) {
 		resetUdemyLayout();
@@ -1775,6 +1786,7 @@ function initInPageDock() {
 	host.style.boxShadow = '-22px 0 48px rgba(0,0,0,0.28)';
 	applyDockViewportFrame();
 
+	ensureDockFonts();
 	const shadow = host.attachShadow({ mode: 'open' });
 	installDockInteractionGuards(shadow);
 
@@ -2593,13 +2605,7 @@ function createOverlay(container: HTMLElement) {
 
 	overlayHandleEl = document.createElement('div');
 	overlayHandleEl.id = 'usb-drag-handle';
-	overlayHandleEl.innerHTML = [
-		'<svg width="16" height="10" viewBox="0 0 16 10" fill="none" xmlns="http://www.w3.org/2000/svg">',
-		'<rect x="0" y="0" width="16" height="2" rx="1" fill="rgba(255,255,255,0.55)"/>',
-		'<rect x="0" y="4" width="16" height="2" rx="1" fill="rgba(255,255,255,0.55)"/>',
-		'<rect x="0" y="8" width="16" height="2" rx="1" fill="rgba(255,255,255,0.55)"/>',
-		'</svg>'
-	].join('');
+	overlayHandleEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="16" height="16" fill="rgba(255,255,255,0.6)"><path d="M228,128a12,12,0,0,1-12,12H40a12,12,0,0,1,0-24H216A12,12,0,0,1,228,128ZM40,76H216a12,12,0,0,0,0-24H40a12,12,0,0,0,0,24ZM216,180H40a12,12,0,0,0,0,24H216a12,12,0,0,0,0-24Z"/></svg>'; // Phosphor (MIT)
 	overlayHandleEl.style.cssText = [
 		'position:absolute',
 		'top:-18px',

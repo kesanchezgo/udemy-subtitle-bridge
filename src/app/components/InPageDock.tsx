@@ -1,10 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore } from "react";
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
-import { ChevronRight, Shield, Wifi, WifiOff, GripVertical, Sun, Moon } from "lucide-react";
 import { Toaster } from "sonner";
 import { ExtensionSidebar } from "./ExtensionSidebar";
 import { AuthGuard } from "./AuthGuard";
-import { AppLogo } from "./AppLogo";
+import { KinemaBrand } from "./AppLogo";
+import { ChevronLeft, ChevronRight, Moon, Sun, Flame, Volume2, VolumeX } from "./icons";
+import { getStreak } from "../services/streak";
+import { getProgress } from "../services/progress";
+import { ProgressPanel } from "./ProgressPanel";
+import { playSound, soundForClick, installToastSounds, isSoundEnabled, setSoundEnabled, subscribeSound } from "../services/sounds";
 import { CelebrationOverlay } from "./CelebrationOverlay";
 import { Session } from "@supabase/supabase-js";
 import { ThemeProvider, useDockTheme } from "../contexts/ThemeContext";
@@ -257,8 +261,28 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
     };
   }, [isResizing, minWidth, maxWidth, scheduleWidthUpdate, setStoredWidth, textScale]);
 
+  const soundOn = useSyncExternalStore(subscribeSound, isSoundEnabled);
+  useEffect(() => { installToastSounds(); }, []);
+  const [streak, setStreak] = useState(() => getStreak());
+  useEffect(() => {
+    const h = () => setStreak(getStreak());
+    window.addEventListener("usb:streak", h);
+    return () => window.removeEventListener("usb:streak", h);
+  }, []);
+  const [level, setLevel] = useState(() => getProgress().level);
+  const [progressOpen, setProgressOpen] = useState(false);
+  useEffect(() => {
+    const h = () => setLevel(getProgress().level);
+    window.addEventListener("usb:xp", h);
+    return () => window.removeEventListener("usb:xp", h);
+  }, []);
+
   return (
     <div
+      onClickCapture={(e) => {
+        const n = soundForClick(e.target);
+        if (n) playSound(n);
+      }}
       className={`usb-dock relative flex shrink-0 h-full${isSepia ? " dock-sepia" : ""}`}
       style={{
         userSelect: isResizing ? "none" : "auto",
@@ -274,11 +298,12 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
             exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.15 }}
             onMouseDown={handleResizeStart}
+            style={{ backgroundColor: isSepia ? "#ffffff" : "#121214" }}
             title="Arrastrar para redimensionar"
             className={`h-full shrink-0 cursor-col-resize flex flex-col items-center justify-center gap-[3px] z-20 group/resize relative transition-colors duration-150 overflow-hidden ${
               isResizing
                 ? t("bg-violet-500/30", "bg-black/8")
-                : t("hover:bg-violet-500/15 bg-transparent", "hover:bg-black/5 bg-transparent")
+                : t("hover:bg-violet-500/15", "")
             }`}
           >
             {[0, 1, 2, 3, 4].map((i) => (
@@ -286,22 +311,11 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                 key={i}
                 className={`w-[3px] h-[3px] rounded-full transition-colors duration-150 shrink-0 ${
                   isResizing
-                    ? t("bg-violet-400", "bg-[#9c9894]")
-                    : t("bg-white/10 group-hover/resize:bg-violet-400/60", "bg-black/6 group-hover/resize:bg-[#9c9894]/60")
+                    ? t("bg-violet-400", "bg-violet-500")
+                    : t("bg-white/10 group-hover/resize:bg-violet-400/60", "bg-black/6 group-hover/resize:bg-violet-500/40")
                 }`}
               />
             ))}
-            <GripVertical
-              size={12}
-              className={`absolute transition-opacity duration-150 ${
-                isResizing
-                  ? t("text-violet-400 opacity-100", "text-[#3d3a38] opacity-100")
-                  : t(
-                      "text-white/0 group-hover/resize:text-violet-400/50 group-hover/resize:opacity-100",
-                      "text-black/0 group-hover/resize:text-[#3d3a38]/50 group-hover/resize:opacity-100"
-                    )
-              }`}
-            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -320,43 +334,31 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.13 }}
-              className={`absolute inset-0 flex flex-col items-center cursor-pointer group ${t("bg-[#0d0e0f]", "bg-[#ebebea]")}`}
+              className={`absolute inset-0 flex flex-col items-center cursor-pointer group ${t("bg-[#0d0e0f]", "bg-[#eceef2]")}`}
               onClick={expandDock}
-              title="Expandir Subtitle Bridge"
+              title="Expandir Kinema"
             >
-              <div className="pt-3 pb-1 flex items-center justify-center">
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+              <div className="pt-5 pb-1 flex items-center justify-center">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
                   t(
                     "bg-violet-500/10 border border-violet-500/20 group-hover:bg-violet-500/20",
                     "bg-black/5 border border-black/8 group-hover:bg-black/9"
                   )
                 }`}>
-                  <ChevronRight
-                    size={12}
-                    className={t(
-                      "text-violet-400/70 group-hover:text-violet-300 transition-colors",
-                      "text-[#3d3a38]/70 group-hover:text-[#1a1918] transition-colors"
-                    )}
-                  />
+                  <span
+                    aria-hidden="true"
+                    className={`text-[16px] leading-none transition-colors ${t(
+                      "text-violet-300 group-hover:text-white",
+                      "text-[#5b37e8] group-hover:text-[#3a2399]"
+                    )}`}
+                  >
+                    <ChevronLeft size={14} />
+                  </span>
                 </div>
               </div>
 
-              <div className="py-2 flex items-center justify-center">
-                <AppLogo size={20} iconOnly />
-              </div>
-
-              <div
-                className="flex-1 flex items-center justify-center"
-                style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}
-              >
-                <span
-                  className={`text-[9px] tracking-widest uppercase transition-colors ${
-                    t("text-white/25 group-hover:text-white/50", "text-[#3d3a38]/40 group-hover:text-[#1a1918]")
-                  }`}
-                  style={{ fontWeight: 600, transform: "rotate(180deg)", letterSpacing: "0.12em" }}
-                >
-                  Subtitle Bridge
-                </span>
+              <div className="flex-1 flex items-center justify-center">
+                <KinemaBrand compact />
               </div>
 
               <div className="pb-4 flex items-center justify-center">
@@ -379,128 +381,115 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
             animate={{ opacity: collapsed ? 0 : 1 }}
             transition={{ duration: 0.13 }}
             aria-hidden={collapsed}
-            className={`absolute inset-0 flex flex-col ${collapsed ? "pointer-events-none invisible" : "pointer-events-auto visible"} ${t("bg-[#1a1b1d]", "bg-[#f8f7f6]")}`}
+            className={`absolute inset-0 flex flex-col ${collapsed ? "pointer-events-none invisible" : "pointer-events-auto visible"} ${t("bg-[#1a1b1d]", "bg-[#f6f7f9]")}`}
           >
-              <div className={`flex items-center justify-between px-3 py-[6px] border-b shrink-0 ${
-                t("bg-[#0a0b0c] border-white/6", "bg-[#f0efed] border-black/6")
+              <div className={`flex items-center justify-between px-3.5 py-1.5 border-b shrink-0 ${
+                t("bg-[#141516] border-white/6", "bg-[#f6f7f9] border-black/6")
               }`}>
-                <div className="flex items-center gap-1.5">
-                  <div className={`flex items-center gap-1 rounded px-1.5 py-[3px] border ${
-                    t("bg-violet-500/8 border-violet-500/20", "bg-black/4 border-black/10")
-                  }`}>
-                    <Shield size={7} className={t("text-violet-400/80", "text-[#3d3a38]/70")} />
-                    <span className={`text-[8px] font-mono ${t("text-violet-400/70", "text-[#3d3a38]/70")}`} style={{ fontWeight: 500, letterSpacing: "0.02em" }}>
-                      Shadow DOM
-                    </span>
-                  </div>
-
-                  <div className={`flex items-center gap-1 rounded px-1.5 py-[3px] border ${
-                    t("bg-emerald-500/6 border-emerald-500/14", "bg-emerald-500/8 border-emerald-500/20")
-                  }`}>
-                    <span className="relative flex h-[6px] w-[6px] shrink-0">
+                <div
+                  className="flex items-center gap-2 min-w-0"
+                  title={localAiConnected ? "Servidor de IA local conectado (127.0.0.1:8010)" : "Servidor de IA local sin conexión"}
+                >
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    {localAiConnected && (
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50" />
-                      <span className="relative inline-flex rounded-full h-[6px] w-[6px] bg-emerald-400 shadow-[0_0_4px_#34d399]" />
-                    </span>
-                    <span className={`text-[8px] ${t("text-emerald-400/60", "text-emerald-600/70")}`} style={{ fontWeight: 500 }}>
-                      In-page
-                    </span>
-                  </div>
-
-                  <div className={`flex items-center gap-1 rounded px-1.5 py-[3px] border ${
-                    localAiConnected
-                      ? t("bg-sky-500/6 border-sky-500/15", "bg-sky-500/8 border-sky-500/20")
-                      : t("bg-white/3 border-white/8", "bg-black/3 border-black/7")
-                  }`}>
-                    {localAiConnected ? (
-                      <Wifi size={7} className={t("text-sky-400/70", "text-sky-600/70")} />
-                    ) : (
-                      <WifiOff size={7} className={t("text-white/25", "text-[#3d3a38]/40")} />
                     )}
-                    <span className={`text-[8px] font-mono ${
-                      localAiConnected
-                        ? t("text-sky-400/60", "text-sky-600/60")
-                        : t("text-white/20", "text-[#3d3a38]/40")
-                    }`} style={{ fontWeight: 500 }}>
-                      :8010
-                    </span>
-                  </div>
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                      localAiConnected ? "bg-emerald-400" : t("bg-white/30", "bg-[#3d3a38]/40")
+                    }`} />
+                  </span>
+                  <span className={`text-[11px] font-medium tracking-wide truncate ${t("text-white/75", "text-[#3d3a38]/85")}`}>
+                    {localAiConnected ? "IA local conectada" : "IA local sin conexión"}
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[8px] font-mono tabular-nums ${t("text-white/12", "text-[#3d3a38]/35")}`}>
-                    {width}px
-                  </span>
-
-                  <motion.button
-                    onClick={toggleTheme}
-                    whileTap={{ scale: 0.88 }}
-                    title={isSepia ? "Cambiar a tema oscuro" : "Cambiar a tema claro"}
-                    className={`w-6 h-6 flex items-center justify-center rounded-md transition-all border ${
-                      isSepia
-                        ? "bg-black/6 border-black/12 text-[#3d3a38] hover:bg-black/10"
-                        : "bg-white/4 border-white/8 text-white/30 hover:text-white/60 hover:bg-white/10 hover:border-white/15"
-                    }`}
-                  >
-                    <AnimatePresence mode="wait">
-                      {isSepia ? (
-                        <motion.span
-                          key="moon"
-                          initial={{ rotate: -20, opacity: 0 }}
-                          animate={{ rotate: 0, opacity: 1 }}
-                          exit={{ rotate: 20, opacity: 0 }}
-                          transition={{ duration: 0.16 }}
-                        >
-                          <Moon size={10} />
-                        </motion.span>
-                      ) : (
-                        <motion.span
-                          key="sun"
-                          initial={{ rotate: 20, opacity: 0 }}
-                          animate={{ rotate: 0, opacity: 1 }}
-                          exit={{ rotate: -20, opacity: 0 }}
-                          transition={{ duration: 0.16 }}
-                        >
-                          <Sun size={10} />
-                        </motion.span>
-                      )}
-                    </AnimatePresence>
-                  </motion.button>
-
+                <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={collapseDock}
-                    className={`flex items-center gap-1 px-2 py-[3px] rounded-md transition-all group/collapse border border-transparent ${
-                      t(
-                        "text-white/40 hover:text-white/80 hover:bg-white/8 hover:border-white/12",
-                        "text-[#3d3a38]/50 hover:text-[#1a1918] hover:bg-black/6 hover:border-black/10"
-                      )
+                    onClick={() => setProgressOpen((v) => !v)}
+                    aria-pressed={progressOpen}
+                    title="Tu progreso (nivel y rango)"
+                    aria-label="Abrir progreso"
+                    className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-[11.5px] font-semibold tabular-nums transition-colors ${
+                      t("text-white/90 bg-white/5 border-white/12 hover:bg-white/10", "text-[#15161c] bg-white border-black/12 hover:bg-black/5")
                     }`}
-                    title="Colapsar dock"
                   >
-                    <ChevronRight size={10} className="transition-transform group-hover/collapse:translate-x-0.5" />
-                    <span className="text-[8px] hidden group-hover/collapse:inline transition-all" style={{ fontWeight: 500 }}>
-                      Colapsar
-                    </span>
+                    {streak > 0 && (
+                      <span className={`inline-flex items-center gap-0.5 ${t("text-amber-300", "text-amber-700")}`}>
+                        <Flame size={12} weight="fill" />{streak}
+                      </span>
+                    )}
+                    <span>Nv {level}</span>
                   </button>
+
+                  <div
+                    className={`inline-flex items-center h-7 rounded-lg border overflow-hidden ${
+                      t("bg-white/5 border-white/12 divide-x divide-white/10", "bg-white border-black/12 divide-x divide-black/10")
+                    }`}
+                  >
+                    <button
+                      data-no-sound
+                      onClick={() => { const next = !soundOn; setSoundEnabled(next); if (next) playSound("on"); }}
+                      title={soundOn ? "Silenciar sonidos" : "Activar sonidos"}
+                      aria-label={soundOn ? "Silenciar sonidos" : "Activar sonidos"}
+                      aria-pressed={soundOn}
+                      className={`w-7 h-full flex items-center justify-center transition-colors ${
+                        t("text-white/80 hover:text-white hover:bg-white/10", "text-[#3d3a38] hover:text-[#15161c] hover:bg-black/5")
+                      }`}
+                    >
+                      {soundOn ? <Volume2 size={14} /> : <VolumeX size={14} className={t("text-white/50", "text-[#3d3a38]/60")} />}
+                    </button>
+                    <motion.button
+                      data-no-sound
+                      onClick={() => { playSound("theme"); toggleTheme(); }}
+                      whileTap={{ scale: 0.92 }}
+                      title={isSepia ? "Cambiar a tema oscuro" : "Cambiar a tema claro"}
+                      aria-label={isSepia ? "Cambiar a tema oscuro" : "Cambiar a tema claro"}
+                      className={`w-7 h-full flex items-center justify-center transition-colors ${
+                        t("text-white/80 hover:text-white hover:bg-white/10", "text-[#3d3a38] hover:text-[#15161c] hover:bg-black/5")
+                      }`}
+                    >
+                      <AnimatePresence mode="wait" initial={false}>
+                        <motion.span
+                          key={isSepia ? "moon" : "sun"}
+                          aria-hidden="true"
+                          className="flex"
+                          initial={{ rotate: isSepia ? -25 : 25, opacity: 0 }}
+                          animate={{ rotate: 0, opacity: 1 }}
+                          exit={{ rotate: isSepia ? 25 : -25, opacity: 0 }}
+                          transition={{ duration: 0.16 }}
+                        >
+                          {isSepia ? <Moon size={14} /> : <Sun size={14} />}
+                        </motion.span>
+                      </AnimatePresence>
+                    </motion.button>
+                    <button
+                      onClick={collapseDock}
+                      title={`Colapsar dock (${width}px)`}
+                      aria-label="Colapsar dock"
+                      className={`w-7 h-full flex items-center justify-center transition-colors ${
+                        t("text-white/80 hover:text-white hover:bg-white/10", "text-[#3d3a38] hover:text-[#15161c] hover:bg-black/5")
+                      }`}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
+              <AnimatePresence>
+                {progressOpen && <ProgressPanel key="progress" onClose={() => setProgressOpen(false)} />}
+              </AnimatePresence>
+
               <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                <MotionConfig reducedMotion="never">
+                <MotionConfig reducedMotion="user">
                   <Toaster
-                    theme="dark"
+                    theme={isSepia ? "light" : "dark"}
                     position="bottom-center"
-                    expand={false}
+                    expand
+                    visibleToasts={3}
                     gap={8}
-                    toastOptions={{
-                      duration: 3000,
-                      style: {
-                        background: "rgba(17,18,24,0.96)",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        color: "#fff",
-                        borderRadius: "12px",
-                        fontSize: "12px",
-                      },
-                    }}
+                    offset={16}
+                    toastOptions={{ duration: 3500 }}
                   />
                   <CelebrationOverlay />
                   <AuthGuard onSessionResolved={onSessionResolved}>

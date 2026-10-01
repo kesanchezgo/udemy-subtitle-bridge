@@ -6,9 +6,9 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Zap, TrendingUp, Database, WifiOff, Radio, RefreshCcw,
+  Zap, TrendingUp, Database, WifiOff, RefreshCcw,
   Key, ChevronDown, ChevronRight, Copy, Check,
-} from "lucide-react";
+} from "./icons";
 import { debugStore } from "../services/debugStore";
 import { contentBridge } from "../services/contentBridge";
 import { PROVIDER_LABELS, type AiProviderConfig } from "../services/ai-providers";
@@ -99,10 +99,26 @@ function getSrtLineType(line: string): LineType {
 
 function SrtOutputLine({ line }: { line: string }) {
   const type = getSrtLineType(line);
-  if (type === "empty")     return <div className="h-[5px]" />;
-  if (type === "number")    return <p className="text-sky-400/80 text-[9px] font-mono leading-tight mt-1" style={{ fontWeight: 700 }}>{line}</p>;
-  if (type === "timestamp") return <p className="text-amber-400/60 text-[9px] font-mono leading-tight">{line}</p>;
-  return <p className="text-white/75 text-[10px] font-mono leading-relaxed">{line}</p>;
+  if (type === "empty")     return <div className="h-[6px]" />;
+  if (type === "number")    return <p className="text-violet-400 text-[10.5px] font-mono leading-tight mt-1.5 font-bold">{line}</p>;
+  if (type === "timestamp") return <p className="text-[var(--usb-fg-lo)] text-[10px] font-mono leading-tight">{line}</p>;
+  return <p className="text-[var(--usb-fg)] text-[11.5px] font-mono leading-relaxed">{line}</p>;
+}
+
+type StepState = "idle" | "active" | "done";
+
+function StepNode({ index, state }: { index: number; state: StepState }) {
+  const tone =
+    state === "done"
+      ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
+      : state === "active"
+        ? "bg-violet-600 border-violet-600 text-white ring-2 ring-violet-500/30"
+        : "bg-[var(--usb-bg-3)] border-[var(--usb-border-mid)] text-[var(--usb-fg-lo)]";
+  return (
+    <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 transition-all duration-300 text-[11px] font-mono font-bold ${tone}`}>
+      {state === "done" ? <Check size={11} strokeWidth={2.6} /> : index}
+    </div>
+  );
 }
 
 function parseSrtPreviewBlocks(srt: string): typeof MOCK_SRT_BLOCKS {
@@ -302,7 +318,7 @@ export function TranslationPipeline({
           // Timeout: if no response in 5min, show error
           sendingTimer = setTimeout(() => {
             setPhase("idle");
-            setErrorMessage("Timeout: la IA no respondió. Pulsa Retranducir para reintentar.");
+            setErrorMessage("Timeout: la IA no respondió. Pulsa Retraducir para reintentar.");
             if (sendingInterval) { clearInterval(sendingInterval); sendingInterval = null; }
           }, 300_000);
           // Update text to show progress phases
@@ -512,29 +528,29 @@ export function TranslationPipeline({
   const displayedBlockCount = Math.min(blockCount, totalBlocks);
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  const step1: StepState = isBuilding ? "active" : phase !== "idle" ? "done" : "idle";
+  const step2: StepState = isSending || isStreaming ? "active" : isDone ? "done" : "idle";
+  const step3: StepState = isDone ? "done" : isStreaming ? "active" : "idle";
+
   return (
     <div className="space-y-2.5">
 
-      {/* ── Header bar ────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2">
-        <p className="text-white/22 text-[9px] uppercase tracking-widest flex items-center gap-1.5">
-          {isActive && (
-            <motion.span
-              className="w-1.5 h-1.5 rounded-full bg-violet-400 inline-block shrink-0"
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: 0.8, repeat: Infinity }}
-            />
-          )}
-          Pipeline SRT · EN → ES
-        </p>
+      {/* ── Header ───────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2.5 min-h-[28px]">
+        <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-amber-500">
+          {isActive
+            ? <motion.span className="w-2 h-2 rounded-full bg-current" animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 0.8, repeat: Infinity }} />
+            : <Zap size={14} />}
+        </span>
+        <p className="text-[12.5px] font-bold tracking-tight text-[var(--usb-fg)] truncate">Pipeline SRT · EN → ES</p>
         <div className="ml-auto flex items-center gap-2">
           {isDone && latencyMs !== null && (
             <>
-              <span className="flex items-center gap-1 text-[9px] text-white/28">
-                <TrendingUp size={8} />{totalBlocks} bloques
+              <span className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)]">
+                <TrendingUp size={10} />{totalBlocks} bloques
               </span>
-              <span className="flex items-center gap-1 text-[9px] text-violet-400/60">
-                <Zap size={8} />{(latencyMs / 1000).toFixed(1)}s
+              <span className="flex items-center gap-1 text-[10px] text-violet-400" style={{ fontWeight: 600 }}>
+                <Zap size={10} />{(latencyMs / 1000).toFixed(1)}s
               </span>
             </>
           )}
@@ -542,50 +558,38 @@ export function TranslationPipeline({
             <button
               onClick={() => setRunCount(n => n + 1)}
               disabled={!autoTranslate}
-              className="flex items-center gap-1 text-[9px] text-white/25 hover:text-white/55 disabled:opacity-30 disabled:cursor-not-allowed border border-[var(--usb-border)] hover:border-white/15 px-1.5 py-0.5 rounded transition-colors"
+              className="kx-chip flex items-center gap-1 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed px-2.5 py-1 rounded-full"
+              style={{ fontWeight: 600 }}
             >
-              <RefreshCcw size={7} />Retranducir
+              <RefreshCcw size={10} />Retraducir
             </button>
           )}
         </div>
       </div>
 
-      {/* ── Pipeline card ──────────────────────────────────────────────────── */}
-      <div className="bg-gradient-to-b from-[#121214] to-[#0a0a0c] border border-white/10 rounded-xl overflow-hidden shadow-lg relative">
+      {/* ── Timeline card ────────────────────────────────────────────────── */}
+      <div className="kx-card rounded-2xl overflow-hidden relative border border-[var(--usb-border)]">
 
-        {/* Connecting spine */}
-        <div className="absolute left-6 top-5 bottom-5 w-px bg-gradient-to-b from-sky-500/20 via-violet-500/20 to-emerald-500/20 pointer-events-none" />
+        {/* Spine */}
+        <div className="absolute left-[27px] top-8 bottom-8 w-px bg-[var(--usb-border-mid)] pointer-events-none" />
 
-        {/* ── STEP 1: Captura SRT ────────────────────────────────────────── */}
-        <div className="px-4 py-3 relative z-10">
-          <div className="flex items-center gap-2 mb-2">
-            <motion.div
-              animate={isBuilding
-                ? { scale: [1, 1.35, 1], boxShadow: ["0 0 0px #0ea5e9","0 0 10px #0ea5e9","0 0 0px #0ea5e9"] }
-                : {}}
-              transition={{ duration: 1.4, repeat: isBuilding ? Infinity : 0 }}
-              className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[var(--usb-bg-1)] ${
-                phase !== "idle" ? "border-sky-500/50" : "border-white/10"
-              }`}
-            >
-              <div className={`w-1.5 h-1.5 rounded-full transition-colors ${phase !== "idle" ? "bg-sky-400" : "bg-white/20"}`} />
-            </motion.div>
-
-            <span className={`text-[10px] uppercase tracking-widest transition-colors flex-1 ${phase !== "idle" ? "text-sky-400" : "text-white/20"}`} style={{ fontWeight: 600 }}>
+        {/* STEP 1 — Transcripción */}
+        <div className="px-4 py-3.5 relative z-10">
+          <div className="flex items-center gap-3">
+            <StepNode index={1} state={step1} />
+            <span className={`kx-slate flex-1 text-[12px] font-semibold ${phase !== "idle" ? "text-[var(--usb-fg)]" : "text-[var(--usb-fg-lo)]"}`}>
               {isBuilding ? "Leyendo transcripción…" : phase !== "idle" ? "Transcripción .srt · Udemy" : "Transcripción"}
             </span>
-
             {phase !== "idle" && (
-              <span className={`text-[9px] font-mono shrink-0 tabular-nums ${displayedBlockCount >= totalBlocks ? "text-sky-400" : "text-sky-400/55"}`}>
+              <span className="kx-num text-[10.5px] shrink-0 text-violet-400 font-bold">
                 {displayedBlockCount} / {totalBlocks}
               </span>
             )}
           </div>
 
-          {/* SRT block preview */}
-          <div className="ml-6 space-y-0">
+          <div className="ml-9 mt-2">
             {phase === "idle" && (
-              <p className={`text-[11px] italic ${errorMessage ? "text-amber-300/55" : "text-white/20"}`}>
+              <p className={`text-[11.5px] ${errorMessage ? "text-amber-400" : "text-[var(--usb-fg-lo)]"}`}>
                 {errorMessage || "Esperando inicio del video…"}
               </p>
             )}
@@ -596,36 +600,29 @@ export function TranslationPipeline({
                 initial={{ opacity: 0, y: -3 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.06 }}
-                className={`py-1.5 ${i < visibleBlocks.length - 1 ? "border-b border-white/4" : ""}`}
+                className={`py-2 ${i < visibleBlocks.length - 1 ? "border-b border-[var(--usb-divider)]" : ""}`}
               >
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-sky-400/70 text-[8px] font-mono" style={{ fontWeight: 700 }}>{block.num}</span>
-                  <span className="text-amber-400/45 text-[8px] font-mono">{block.ts}</span>
+                  <span className="kx-num text-violet-400 text-[10.5px] font-bold">{block.num}</span>
+                  <span className="kx-num text-[var(--usb-fg-lo)] text-[10px]">{block.ts}</span>
                 </div>
-                <p className="text-white/40 text-[9.5px] leading-snug line-clamp-1">{block.text}</p>
+                <p className="text-[var(--usb-fg-mid)] text-[11.5px] leading-snug line-clamp-1">{block.text}</p>
               </motion.div>
             ))}
 
             {phase !== "idle" && displayedBlockCount > 3 && (
-              <p className="text-white/18 text-[9px] pt-1">+ {displayedBlockCount - 3} bloques más…</p>
+              <p className="text-[var(--usb-fg-lo)] text-[10.5px] pt-1.5 font-medium">+ {displayedBlockCount - 3} bloques más…</p>
             )}
           </div>
         </div>
 
-        {/* ── STEP 2: Modelo IA ─────────────────────────────────────────── */}
-        <div className={`px-4 py-2.5 relative z-10 transition-colors duration-500 ${
-          isSending || isStreaming
-            ? "bg-violet-500/5 border-y border-violet-500/10"
-            : "border-y border-[var(--usb-divider)] bg-white/[0.015]"
+        {/* STEP 2 — Modelo IA */}
+        <div className={`px-4 py-3.5 relative z-10 border-y border-[var(--usb-divider)] transition-colors duration-300 ${
+          step2 === "active" ? "bg-[var(--usb-accent-soft)]" : "bg-transparent"
         }`}>
-          <div className="flex items-center gap-2">
-            <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[var(--usb-bg-1)] ${
-              isSending || isStreaming ? "border-violet-500/50" : "border-white/10"
-            }`}>
-              <Radio size={8} className={`transition-colors ${isSending || isStreaming ? "text-violet-400" : "text-white/20"}`} />
-            </div>
-
-            <span className={`text-[10px] tracking-wide flex-1 transition-colors ${isSending || isStreaming ? "text-violet-300" : "text-white/20"}`} style={{ fontWeight: 600 }}>
+          <div className="flex items-center gap-3">
+            <StepNode index={2} state={step2} />
+            <span className={`text-[12px] flex-1 min-w-0 truncate ${step2 === "idle" ? "text-[var(--usb-fg-mid)]" : "text-[var(--usb-fg)]"}`} style={{ fontWeight: 600 }}>
               {isSending   ? (errorMessage || `Enviando payload .srt · ${payloadKb}KB…`) :
                isStreaming ? "Generando traducción SRT…" :
                isDone      ? effectiveModelLabel :
@@ -633,39 +630,38 @@ export function TranslationPipeline({
             </span>
 
             {(isSending || isStreaming) && (
-              <span className="text-[9px] text-violet-400/55 shrink-0 flex items-center gap-1">
-                {localRef.current ? <><Database size={7} />Local</> : apiKeys.some(Boolean) ? <><Key size={7} />Gemini</> : <><WifiOff size={7} />Mock</>}
+              <span className="text-[10.5px] text-violet-400 shrink-0 flex items-center gap-1 font-semibold">
+                {localRef.current ? <><Database size={11} />Local</> : apiKeys.some(Boolean) ? <><Key size={11} />Gemini</> : <><WifiOff size={11} />Mock</>}
               </span>
             )}
 
             {isDone && latencyMs !== null && (
               <motion.span
-                initial={{ opacity: 0, scale: 0.8 }}
+                initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className={`text-[9px] shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                className={`text-[10px] shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full border shadow-sm ${
                   modelUsed === "mock"
-                    ? "text-amber-400 border-amber-500/20 bg-amber-500/8"
-                    : "text-emerald-400 border-emerald-500/20 bg-emerald-500/8"
+                    ? "text-amber-400 border-amber-500/30 bg-amber-500/10"
+                    : "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
                 }`}
                 style={{ fontWeight: 600 }}
               >
                 {modelUsed === "mock"
-                  ? <><WifiOff size={7} />mock</>
-                  : <><Zap size={7} />{(latencyMs / 1000).toFixed(1)}s</>}
+                  ? <><WifiOff size={10} />mock</>
+                  : <><Zap size={10} />{(latencyMs / 1000).toFixed(1)}s</>}
               </motion.span>
             )}
           </div>
 
-          {/* Progress bar */}
           <AnimatePresence>
             {(isSending || isStreaming) && (
               <motion.div
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="mt-2 ml-6"
+                className="mt-2.5 ml-9"
               >
-                <div className="h-0.5 bg-white/6 rounded-full overflow-hidden">
+                <div className="h-[3.5px] bg-[var(--usb-border)] rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 rounded-full"
+                    className="h-full bg-violet-600 rounded-full"
                     initial={{ width: "0%" }}
                     animate={{
                       width: isSending ? "28%" : ["30%", "52%", "70%", "87%", "96%"]
@@ -682,36 +678,21 @@ export function TranslationPipeline({
           </AnimatePresence>
         </div>
 
-        {/* ── STEP 3: Salida SRT en español ────────────────────────────── */}
-        <div className="px-4 py-3 relative z-10">
-          <div className="flex items-center gap-2 mb-2">
-            <motion.div
-              animate={isDone
-                ? { scale: [1, 1.2, 1], boxShadow: ["0 0 0px #10b981","0 0 10px #10b981","0 0 0px #10b981"] }
-                : {}}
-              transition={{ duration: 0.8 }}
-              className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border transition-colors bg-[var(--usb-bg-1)] ${
-                isDone ? "border-emerald-500/50" : isStreaming ? "border-violet-400/50" : "border-white/10"
-              }`}
-            >
-              <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
-                isDone ? "bg-emerald-400" : isStreaming ? "bg-violet-400" : "bg-white/20"
-              }`} />
-            </motion.div>
-            <span className={`text-[10px] uppercase tracking-widest transition-colors ${
-              isDone ? "text-emerald-400" : isStreaming ? "text-violet-300" : "text-white/20"
-            }`} style={{ fontWeight: 600 }}>
+        {/* STEP 3 — Salida */}
+        <div className="px-4 py-3.5 relative z-10">
+          <div className="flex items-center gap-3">
+            <StepNode index={3} state={step3} />
+            <span className={`kx-slate flex-1 text-[12px] font-semibold ${step3 === "idle" ? "text-[var(--usb-fg-lo)]" : "text-[var(--usb-fg)]"}`}>
               {isStreaming ? "Traduciendo SRT…" : isDone ? "SRT Español · Completo" : "Salida .srt"}
             </span>
             {isDone && (
-              <span className="ml-auto text-emerald-400/50 text-[9px]">
-                {totalBlocks} bloques listos
+              <span className="kx-num text-emerald-400 text-[10.5px] font-bold">
+                {totalBlocks} bloques
               </span>
             )}
           </div>
 
-          {/* SRT output box */}
-          <div className="ml-6">
+          <div className="ml-9 mt-2">
             <AnimatePresence mode="wait">
               {(isStreaming || isDone) && streamedSrt ? (
                 <motion.div
@@ -720,11 +701,11 @@ export function TranslationPipeline({
                   animate={{ opacity: 1 }}
                   className="bg-[var(--usb-bg-4)] border border-[var(--usb-border)] rounded-lg overflow-hidden"
                 >
-                  <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[var(--usb-border)]">
-                    <span className="text-[var(--usb-fg-lo)] text-[8px] font-mono uppercase tracking-widest">subtitulos_es.srt</span>
+                  <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[var(--usb-divider)]">
+                    <span className="kx-num text-[var(--usb-fg-lo)] text-[10px] uppercase">subtitulos_es.srt</span>
                     {isStreaming && (
                       <motion.span
-                        className="w-1 h-3 bg-violet-400 rounded-sm"
+                        className="w-1 h-3 bg-violet-600 rounded-sm"
                         animate={{ opacity: [1, 0, 1] }}
                         transition={{ duration: 0.45, repeat: Infinity }}
                       />
@@ -739,7 +720,7 @@ export function TranslationPipeline({
                     ))}
                     {isStreaming && (
                       <motion.span
-                        className="inline-block ml-[1px] w-[2px] h-[12px] bg-violet-400 rounded-sm align-middle shadow-[0_0_6px_#a78bfa]"
+                        className="inline-block ml-[1px] w-[2px] h-[12px] bg-violet-600 rounded-sm align-middle"
                         animate={{ opacity: [1, 0, 1] }}
                         transition={{ duration: 0.5, repeat: Infinity }}
                       />
@@ -747,14 +728,9 @@ export function TranslationPipeline({
                   </div>
                   {isDone && (
                     <div className="px-2.5 pb-2">
-                      <motion.p
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.4 }}
-                        className="text-[var(--usb-fg-dim)] text-[9px] font-mono"
-                      >
+                      <p className="kx-num text-[var(--usb-fg-lo)] text-[10px]">
                         {totalBlocks} bloques · {streamedSrt.split(" ").length} tokens
-                      </motion.p>
+                      </p>
                     </div>
                   )}
                 </motion.div>
@@ -763,38 +739,38 @@ export function TranslationPipeline({
                   {[55, 40, 65].map((w, i) => (
                     <motion.div
                       key={i}
-                      animate={{ opacity: [0.06, 0.18, 0.06] }}
+                      animate={{ opacity: [0.25, 0.6, 0.25] }}
                       transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.18 }}
-                      className="h-2 rounded bg-[var(--usb-fg-dim)]"
+                      className="h-2 rounded bg-[var(--usb-border-mid)]"
                       style={{ width: `${w}%` }}
                     />
                   ))}
                 </div>
               ) : (
-                <p className="text-[var(--usb-fg-lo)] text-[11px] italic">Pendiente…</p>
+                <p className="text-[var(--usb-fg-lo)] text-[11px]">Pendiente…</p>
               )}
             </AnimatePresence>
           </div>
         </div>
       </div>
 
-      {/* ── Expandable Prompt section ─────────────────────────────────────── */}
-      <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-4)] overflow-hidden">
+      {/* ── Prompt ───────────────────────────────────────────────────────── */}
+      <div className="kx-card overflow-hidden">
         <button
           onClick={() => setShowPrompt(v => !v)}
-          className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white/3 transition-colors"
+          className="w-full flex items-center gap-2 px-3.5 py-3 hover:bg-[var(--usb-accent-soft)] transition-colors"
         >
-          <span className="text-white/35 text-[9px] uppercase tracking-widest flex-1 text-left" style={{ fontWeight: 600 }}>
+          <span className="kx-slate text-[var(--usb-fg-mid)] flex-1 text-left">
             Prompt de traducción
           </span>
-          <span className="text-violet-400/50 text-[9px]">
-            {showPrompt ? "ocultar" : "ver →"}
+          <span className="text-violet-400 text-[11px]" style={{ fontWeight: 600 }}>
+            {showPrompt ? "ocultar" : "ver"}
           </span>
           <motion.div
             animate={{ rotate: showPrompt ? 180 : 0 }}
             transition={{ duration: 0.2 }}
           >
-            <ChevronDown size={11} className="text-white/25" />
+            <ChevronDown size={12} className="text-[var(--usb-fg-lo)]" />
           </motion.div>
         </button>
 
@@ -808,27 +784,25 @@ export function TranslationPipeline({
               className="overflow-hidden"
             >
               <div className="border-t border-[var(--usb-divider)]">
-                {/* Copy button */}
-                <div className="flex items-center justify-between px-3 py-2">
-                  <p className="text-white/22 text-[9px]">
+                <div className="flex items-center justify-between px-3.5 py-2.5">
+                  <p className="text-[var(--usb-fg-lo)] text-[10px]">
                     Copia y pega en Gemini · ChatGPT · Claude
                   </p>
                   <button
                     onClick={handleCopyPrompt}
-                    className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border transition-all ${
+                    className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border transition-colors ${
                       promptCopied
-                        ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/8"
-                        : "text-white/35 hover:text-white/65 border-[var(--usb-border)] hover:border-white/18"
+                        ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                        : "text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] border-[var(--usb-border-mid)] hover:bg-[var(--usb-accent-soft)]"
                     }`}
                     style={{ fontWeight: 600 }}
                   >
-                    {promptCopied ? <><Check size={9} />Copiado</> : <><Copy size={9} />Copiar</>}
+                    {promptCopied ? <><Check size={10} />Copiado</> : <><Copy size={10} />Copiar</>}
                   </button>
                 </div>
 
-                {/* Prompt text */}
-                <div className="mx-3 mb-3 bg-[var(--usb-bg-0)] border border-[var(--usb-border)] rounded-lg overflow-hidden">
-                  <pre className="px-3 py-2.5 text-[9px] text-white/45 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
+                <div className="mx-3.5 mb-3.5 bg-[var(--usb-bg-4)] border border-[var(--usb-border)] rounded-lg overflow-hidden">
+                  <pre className="px-3 py-2.5 text-[10px] text-[var(--usb-fg-mid)] font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
                     {TRANSLATION_PROMPT}
                   </pre>
                 </div>
