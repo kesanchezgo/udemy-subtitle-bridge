@@ -49,3 +49,5 @@ tmp/
 .mock/
 AGENTS.md
 udemy_curse_page_v2.html
+temp_profile*/
+.e2e-harness-profile/
