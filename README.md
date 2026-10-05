@@ -35,6 +35,9 @@ parties beyond the AI endpoint you configure.
 
 ### Anki export — two deck families
 
+Everything exports under one configurable root deck — **`Kinema`** by default —
+so nothing mixes with your other decks.
+
 **Course concepts** (`<Root>::Courses::<Course>::<Lesson>`):
 
 - One `.apkg` with everything inside: the `Udemy Bridge Concept` note type
@@ -45,6 +48,13 @@ parties beyond the AI endpoint you configure.
   decks and the `Default` preset are never touched; re-importing a lesson
   updates its notes instead of duplicating (content-addressed GUIDs).
 - A legacy `.txt` path (CSS + templates) remains as a repair fallback.
+- Every concept card carries a **color-coded type pill** (Concepto / Código /
+  Entrevista / Comparación / Proceso / Aplicación) next to the lesson pill —
+  the AI classifies each card and the design signals it (signaling principle,
+  rationale and references in `docs/ANKI_PEDAGOGY.md`).
+- Note types and presets keep their `Udemy Bridge …` names as stable
+  identifiers — renaming them would fork note types inside existing
+  collections.
 
 **Course vocabulary** (`<Root>::Vocabulary::<Language>::<Course>`):
 
@@ -89,6 +99,10 @@ parties beyond the AI endpoint you configure.
 
 Loading the root fails: Chrome would read the source manifest/TypeScript.
 After pulling changes, rebuild (`npm run build`) and reload the extension.
+
+**Branding**: the toolbar / extensions-page / store icons are the Kinema K
+(`public/icons/`, master SVG + `node scripts/generate-icons.mjs` to regenerate;
+see `.mock/docs/KINEMA-BRAND.md` for the identity rules).
 
 ## Typical session
 
