@@ -396,6 +396,7 @@ else console.log('   ✅ SRT Español presente en el curso real');
 // ── Fase: Vocabulario EN del curso real → .apkg ──────────────────────────────
 step('Exporting REAL course vocabulary (.apkg)');
 let vocabOk = false;
+let vocabPhonetics = [];
 const vocabDownload = page.waitForEvent('download', { timeout: 90000 }).then((d) => ({ d }), () => ({}));
 await page.locator('[id^="usb-dock-host-"] button:has-text("Extraer vocabulario")').first().click({ timeout: 15000 });
 await sleep(3000);
@@ -423,15 +424,43 @@ if (!vocabEv.d) {
 		}
 		const vocabDeck = Object.values(decks).find((d) => /Vocabulary::English::/i.test(d.name));
 		if (!vocabDeck) throw new Error('mazo de vocabulario ausente: ' + Object.values(decks).map((d) => d.name).join(', '));
-		const notes = db.exec('SELECT guid, sfld FROM notes')[0]?.values || [];
+		const notes = db.exec('SELECT guid, sfld, flds FROM notes')[0]?.values || [];
 		if (notes.length === 0) throw new Error('0 notas de vocabulario');
 		for (const n of notes) if (!n[0].startsWith('usb')) throw new Error('GUID sin prefijo usb');
+		vocabPhonetics = notes.map((n) => (n[2] || '').split('')[1]).filter(Boolean);
 		vocabOk = true;
 		console.log(`   ✅ vocabulario real: ${notes.length} palabras en "${vocabDeck.name}" (fonética/definición incluidas)`);
 		db.close();
 	} catch (e) {
 		await fail('vocabulario (curso real): ' + e.message, page, 'vocab-audit');
 	}
+}
+
+// ── Fase: chip de glosario + badge de repasos durante el playback real ───────
+step('Glossary chip + review badge (playback real, best effort)');
+try {
+	let glossSeen = false;
+	if (vocabPhonetics.length > 0) {
+		const appeared = await page.waitForFunction(
+			(ips) => ips.some((ip) => document.body?.innerText?.includes(ip)),
+			vocabPhonetics,
+			{ timeout: 45000 },
+		).then(() => true, () => false);
+		glossSeen = appeared;
+		if (appeared) {
+			await page.screenshot({ path: path.join(repoRoot, 'qa-udemy-gloss-chip.png') });
+			console.log('   ✅ chip de glosario visible durante el playback real (palabra + IPA)');
+		} else {
+			console.log('   · ninguna palabra del glosario pasó en la ventana de 45s (no fatal)');
+		}
+	}
+	const dockText = await page.evaluate(() => document.querySelector('[id^="usb-dock-host-"]').shadowRoot.textContent);
+	const badgeShown = /por repasar/.test(dockText);
+	console.log(badgeShown
+		? '   ✅ badge de repasos visible (Anki abierto con tarjeta pendiente)'
+		: '   · badge de repasos no visible (Anki cerrado o sin pendientes — graceful)');
+} catch (e) {
+	console.log('   · verificación best-effort falló (no fatal):', String(e).slice(0, 80));
 }
 
 // ── Fase: Obsidian (URIs reales del curso real) + guard de duplicados ─────────
