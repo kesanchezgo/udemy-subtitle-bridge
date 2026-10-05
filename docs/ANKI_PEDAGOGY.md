@@ -1,4 +1,15 @@
-# Pedagogía Anki — Udemy Subtitle Bridge
+# Pedagogía Anki — Kinema (by Kivara)
+
+## 0. Política de evidencia (REGLA PERMANENTE)
+
+**Toda decisión pedagógica o de diseño de las tarjetas debe estar respaldada
+por referencias verificadas en Scopus ANTES de implementarse**, usando la API
+(key del propietario) con queries TITLE-ABS-KEY y resultados citables (DOI).
+Las queries quedan documentadas en §5 y se amplían con cada feature nueva.
+Decisiones sin referencia previa (p. ej. experimentos de color) se verifican
+con Scopus ANTES de consolidarse — y se revierten si la evidencia no las
+respalda.
+
 
 Diseño basado en evidencia para las dos familias de mazos que genera la
 extensión. Bibliografía consultada vía **Scopus API** (2026-09-28, API key del
