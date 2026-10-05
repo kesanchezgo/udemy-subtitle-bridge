@@ -2710,20 +2710,27 @@ function updateGlossChip() {
 	const video = document.querySelector('video');
 	const paused = video?.paused ?? false;
 
+	// El chip sigue el tono y la opacidad configurados del overlay (misma
+	// jerarquía visual que el subtítulo sobre el que flota).
+	const toneColor = getToneColor(currentConfig.tone);
+	const chipBg = `rgba(0, 0, 0, ${Math.max(0, Math.min(1, currentConfig.opacity > 1 ? currentConfig.opacity / 100 : currentConfig.opacity))})`;
+	glossChipEl.style.background = chipBg;
+	glossChipEl.style.color = toneColor;
+
 	glossChipEl.textContent = '';
 	const wordSpan = document.createElement('span');
-	wordSpan.style.cssText = 'font-weight:700;color:#93c5fd';
+	wordSpan.style.cssText = 'font-weight:700';
 	wordSpan.textContent = entry.word;
 	glossChipEl.appendChild(wordSpan);
 	if (entry.phonetic) {
 		const ipaSpan = document.createElement('span');
-		ipaSpan.style.cssText = 'color:#5eead4;margin-left:6px;font-style:italic';
+		ipaSpan.style.cssText = 'margin-left:6px;font-style:italic;opacity:0.82';
 		ipaSpan.textContent = ` ${entry.phonetic}`;
 		glossChipEl.appendChild(ipaSpan);
 	}
 	if (paused && entry.monolingual) {
 		const defDiv = document.createElement('div');
-		defDiv.style.cssText = 'margin-top:3px;color:#cbd5e1;font-weight:400;font-style:normal;font-size:11.5px';
+		defDiv.style.cssText = 'margin-top:3px;opacity:0.85;font-weight:400;font-style:normal;font-size:11.5px';
 		defDiv.textContent = entry.monolingual;
 		glossChipEl.appendChild(defDiv);
 	}
