@@ -10,15 +10,14 @@
 import { spawnSync } from 'node:child_process';
 
 const runs = Math.max(1, Number(process.argv[2]) || 1);
-const HARNESS = ['node', '--import', './scripts/register-ts-resolve.mjs'];
 let failed = false;
 
 for (let attempt = 1; attempt <= runs; attempt += 1) {
 	console.log(`\n═══════════ INTENTO ${attempt}/${runs} ═══════════`);
 	const steps = [
-		{ name: 'estructura .apkg', cmd: [...HARNESS, 'scripts/qa-anki-decks.mjs'] },
+		{ name: 'estructura .apkg', cmd: ['node', 'scripts/qa-anki-decks.mjs'] },
 		{ name: 'importación real + capturas', cmd: ['node', 'scripts/qa-anki-import-verify.mjs'] },
-		{ name: 'contenido IA (proxy real)', cmd: [...HARNESS, 'scripts/qa-vocab-ai.mjs'] },
+		{ name: 'contenido IA (proxy real)', cmd: ['node', 'scripts/qa-vocab-ai.mjs'] },
 	];
 	for (const step of steps) {
 		console.log(`\n── ${step.name} ──`);

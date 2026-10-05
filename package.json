@@ -5,7 +5,12 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "qa:local": "npm run build && node scripts/qa-local.js",
-    "qa:extension": "npm run build && node scripts/qa-extension-local.mjs"
+    "qa:extension": "npm run build && node scripts/qa-extension-local.mjs",
+    "qa:anki:structure": "node scripts/qa-anki-decks.mjs",
+    "qa:anki:import": "node scripts/qa-anki-import-verify.mjs",
+    "qa:anki:all": "node scripts/qa-anki-all.mjs",
+    "qa:vocab:ai": "node scripts/qa-vocab-ai.mjs",
+    "qa:udemy:real": "node scripts/qa-udemy-real.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

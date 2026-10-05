@@ -7,6 +7,10 @@
  * Uso: node --import ./scripts/register-ts-resolve.mjs scripts/qa-vocab-ai.mjs
  */
 import { createRequire } from 'node:module';
+import { register } from 'node:module';
+
+// Auto-registro: `node scripts/qa-anki-decks.mjs` funciona sin --import.
+register('./ts-resolve-loader.mjs', import.meta.url);
 
 const require = createRequire(import.meta.url);
 
