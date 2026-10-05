@@ -258,3 +258,22 @@ coding" AND picture*` · `"desirable difficulties"` · `"elaborative
 interrogation" OR "self-explanation" OR "practice testing"` · `"incidental
 vocabulary" AND reading AND acquisition` · `vocabulary AND "sentence" AND L2
 AND learning`.
+
+## 7. Features pedagógicas del ecosistema
+
+**Badge de repasos (AnkiConnect)**: el dock consulta cuántas tarjetas de la
+lección actual tienen repaso pendiente hoy. No introduce un efecto nuevo:
+operacionaliza el espaciado ya evidenciado (Cepeda et al. 2006; Dunlosky et
+al. 2013 — §1) reduciendo la fricción de adherencia al calendario.
+
+**Glosario resaltado durante el video**: las palabras exportadas de la
+lección aparecen como chip (palabra + IPA + definición monolingüe en pausa)
+bajo el subtítulo cuando su cue está activa. Base (Scopus 2026-09-29):
+- Meta-análisis de glosas hipertexto en L2: efecto positivo en adquisición
+  de vocabulario — 10.1080/09588221.2010.523285.
+- Glosas L1 en subtítulos de videojuegos: 10.1080/10494820.2020.1863233.
+- Técnicas de enhancement durante video: 10.1080/09588221.2017.1375960.
+- Anotaciones multimedia e incidencia incidental: 10.1007/s11251-007-9016-7.
+La re-exposición incidental en el momento temporal correcto (la cue donde la
+palabra aparece) combina la señal espacial con el contexto original.
+

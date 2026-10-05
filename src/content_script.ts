@@ -120,6 +120,12 @@ const autoEnabledTracks = new WeakSet<TextTrack>();
 let capturedEnVtt: string | null = null;
 let capturedCues: CapturedCue[] = [];
 let importedEsCues: CapturedCue[] = [];
+
+// Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
+// el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
+type GlossaryEntry = { word: string; phonetic: string; monolingual: string };
+let lessonGlossary: GlossaryEntry[] = [];
+let glossChipEl: HTMLDivElement | null = null;
 let collectedLines: Array<{ text: string; ts: number }> = [];
 let lastImportedSubtitleAt = 0;
 let lastImportedSubtitleText = '';
@@ -2603,6 +2609,26 @@ function createOverlay(container: HTMLElement) {
 
 	overlayEl.appendChild(overlayTextEl);
 
+	glossChipEl = document.createElement('div');
+	glossChipEl.id = 'usb-gloss-chip';
+	glossChipEl.style.cssText = [
+		'display:none',
+		'margin-top:6px',
+		'padding:5px 12px',
+		'background:rgba(0,0,0,0.62)',
+		'border:1px solid rgba(255,255,255,0.16)',
+		'border-radius:8px',
+		'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+		'font-size:12px',
+		'line-height:1.45',
+		'color:#e2e8f0',
+		'text-align:left',
+		'max-width:100%',
+		'user-select:text',
+		'pointer-events:auto'
+	].join(';');
+	overlayEl.appendChild(glossChipEl);
+
 	overlayHandleEl = document.createElement('div');
 	overlayHandleEl.id = 'usb-drag-handle';
 	overlayHandleEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="16" height="16" fill="rgba(255,255,255,0.6)"><path d="M228,128a12,12,0,0,1-12,12H40a12,12,0,0,1,0-24H216A12,12,0,0,1,228,128ZM40,76H216a12,12,0,0,0,0-24H40a12,12,0,0,0,0,24ZM216,180H40a12,12,0,0,0,0,24H216a12,12,0,0,0,0-24Z"/></svg>'; // Phosphor (MIT)
@@ -2644,6 +2670,66 @@ function createOverlay(container: HTMLElement) {
 	applyOverlayStyle();
 }
 
+/** Busca la palabra del glosario presente en la cue EN que cubre `time`. */
+function findGlossForTime(time: number): GlossaryEntry | null {
+	if (lessonGlossary.length === 0) return null;
+	const cue = capturedCues.find((c) => time >= c.startTime && time <= c.endTime);
+	if (!cue) return null;
+	const lower = cue.text.toLowerCase();
+	for (const entry of lessonGlossary) {
+		const escaped = entry.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		if (new RegExp(`\\b${escaped}\\b`, 'i').test(lower)) return entry;
+	}
+	return null;
+}
+
+/** Chip de glosario bajo el subtítulo: palabra + IPA; en pausa añade la
+ *  definición monolingüe. Sin glosario/cue/sin match → oculto. */
+function updateGlossChip() {
+	if (!glossChipEl) return;
+	const time = getCurrentVideoTime();
+	if (time == null || lessonGlossary.length === 0) {
+		glossChipEl.style.display = 'none';
+		return;
+	}
+	const entry = findGlossForTime(time);
+	try {
+		const cueNow = capturedCues.find((c) => time >= c.startTime && time <= c.endTime);
+		document.documentElement.dataset.usbGlossState = JSON.stringify({
+			time: Math.round(time * 10) / 10,
+			cue: cueNow ? cueNow.text.slice(0, 24) : null,
+			cues: capturedCues.length,
+			entry: entry ? entry.word : null,
+			paused: document.querySelector('video')?.paused ?? null,
+		});
+	} catch {}
+	if (!entry) {
+		glossChipEl.style.display = 'none';
+		return;
+	}
+	const video = document.querySelector('video');
+	const paused = video?.paused ?? false;
+
+	glossChipEl.textContent = '';
+	const wordSpan = document.createElement('span');
+	wordSpan.style.cssText = 'font-weight:700;color:#93c5fd';
+	wordSpan.textContent = entry.word;
+	glossChipEl.appendChild(wordSpan);
+	if (entry.phonetic) {
+		const ipaSpan = document.createElement('span');
+		ipaSpan.style.cssText = 'color:#5eead4;margin-left:6px;font-style:italic';
+		ipaSpan.textContent = ` ${entry.phonetic}`;
+		glossChipEl.appendChild(ipaSpan);
+	}
+	if (paused && entry.monolingual) {
+		const defDiv = document.createElement('div');
+		defDiv.style.cssText = 'margin-top:3px;color:#cbd5e1;font-weight:400;font-style:normal;font-size:11.5px';
+		defDiv.textContent = entry.monolingual;
+		glossChipEl.appendChild(defDiv);
+	}
+	glossChipEl.style.display = 'block';
+}
+
 function updateOverlayText(text: string) {
 	if (overlayTextEl) {
 		const trimmed = text.trim();
@@ -2654,6 +2740,7 @@ function updateOverlayText(text: string) {
 		applyOverlayStyle();
 	}
 
+	updateGlossChip();
 	syncNativeCaptionVisibility();
 }
 
@@ -3232,6 +3319,16 @@ function bootstrap() {
 			}
 			applyOverlayStyle();
 			logOverlaySync('auto-translate toggle', `active=${nextActive} importedTrack=${hasImportedTrack}`);
+			return;
+		}
+
+		if (message.type === 'GLOSSARY_UPDATE') {
+			const payload = message.payload as { words?: GlossaryEntry[] } | undefined;
+			lessonGlossary = Array.isArray(payload?.words)
+				? payload.words.filter((w) => w && typeof w.word === 'string' && w.word.trim())
+				: [];
+			try { document.documentElement.dataset.usbGlossary = String(lessonGlossary.length); } catch {}
+			updateGlossChip();
 			return;
 		}
 

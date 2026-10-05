@@ -229,17 +229,29 @@ if (!sw) await fail('service worker never appeared', page, 'sw');
 console.log('   service worker up:', sw.url());
 
 step('Seeding provider config + Obsidian export config + clearing stale dock prefs');
-await sw.evaluate(({ cfg, obsidian }) => {
+await sw.evaluate(({ cfg, obsidian, registry }) => {
 	return new Promise((resolve) => {
 		chrome.storage.local.clear(() => {
 			chrome.storage.local.set({
 				usg_ai_provider_config: cfg,
 				enabled: true,
 				obsidian_export_config: obsidian,
+					usb_vocab_registry: registry,
 			}, resolve);
 		});
 	});
 }, {
+		registry: {
+			'en|java': {
+				course: 'Java Programming Bootcamp: Spring Boot & REST APIs',
+				lesson: 'Platform Independence in Java',
+				date: '2026-10-01',
+				deck: 'Kinema::Vocabulary::English::QA',
+				word: 'java',
+				phonetic: '/ˈdʒɑːvə/',
+				monolingual: 'a programming language and platform',
+			},
+		},
 	cfg: PROVIDER_CFG,
 	obsidian: {
 		vaultName: 'QA Vault',
@@ -457,6 +469,32 @@ try {
 } catch (e) {
 	console.log(`   ⚠️ clipboard no verificable en este entorno: ${String(e).slice(0, 120)}`);
 }
+
+step('Verifying glossary chip in the overlay (vocabulario de la lección)');
+// Buscar el video al inicio de la cue "Every Java program starts with a class"
+await page.evaluate(() => {
+	const v = document.querySelector('video');
+	if (v) { v.currentTime = 0.3; v.pause?.(); }
+});
+const glossAppear = await page.waitForFunction(
+	() => document.body?.innerText?.includes('/ˈdʒɑːvə/'),
+	{ timeout: 25000 },
+).then(() => true, () => false);
+if (!glossAppear) {
+	const dbg = await page.evaluate(() => ({
+		chip: Boolean(document.getElementById('usb-gloss-chip')),
+		chipDisplay: document.getElementById('usb-gloss-chip')?.style.display ?? null,
+		chipText: document.getElementById('usb-gloss-chip')?.textContent?.slice(0, 60) ?? null,
+		glossaryLen: document.documentElement.dataset.usbGlossary ?? null,
+		state: document.documentElement.dataset.usbGlossState ?? null,
+	}));
+	console.error('DEBUG gloss:', JSON.stringify(dbg));
+	await fail('glossary chip no apareció en el overlay (falta /ˈdʒɑːvə/)', page, 'gloss-chip');
+}
+console.log('   ✅ chip de glosario visible (java + IPA + definición en pausa)');
+	await page.evaluate(() => document.getElementById('usb-gloss-chip')?.scrollIntoView({ block: 'center' }));
+	await page.waitForTimeout(600);
+	await page.screenshot({ path: path.join(repoRoot, 'qa-extension-gloss-chip.png') });
 
 step('Verifying .apkg download (unzip + SQLite audit)');
 let apkgOk = false;

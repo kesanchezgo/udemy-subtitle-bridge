@@ -15,7 +15,7 @@ import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream,
 import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
 import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
 import {
-  DEFAULT_VOCAB_CONFIG, buildVocabularySpec, filterVocabulary, loadVocabConfig,
+  DEFAULT_VOCAB_CONFIG, buildVocabularySpec, filterVocabulary, getLectureGlossary, loadVocabConfig,
   loadVocabRegistry, markVocabularyExported, parseVocabularyPayload, saveVocabConfig,
   splitAlreadyExported,
   type VocabConfig,
@@ -1231,6 +1231,10 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const [vocabProgress, setVocabProgress]   = useState("");
   const [vocabLangOk, setVocabLangOk]       = useState<boolean | null>(null);
 
+  // Badge de repasos: tarjetas de ESTA lección con repaso pendiente en Anki hoy
+  // (vía AnkiConnect; null = Anki cerrado o sin datos).
+  const [ankiDue, setAnkiDue]               = useState<number | null>(null);
+
   // Obsidian export
   const [obsidianCfg, setObsidianCfg]             = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
   const [obsidianPanelOpen, setObsidianPanelOpen] = useState(false);
@@ -1336,6 +1340,33 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       if (Object.keys(relevant).length) apply(relevant);
     });
   }, []);
+
+  // Empuja el glosario de la lección al overlay (content script): palabras
+  // exportadas de ESTA lección con su IPA/definición para el chip del video.
+  const pushLectureGlossary = useCallback(async () => {
+    try {
+      if (!courseName.trim() || !lessonName.trim()) return;
+      const words = await getLectureGlossary(courseName, lessonName);
+      if (words.length === 0) return;
+      await contentBridge.sendToContent({ type: "GLOSSARY_UPDATE", payload: { words } });
+    } catch { /* overlay sin glosario — no fatal */ }
+  }, [courseName, lessonName]);
+
+  useEffect(() => { void pushLectureGlossary(); }, [pushLectureGlossary]);
+
+  // Badge de repasos: consulta AnkiConnect (si Anki está abierto) cuántas
+  // tarjetas de esta lección tienen repaso pendiente hoy.
+  useEffect(() => {
+    if (!content) return;
+    let alive = true;
+    void sendRuntimeMessage<{ ok?: boolean; due?: number }>({
+      type: "USG_ANKI_DUE", course: courseName, lesson: lessonName,
+    }).then((r) => {
+      if (alive && r?.ok && typeof r.due === "number") setAnkiDue(r.due);
+      else if (alive) setAnkiDue(null);
+    });
+    return () => { alive = false; };
+  }, [content, courseName, lessonName, ankiExported]);
 
   const handleSaveVocabCfg = (patch: Partial<VocabConfig>) => {
     const next = { ...vocabCfg, ...patch };
@@ -2338,6 +2369,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       const apkg = await buildAnkiApkg(spec, (msg) => setVocabProgress(msg));
       downloadApkg(apkg, `${lessonName.replace(/[^a-z0-9]/gi, "_")}_vocabulario_${vocabCfg.targetLang}.apkg`);
       await markVocabularyExported(vocabCfg.targetLang, fresh, { course: courseName, lesson: lessonName, deck: deckPath });
+      void pushLectureGlossary();
 
       setVocabStatus("done");
       setVocabProgress(`${fresh.length} palabras`);
@@ -3222,6 +3254,16 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full"/>
                 </div>
                 <span className="text-emerald-400 text-[11px] font-bold tabular-nums shrink-0">{content.relevance.score}%</span>
+                {ankiDue != null && ankiDue > 0 && (
+                  <button
+                    onClick={() => { void sendRuntimeMessage({ type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, browse: true }); }}
+                    title="Abrir estas tarjetas en el navegador de Anki"
+                    className="ml-auto shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300/90 text-[10px] font-bold tabular-nums hover:bg-amber-500/18 transition-colors"
+                  >
+                    <Repeat2 size={10}/>
+                    {ankiDue} por repasar
+                  </button>
+                )}
               </div>
               )}
 
