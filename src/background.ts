@@ -408,6 +408,18 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		return true;
 	}
 
+	if (type === 'USG_ANKI_DUE') {
+		const course = String((message as { course?: unknown }).course || '');
+		const lesson = String((message as { lesson?: unknown }).lesson || '');
+		const browse = Boolean((message as { browse?: unknown }).browse);
+
+		handleAnkiDue(course, lesson, browse)
+			.then((result) => sendResponse({ ok: true, ...result }))
+			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
+
+		return true;
+	}
+
 	if (type === 'USG_GENERATE_VOCABULARY') {
 		const transcriptText = String(message.transcriptText || '');
 		const opts = message as ExtensionMessage & {
@@ -1747,4 +1759,33 @@ async function refineObjectiveViaGemini(
 		source: 'mock',
 		error: typeof reportedError === 'string' ? reportedError : undefined,
 	};
+}
+
+
+// ─── Badge de repasos: consulta AnkiConnect (si Anki está abierto) ───────────
+// La raíz del mazo es configurable, pero el import estático vive aquí para que
+// el SW la resuelva al compilar; el default ya es 'Kinema'.
+const ANKI_CONNECT_URL = 'http://127.0.0.1:8765';
+
+async function ankiInvokeBg(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
+	const res = await fetch(ANKI_CONNECT_URL, {
+		method: 'POST',
+		body: JSON.stringify({ action, version: 6, params }),
+		signal: AbortSignal.timeout(3000)
+	});
+	if (!res.ok) throw new Error(`AnkiConnect HTTP ${res.status}`);
+	const json = await res.json();
+	if (json.error) throw new Error(String(json.error));
+	return json.result;
+}
+
+async function handleAnkiDue(course: string, lesson: string, browse: boolean) {
+	const { conceptDeckPath, DEFAULT_ROOT_DECK } = await import('./app/services/ankiDesign');
+	const deck = conceptDeckPath(DEFAULT_ROOT_DECK, course, lesson);
+	if (browse) {
+		await ankiInvokeBg('guiBrowse', { query: `deck:"${deck}" is:due` });
+		return { browse: true };
+	}
+	const ids = await ankiInvokeBg('findCards', { query: `deck:"${deck}" is:due` });
+	return { due: Array.isArray(ids) ? ids.length : 0, deck };
 }

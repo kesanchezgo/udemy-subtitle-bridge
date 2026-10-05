@@ -66,7 +66,17 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 const VOCAB_CONFIG_KEY = 'usb_vocab_config';
 const VOCAB_REGISTRY_KEY = 'usb_vocab_registry';
 
-export type VocabRegistry = Record<string, { course: string; lesson: string; date: string; deck: string }>;
+export interface VocabRegistryEntry {
+	course: string;
+	lesson: string;
+	date: string;
+	deck: string;
+	word?: string;
+	phonetic?: string;
+	monolingual?: string;
+}
+
+export type VocabRegistry = Record<string, VocabRegistryEntry>;
 
 export async function loadVocabConfig(): Promise<VocabConfig> {
 	try {
@@ -97,6 +107,22 @@ export async function saveVocabConfig(config: VocabConfig): Promise<void> {
 	await chromeLocalStorage.set({ [VOCAB_CONFIG_KEY]: config });
 }
 
+
+/** Glosario de la lección actual: palabras exportadas con su IPA y definición
+ *  monolingüe — alimenta el chip del overlay durante el video. */
+export async function getLectureGlossary(course: string, lesson: string): Promise<{ word: string; phonetic: string; monolingual: string }[]> {
+	const registry = await loadVocabRegistry();
+	const wantCourse = course.trim().toLowerCase();
+	const wantLesson = lesson.trim().toLowerCase();
+	const out: { word: string; phonetic: string; monolingual: string }[] = [];
+	for (const entry of Object.values(registry)) {
+		if (!entry.word) continue;
+		if (entry.course.trim().toLowerCase() !== wantCourse || entry.lesson.trim().toLowerCase() !== wantLesson) continue;
+		out.push({ word: entry.word, phonetic: entry.phonetic ?? '', monolingual: entry.monolingual ?? '' });
+	}
+	return out;
+}
+
 export async function loadVocabRegistry(): Promise<VocabRegistry> {
 	try {
 		const stored = await chromeLocalStorage.get([VOCAB_REGISTRY_KEY]);
@@ -116,7 +142,13 @@ export async function markVocabularyExported(
 	const registry = await loadVocabRegistry();
 	const today = new Date().toISOString().slice(0, 10);
 	for (const word of words) {
-		registry[registryKey(lang, word.word)] = { ...meta, date: today };
+		registry[registryKey(lang, word.word)] = {
+			...meta,
+			date: today,
+			word: word.word,
+			phonetic: word.phonetic,
+			monolingual: word.monolingual,
+		};
 	}
 	await chromeLocalStorage.set({ [VOCAB_REGISTRY_KEY]: registry });
 }
