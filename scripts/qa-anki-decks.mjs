@@ -16,6 +16,10 @@
  * Uso: node --import ./scripts/register-ts-resolve.mjs scripts/qa-anki-decks.mjs
  */
 import { createRequire } from 'node:module';
+import { register } from 'node:module';
+
+// Auto-registro: `node scripts/qa-anki-decks.mjs` funciona sin --import.
+register('./ts-resolve-loader.mjs', import.meta.url);
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 
