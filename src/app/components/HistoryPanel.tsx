@@ -291,7 +291,7 @@ export function HistoryPanel({ onOpenLecture, defaultOpen = false, hideToggle = 
                               transition={{ duration: 0.18 }}
                               className="overflow-hidden"
                             >
-                              <div className="px-3 pb-3 pt-1.5 border-t border-[var(--usb-divider)] space-y-1">
+                              <div className="px-3 pb-3 pt-1.5 border-t border-[var(--usb-divider)] space-y-1 max-h-72 overflow-y-auto">
                                 {lectures.length === 0 ? (
                                   <p className="text-[11.5px] py-3 text-center text-[var(--usb-fg-lo)] font-medium">Cargando lecciones…</p>
                                 ) : lectures.map((rec) => {
