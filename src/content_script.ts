@@ -29,6 +29,7 @@ type OverlayConfig = {
 	offsetMs: number;
 	shadowStrength: number;
 	customPos: OverlayCustomPos;
+	showGlossary: boolean;
 };
 
 type CapturedCue = {
@@ -74,7 +75,8 @@ const DEFAULT_CONFIG: OverlayConfig = {
 	opacity: 85,
 	offsetMs: 0,
 	shadowStrength: 60,
-	customPos: null
+	customPos: null,
+	showGlossary: true
 };
 
 const EXT_RUNTIME_ID =
@@ -2611,8 +2613,14 @@ function createOverlay(container: HTMLElement) {
 
 	glossChipEl = document.createElement('div');
 	glossChipEl.id = 'usb-gloss-chip';
+	// FUERA del flujo (absolute): el chip no altera la geometría del
+	// subtítulo — se ancla bajo el texto y se ajusta a los bordes del video.
 	glossChipEl.style.cssText = [
 		'display:none',
+		'position:absolute',
+		'left:50%',
+		'transform:translateX(-50%)',
+		'top:100%',
 		'margin-top:6px',
 		'padding:5px 12px',
 		'background:rgba(0,0,0,0.62)',
@@ -2623,9 +2631,10 @@ function createOverlay(container: HTMLElement) {
 		'line-height:1.45',
 		'color:#e2e8f0',
 		'text-align:left',
-		'max-width:100%',
+		'max-width:92%',
 		'user-select:text',
-		'pointer-events:auto'
+		'pointer-events:auto',
+		`z-index:${OVERLAY_Z_INDEX + 1}`
 	].join(';');
 	overlayEl.appendChild(glossChipEl);
 
@@ -2692,6 +2701,10 @@ function updateGlossChip() {
 		glossChipEl.style.display = 'none';
 		return;
 	}
+	if (currentConfig.showGlossary === false) {
+		glossChipEl.style.display = 'none';
+		return;
+	}
 	const entry = findGlossForTime(time);
 	try {
 		const cueNow = capturedCues.find((c) => time >= c.startTime && time <= c.endTime);
@@ -2707,6 +2720,11 @@ function updateGlossChip() {
 		glossChipEl.style.display = 'none';
 		return;
 	}
+	// En posición inferior, el chip va ARRIBA del texto para no salirse del video.
+	glossChipEl.style.top = currentConfig.position === 'bottom' ? 'auto' : '100%';
+	glossChipEl.style.bottom = currentConfig.position === 'bottom' ? '100%' : 'auto';
+	glossChipEl.style.marginTop = currentConfig.position === 'bottom' ? '0' : '6px';
+	glossChipEl.style.marginBottom = currentConfig.position === 'bottom' ? '6px' : '0';
 	const video = document.querySelector('video');
 	const paused = video?.paused ?? false;
 
@@ -3296,7 +3314,8 @@ function bootstrap() {
 				opacity: typeof payload.opacity === 'number' ? payload.opacity : currentConfig.opacity,
 				offsetMs: typeof payload.offsetMs === 'number' ? payload.offsetMs : readNumber(payload.syncOffset, currentConfig.offsetMs),
 				shadowStrength: typeof payload.shadowStrength === 'number' ? payload.shadowStrength : currentConfig.shadowStrength,
-				customPos: payload.customPos === undefined ? currentConfig.customPos : readCustomPos(payload.customPos)
+				customPos: payload.customPos === undefined ? currentConfig.customPos : readCustomPos(payload.customPos),
+				showGlossary: typeof payload.showGlossary === 'boolean' ? payload.showGlossary : currentConfig.showGlossary
 			};
 			if (payload.customPos === null) {
 				lastSyncedOverlayPosKey = '';

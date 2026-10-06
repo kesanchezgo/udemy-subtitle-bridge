@@ -136,6 +136,16 @@ function writeFallback(config: AiProviderConfig): void {
   }
 }
 
+/** Security: remove legacy credential mirrors from page localStorage. */
+function purgeFallback(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(LOCAL_FALLBACK_PREFIX + AI_PROVIDER_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Load the persisted provider config into globalThis. Safe to call repeatedly. */
 export async function initAiProviderConfig(): Promise<AiProviderConfig> {
   const storage = getChromeStorage();
@@ -175,12 +185,15 @@ export async function saveAiProviderConfig(
   return new Promise<AiProviderConfig>((resolve) => {
     try {
       storage.set({ [AI_PROVIDER_STORAGE_KEY]: config }, () => {
-        // Mirror to localStorage too so the content-script preview stays warm.
-        writeFallback(config);
+        // Security: with chrome.storage available, credentials must NEVER be
+        // mirrored to page localStorage (the content script shares the page
+        // origin's localStorage with every script on udemy.com). Purge any
+        // legacy mirror from older versions instead.
+        purgeFallback();
         resolve(config);
       });
     } catch {
-      writeFallback(config);
+      purgeFallback();
       resolve(config);
     }
   });

@@ -284,6 +284,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const [opacity, setOpacity]               = usePersistedState<number[]>("overlay_opacity", [85]);
   const [syncOffset, setSyncOffset]         = usePersistedState<number[]>("overlay_sync_offset", [0]);
   const [position, setPosition]             = usePersistedState<"top" | "center" | "bottom">("overlay_position", "bottom");
+  const [showGlossary, setShowGlossary]     = usePersistedState("overlay_show_glossary", true);
   const [textColor, setTextColor]           = usePersistedState<"white" | "yellow" | "cyan">("overlay_text_color", "white");
   const [shadowStrength, setShadowStrength] = usePersistedState<number[]>("overlay_shadow", [60]);
 
@@ -543,6 +544,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           textColor,
           shadowStrength: shadowStrength[0],
           offsetMs: syncOffset[0],
+          showGlossary,
           syncOffset: syncOffset[0],
           customPos: hasCustomPos ? { x: customPosX, y: customPosY } : null,
         },
@@ -552,7 +554,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     }, 280);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset, hasCustomPos, customPosX, customPosY]);
+  }, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset, hasCustomPos, customPosX, customPosY, showGlossary]);
 
   // ── Auto-translate toggle sync ────────────────────────────────────────────
   // Only fire on the toggle itself; live-overlay pushes are handled below.
@@ -1131,6 +1133,13 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                         className="absolute flex flex-col items-center gap-0.5"
                         style={previewPresetStyle}
                       >
+                        {showGlossary && (
+                          <div className="px-2.5 py-1 rounded-md bg-black/60 border border-white/16 text-[10px] leading-tight" style={{ marginTop: 6 }}>
+                            <span className="font-bold text-sky-300">java</span>
+                            <span className="text-teal-300 italic ml-1.5">/ˈdʒɑːvə/</span>
+                            <div className="text-white/70 text-[9px] mt-0.5">lenguaje de programación y plataforma</div>
+                          </div>
+                        )}
                         <AnimatePresence mode="wait">
                           <motion.div
                             key={`${currentLine}-${position}`}
@@ -1289,6 +1298,21 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 <SliderCard icon="sparkles" tone="rose" title="Sombra de relieve" value={`${shadowStrength[0]}%`}>
                   <Slider value={shadowStrength} onValueChange={setShadowStrength} max={100} min={0} step={10} className="[&_[data-slot=track]]:bg-violet-500/20 [&_[data-slot=range]]:bg-violet-600 [&_[data-slot=thumb]]:border-violet-600 [&_[data-slot=thumb]]:bg-white [&_[data-slot=thumb]]:h-4 [&_[data-slot=thumb]]:w-4"/>
                 </SliderCard>
+
+                <div className="flex items-center justify-between px-1 py-1">
+                  <div>
+                    <p className="text-[11.5px] font-semibold text-[var(--usb-fg-hi)] leading-tight">Glosario de vocabulario</p>
+                    <p className="text-[9.5px] text-[var(--usb-fg-lo)] leading-tight mt-0.5">Chip con palabra + IPA bajo el subtítulo; definición al pausar</p>
+                  </div>
+                  <button
+                    onClick={() => setShowGlossary(!showGlossary)}
+                    role="switch"
+                    aria-checked={showGlossary}
+                    className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${showGlossary ? "bg-violet-600" : "bg-black/25 border border-white/15"}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${showGlossary ? "left-[18px]" : "left-0.5"}`} />
+                  </button>
+                </div>
 
                 {/* Text color */}
                 <div>

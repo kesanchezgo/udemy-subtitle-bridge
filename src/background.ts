@@ -412,8 +412,9 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		const course = String((message as { course?: unknown }).course || '');
 		const lesson = String((message as { lesson?: unknown }).lesson || '');
 		const browse = Boolean((message as { browse?: unknown }).browse);
+		const rootDeck = String((message as { rootDeck?: unknown }).rootDeck || '');
 
-		handleAnkiDue(course, lesson, browse)
+		handleAnkiDue(course, lesson, browse, rootDeck)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 
@@ -1779,9 +1780,9 @@ async function ankiInvokeBg(action: string, params: Record<string, unknown> = {}
 	return json.result;
 }
 
-async function handleAnkiDue(course: string, lesson: string, browse: boolean) {
+async function handleAnkiDue(course: string, lesson: string, browse: boolean, rootDeck: string) {
 	const { conceptDeckPath, DEFAULT_ROOT_DECK } = await import('./app/services/ankiDesign');
-	const deck = conceptDeckPath(DEFAULT_ROOT_DECK, course, lesson);
+	const deck = conceptDeckPath(rootDeck || DEFAULT_ROOT_DECK, course, lesson);
 	if (browse) {
 		await ankiInvokeBg('guiBrowse', { query: `deck:"${deck}" is:due` });
 		return { browse: true };

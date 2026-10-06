@@ -1346,9 +1346,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const pushLectureGlossary = useCallback(async () => {
     try {
       if (!courseName.trim() || !lessonName.trim()) return;
+      // SIEMPRE se envía (incluso vacío): al cambiar a una lección sin
+      // vocabulario, el overlay debe limpiar el glosario de la anterior.
       const words = await getLectureGlossary(courseName, lessonName);
-      if (words.length === 0) return;
-      await contentBridge.sendToContent({ type: "GLOSSARY_UPDATE", payload: { words } });
+      await contentBridge.sendToContent({
+        type: "GLOSSARY_UPDATE",
+        payload: { course: courseName, lesson: lessonName, words },
+      });
     } catch { /* overlay sin glosario — no fatal */ }
   }, [courseName, lessonName]);
 
@@ -1360,13 +1364,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     if (!content) return;
     let alive = true;
     void sendRuntimeMessage<{ ok?: boolean; due?: number }>({
-      type: "USG_ANKI_DUE", course: courseName, lesson: lessonName,
+      type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, rootDeck: vocabCfg.rootDeck,
     }).then((r) => {
       if (alive && r?.ok && typeof r.due === "number") setAnkiDue(r.due);
       else if (alive) setAnkiDue(null);
     });
     return () => { alive = false; };
-  }, [content, courseName, lessonName, ankiExported]);
+  }, [content, courseName, lessonName, ankiExported, vocabCfg.rootDeck]);
 
   const handleSaveVocabCfg = (patch: Partial<VocabConfig>) => {
     const next = { ...vocabCfg, ...patch };
@@ -3256,7 +3260,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                 <span className="text-emerald-400 text-[11px] font-bold tabular-nums shrink-0">{content.relevance.score}%</span>
                 {ankiDue != null && ankiDue > 0 && (
                   <button
-                    onClick={() => { void sendRuntimeMessage({ type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, browse: true }); }}
+                    onClick={() => { void sendRuntimeMessage({ type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, browse: true, rootDeck: vocabCfg.rootDeck }); }}
                     title="Abrir estas tarjetas en el navegador de Anki"
                     className="ml-auto shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300/90 text-[10px] font-bold tabular-nums hover:bg-amber-500/18 transition-colors"
                   >
