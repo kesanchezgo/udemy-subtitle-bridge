@@ -1,27 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
-import { Check, Download, Loader2, Layers, Flame } from "../icons";
+import { Download, Loader2, Layers } from "../icons";
 import { historyService, type LectureHistoryRecord } from "../../services/historyService";
 import { celebrate } from "../CelebrationOverlay";
 import { exportPrimaryBtnCls, exportGhostBtnCls } from "./ExportModule";
+import { chromeLocalStorage } from "../../services/chromeStorage";
 
-const REVIEW_KEY = "kinema-anki-review";
-const SNOOZE_KEY = "kinema-anki-snooze";
 const HINT_KEY = "kinema-memory-hint-seen";
-const DAY = 86_400_000;
-
-const dayId = (d = new Date()) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-
-interface ReviewState { last: string; count: number }
-function readReview(): ReviewState {
-  try { return JSON.parse(localStorage.getItem(REVIEW_KEY) || "") as ReviewState; } catch { return { last: "", count: 0 }; }
-}
-function reviewStreak(): number {
-  const r = readReview();
-  if (!r.last) return 0;
-  const y = new Date(); y.setDate(y.getDate() - 1);
-  return r.last === dayId() || r.last === dayId(y) ? r.count : 0;
-}
 
 interface Props {
   /** Exports one lesson's stored cards as .apkg (downloads the file). */
@@ -34,30 +19,35 @@ export function MemoryCard({ onExportLesson, onOpenGuide }: Props) {
   const [lectures, setLectures] = useState<LectureHistoryRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
-  const [snoozed, setSnoozed] = useState(() => localStorage.getItem(SNOOZE_KEY) === dayId());
-  const [hintSeen, setHintSeen] = useState(() => localStorage.getItem(HINT_KEY) === "1");
-  const [streak, setStreak] = useState(reviewStreak);
+  const [hintSeen, setHintSeen] = useState(false);
 
   const load = useCallback(() => {
     historyService.listLectures().then((l) => setLectures(l.filter((r) => !r.deletedAt && r.status === "completed"))).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    void chromeLocalStorage.get([HINT_KEY]).then((items) => {
+      setHintSeen(items[HINT_KEY] === "1");
+    }).catch(() => {});
+  }, []);
+
+  const dismissHint = () => {
+    void chromeLocalStorage.set({ [HINT_KEY]: "1" }).catch(() => {});
+    setHintSeen(true);
+  };
+
+  // Estados fácticos: (a) generadas sin exportar, (b) exportadas.
+  // El estado de repaso (vencidas/hoy) vive SOLO en Anki — nunca se estima aquí.
   const pending = useMemo(() => lectures.filter((l) => !l.exportedAt && (l.ankiCards?.length ?? 0) > 0), [lectures]);
   const exported = useMemo(() => lectures.filter((l) => l.exportedAt), [lectures]);
-  const dueReview = useMemo(
-    () => exported.filter((l) => !l.reviewedAt || Date.now() - l.reviewedAt > DAY),
-    [exported],
-  );
-  const reviewedToday = readReview().last === dayId();
 
   const courses = useMemo(() => {
-    const m = new Map<string, { name: string; total: number; exported: number; reviewed: number }>();
+    const m = new Map<string, { name: string; total: number; exported: number }>();
     for (const l of lectures) {
-      const c = m.get(l.courseId) ?? { name: l.courseName, total: 0, exported: 0, reviewed: 0 };
+      const c = m.get(l.courseId) ?? { name: l.courseName, total: 0, exported: 0 };
       c.total++;
       if (l.exportedAt) c.exported++;
-      if (l.reviewedAt) c.reviewed++;
       m.set(l.courseId, c);
     }
     return [...m.values()].filter((c) => c.total > 0).slice(0, 3);
@@ -91,27 +81,6 @@ export function MemoryCard({ onExportLesson, onOpenGuide }: Props) {
     }
   };
 
-  const confirmReview = async () => {
-    const r = readReview();
-    const y = new Date(); y.setDate(y.getDate() - 1);
-    const count = r.last === dayId(y) ? r.count + 1 : r.last === dayId() ? r.count : 1;
-    try { localStorage.setItem(REVIEW_KEY, JSON.stringify({ last: dayId(), count })); } catch {}
-    setStreak(count);
-    await Promise.all(dueReview.map((l) => historyService.markReviewed(l.courseId, l.lectureId)));
-    load();
-  };
-
-  const snooze = () => {
-    try { localStorage.setItem(SNOOZE_KEY, dayId()); } catch {}
-    setSnoozed(true);
-  };
-
-  const dismissHint = () => {
-    try { localStorage.setItem(HINT_KEY, "1"); } catch {}
-    setHintSeen(true);
-  };
-
-  const showReview = exported.length > 0 && dueReview.length > 0 && !snoozed && !reviewedToday;
   const showHint = !hintSeen && exported.length === 0;
 
   return (
@@ -127,11 +96,6 @@ export function MemoryCard({ onExportLesson, onOpenGuide }: Props) {
             <p className="text-[var(--usb-fg-lo)] text-[10px]">Anki y Obsidian son tu sistema de repaso</p>
           </div>
         </div>
-        {streak > 0 && (
-          <span className="flex items-center gap-1 text-[10.5px] font-bold text-[#d97706] bg-[#d97706]/10 px-2 py-1 rounded-full">
-            <Flame size={11} />{streak} {streak === 1 ? "día" : "días"} repasando
-          </span>
-        )}
       </div>
 
       {courses.length > 0 && (
@@ -140,10 +104,10 @@ export function MemoryCard({ onExportLesson, onOpenGuide }: Props) {
             <div key={c.name}>
               <div className="flex items-center justify-between text-[10.5px] mb-1">
                 <span className="text-[var(--usb-fg)] font-semibold truncate pr-2">{c.name}</span>
-                <span className="text-[var(--usb-fg-lo)] shrink-0">{c.exported} de {c.total} fijadas{c.reviewed ? ` · ${c.reviewed} repasadas` : ""}</span>
+                <span className="text-[var(--usb-fg-lo)] shrink-0">{c.exported} de {c.total} fijadas</span>
               </div>
               <div className="h-1.5 rounded-full bg-[var(--usb-bg-3)] overflow-hidden">
-                <div className="h-full rounded-full bg-[#059669] transition-all duration-500" style={{ width: `${(c.exported / c.total) * 100}%` }} />
+                <div className="h-full rounded-full bg-[var(--usb-ok-ink)] transition-all duration-500" style={{ width: `${(c.exported / c.total) * 100}%` }} />
               </div>
             </div>
           ))}
@@ -162,16 +126,6 @@ export function MemoryCard({ onExportLesson, onOpenGuide }: Props) {
             {busy ? <><Loader2 size={13} className="animate-spin" />{progress || "Exportando…"}</>
               : <><Download size={13} />Exportar {pending.length === 1 ? "tarjetas" : `${pending.length} mazos`} a Anki</>}
           </button>
-        </div>
-      )}
-
-      {showReview && (
-        <div className="rounded-xl bg-[#6d4aff]/8 border border-[#6d4aff]/25 p-3 space-y-2">
-          <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-semibold">¿Ya repasaste en Anki hoy?</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={confirmReview} className={`${exportPrimaryBtnCls}`}><Check size={13} />Sí, repasé</button>
-            <button onClick={snooze} className={exportGhostBtnCls}>Aún no</button>
-          </div>
         </div>
       )}
 

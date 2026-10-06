@@ -66,6 +66,13 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 const VOCAB_CONFIG_KEY = 'usb_vocab_config';
 const VOCAB_REGISTRY_KEY = 'usb_vocab_registry';
 
+export interface VocabAppearance {
+	course: string;
+	lesson: string;
+	phonetic?: string;
+	monolingual?: string;
+}
+
 export interface VocabRegistryEntry {
 	course: string;
 	lesson: string;
@@ -74,6 +81,9 @@ export interface VocabRegistryEntry {
 	word?: string;
 	phonetic?: string;
 	monolingual?: string;
+	/** Todas las lecciones donde la palabra aparece (el lema vive una sola vez
+	 *  en Anki, pero puede reintroducirse en el glosario de cada lección). */
+	appearances?: VocabAppearance[];
 }
 
 export type VocabRegistry = Record<string, VocabRegistryEntry>;
@@ -117,8 +127,22 @@ export async function getLectureGlossary(course: string, lesson: string): Promis
 	const out: { word: string; phonetic: string; monolingual: string }[] = [];
 	for (const entry of Object.values(registry)) {
 		if (!entry.word) continue;
-		if (entry.course.trim().toLowerCase() !== wantCourse || entry.lesson.trim().toLowerCase() !== wantLesson) continue;
-		out.push({ word: entry.word, phonetic: entry.phonetic ?? '', monolingual: entry.monolingual ?? '' });
+		// Apariencias: legado (course/lesson únicos) o la lista completa.
+		const appearances = entry.appearances ?? (
+			entry.course || entry.lesson
+				? [{ course: entry.course, lesson: entry.lesson, phonetic: entry.phonetic, monolingual: entry.monolingual }]
+				: []
+		);
+		for (const a of appearances) {
+			if (a.course.trim().toLowerCase() === wantCourse && a.lesson.trim().toLowerCase() === wantLesson) {
+				out.push({
+					word: entry.word,
+					phonetic: a.phonetic ?? entry.phonetic ?? '',
+					monolingual: a.monolingual ?? entry.monolingual ?? '',
+				});
+				break;
+			}
+		}
 	}
 	return out;
 }
@@ -142,12 +166,25 @@ export async function markVocabularyExported(
 	const registry = await loadVocabRegistry();
 	const today = new Date().toISOString().slice(0, 10);
 	for (const word of words) {
-		registry[registryKey(lang, word.word)] = {
+		const key = registryKey(lang, word.word);
+		const prev = registry[key];
+		const appearance: VocabAppearance = {
+			course: meta.course, lesson: meta.lesson,
+			phonetic: word.phonetic, monolingual: word.monolingual,
+		};
+		// Primera vez: crea la entrada con los datos de la palabra.
+		// Reaparaz en otra lección: añade la aparición sin duplicar la nota.
+		const appearances = prev?.appearances ?? [];
+		registry[key] = {
+			...prev,
 			...meta,
 			date: today,
 			word: word.word,
-			phonetic: word.phonetic,
-			monolingual: word.monolingual,
+			phonetic: prev?.phonetic ?? word.phonetic,
+			monolingual: prev?.monolingual ?? word.monolingual,
+			appearances: appearances.some((a) => a.course === meta.course && a.lesson === meta.lesson)
+				? appearances
+				: [...appearances, appearance],
 		};
 	}
 	await chromeLocalStorage.set({ [VOCAB_REGISTRY_KEY]: registry });
