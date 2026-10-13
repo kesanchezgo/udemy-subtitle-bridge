@@ -20,7 +20,18 @@ import {
   type VocabConfig,
 } from "../services/vocabularyService";
 import { VocabularyPanel } from "./study/VocabularyPanel";
-import { prototypeVocabulary } from "../services/prototypeData";
+// Datos de demo SOLO en desarrollo: import estático dejaría el módulo (y sus
+// palabras/historial de ejemplo) dentro del bundle de producción.
+/** Fábrica del generador de demo: en DEV carga el módulo; en prod devuelve null. */
+async function prototypeVocabularyFor(lang: string) {
+  if (!import.meta.env?.DEV) return null;
+  try {
+    const mod = await import("../services/prototypeData");
+    return mod.prototypeVocabulary(lang);
+  } catch {
+    return null;
+  }
+}
 import { vocabularyMatches } from "../services/vocabularySession";
 import { Collapse, ExportModule, exportFieldCls, exportGhostBtnCls, exportLabelCls, exportPrimaryBtnCls } from "./study/ExportModule";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
@@ -2334,7 +2345,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
   // ── Vocabulario del curso → .apkg (note type + preset propios) ─────────────
   const generateVocabularyCandidates = async () => {
-    const previewPayload = prototypeVocabulary(vocabCfg.targetLang);
+    // Sin runtime de extensión (preview web), la demo local permite ver el flujo.
+    const previewPayload = await prototypeVocabularyFor(vocabCfg.targetLang);
     if (previewPayload) return previewPayload;
     const transcript = await requestStudyTranscript(22000);
     if (!transcript.ok || !transcript.transcriptText?.trim()) throw new Error(transcript.error || "No hay transcripción disponible.");

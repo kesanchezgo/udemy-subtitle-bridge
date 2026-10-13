@@ -18,10 +18,8 @@
     "https://api.anthropic.com/*",
     "https://api.deepseek.com/*",
     "https://openrouter.ai/*",
-    "https://generativelanguage.googleapis.com/*",
     "http://127.0.0.1/*",
-    "http://localhost/*",
-    "https://*/*"
+    "http://localhost/*"
   ],
   "action": {
     "default_title": "Kinema \u2014 by Kivara",
@@ -64,5 +62,9 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ]
 }

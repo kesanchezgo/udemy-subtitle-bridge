@@ -464,9 +464,9 @@ export const historyService = {
 
   /** Export the full namespace for Supabase sync / backup. */
   async exportAll(): Promise<LectureHistoryRecord[]> {
-    // Exclude tombstones: deleted lectures must not be pushed to the cloud,
-    // otherwise they clutter sync and can come back as ghost records.
-    return (await this.listLectures()).filter((rec) => !rec.deletedAt);
+    // Include tombstones: they carry a bumped `version`, so on importAll they
+    // beat the stale cloud copy. Dropping them let deleted lectures resurrect.
+    return this.listLectures();
   },
 
   /**
