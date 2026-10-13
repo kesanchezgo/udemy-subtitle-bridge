@@ -1,18 +1,19 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo, useContext } from "react";
 import {
   Download, Upload, RefreshCcw, CheckCircle2, AlertCircle, PlaySquare,
   Sparkles, RotateCcw, Type, Eye, EyeOff, AlignCenter,
-  FileText, Loader2, ArrowUpDown, Baseline, GripHorizontal, Keyboard,
-  X, Icon, Settings, History, LogOut, Cloud, Check, ChevronRight, type IconName,
+  FileText, Loader2, ArrowUpDown, Baseline, GripHorizontal, Keyboard, Play, Pause, Flame,
+  X, Icon, Settings, History, LogOut, Cloud, Check, ChevronRight, ChevronDown, type IconName,
 } from "./icons";
 import { motion, AnimatePresence } from "motion/react";
+import { getProgress } from "../services/progress";
+import { getStreak } from "../services/streak";
 import { Switch } from "./ui/switch";
 import { Slider } from "./ui/slider";
 import { StudyAgentTab } from "./StudyAgentTab";
 import { TranslationPipeline } from "./TranslationPipeline";
-import { ApiKeysPanel } from "./ApiKeysPanel";
-import { CacheSettingsPanel } from "./CacheSettingsPanel";
 import { DevTab } from "./DevTab";
+import { VocabularyMountContext } from "./SettingsSheet";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { contentBridge } from "../services/contentBridge";
@@ -26,11 +27,12 @@ import {
   PROVIDER_LABELS,
   getAiProviderConfig,
   initAiProviderConfig,
-  saveAiProviderConfig,
-  setAiProviderConfigSync,
   type AiProviderConfig,
 } from "../services/ai-providers";
+import { historyService } from "../services/historyService";
 import { toast } from "sonner";
+import { VocabularyChip, type VocabularyChipWord } from "./study/VocabularyChip";
+import { vocabularyMatches } from "../services/vocabularySession";
 
 interface ExtensionSidebarProps {
   isOpen: boolean;
@@ -97,7 +99,7 @@ function StatusRow({ label, status, ok, pulse }: { label: string; status: string
       <span className="text-[11.5px] text-[var(--usb-fg-mid)] font-medium">{label}</span>
       <span className="flex items-center gap-2 text-[11.5px] tabular-nums text-[var(--usb-fg)] font-semibold">
         <span className="relative flex h-2 w-2 shrink-0">
-          {pulse && ok && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60"/>}
+          {pulse && ok && <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60"/>}
           <span className={`relative inline-flex rounded-full h-2 w-2 ${ok ? "bg-emerald-500" : "bg-rose-500"}`}/>
         </span>
         {status}
@@ -177,28 +179,97 @@ function syncGeminiKeysToBackground(keys: string[]): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+/** Insignia de nivel junto a la marca: anillo de XP + rango. Abre el panel de progreso del dock. */
+function LevelBadge() {
+  const [p, setP] = useState(() => getProgress());
+  const [streak, setStreak] = useState(() => getStreak());
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const xp = () => setP(getProgress());
+    const st = () => setStreak(getStreak());
+    const op = (e: Event) => setOpen(Boolean((e as CustomEvent<{ open: boolean }>).detail?.open));
+    window.addEventListener("usb:xp", xp);
+    window.addEventListener("usb:streak", st);
+    window.addEventListener("usb:progress-open", op);
+    return () => {
+      window.removeEventListener("usb:xp", xp);
+      window.removeEventListener("usb:streak", st);
+      window.removeEventListener("usb:progress-open", op);
+    };
+  }, []);
+  const pct = p.span > 0 ? Math.min(1, p.into / p.span) : 0;
+  const r = 14, c = 2 * Math.PI * r;
+  // Misma superficie que la barra de pestañas (kx-seg) para que la fila de marca y la navegación hablen igual.
+  return (
+    <button
+      type="button"
+      onClick={() => window.dispatchEvent(new CustomEvent("usb:toggle-progress"))}
+      aria-pressed={open}
+      aria-label={`Nivel ${p.level}, ${p.tier.name}. ${p.into} de ${p.span} XP. Abrir progreso`}
+      title={`${p.tier.name} · ver tu progreso`}
+      className={`kx-seg group shrink-0 items-center gap-2.5 !rounded-xl !py-1 !pl-1 !pr-3 text-left transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a48bff] ${
+        open ? "!shadow-[inset_0_0_0_1.5px_#6d4aff]" : "hover:!shadow-[inset_0_0_0_1px_color-mix(in_srgb,#6d4aff_45%,transparent)]"
+      }`}
+    >
+      <span className="relative flex h-9 w-9 items-center justify-center">
+        <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90" aria-hidden>
+          <circle cx="18" cy="18" r={r} fill="none" strokeWidth="3" stroke="color-mix(in srgb, #6d4aff 18%, transparent)" />
+          <motion.circle
+            cx="18" cy="18" r={r} fill="none" strokeWidth="3" strokeLinecap="round" stroke="#6d4aff"
+            strokeDasharray={c} initial={false} animate={{ strokeDashoffset: c * (1 - Math.max(pct, 0.02)) }}
+            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          />
+        </svg>
+        <span className="text-[13px] font-bold tabular-nums text-[var(--usb-fg)]">{p.level}</span>
+      </span>
+      <span className="flex min-w-[72px] flex-col gap-1.5 leading-none">
+        <span className="flex items-center justify-between gap-2">
+          <span className="text-[12px] font-bold text-[var(--usb-fg)]">Nivel {p.level}</span>
+          {streak > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-[10.5px] font-bold tabular-nums text-amber-600" title={`Racha de ${streak} días`}>
+              <Flame size={10} weight="fill" />{streak}
+            </span>
+          )}
+        </span>
+        <span className="text-[10.5px] font-medium tabular-nums text-[var(--usb-fg-mid)]">{p.into} / {p.span} XP</span>
+      </span>
+    </button>
+  );
+}
+
 export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, onSignOut }: ExtensionSidebarProps) {
   // ── Tab & Dev mode ────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"study" | "captions" | "overlay" | "dev">("study");
+  const vocabularyMount = useContext(VocabularyMountContext);
   const [devMode, setDevMode]     = useState(false);
-  const gearClickRef              = useRef<number[]>([]);
 
   // ── Hotkeys panel ─────────────────────────────────────────────────────────
   const [showHotkeys, setShowHotkeys] = useState(false);
+  const [pendingExportsCount, setPendingExportsCount] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    const checkReviews = async () => {
+      try {
+        const lecs = await historyService.listLectures();
+        const pending = lecs.filter(lecture => !lecture.deletedAt && lecture.status === "completed" && !lecture.exportedAt && (lecture.ankiCards?.length ?? 0) > 0);
+        if (alive) setPendingExportsCount(pending.length);
+      } catch {
+        if (alive) setPendingExportsCount(0);
+      }
+    };
+    void checkReviews();
+    const unsub = historyService.onChanged(() => { void checkReviews(); });
+    return () => { alive = false; unsub(); };
+  }, []);
 
   // ── Theme ─────────────────────────────────────────────────────────────────
   const { t } = useDockTheme();
 
   // ── API Keys (persisted) ──────────────────────────────────────────────────
   const [apiKeys, setApiKeys] = useState<string[]>([]);
-  const [showApiPanel, setShowApiPanel] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [providerConfig, setProviderConfig] = useState<AiProviderConfig>(() => getAiProviderConfig());
-
-  const handleSaveProvider = (config: AiProviderConfig) => {
-    const saved = setAiProviderConfigSync(config);
-    setProviderConfig(saved);
-    void saveAiProviderConfig(saved).catch(() => undefined);
-  };
 
   const handleSaveKeys = (keys: string[]) => {
     const normalized = normalizeGeminiKeys(keys);
@@ -223,52 +294,24 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     void initAiProviderConfig().then((config) => {
       if (alive) setProviderConfig(config);
     }).catch(() => undefined);
-    return () => { alive = false; };
+    const onChanged = (e: Event) => { const d = (e as CustomEvent<AiProviderConfig>).detail; if (d) setProviderConfig(d); };
+    window.addEventListener("usb:provider-changed", onChanged);
+    return () => { alive = false; window.removeEventListener("usb:provider-changed", onChanged); };
   }, []);
 
+  // Gemini ya no usa rotación de llaves: la única llave es la del proveedor
+  // Gemini configurado. Esto también limpia listas heredadas de varias llaves.
+  const providerGeminiKey = providerConfig.kind === "gemini" ? providerConfig.apiKey.trim() : "";
   useEffect(() => {
-    let alive = true;
-
-    void Promise.all([
-      initGeminiKeys(),
-      chromeStorage.get(["gemini_api_keys", "gemini_api_key_1", "gemini_api_key_2"]),
-    ]).then(([, visibleKeys]) => {
-      const storedKeys = (globalThis as typeof globalThis & { USB_GEMINI_API_KEYS?: string[] }).USB_GEMINI_API_KEYS;
-      if (!alive) return;
-      const syncedArray = Array.isArray(visibleKeys.gemini_api_keys)
-        ? normalizeGeminiKeys((visibleKeys.gemini_api_keys as unknown[]).map(String))
-        : [];
-      const legacy = normalizeGeminiKeys([
-        typeof visibleKeys.gemini_api_key_1 === "string" ? visibleKeys.gemini_api_key_1 : "",
-        typeof visibleKeys.gemini_api_key_2 === "string" ? visibleKeys.gemini_api_key_2 : "",
-      ]);
-      const loaded = Array.isArray(storedKeys) ? normalizeGeminiKeys(storedKeys) : [];
-      const next = loaded.length > 0 ? loaded : syncedArray.length > 0 ? syncedArray : legacy;
-      if (next.length === 0) return;
-      setApiKeys(next);
-      setGeminiKeysSync(next);
-      void chromeStorage.set({
-        gemini_api_keys: next,
-        gemini_api_key_1: next[0] ?? "",
-        gemini_api_key_2: next[1] ?? "",
-      });
-      void saveGeminiKeys(next);
-      void syncGeminiKeysToBackground(next);
-    });
-
-    return () => {
-      alive = false;
-    };
-  // Run once to migrate keys from the engine storage into the visible panel.
+    void initGeminiKeys().catch(() => undefined).then(() => handleSaveKeys(providerGeminiKey ? [providerGeminiKey] : []));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [providerGeminiKey]);
 
   // ── Captions state ────────────────────────────────────────────────────────
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
   const [pasteSrt, setPasteSrt]           = useState("");
 
   // ── Cache config (persisted) ──────────────────────────────────────────────
-  const [cacheTtlDays, setCacheTtlDays] = usePersistedState<number>("cache_ttl_days", 7);
   const [srtApplied, setSrtApplied]       = useState(false);
   const [applyingCopy, setApplyingCopy]   = useState(false);
   const [currentLine, setCurrentLine]     = useState(2);
@@ -283,8 +326,22 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const [fontSize, setFontSize]             = usePersistedState<number[]>("overlay_font_size", [24]);
   const [opacity, setOpacity]               = usePersistedState<number[]>("overlay_opacity", [85]);
   const [syncOffset, setSyncOffset]         = usePersistedState<number[]>("overlay_sync_offset", [0]);
+  const [showGlossaryChip, setShowGlossaryChip] = usePersistedState<boolean>("overlay_show_glossary_chip", true);
+  const [previewPaused, setPreviewPaused] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    const h = (e: Event) => setHistoryOpen(Boolean((e as CustomEvent<{ open: boolean }>).detail?.open));
+    window.addEventListener("usb:history-open", h);
+    return () => window.removeEventListener("usb:history-open", h);
+  }, []);
+  const [previewWords, setPreviewWords] = useState<VocabularyChipWord[]>([]);
+  useEffect(() => contentBridge.onMessageFromSidebar(message => {
+    if (message.type === "GLOSSARY_UPDATE") {
+      const payload = message.payload as { words?: VocabularyChipWord[] };
+      setPreviewWords(Array.isArray(payload.words) ? payload.words : []);
+    }
+  }), []);
   const [position, setPosition]             = usePersistedState<"top" | "center" | "bottom">("overlay_position", "bottom");
-  const [showGlossary, setShowGlossary]     = usePersistedState("overlay_show_glossary", true);
   const [textColor, setTextColor]           = usePersistedState<"white" | "yellow" | "cyan">("overlay_text_color", "white");
   const [shadowStrength, setShadowStrength] = usePersistedState<number[]>("overlay_shadow", [60]);
 
@@ -469,6 +526,11 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         setContentScriptConnected(true);
         applyLectureContext(msg.payload);
       }
+      if (msg.type === "VOCABULARY_SELECTION_RESULT") {
+        const payload = msg.payload as { error?: string };
+        if (payload.error) toast.error(payload.error);
+        else toast.success("Selección de vocabulario actualizada", { description: "Revísala en Study antes de exportar a Anki." });
+      }
       if (msg.type === "LECTURE_CONTEXT_UPDATE") {
         applyLectureContext(msg.payload);
       }
@@ -517,8 +579,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         const x = payload?.customPos?.x;
         const y = payload?.customPos?.y;
         if (typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)) {
-          setCustomPosX(Math.round(clamp(x, 0, 100)));
-          setCustomPosY(Math.round(clamp(y, 0, 100)));
+          setCustomPosX(Math.round(clamp(x, 0, 100) * 100) / 100);
+          setCustomPosY(Math.round(clamp(y, 0, 100) * 100) / 100);
           setHasCustomPos(true);
         }
       }
@@ -544,8 +606,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           textColor,
           shadowStrength: shadowStrength[0],
           offsetMs: syncOffset[0],
-          showGlossary,
           syncOffset: syncOffset[0],
+          showGlossaryChip,
           customPos: hasCustomPos ? { x: customPosX, y: customPosY } : null,
         },
       });
@@ -554,7 +616,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     }, 280);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset, hasCustomPos, customPosX, customPosY, showGlossary]);
+  }, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset, showGlossaryChip, hasCustomPos, customPosX, customPosY]);
 
   // ── Auto-translate toggle sync ────────────────────────────────────────────
   // Only fire on the toggle itself; live-overlay pushes are handled below.
@@ -588,50 +650,73 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   }, []);
 
   // ── Drag implementation ───────────────────────────────────────────────────
-  const startDragHandle = useCallback((e: React.MouseEvent) => {
+  // Pointer events + captura: el arrastre no se "pega" si el puntero sale del dock.
+  // Se conserva el desfase del agarre (el subtítulo no salta al cursor) y la
+  // posición se guarda solo al soltar.
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const startDragHandle = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    const ref = previewRef.current;
+    const anchor = (dragRef.current ?? (e.currentTarget.parentElement as HTMLElement | null));
+    if (ref && anchor) {
+      const rect = ref.getBoundingClientRect();
+      const a = anchor.getBoundingClientRect();
+      dragOffsetRef.current = { x: e.clientX - (a.left + a.width / 2), y: e.clientY - (a.top + a.height / 2) };
+      if (!hasCustomPos) setDragPos({ x: ((a.left + a.width / 2 - rect.left) / rect.width) * 100, y: ((a.top + a.height / 2 - rect.top) / rect.height) * 100 });
+    }
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     setIsDragging(true);
-  }, []);
+  }, [hasCustomPos]);
 
   useEffect(() => {
     if (!isDragging) return;
+    let last: { x: number; y: number } | null = null;
 
-    const handleMove = (e: MouseEvent) => {
+    const handleMove = (e: PointerEvent) => {
       const ref = previewRef.current;
-      const dragEl = dragRef.current;
-      if (!ref) { setIsDragging(false); return; }
-      
+      if (!ref) return;
       const rect = ref.getBoundingClientRect();
-      let x = ((e.clientX - rect.left) / rect.width) * 100;
-      let y = ((e.clientY - rect.top) / rect.height) * 100;
-
-      if (dragEl) {
-        const dragRect = dragEl.getBoundingClientRect();
-        const halfW = ((dragRect.width / 2) / rect.width) * 100;
-        const halfH = ((dragRect.height / 2) / rect.height) * 100;
-        x = Math.max(halfW, Math.min(100 - halfW, x));
-        y = Math.max(halfH, Math.min(100 - halfH, y));
-      } else {
-        x = Math.max(8, Math.min(92, x));
-        y = Math.max(8, Math.min(92, y));
-      }
-
-      setCustomPosX(Math.round(x));
-      setCustomPosY(Math.round(y));
-      setHasCustomPos(true);
+      const cx = e.clientX - dragOffsetRef.current.x;
+      const cy = e.clientY - dragOffsetRef.current.y;
+      let x = ((cx - rect.left) / rect.width) * 100;
+      let y = ((cy - rect.top) / rect.height) * 100;
+      const dragEl = dragRef.current;
+      const dragRect = dragEl?.getBoundingClientRect();
+      const halfW = dragRect ? ((dragRect.width / 2) / rect.width) * 100 : 8;
+      const halfH = dragRect ? ((dragRect.height / 2) / rect.height) * 100 : 4;
+      x = Math.max(halfW, Math.min(100 - halfW, x));
+      // Espacio corto para la tarjeta de vocabulario (se compacta si falta sitio).
+      const reserve = showGlossaryChip ? ((previewPaused ? 66 : 26) / rect.height) * 100 : 0;
+      y = Math.max(halfH, Math.min(100 - halfH - reserve, y));
+      last = { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 };
+      setDragPos(last);
+      if (!hasCustomPos) setHasCustomPos(true);
     };
 
-    const handleUp = () => setIsDragging(false);
+    const handleUp = () => {
+      setIsDragging(false);
+      if (last) { setCustomPosX(last.x); setCustomPosY(last.y); setHasCustomPos(true); }
+      setDragPos(null);
+    };
 
-    document.addEventListener("mousemove", handleMove);
-    document.addEventListener("mouseup",   handleUp);
+    document.addEventListener("pointermove", handleMove);
+    document.addEventListener("pointerup", handleUp);
+    document.addEventListener("pointercancel", handleUp);
+    window.addEventListener("blur", handleUp);
     return () => {
-      document.removeEventListener("mousemove", handleMove);
-      document.removeEventListener("mouseup",   handleUp);
+      document.removeEventListener("pointermove", handleMove);
+      document.removeEventListener("pointerup", handleUp);
+      document.removeEventListener("pointercancel", handleUp);
+      window.removeEventListener("blur", handleUp);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDragging]);
+
+  const shownPosX = dragPos?.x ?? customPosX;
+  const shownPosY = dragPos?.y ?? customPosY;
 
   const resetDragPos = () => {
     setHasCustomPos(false);
@@ -669,25 +754,44 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     setTimeout(() => setSyncPulse(false), 900);
   };
 
-  // ── Triple-click gear → Dev mode ─────────────────────────────────────────
-  const handleGearClick = () => {
-    const now = Date.now();
-    gearClickRef.current = [...gearClickRef.current.filter(t => now - t < 1000), now];
-    if (gearClickRef.current.length >= 3) {
-      gearClickRef.current = [];
-      setDevMode(v => {
+  // ── Sync Settings and Dev state with InPageDock ──────────────────────────
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("usb:settings-state", {
+        detail: { devMode },
+      })
+    );
+  }, [devMode]);
+
+  useEffect(() => {
+    const handleToggleDev = () => {
+      setDevMode((v) => {
         const next = !v;
-        if (!next && activeTab === "dev") setActiveTab("study");
+        setActiveTab(next ? "dev" : "study");
         return next;
       });
-    }
-  };
+    };
+    const handleSettingsOpen = (e: Event) => setSettingsOpen(Boolean((e as CustomEvent<{ open?: boolean }>).detail?.open));
+    window.addEventListener("usb:toggle-dev", handleToggleDev);
+    window.addEventListener("usb:settings-open", handleSettingsOpen);
+    return () => {
+      window.removeEventListener("usb:toggle-dev", handleToggleDev);
+      window.removeEventListener("usb:settings-open", handleSettingsOpen);
+    };
+  }, []);
+
 
   // ── Derived state ─────────────────────────────────────────────────────────
   const configuredGeminiKeys = useMemo(() => normalizeGeminiKeys(apiKeys), [apiKeys]);
   const hasKeys    = configuredGeminiKeys.length > 0;
   const preview_en = liveEn || MOCK_LINES[currentLine]?.en || "";
   const preview_es = liveEs || MOCK_LINES[currentLine]?.es || "";
+  const overlayPreviewText = preview_es;
+  const previewWord = previewWords.find(word => vocabularyMatches(word.word, preview_en));
+  const previewBounds = previewRef.current?.getBoundingClientRect();
+  const subtitleBounds = dragRef.current?.getBoundingClientRect();
+  const previewChipHeight = Math.max(32, previewBounds && subtitleBounds ? previewBounds.bottom - subtitleBounds.bottom - 12 : 80);
+  const previewVocabularyChip = showGlossaryChip && previewWord ? <VocabularyChip availableHeight={previewChipHeight} paused={previewPaused} word={previewWord} baseSize={Math.max(9, fontSize[0] * 0.44)} /> : null;
   const preview_ts = liveTs !== "--:--" ? liveTs : (MOCK_LINES[currentLine]?.ts ?? "--:--");
 
   // Which backend is active? Priority mirrors the background chain:
@@ -744,7 +848,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       ? { left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "max-content", maxWidth: "80%" }
       : position === "top"
         ? { left: "50%", top: "10%", transform: "translateX(-50%)", width: "max-content", maxWidth: "80%" }
-        : { left: "50%", top: "90%", transform: "translate(-50%, -100%)", width: "max-content", maxWidth: "80%" };
+        : { left: "50%", top: "65%", transform: "translate(-50%, -100%)", width: "max-content", maxWidth: "80%" };
 
   // Tab config
   const tabs = [
@@ -764,64 +868,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       <div className={`px-4 pt-3.5 pb-3.5 border-b shrink-0 sticky top-0 z-20 ${t("border-white/8 bg-[#121214]", "border-black/8 bg-[#ffffff]")}`}>
         <div className="flex items-center justify-between gap-3">
 
-          {/* Left: Logo + title */}
+          {/* Left: Logo + title · Right: nivel del usuario */}
           <KinemaBrand dense />
+          <LevelBadge />
 
-          {/* Right: status indicators + gear */}
-          <div className="flex shrink-0 items-center gap-2">
-
-            {/* ── Active AI Engine Badge ── */}
-            <button
-              onClick={() => setShowApiPanel(v => !v)}
-              title="Configurar motores de IA"
-              className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] transition-all duration-300 border ${
-                activeBackend === "local"
-                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
-                  : activeBackend === "provider"
-                    ? "bg-violet-500/10 border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
-                    : activeBackend === "gemini"
-                      ? "bg-violet-500/10 border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
-                      : "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
-              }`}
-              style={{ fontWeight: 600 }}
-            >
-              <span className="relative flex h-1.5 w-1.5 shrink-0">
-                {(activeBackend === "local" || activeBackend === "provider" || activeBackend === "gemini") && !showApiPanel && (
-                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${
-                    activeBackend === "local" ? "bg-emerald-400" : "bg-violet-400"
-                  }`}/>
-                )}
-                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
-                  activeBackend === "local" ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" :
-                  activeBackend === "provider" || activeBackend === "gemini" ? "bg-violet-400 shadow-[0_0_5px_#9a83ff]" : "bg-amber-400"
-                }`}/>
-              </span>
-              <span>{BACKEND_LABELS[activeBackend]}</span>
-            </button>
-
-            {/* ── Dev mode gear ── */}
-            <button
-              onClick={handleGearClick}
-              title="Triple-click para activar Dev mode"
-              className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-300 ${
-                devMode
-                  ? "text-amber-400 bg-amber-500/10 border border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]"
-                  : t("text-white/30 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10",
-                      "text-[#3d3a38]/55 hover:text-[#1a1918] hover:bg-black/6 border border-transparent hover:border-black/10")
-              }`}
-            >
-              <motion.div
-                animate={devMode ? { rotate: 360 } : { rotate: 0 }}
-                transition={devMode
-                  ? { duration: 4, repeat: Infinity, ease: "linear" }
-                  : { duration: 0.4, ease: "easeOut" }
-                }
-                style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
-              >
-                <Settings size={15} />
-              </motion.div>
-            </button>
-          </div>
         </div>
 
         {/* ── User info strip (visible when logged in) ── */}
@@ -848,7 +898,6 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 </span>
                 {/* Sync pulse */}
                 <span className="relative flex h-1.5 w-1.5 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-50"/>
                   <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"/>
                 </span>
               </div>
@@ -869,16 +918,6 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         </AnimatePresence>
       </div>
 
-      {/* ── API Keys Panel ────────────────────────────────────────────────── */}
-      <ApiKeysPanel
-        isOpen={showApiPanel}
-        onClose={() => setShowApiPanel(false)}
-        apiKeys={configuredGeminiKeys}
-        localConnected={localConnected}
-        onSave={handleSaveKeys}
-        providerConfig={providerConfig}
-        onSaveProvider={handleSaveProvider}
-      />
 
       {/* ── Tab Nav ── control segmentado con claqueta numerada */}
       <div className={`flex shrink-0 items-center gap-2 px-4 py-2.5 border-b relative z-10 ${t("bg-[#121214] border-white/8","bg-[#ffffff] border-black/8")}`}>
@@ -886,7 +925,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           {tabs.map((tab, i) => {
             const active = activeTab === tab.id;
             return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              <button key={tab.id} onClick={() => { window.dispatchEvent(new CustomEvent("usb:close-settings")); setActiveTab(tab.id); }}
                 role="tab" aria-selected={active}
                 className={`relative flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] transition-colors ${
                   active
@@ -907,12 +946,24 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           })}
         </div>
         <button
-          onClick={() => { setActiveTab("study"); window.dispatchEvent(new CustomEvent("usb:open-history")); }}
-          title="Historial de estudio"
-          aria-label="Abrir historial de estudio"
-          className={`h-[34px] w-[34px] shrink-0 rounded-lg border flex items-center justify-center transition-colors ${t("bg-white/5 border-white/12 text-white/80 hover:bg-white/10 hover:text-white","bg-white border-black/12 text-[#3d3a38] hover:bg-black/5 hover:text-[#15161c]")}`}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent("usb:close-settings"));
+            if (activeTab !== "study") { setActiveTab("study"); window.dispatchEvent(new CustomEvent("usb:open-history")); }
+            else window.dispatchEvent(new CustomEvent("usb:toggle-history"));
+          }}
+          aria-pressed={historyOpen}
+          title={pendingExportsCount > 0 ? `Historial · ${pendingExportsCount} archivos de contenido por descargar` : "Historial de estudio"}
+          aria-label={historyOpen ? "Cerrar historial de estudio" : "Abrir historial de estudio"}
+          className={`relative h-[34px] w-[34px] shrink-0 rounded-lg border flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a48bff] ${historyOpen
+            ? t("text-white bg-[#6d4aff]/20 border-[#8b6dff]/60", "text-[#4a2fd1] bg-[#6d4aff]/10 border-[#6d4aff]/45")
+            : t("text-white/90 bg-white/5 border-white/12 hover:bg-white/10", "text-[#15161c] bg-white border-black/12 hover:bg-black/5")}`}
         >
           <History size={16} />
+          {pendingExportsCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-amber-500 text-[9px] font-extrabold text-black shadow-sm ring-2 ring-[var(--usb-bg-1)]">
+              {pendingExportsCount}
+            </span>
+          )}
         </button>
       </div>
 
@@ -926,7 +977,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
           className={`absolute inset-0 flex flex-col ${activeTab === "study" ? "pointer-events-auto z-10" : "pointer-events-none z-0"}`}
         >
-          <StudyAgentTab session={session} apiKeys={configuredGeminiKeys} />
+          <StudyAgentTab session={session} apiKeys={configuredGeminiKeys} vocabularyMount={vocabularyMount} />
         </motion.div>
 
         {/* ════════ CAPTIONS ════════ */}
@@ -964,9 +1015,6 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                       local server — that one already has its own row above. */}
                   {activeBackend === "provider" && providerConfig.kind !== "local" && (
                     <StatusRow label={providerLabel} status={`${providerConfig.model}`} ok={true} pulse/>
-                  )}
-                  {hasKeys && (
-                    <StatusRow label="Gemini fallback"        status={`${configuredGeminiKeys.length} keys en rotación`}   ok={true}  pulse/>
                   )}
                 </div>
               </Card>
@@ -1019,7 +1067,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   </div>
                   <textarea ref={srtTextareaRef} value={pasteSrt} onChange={e => { setPasteSrt(e.target.value); setSrtApplied(false); }}
                     placeholder={"1\n00:00:00,000 --> 00:00:02,000\nHola a todos…"}
-                    className="w-full h-[98px] text-[11.5px] font-mono bg-transparent px-4 py-3 resize-none outline-none leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] focus:bg-[var(--usb-bg-2)]/20 transition-colors"/>
+                    className="w-full h-[98px] text-[11.5px] font-mono bg-transparent px-4 py-3 resize-none outline-none leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-mid)] focus:bg-[var(--usb-bg-2)]/20 transition-colors"/>
                 </div>
                 <AnimatePresence mode="wait">
                   {srtApplied ? (
@@ -1035,9 +1083,6 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                   )}
                 </AnimatePresence>
               </div>
-
-              {/* Cache settings */}
-              <CacheSettingsPanel ttlDays={cacheTtlDays} onTtlChange={setCacheTtlDays} />
 
               <div className="h-2"/>
         </motion.div>
@@ -1087,10 +1132,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                       /* Custom dragged position */
                       <div
                         ref={dragRef}
-                        className="absolute flex flex-col items-center gap-0.5"
+                        className="absolute flex flex-col items-center"
                         style={{
-                          left: `${customPosX}%`,
-                          top: `${customPosY}%`,
+                          left: `${shownPosX}%`,
+                          top: `${shownPosY}%`,
                           transform: "translate(-50%, -50%)",
                           width: "max-content",
                           maxWidth: "85%",
@@ -1104,25 +1149,26 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                             className="text-center px-2.5 py-1 rounded-md max-w-full whitespace-pre-wrap"
                             style={previewSubtitleStyle}
                           >
-                            {preview_es}
+                            {overlayPreviewText}
                           </motion.div>
                         </AnimatePresence>
+                        {previewVocabularyChip}
                         {/* Drag handle */}
                         <div
-                          onMouseDown={startDragHandle}
-                          className={`flex items-center justify-center cursor-grab select-none transition-all duration-150 px-2 py-0.5 rounded ${
+                          onPointerDown={startDragHandle}
+                          className={`absolute right-full top-1/2 -translate-y-1/2 mr-1 touch-none flex items-center justify-center cursor-grab select-none transition-all duration-150 px-0.5 py-1 rounded ${
                             isDragging
                               ? "cursor-grabbing text-violet-300 bg-violet-600/30"
                               : "text-white/40 hover:text-white hover:bg-white/10"
                           }`}
                           title="Arrastra para mover"
                         >
-                          <GripHorizontal size={12}/>
+                          <GripHorizontal size={12} className="rotate-90"/>
                         </div>
                         {/* Coordinates badge */}
                         {isDragging && (
                           <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-violet-950/90 border border-violet-500/40 px-2 py-0.5 rounded text-[9px] text-violet-200 font-mono whitespace-nowrap">
-                            {customPosX}% · {customPosY}%
+                            {Math.round(shownPosX)}% · {Math.round(shownPosY)}%
                           </div>
                         )}
                       </div>
@@ -1130,16 +1176,9 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                       /* Preset position (top / center / bottom) */
                       <div
                         ref={dragRef}
-                        className="absolute flex flex-col items-center gap-0.5"
+                        className="absolute flex flex-col items-center"
                         style={previewPresetStyle}
                       >
-                        {showGlossary && (
-                          <div className="px-2.5 py-1 rounded-md bg-black/60 border border-white/16 text-[10px] leading-tight" style={{ marginTop: 6 }}>
-                            <span className="font-bold text-sky-300">java</span>
-                            <span className="text-teal-300 italic ml-1.5">/ˈdʒɑːvə/</span>
-                            <div className="text-white/70 text-[9px] mt-0.5">lenguaje de programación y plataforma</div>
-                          </div>
-                        )}
                         <AnimatePresence mode="wait">
                           <motion.div
                             key={`${currentLine}-${position}`}
@@ -1150,36 +1189,37 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                             className="text-center px-2.5 py-1 rounded-md max-w-full whitespace-pre-wrap"
                             style={previewSubtitleStyle}
                           >
-                            {preview_es}
+                            {overlayPreviewText}
                           </motion.div>
                         </AnimatePresence>
+                        {previewVocabularyChip}
                         {/* Drag handle */}
                         <div
-                          onMouseDown={startDragHandle}
-                          className="flex items-center justify-center cursor-grab select-none text-white/30 hover:text-white hover:bg-white/10 px-2 py-0.5 rounded transition-all duration-150"
+                          onPointerDown={startDragHandle}
+                          className="absolute right-full top-1/2 -translate-y-1/2 mr-1 touch-none flex items-center justify-center cursor-grab select-none text-white/30 hover:text-white hover:bg-white/10 px-2 py-0.5 rounded transition-all duration-150"
                           title="Arrastra para posición libre"
                         >
-                          <GripHorizontal size={12}/>
+                          <GripHorizontal size={12} className="rotate-90"/>
                         </div>
                       </div>
                     )
                   )}
 
                   {/* Preview label */}
-                  <div className="absolute top-2.5 left-2.5">
-                    <span className="text-[10px] font-bold text-white bg-black/70 border border-white/15 px-2.5 py-1 rounded-full tracking-wider shadow-sm backdrop-blur-md">
-                      MONITOR EN VIVO
+                  <button
+                    type="button"
+                    aria-pressed={previewPaused}
+                    aria-label={previewPaused ? "Reanudar vista previa" : "Pausar vista previa"}
+                    title={previewPaused ? "Reanudar vista previa" : "Pausar para ver la tarjeta completa"}
+                    onClick={() => setPreviewPaused(value => !value)}
+                    className="absolute top-2 left-2 z-10 flex h-6 items-center gap-1.5 rounded-full border border-white/12 bg-[#090711]/75 pl-1 pr-2.5 text-[10px] font-semibold text-white/85 backdrop-blur-md transition-colors hover:bg-[#090711]/90 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a48bff]"
+                  >
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full ${previewPaused ? "bg-white/15" : "bg-[#6d4aff]"}`}>
+                      {previewPaused ? <Play size={8}/> : <Pause size={8}/>}
                     </span>
-                  </div>
+                    {previewPaused ? "En pausa" : "Vista previa"}
+                  </button>
 
-                  {/* Drag hint when not dragging and in default mode */}
-                  {showOverlay && !hasCustomPos && !isDragging && (
-                    <div className="absolute bottom-2 right-2.5">
-                      <span className="text-white/60 text-[10px] select-none font-semibold bg-black/50 px-2 py-0.5 rounded-md border border-white/10">
-                        arrastra ⠿
-                      </span>
-                    </div>
-                  )}
 
                   {!showOverlay && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -1192,13 +1232,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 <div className="kx-card overflow-hidden transition-all duration-300">
                   <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-[var(--usb-divider)]">
                     <span className="relative flex h-2 w-2 shrink-0">
-                      {autoTranslate && showOverlay && (
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60"/>
-                      )}
                       <span className={`relative inline-flex rounded-full h-2 w-2 ${autoTranslate && showOverlay ? "bg-violet-500" : "bg-[var(--usb-fg-lo)]"}`}/>
                     </span>
                     <span className={`text-[11.5px] font-bold flex-1 ${autoTranslate && showOverlay ? t("text-violet-300", "text-[#5b37e8]") : "text-[var(--usb-fg-mid)]"}`}>
-                      {autoTranslate && showOverlay ? "Transmisión en vivo" : "Pausado"}
+                      {autoTranslate && showOverlay ? "Subtítulo actual" : "Traducción en pausa"}
                     </span>
                     {autoTranslate && showOverlay && (
                       <span className="text-[11px] font-mono tabular-nums text-[var(--usb-fg-lo)]">{preview_ts}</span>
@@ -1241,6 +1278,21 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
               {/* ── SCROLLABLE CONTROLS — preview always stays above ── */}
               <div className={`kx-page kx-cap flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5 transition-opacity duration-300 ${!showOverlay ? "opacity-30 pointer-events-none" : ""}`}>
 
+                {/* Toggle Glosario incidental bajo subtítulo */}
+                <div className="kx-card kx-toggle px-4 py-3 flex items-center gap-3" data-on={showGlossaryChip ? "1" : "0"}>
+                  <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-violet-400">
+                    <Icon name="bookOpen" size={17} weight={showGlossaryChip ? "fill" : "duotone"} />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-bold tracking-tight text-[var(--usb-fg)]">Vocabulario de apoyo</p>
+                    <p className="text-[11px] text-[var(--usb-fg-mid)] leading-snug">Palabras de la lección bajo el subtítulo. IPA y significado al pausar.</p>
+                  </div>
+                  <Switch checked={showGlossaryChip} onCheckedChange={setShowGlossaryChip}
+                    aria-label="Mostrar vocabulario de apoyo"
+                    className="data-[state=checked]:bg-violet-600 scale-[0.9] shrink-0"/>
+                </div>
+
+
                 {/* Position presets */}
                 <div>
                   <SectionLabel icon="layers" tone="violet">Posición vertical</SectionLabel>
@@ -1270,12 +1322,12 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                       Posición libre
                       {hasCustomPos && (
                         <span className="text-[10.5px] font-mono font-bold px-2 py-0.5 rounded-full" style={{ background: "color-mix(in srgb, #6d4aff 16%, transparent)", color: t("#b7a6ff", "#5b37e8") }}>
-                          {customPosX}% · {customPosY}%
+                          {Math.round(shownPosX)}% · {Math.round(shownPosY)}%
                         </span>
                       )}
                     </p>
                     <p className="text-[11.5px] mt-0.5 text-[var(--usb-fg-mid)]">
-                      Arrastra el icono ⠿ en el monitor para mover libremente
+                      Arrastra el subtítulo en la vista previa
                     </p>
                   </div>
                   {hasCustomPos && (
@@ -1298,21 +1350,6 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 <SliderCard icon="sparkles" tone="rose" title="Sombra de relieve" value={`${shadowStrength[0]}%`}>
                   <Slider value={shadowStrength} onValueChange={setShadowStrength} max={100} min={0} step={10} className="[&_[data-slot=track]]:bg-violet-500/20 [&_[data-slot=range]]:bg-violet-600 [&_[data-slot=thumb]]:border-violet-600 [&_[data-slot=thumb]]:bg-white [&_[data-slot=thumb]]:h-4 [&_[data-slot=thumb]]:w-4"/>
                 </SliderCard>
-
-                <div className="flex items-center justify-between px-1 py-1">
-                  <div>
-                    <p className="text-[11.5px] font-semibold text-[var(--usb-fg-hi)] leading-tight">Glosario de vocabulario</p>
-                    <p className="text-[9.5px] text-[var(--usb-fg-lo)] leading-tight mt-0.5">Chip con palabra + IPA bajo el subtítulo; definición al pausar</p>
-                  </div>
-                  <button
-                    onClick={() => setShowGlossary(!showGlossary)}
-                    role="switch"
-                    aria-checked={showGlossary}
-                    className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${showGlossary ? "bg-violet-600" : "bg-black/25 border border-white/15"}`}
-                  >
-                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${showGlossary ? "left-[18px]" : "left-0.5"}`} />
-                  </button>
-                </div>
 
                 {/* Text color */}
                 <div>
@@ -1451,7 +1488,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 ))}
                 <div className={`pt-2 border-t space-y-1 ${t("border-white/5","border-black/6")}`}>
                   <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Triple clic en Ajustes: modo Dev (telemetría SSE)</p>
-                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Badge de IA → Configurar proveedor y API keys</p>
+                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Engranaje → Configuración de Kinema</p>
                   <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Overlay tab → arrastra ⠿ para posición libre</p>
                 </div>
               </div>
@@ -1490,7 +1527,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v1.3.0</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v1.1.0</span>
         </div>
       </div>
 

@@ -148,7 +148,7 @@ function RequestCard({ req, expanded, onToggle }: {
   }, [expanded, req.tokens.length, req.status]);
 
   const statusIcon =
-    req.status === "streaming" ? <motion.span className="w-2 h-2 rounded-full bg-[#6d4aff] inline-block" animate={{ opacity: [1,0.3,1] }} transition={{ duration:0.7,repeat:Infinity }}/> :
+    req.status === "streaming" ? <motion.span className="w-2 h-2 rounded-full bg-[#6d4aff] inline-block"/> :
     req.status === "done"      ? <CheckCircle2 size={13} className="text-[#059669]"/> :
     req.status === "aborted"   ? <RefreshCcw size={13} className="text-[#d97706]"/> :
                                   <AlertCircle size={13} className="text-[#e11d48]"/>;
@@ -211,8 +211,6 @@ function RequestCard({ req, expanded, onToggle }: {
                     {req.status === "streaming" && (
                       <motion.span
                         className="inline-block w-[2px] h-[11px] bg-[#6d4aff] rounded-full align-middle ml-px"
-                        animate={{ opacity: [1, 0, 1] }}
-                        transition={{ duration: 0.55, repeat: Infinity }}
                       />
                     )}
                   </p>

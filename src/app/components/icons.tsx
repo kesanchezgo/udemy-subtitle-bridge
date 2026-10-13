@@ -1,6 +1,7 @@
 import React from "react";
 import {
   AddIcon as LAdd,
+  MinusIcon as LMinus,
   AddFolderIcon as LAddFolder,
   AltArrowDownIcon as LAltArrowDown,
   AltArrowLeftIcon as LAltArrowLeft,
@@ -125,6 +126,7 @@ import {
 } from "@solar-icons/react/linear";
 import {
   AddIcon as DAdd,
+  MinusIcon as DMinus,
   AddFolderIcon as DAddFolder,
   AltArrowDownIcon as DAltArrowDown,
   AltArrowLeftIcon as DAltArrowLeft,
@@ -249,6 +251,7 @@ import {
 } from "@solar-icons/react/bold-duotone";
 import {
   AddIcon as BAdd,
+  MinusIcon as BMinus,
   AddFolderIcon as BAddFolder,
   AltArrowDownIcon as BAltArrowDown,
   AltArrowLeftIcon as BAltArrowLeft,
@@ -399,6 +402,7 @@ export const ICONS = {
   check: [LCheck, DCheck, BCheck],
   x: [LClose, DClose, BClose],
   plus: [LAdd, DAdd, BAdd],
+  minus: [LMinus, DMinus, BMinus],
   search: [LMagnifier, DMagnifier, BMagnifier],
   trash2: [LTrashBinMinimalistic, DTrashBinMinimalistic, BTrashBinMinimalistic],
   download: [LDownloadMinimalistic, DDownloadMinimalistic, BDownloadMinimalistic],
@@ -577,6 +581,7 @@ export const CheckCircle2 = make("checkCircle2");
 export const Check = make("check");
 export const X = make("x");
 export const Plus = make("plus");
+export const Minus = make("minus");
 export const Trash2 = make("trash2");
 export const AlertCircle = make("alertCircle");
 export const HelpCircle = make("helpCircle");

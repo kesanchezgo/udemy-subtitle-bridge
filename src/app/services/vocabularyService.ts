@@ -66,6 +66,15 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 const VOCAB_CONFIG_KEY = 'usb_vocab_config';
 const VOCAB_REGISTRY_KEY = 'usb_vocab_registry';
 
+/** Clave estable de la sesión de candidatas de una lección (curso+lección+idioma). */
+export function vocabularySessionKey(course: string, lesson: string, targetLang: string): string {
+	return 'usb_vocab_session_' + [
+		String(course || '').trim().toLowerCase(),
+		String(lesson || '').trim().toLowerCase(),
+		String(targetLang || 'en').trim(),
+	].join('|');
+}
+
 export interface VocabAppearance {
 	course: string;
 	lesson: string;

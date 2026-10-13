@@ -1,3 +1,4 @@
+import { fieldCls, textareaCls } from "./settings/SettingsKit";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Target, Sparkles, Wand2, Check, Edit3, ArrowRight, Brain,
@@ -5,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Info, FileDown, FolderPlus,
   FolderSync, Send, Loader2, Wifi, WifiOff, Star, BookOpen,
   Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History,
-  BookMarked, Settings2, ClipboardCopy, ExternalLink, Languages,
+  BookMarked, RefreshCw, Settings2, ClipboardCopy, ExternalLink, Languages,
   Icon, Glyph, splitLeadingMarker
 } from "./icons";
 import type { IconName } from "./icons";
@@ -15,12 +16,12 @@ import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream,
 import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
 import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
 import {
-  DEFAULT_VOCAB_CONFIG, buildVocabularySpec, filterVocabulary, getLectureGlossary, loadVocabConfig,
-  loadVocabRegistry, markVocabularyExported, parseVocabularyPayload, saveVocabConfig,
-  splitAlreadyExported,
+  DEFAULT_VOCAB_CONFIG, loadVocabConfig, parseVocabularyPayload, saveVocabConfig,
   type VocabConfig,
 } from "../services/vocabularyService";
-import { cefrLevels } from "../../shared/prompts";
+import { VocabularyPanel } from "./study/VocabularyPanel";
+import { prototypeVocabulary } from "../services/prototypeData";
+import { vocabularyMatches } from "../services/vocabularySession";
 import { Collapse, ExportModule, exportFieldCls, exportGhostBtnCls, exportLabelCls, exportPrimaryBtnCls } from "./study/ExportModule";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
@@ -45,7 +46,6 @@ import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync 
 import { toast } from "sonner";
 import { celebrate } from "./CelebrationOverlay";
 import { getStreak } from "../services/streak";
-import { MemoryCard } from "./study/MemoryCard";
 import { getProgress, recordActivity } from "../services/progress";
 
 import { Session } from "@supabase/supabase-js";
@@ -608,9 +608,6 @@ function AIAnalyzingLoader() {
         <motion.div
           className="h-full bg-violet-400"
           style={{ width: "35%" }}
-          initial={{ x: "-100%" }}
-          animate={{ x: "300%" }}
-          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
         />
       </div>
       <div className="flex items-center gap-3 px-3.5 py-3">
@@ -748,7 +745,7 @@ function AIFeedback({
             <p key={i} className="text-white/70 text-[11.5px] leading-relaxed">
               {renderInline(textOnly)}
               {isStreaming && i === paragraphs.length - 1 && (
-                <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70 animate-pulse" />
+                <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70" />
               )}
             </p>
           );
@@ -1168,16 +1165,19 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; apiKeys?: string[] }) {
+export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { session?: Session; apiKeys?: string[]; vocabularyMount?: HTMLElement | null }) {
   const { t } = useDockTheme();
-  const [phase, setPhase]             = useState<Phase>("objective");
-  const [selectedObj, setSelectedObj] = usePersistedState<string>("agent_selected_obj", "custom");
+  const [phase, setPhase]             = useState<Phase>(() => {
+    // Si ya hay contenido en cache o estamos en prototipo, permitir iniciar en ready si existe
+    return "objective";
+  });
+  const [selectedObj, setSelectedObj] = usePersistedState<string>("agent_selected_obj", "spring-interview");
   const [customObj, setCustomObj]     = usePersistedState<string>("agent_custom_obj", "");
   const [refinedObj, setRefinedObj]   = useState("");
   const [refinedFromText, setRefinedFromText] = useState("");
   const [isRefining, setIsRefining]   = useState(false);
-  const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "");
-  const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "");
+  const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "Java In-Depth: Become a Complete Java Engineer!");
+  const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "What is Java & JVM?");
   const [courseDescription, setCourseDescription] = usePersistedState<string>("agent_course_description", "");
   const [courseAIContext, setCourseAIContext]           = useState("");
   const [courseAIContextSlug, setCourseAIContextSlug]   = useState("");
@@ -1226,22 +1226,20 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
 
   // Vocabulary export
   const [vocabCfg, setVocabCfg]             = useState<VocabConfig>(DEFAULT_VOCAB_CONFIG);
-  const [vocabPanelOpen, setVocabPanelOpen] = useState(false);
-  const [vocabStatus, setVocabStatus]       = useState<"idle" | "loading" | "done" | "error">("idle");
-  const [vocabProgress, setVocabProgress]   = useState("");
   const [vocabLangOk, setVocabLangOk]       = useState<boolean | null>(null);
 
   // Badge de repasos: tarjetas de ESTA lección con repaso pendiente en Anki hoy
   // (vía AnkiConnect; null = Anki cerrado o sin datos).
   const [ankiDue, setAnkiDue]               = useState<number | null>(null);
+  const [ankiOpening, setAnkiOpening]       = useState(false);
 
   // Obsidian export
   const [obsidianCfg, setObsidianCfg]             = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
-  const [obsidianPanelOpen, setObsidianPanelOpen] = useState(false);
+  const openObsidianSettings = () => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "obsidian" } }));
   const [obsidianHelpOpen, setObsidianHelpOpen]   = useState(false);
   const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
   const [createdMocs, setCreatedMocs]             = useState<string[]>([]);
-  const [, setExportedNotes]                      = useState<string[]>([]);
+  const [exportedNotes, setExportedNotes]                    = useState<string[]>([]);
 
   // Focus navigator (one step at a time)
   const [focusStep, setFocusStep] = useState(0);
@@ -1322,7 +1320,10 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       const stored = data.agent_anki_txt_setup_courses;
       if (alive && Array.isArray(stored)) setTxtSetupCourses(new Set(stored.map(String)));
     });
-    return () => { alive = false; };
+    const unsubscribe = chromeLocalStorage.onChange(changes => {
+      if ("obsidian_export_config" in changes) void loadObsidianExportConfig().then(config => { if (alive) setObsidianCfg(config); });
+    });
+    return () => { alive = false; unsubscribe(); };
   }, []);
 
   // Hidden Udemy course context (written by the sidebar into local storage).
@@ -1341,33 +1342,17 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     });
   }, []);
 
-  // Empuja el glosario de la lección al overlay (content script): palabras
-  // exportadas de ESTA lección con su IPA/definición para el chip del video.
-  const pushLectureGlossary = useCallback(async () => {
-    try {
-      if (!courseName.trim() || !lessonName.trim()) return;
-      // SIEMPRE se envía (incluso vacío): al cambiar a una lección sin
-      // vocabulario, el overlay debe limpiar el glosario de la anterior.
-      const words = await getLectureGlossary(courseName, lessonName);
-      await contentBridge.sendToContent({
-        type: "GLOSSARY_UPDATE",
-        payload: { course: courseName, lesson: lessonName, words },
-      });
-    } catch { /* overlay sin glosario — no fatal */ }
-  }, [courseName, lessonName]);
-
-  useEffect(() => { void pushLectureGlossary(); }, [pushLectureGlossary]);
-
-  // Badge de repasos: consulta AnkiConnect (si Anki está abierto) cuántas
-  // tarjetas de esta lección tienen repaso pendiente hoy.
   useEffect(() => {
     if (!content) return;
     let alive = true;
     void sendRuntimeMessage<{ ok?: boolean; due?: number }>({
       type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, rootDeck: vocabCfg.rootDeck,
     }).then((r) => {
-      if (alive && r?.ok && typeof r.due === "number") setAnkiDue(r.due);
-      else if (alive) setAnkiDue(null);
+      if (alive && r?.ok && typeof r.due === "number") {
+        setAnkiDue(r.due);
+      } else if (alive) {
+        setAnkiDue(null);
+      }
     });
     return () => { alive = false; };
   }, [content, courseName, lessonName, ankiExported, vocabCfg.rootDeck]);
@@ -1377,6 +1362,32 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     setVocabCfg(next);
     void saveVocabConfig(next);
   };
+
+  const handleOpenAnkiDue = useCallback(() => {
+    if (ankiOpening) return;
+    setAnkiOpening(true);
+    const count = ankiDue ?? 0;
+    const targetDeck = `Kinema::Courses::${courseName}::${lessonName}`;
+
+    celebrate({
+      type: "achievement",
+      title: "Repaso en Anki",
+      subtitle: `${count} tarjetas pendientes · ${lessonName}`,
+      icon: <Repeat2 className="text-amber-400" />,
+    });
+
+    void sendRuntimeMessage({
+      type: "USG_ANKI_DUE",
+      course: courseName,
+      lesson: lessonName,
+      browse: true,
+      rootDeck: vocabCfg.rootDeck,
+    });
+
+    setTimeout(() => {
+      setAnkiOpening(false);
+    }, 1200);
+  }, [ankiOpening, ankiDue, courseName, lessonName, vocabCfg.rootDeck]);
 
   // ── Verdict sound is handled centrally by celebrate() ──────────────────────
 
@@ -2322,80 +2333,20 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   };
 
   // ── Vocabulario del curso → .apkg (note type + preset propios) ─────────────
-  const handleExportVocabulary = async () => {
-    if (vocabStatus === "loading") return;
-    markQa("vocab-click");
-    setVocabStatus("loading");
-    setVocabProgress("Transcripción…");
-    try {
-      const transcript = await requestStudyTranscript(22000);
-      if (!transcript.ok || !transcript.transcriptText?.trim()) {
-        throw new Error(transcript.error || "No hay transcripción disponible en esta lección.");
-      }
-
-      setVocabProgress("IA extrayendo palabras…");
-      const ai = await sendRuntimeMessage<{ ok?: boolean; payload?: unknown; error?: string }>({
-        type: "USG_GENERATE_VOCABULARY",
-        transcriptText: transcript.transcriptText,
-        course: courseName,
-        lesson: lessonName,
-        targetLang: vocabCfg.targetLang === "en" ? "inglés" : vocabCfg.targetLangLabel,
-        baseLang: vocabCfg.baseLangLabel,
-        minLevel: vocabCfg.minLevel,
-        maxWords: vocabCfg.maxWords,
-      });
-      if (!ai?.ok) throw new Error(ai?.error || "El motor de IA no respondió.");
-
-      const parsed = parseVocabularyPayload(ai.payload);
-      if (parsed.length === 0) {
-        throw new Error(`La IA no encontró palabras de nivel ${vocabCfg.minLevel}+. ¿Los subtítulos de la lección están en ${vocabCfg.targetLangLabel}?`);
-      }
-      const { fresh: levelFiltered } = filterVocabulary(parsed, vocabCfg);
-      const registry = await loadVocabRegistry();
-      const { fresh, seen } = splitAlreadyExported(levelFiltered, registry, vocabCfg.targetLang);
-
-      if (fresh.length === 0) {
-        setVocabStatus("done");
-        setVocabProgress(`${seen.length} ya exportadas`);
-        markQa("vocab-dup:" + seen.length);
-        toast.info("Sin palabras nuevas esta lección", {
-          description: seen.length > 0
-            ? `Las ${seen.length} palabras ya estaban en tu mazo de otras lecciones.`
-            : "Todo el vocabulario de esta lección ya fue exportado.",
-          icon: <CheckCircle2 className="text-sky-400" size={18} />,
-        });
-        setTimeout(() => setVocabStatus("idle"), 4000);
-        return;
-      }
-
-      setVocabProgress(`Empaquetando ${fresh.length} palabras…`);
-      const { spec, deckPath } = buildVocabularySpec(fresh, courseName, lessonName, vocabCfg);
-      const apkg = await buildAnkiApkg(spec, (msg) => setVocabProgress(msg));
-      downloadApkg(apkg, `${lessonName.replace(/[^a-z0-9]/gi, "_")}_vocabulario_${vocabCfg.targetLang}.apkg`);
-      await markVocabularyExported(vocabCfg.targetLang, fresh, { course: courseName, lesson: lessonName, deck: deckPath });
-      void pushLectureGlossary();
-
-      setVocabStatus("done");
-      setVocabProgress(`${fresh.length} palabras`);
-      markQa("vocab-done:" + fresh.length);
-      celebrate({
-        type: "anki_export",
-        rewardKey: `anki-vocab::${slugify(courseName)}::${slugify(lessonName)}::${vocabCfg.targetLang}`,
-        title: "¡Vocabulario exportado!",
-        subtitle: `${fresh.length} palabras → ${deckPath}${seen.length ? ` (${seen.length} repetidas saltadas)` : ""}`,
-        icon: <Languages className="text-sky-400" />,
-      });
-      setTimeout(() => setVocabStatus("idle"), 4000);
-    } catch (err) {
-      console.error("[vocab export]", err);
-      markQa("vocab-error:" + String(err instanceof Error ? err.message : err).slice(0, 70));
-      setVocabStatus("error");
-      setVocabProgress(err instanceof Error ? err.message.slice(0, 70) : "Error al exportar");
-      toast.error("No se pudo exportar el vocabulario", {
-        description: err instanceof Error && err.message.length > 140 ? `${err.message.slice(0, 140)}…` : undefined,
-      });
-      setTimeout(() => setVocabStatus("idle"), 5000);
-    }
+  const generateVocabularyCandidates = async () => {
+    const previewPayload = prototypeVocabulary(vocabCfg.targetLang);
+    if (previewPayload) return previewPayload;
+    const transcript = await requestStudyTranscript(22000);
+    if (!transcript.ok || !transcript.transcriptText?.trim()) throw new Error(transcript.error || "No hay transcripción disponible.");
+    const response = await sendRuntimeMessage<{ ok?: boolean; payload?: unknown; error?: string }>({
+      type: "USG_GENERATE_VOCABULARY", transcriptText: transcript.transcriptText,
+      course: courseName, lesson: lessonName, targetLang: vocabCfg.targetLangLabel,
+      baseLang: vocabCfg.baseLangLabel, minLevel: vocabCfg.minLevel, maxWords: 20,
+    });
+    if (!response?.ok) throw new Error(response?.error || "La generación requiere la extensión y un motor de IA disponible. Puedes probar la demo sin exportar.");
+    const words = parseVocabularyPayload(response.payload).filter(word => vocabularyMatches(word.word, transcript.transcriptText ?? ""));
+    if (!words.length) throw new Error("La IA no devolvió palabras presentes en los subtítulos. Revisa el idioma objetivo y la transcripción.");
+    return { words, partial: Boolean(transcript.truncated || transcript.transcriptTruncated) };
   };
 
   // ── Obsidian export ──────────────────────────────────────────────────────────
@@ -2415,7 +2366,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     const data = getObsidianSessionData();
     if (!data) return;
     if (!obsidianCfg.vaultName.trim()) {
-      setObsidianPanelOpen(true);
+      openObsidianSettings();
       toast.error("Escribe el nombre de tu vault para exportar", {
         description: "Obsidian lo abre y crea la nota — sin plugins ni servidores.",
         icon: <BookMarked className="text-violet-400" size={18} />,
@@ -2530,6 +2481,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
       area.select();
       try {
         if (!document.execCommand("copy")) throw new Error("execCommand(copy) devolvió false");
+      } catch {
+        toast.error("No se pudo copiar el Markdown", { description: "Usa «Descargar .md» como alternativa." });
+        return;
       } finally {
         area.remove();
       }
@@ -2540,8 +2494,13 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   const handleDownloadObsidianMarkdown = () => {
     const data = getObsidianSessionData();
     if (!data) return;
-    const path = buildSessionNotePath(obsidianCfg, courseName, lessonName);
-    downloadFile(buildSessionNoteMarkdown(data, obsidianCfg), path.split("/").pop() || "sesion.md", "text/markdown;charset=utf-8");
+    try {
+      const path = buildSessionNotePath(obsidianCfg, courseName, lessonName);
+      downloadFile(buildSessionNoteMarkdown(data, obsidianCfg), path.split("/").pop() || "sesion.md", "text/markdown;charset=utf-8");
+    } catch (error) {
+      toast.error("No se pudo descargar la nota", { description: error instanceof Error ? error.message : "Inténtalo de nuevo." });
+      return;
+    }
     toast.success("Nota .md descargada", { description: "Muévela a la carpeta del vault si no la guardaste ahí." });
   };
 
@@ -2549,30 +2508,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
     const next = { ...obsidianCfg, ...patch };
     setObsidianCfg(next);
     void saveObsidianExportConfig(next);
-  };
-
-  const handleTestObsidianVault = () => {
-    if (!obsidianCfg.vaultName.trim()) {
-      toast.error("Escribe el nombre del vault primero.");
-      return;
-    }
-    openObsidianUri(buildObsidianOpenVaultUri(obsidianCfg.vaultName));
-    toast.info("Obsidian debería abrir ese vault ahora", {
-      description: "Si abre vacío o avisa que no existe, revisa el nombre exacto en el selector de vaults.",
-      duration: 7000,
-    });
-  };
-
-  const handleCreateVaultScaffold = () => {
-    if (!obsidianCfg.vaultName.trim()) {
-      toast.error("Escribe el nombre del vault primero.");
-      return;
-    }
-    const count = createVaultScaffold(obsidianCfg, { platform: "udemy" });
-    toast.success(`Creando estructura (${count} notas)…`, {
-      description: "Obsidian crea carpetas y notas: CLAUDE.md, índice, log y plantillas.",
-      icon: <FolderPlus className="text-violet-400" size={18} />,
-    });
   };
 
   const isFirstExport = !txtSetupCourses.has(slugify(courseName));
@@ -2672,9 +2607,24 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
   // El botón de historial de las pestañas (ExtensionSidebar) abre el historial.
   useEffect(() => {
     const open = () => setHistoryOpen(true);
+    const toggle = () => setHistoryOpen(v => !v);
+    const close = (e: Event) => { if ((e as CustomEvent<{ open: boolean }>).detail?.open) setHistoryOpen(false); };
     window.addEventListener("usb:open-history", open);
-    return () => window.removeEventListener("usb:open-history", open);
+    window.addEventListener("usb:toggle-history", toggle);
+    window.addEventListener("usb:settings-open", close);
+    return () => {
+      window.removeEventListener("usb:open-history", open);
+      window.removeEventListener("usb:toggle-history", toggle);
+      window.removeEventListener("usb:settings-open", close);
+    };
   }, []);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("usb:history-open", { detail: { open: historyOpen } }));
+    if (!historyOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setHistoryOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [historyOpen]);
 
   // ── Render ────────────────────────────────────────��─────────────────────────
   return (
@@ -2697,26 +2647,24 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
               className="absolute inset-y-0 right-0 z-50 w-[88%] max-w-[360px] bg-[var(--usb-bg-1)] border-l border-[var(--usb-border)] shadow-2xl flex flex-col"
             >
-              <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--usb-divider)] shrink-0">
-                <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border shadow-sm"
-                  style={{
-                    background: "color-mix(in srgb, #6d4aff 12%, var(--usb-bg-3))",
-                    borderColor: "color-mix(in srgb, #6d4aff 24%, var(--usb-border))",
-                    color: t("#b7a6ff", "#5b37e8"),
-                  }}>
-                  <Icon name="history" size={15} weight="duotone" />
-                </span>
-                <span className="flex-1 text-[13px] font-bold tracking-tight text-[var(--usb-fg)]">Historial de estudio</span>
+              {/* Misma cabecera que DockSheet (Configuración / Nivel). */}
+              <div className="flex items-center gap-3 px-4 pt-5 pb-3 border-b border-[var(--usb-divider)] shrink-0">
+                <div className="min-w-0 flex-1">
+                  <span className="kx-slate block" style={{ color: t("#b7a6ff", "#5b37e8") }}>Estudio</span>
+                  <h3 className="mt-1 text-[16px] font-extrabold tracking-tight leading-tight text-[var(--usb-fg-hi)] truncate">Historial</h3>
+                </div>
                 <button
+                  type="button"
                   onClick={() => setHistoryOpen(false)}
                   aria-label="Cerrar historial"
-                  className="kx-chip w-7 h-7 flex items-center justify-center rounded-full"
+                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 w-8 h-8 flex items-center justify-center rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors"
                 >
-                  <X size={13} />
+                  <X size={14} />
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                 <HistoryPanel
+                  onExportLesson={async rec => { await exportApkgFile((rec.ankiCards ?? []).map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concept" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck); }}
                   hideToggle
                   defaultOpen
                   onOpenLecture={(rec) => {
@@ -2738,6 +2686,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
           </>
         )}
       </AnimatePresence>
+
+      <VocabularyPanel compact mount={vocabularyMount} course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} />
 
       <AnimatePresence mode="wait">
 
@@ -2779,15 +2729,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               </div>
             </div>
 
-            <MemoryCard
-              onExportLesson={async (rec) => {
-                await exportApkgFile(
-                  (rec.ankiCards ?? []).map((c) => ({ ...c, tags: c.tags ?? [], type: c.type ?? "concept" })) as unknown as AnkiCard[],
-                  rec.courseName, rec.lectureName, vocabCfg.rootDeck,
-                );
-                await new Promise((r) => setTimeout(r, 600));
-              }}
-            />
 
             {/* Objectives — AI-generated per course, with fold-don't-hide disclosure */}
             <div>
@@ -2806,7 +2747,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
               {objectivesLoading && !dynamicObjectives && (
                 <div className="grid grid-cols-2 gap-2">
                   {[0,1,2,3].map(i => (
-                    <div key={i} className="h-[88px] rounded-2xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] animate-pulse"/>
+                    <div key={i} className="h-[88px] rounded-2xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)]"/>
                   ))}
                 </div>
               )}
@@ -2983,7 +2924,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       else { setSelectedObj(fallbackId); setRefinedObj(""); setRefinedFromText(""); }
                     }}
                     placeholder="Ej: Conseguir trabajo en fintech como Java dev en 3 meses…"
-                    className={`w-full h-[74px] text-[12.5px] rounded-2xl bg-[var(--usb-bg-3)] border ${isCustomActive ? "border-[#6d4aff]/60 ring-2 ring-[#6d4aff]/20" : "border-[var(--usb-border)]"} text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] px-4 py-3 resize-none outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors leading-relaxed`}/>
+                    className={`kx-field w-full h-[74px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border ${isCustomActive ? "border-[#6d4aff]/60 ring-2 ring-[#6d4aff]/20" : "border-[var(--usb-border)]"} text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-mid)] px-4 py-3 resize-none outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors leading-relaxed`}/>
 
                   <AnimatePresence mode="wait">
                     {/* No refined version yet → primary CTA */}
@@ -3043,12 +2984,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
             <div className="space-y-3">
               <SectionTitle icon="bookOpen" hue={2}>Datos del curso</SectionTitle>
               <input value={courseName} onChange={e => { setCourseName(e.target.value); courseNameEditedRef.current = true; }} placeholder="Nombre del curso (para mazo Anki)"
-                className="w-full h-11 text-[12.5px] rounded-2xl kx-field bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] px-4 outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors"/>
+                className={fieldCls}/>
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
-                className="w-full h-11 text-[12.5px] rounded-2xl kx-field bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] px-4 outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors"/>
+                className={fieldCls}/>
               <textarea value={courseDescription} onChange={e => setCourseDescription(e.target.value)}
                 placeholder="Descripción breve del curso (ayuda a la IA a generar mejores objetivos)"
-                className="w-full h-[74px] text-[12px] rounded-2xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] p-3 resize-none outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors leading-relaxed custom-scrollbar-thin"/>
+                className={`${textareaCls} h-[74px] custom-scrollbar-thin`}/>
             </div>
 
             {/* Transcript indicator */}
@@ -3258,16 +3199,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full"/>
                 </div>
                 <span className="text-emerald-400 text-[11px] font-bold tabular-nums shrink-0">{content.relevance.score}%</span>
-                {ankiDue != null && ankiDue > 0 && (
-                  <button
-                    onClick={() => { void sendRuntimeMessage({ type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, browse: true, rootDeck: vocabCfg.rootDeck }); }}
-                    title="Abrir estas tarjetas en el navegador de Anki"
-                    className="ml-auto shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300/90 text-[10px] font-bold tabular-nums hover:bg-amber-500/18 transition-colors"
-                  >
-                    <Repeat2 size={10}/>
-                    {ankiDue} por repasar
-                  </button>
-                )}
               </div>
               )}
 
@@ -3435,7 +3366,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           onChange={(e) => setRecallNotes(e.target.value)}
                           rows={3}
                           placeholder="Lo que recuerdo es…"
-                          className="kx-field w-full resize-none rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 text-[11.5px] leading-relaxed text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] outline-none focus:border-[#6d4aff]/60 transition-colors"
+                          className={textareaCls}
                         />
                         <button onClick={() => setRecallRevealed(true)}
                           className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]">
@@ -3672,7 +3603,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                     <textarea value={questionAnswers[i] || ""}
                                       onChange={e => setQuestionAnswers(p => ({ ...p, [i]: e.target.value }))}
                                       placeholder="Escribe tu respuesta con tus propias palabras…"
-                                      className={`w-full h-[92px] text-[12px] rounded-2xl bg-[var(--usb-bg-3)] border px-3.5 py-3 resize-none outline-none transition-all leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-lo)] ${ratingBorder}`}/>
+                                      className={`kx-field w-full h-[92px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-mid)] ${ratingBorder}`}/>
                                     {(questionAnswers[i]?.length ?? 0) > 0 && (
                                       <span className="absolute bottom-2.5 right-3 text-[10px] text-[var(--usb-fg-lo)] font-mono pointer-events-none">
                                         {questionAnswers[i].length}
@@ -3805,7 +3736,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       <div className="relative">
                         <textarea value={appAnswer} onChange={e => setAppAnswer(e.target.value)}
                           placeholder={content.application.isCode ? "// Tu solución aquí…" : "Tu respuesta aquí…"}
-                          className={`w-full h-[100px] text-[12px] rounded-2xl bg-[var(--usb-bg-3)] border px-3.5 py-3 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-[var(--usb-fg-lo)] ${
+                          className={`kx-field w-full h-[100px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-[var(--usb-fg-mid)] ${
                             content.application.isCode ? "font-mono text-emerald-400" : "text-[var(--usb-fg)]"
                           } ${
                             appFeedback.status === "done" && (appFeedback.rating === "correct" || appFeedback.rating === "excellent")
@@ -4026,7 +3957,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       onChange={(e) => { setOralAnswer(e.target.value); if (oralFeedback.status === "done" || oralFeedback.status === "error") setOralFeedback(IDLE_FB); }}
                       placeholder="Escribe aquí lo que dirías en voz alta…"
                       rows={3}
-                      className="kx-field w-full resize-none rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 text-[11.5px] leading-relaxed text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] outline-none focus:border-[#6d4aff]/60 transition-colors"
+                      className={textareaCls}
                     />
                     {oralFeedback.status === "idle" && (
                       <button onClick={handleEvaluateOral} disabled={!oralAnswer.trim()}
@@ -4036,12 +3967,12 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                     )}
                     <AIFeedback fb={oralFeedback} onRetry={handleEvaluateOral} />
                     {oralFeedback.status !== "done" && !oralSkipped && (
-                      <button onClick={() => setOralSkipped(true)} className="w-full text-[10px] font-medium text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] transition-colors">
+                      <button onClick={() => setOralSkipped(true)} className="w-full text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors">
                         Omitir por ahora
                       </button>
                     )}
                     {oralSkipped && oralFeedback.status !== "done" && (
-                      <p className="text-[10px] font-medium text-[var(--usb-fg-lo)] text-center">Omitida. Puedes responderla cuando quieras.</p>
+                      <p className="text-[11px] font-medium text-[var(--usb-fg-mid)] text-center">Omitida. Puedes responderla cuando quieras.</p>
                     )}
                     <button onClick={() => setShowInterviewAnswer(v => !v)}
                       className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
@@ -4049,8 +3980,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                           ? "bg-[#6d4aff]/10 border-[#6d4aff]/30 text-[var(--usb-fg-hi)]"
                           : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
                       }`}>
-                      <span className="text-[10.5px] font-semibold flex-1">{oralPracticeMeta.answerLabel}</span>
-                      <ChevronDown size={11} className={`shrink-0 transition-transform text-[var(--usb-fg-lo)] ${showInterviewAnswer ? "rotate-180" : ""}`}/>
+                      <span className="text-[11.5px] font-semibold flex-1">{oralPracticeMeta.answerLabel}</span>
+                      <ChevronDown size={14} className={`shrink-0 transition-transform text-[var(--usb-fg-mid)] ${showInterviewAnswer ? "rotate-180" : ""}`}/>
                     </button>
                     <AnimatePresence>
                       {showInterviewAnswer && (
@@ -4077,37 +4008,37 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       icon={Package}
                       title="Tarjetas de la lección"
                       subtitle={`${content.ankiCards.length} tarjetas · .apkg se importa con doble clic`}
-                      badge={ankiExported ? <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
+                      badge={ankiExported ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
                     >
                       <div className="grid grid-cols-[1.4fr_1fr] gap-1.5">
                         <button onClick={handleExportApkg} disabled={!showApply || apkgStatus === "loading"}
-                          style={{ "--kx-btn": apkgStatus === "error" ? "#e11d48" : apkgStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
+                          style={{ "--kx-btn": apkgStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
                           className={exportPrimaryBtnCls}>
                           {apkgStatus === "loading"
                             ? <><Loader2 size={12} className="animate-spin"/><span className="truncate max-w-[85px]">{apkgProgress}</span></>
                             : apkgStatus === "done"
                               ? <><CheckCircle2 size={12}/>Exportado</>
                               : apkgStatus === "error"
-                                ? <><X size={12}/>Error</>
+                                ? <><RefreshCw size={12}/>Reintentar</>
                                 : <><Package size={12}/>Exportar .apkg</>}
                         </button>
                         <button onClick={handleExport} disabled={!showApply} className={`${exportGhostBtnCls} h-9`}>
                           <FileDown size={12}/>.txt
                         </button>
                       </div>
-                      <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
+                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
                         {isFirstExport
                           ? ".txt es manual: la primera vez de cada curso incluye CSS y plantilla."
                           : ".txt usa el setup que ya creaste para este curso."}
                       </p>
                       <div className="flex items-center gap-4">
                         <button onClick={() => setShowCardPreview(v => !v)} aria-expanded={showCardPreview}
-                          className="text-[10px] font-medium text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
-                          <ChevronDown size={11} className={`transition-transform ${showCardPreview ? "rotate-180" : ""}`}/>{showCardPreview ? "Ocultar tarjetas" : "Ver tarjetas"}
+                          className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
+                          <ChevronDown size={14} className={`transition-transform ${showCardPreview ? "rotate-180" : ""}`}/>{showCardPreview ? "Ocultar tarjetas" : "Ver tarjetas"}
                         </button>
                         <button onClick={() => setShowAnkiGuide(v => !v)} aria-expanded={showAnkiGuide}
-                          className="text-[10px] font-medium text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
-                          <Info size={10}/>{showAnkiGuide ? "Ocultar guía" : "Guía de importación"}
+                          className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
+                          <Info size={13}/>{showAnkiGuide ? "Ocultar guía" : "Guía de importación"}
                         </button>
                       </div>
                       <AnimatePresence initial={false}>
@@ -4129,9 +4060,9 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
                                   "FSRS queda activado automáticamente en los dos presets al importar (sin pasos). Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
                                   "Tus demás mazos y tu preset Default NO se tocan nunca.",
-                                  `Audio del vocabulario (${vocabCfg.audioMode === "tts" ? "voz del sistema" : "archivos de calidad"}): cambia el modo en Configurar. Imagen y fonética las completa tu sistema de imágenes.`,
+                                  `Audio del vocabulario (${vocabCfg.audioMode === "tts" ? "voz del sistema" : "archivos de calidad"}): cambia el modo en Configuración › Mazo de idiomas. Imagen y fonética las completa tu sistema de imágenes.`,
                                 ].map((s, i) => (
-                                  <p key={i} className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed">{i + 1}. {s}</p>
+                                  <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i + 1}. {s}</p>
                                 ))}
                               </div>
                               <div className="pt-2 border-t border-[var(--usb-divider)]" />
@@ -4144,8 +4075,8 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                     { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-[#059669]", steps:["En Anki: Archivo → Importar → selecciona este archivo","Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar"] },
                                   ].map(({ file, color, steps }) => (
                                     <div key={file} className="space-y-1 pt-2 border-t border-[var(--usb-divider)]">
-                                      <p className={`font-mono text-[10px] ${color}`}>{file}</p>
-                                      {steps.map((s,i) => <p key={i} className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed pl-2">{i+1}. {s}</p>)}
+                                      <p className={`font-mono text-[11px] ${color}`}>{file}</p>
+                                      {steps.map((s,i) => <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed pl-2">{i+1}. {s}</p>)}
                                     </div>
                                   ))}
                                 </>
@@ -4153,11 +4084,11 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 <>
                                   <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>TXT manual · siguientes lecciones</p>
                                   {["Archivo → Importar en Anki",`Selecciona "${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt"`,"Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar y revisa el resumen antes de confirmar"].map((s,i) => (
-                                    <p key={i} className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed">{i+1}. {s}</p>
+                                    <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i+1}. {s}</p>
                                   ))}
                                   <button onClick={handleDownloadTxtSetup}
-                                    className="w-full h-7 rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[10px] font-medium flex items-center justify-center gap-1.5 transition-all">
-                                    <FolderPlus size={10}/>Descargar CSS + plantilla otra vez
+                                    className="w-full h-7 rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all">
+                                    <FolderPlus size={13}/>Descargar CSS + plantilla otra vez
                                   </button>
                                 </>
                               )}
@@ -4167,141 +4098,23 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                       </AnimatePresence>
                     </ExportModule>
 
-                      {/* ── Vocabulario del curso (idiomas) ── */}
-                      {vocabLangOk === false ? (
-                        <div className="flex items-start gap-2.5 rounded-xl border border-dashed border-[var(--usb-border-mid)] px-3 py-2.5">
-                          <Languages size={12} className="text-[var(--usb-fg-lo)] shrink-0 mt-0.5"/>
-                          <p className="text-[var(--usb-fg-mid)] text-[10px] leading-relaxed">
-                            <span className="text-[var(--usb-fg-hi)] font-semibold">Vocabulario no disponible en esta lección.</span>
-                            {" "}Los subtítulos no están en {vocabCfg.targetLangLabel}; conceptos y Obsidian funcionan igual.
-                          </p>
-                        </div>
-                      ) : (
-                        <ExportModule
-                          icon={Languages}
-                                          title={`Vocabulario · ${vocabCfg.targetLangLabel}`}
-                          subtitle={<>Nivel {vocabCfg.minLevel}+ · hasta {vocabCfg.maxWords} palabras · {vocabCfg.audioMode === "tts" ? "voz del sistema" : "audio de calidad"}</>}
-                          configOpen={vocabPanelOpen}
-                          onToggleConfig={() => setVocabPanelOpen(v => !v)}
-                        >
-                          <AnimatePresence initial={false}>
-                          {vocabPanelOpen && (
-                            <Collapse>
-                            <div className="space-y-2 pb-1">
-                              <div className="grid grid-cols-2 gap-1.5">
-                                <label className="block">
-                                  <p className={exportLabelCls}>Nivel mínimo (CEFR)</p>
-                                  <select value={vocabCfg.minLevel} onChange={(e) => handleSaveVocabCfg({ minLevel: e.target.value })} className={exportFieldCls}>
-                                    {cefrLevels().map((level) => (
-                                      <option key={level} value={level}>{level}</option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <label className="block">
-                                  <p className={exportLabelCls}>Máx. palabras / lección</p>
-                                  <input type="number" min={3} max={20} value={vocabCfg.maxWords}
-                                    onChange={(e) => handleSaveVocabCfg({ maxWords: Math.min(20, Math.max(3, Number(e.target.value) || 8)) })}
-                                    className={exportFieldCls}/>
-                                </label>
-                                <label className="block">
-                                  <p className={exportLabelCls}>Audio de las tarjetas</p>
-                                  <select value={vocabCfg.audioMode} onChange={(e) => handleSaveVocabCfg({ audioMode: e.target.value as VocabConfig["audioMode"] })} className={exportFieldCls}>
-                                    <option value="field">Archivo de calidad</option>
-                                    <option value="tts">Voz del sistema</option>
-                                  </select>
-                                </label>
-                                <label className="block">
-                                  <p className={exportLabelCls}>Mazo raíz</p>
-                                  <input value={vocabCfg.rootDeck} onChange={(e) => handleSaveVocabCfg({ rootDeck: e.target.value })}
-                                    placeholder="Kinema" className={exportFieldCls}/>
-                                </label>
-                              </div>
-                              <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
-                                {vocabCfg.audioMode === "tts"
-                                  ? "Voz del sistema: Anki habla al instante con las voces del sistema operativo, sin archivos."
-                                  : "Archivo de calidad: la plantilla reproduce word audio / sentence audio, que genera HyperTTS o tu pipeline externo."}
-                                {" "}Cada tarjeta trae una oración limpia escrita para ella; las palabras repetidas de otras lecciones se saltan solas.
-                              </p>
-                            </div>
-                            </Collapse>
-                          )}
-                          </AnimatePresence>
-
-                          <button onClick={handleExportVocabulary} disabled={vocabStatus === "loading"}
-                            style={{ "--kx-btn": vocabStatus === "error" ? "#e11d48" : vocabStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
-                            className={`${exportPrimaryBtnCls} w-full`}>
-                            {vocabStatus === "loading"
-                              ? <><Loader2 size={11} className="animate-spin"/><span className="truncate max-w-[180px]">{vocabProgress}</span></>
-                              : vocabStatus === "done"
-                                ? <><CheckCircle2 size={12}/><span className="truncate max-w-[180px]">Exportado · {vocabProgress}</span></>
-                                : vocabStatus === "error"
-                                  ? <><X size={12}/><span className="truncate max-w-[180px]">{vocabProgress}</span></>
-                                  : <><Languages size={12}/>Extraer vocabulario (.apkg)</>
-                            }
-                          </button>
-                        </ExportModule>
-                      )}
+                      <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} />
 
                       {/* ── Obsidian export ── */}
                       <ExportModule
                         icon={BookMarked}
-                                        title="Obsidian"
+                        title="Obsidian"
+                        badge={exportedNotes.includes(sessionExportKey(courseName, lessonName)) ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
                         subtitle={obsidianCfg.vaultName.trim()
                           ? <>Vault «{obsidianCfg.vaultName}» · nota + MOC del curso</>
                           : "Sin vault configurado"}
-                        configOpen={obsidianPanelOpen}
-                        onToggleConfig={() => setObsidianPanelOpen(v => !v)}
+                        configLabel="Ajustar"
+                        onToggleConfig={openObsidianSettings}
                       >
-                        <AnimatePresence initial={false} mode="wait">
-                        {obsidianPanelOpen ? (
-                          <Collapse key="cfg">
-                          <div className="space-y-2">
-                            <label className="block">
-                              <p className={exportLabelCls}>Nombre del vault (igual que en el selector de Obsidian)</p>
-                              <input value={obsidianCfg.vaultName} onChange={(e) => handleSaveObsidianCfg({ vaultName: e.target.value })}
-                                placeholder="Ej: Dev Courses" className={exportFieldCls}/>
-                            </label>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <label className="block">
-                                <p className={exportLabelCls}>Notas de sesión</p>
-                                <input value={obsidianCfg.sourcesFolder} onChange={(e) => handleSaveObsidianCfg({ sourcesFolder: e.target.value })} className={`${exportFieldCls} font-mono`}/>
-                              </label>
-                              <label className="block">
-                                <p className={exportLabelCls}>MOCs de curso</p>
-                                <input value={obsidianCfg.mocsFolder} onChange={(e) => handleSaveObsidianCfg({ mocsFolder: e.target.value })} className={`${exportFieldCls} font-mono`}/>
-                              </label>
-                            </div>
-                            <div className="grid grid-cols-1 gap-1">
-                              {([
-                                ["includeCards", "Incluir tarjetas #flashcards"],
-                                ["autoExport", "Auto-exportar al generar la sesión"],
-                                ["includeRawSrt", "Guardar SRT crudo en raw/"],
-                              ] as const).map(([key, label]) => (
-                                <label key={key} className="flex items-center gap-2 text-[var(--usb-fg-mid)] text-[10px] cursor-pointer py-0.5">
-                                  <input type="checkbox" checked={obsidianCfg[key]} onChange={(e) => handleSaveObsidianCfg({ [key]: e.target.checked } as Partial<ObsidianExportConfig>)} className="accent-[#6d4aff] w-3 h-3"/>
-                                  {label}
-                                </label>
-                              ))}
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <button onClick={handleTestObsidianVault} className={exportGhostBtnCls}>
-                                <ExternalLink size={10}/>Probar vault
-                              </button>
-                              <button onClick={handleCreateVaultScaffold} className={exportGhostBtnCls}>
-                                <FolderPlus size={10}/>Crear desde cero
-                              </button>
-                            </div>
-                            <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
-                              Requiere Obsidian instalado. La primera vez Chrome pregunta si abrir <span className="font-mono text-[var(--usb-fg-hi)]">obsidian://</span>: marca «Siempre».
-                            </p>
-                          </div>
-                          </Collapse>
-                        ) : (
-                          <Collapse key="main">
                           <>
                             {!obsidianCfg.vaultName.trim() && (
-                              <button onClick={() => setObsidianPanelOpen(true)}
-                                className="w-full text-left rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:bg-[var(--usb-bg-2)] px-3 py-2 text-[var(--usb-fg-mid)] text-[10.5px] font-medium leading-relaxed transition-colors shadow-2xs">
+                              <button onClick={openObsidianSettings}
+                                className="w-full text-left rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:bg-[var(--usb-bg-2)] px-3 py-2 text-[var(--usb-fg-mid)] text-[11.5px] font-medium leading-relaxed transition-colors shadow-2xs">
                                 Configura el nombre de tu vault para exportar con un clic →
                               </button>
                             )}
@@ -4310,22 +4123,22 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                 style={{ "--kx-btn": obsidianStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
                                 className={exportPrimaryBtnCls}>
                                 {obsidianStatus === "done"
-                                  ? <><CheckCircle2 size={11}/>Listo</>
-                                  : <><BookMarked size={11}/>Exportar</>}
+                                  ? <><CheckCircle2 size={12}/>Exportado</>
+                                  : <><BookMarked size={12}/>Exportar</>}
                               </button>
                               <button onClick={handleCopyObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
-                                <ClipboardCopy size={10}/>Copiar
+                                <ClipboardCopy size={12}/>Copiar
                               </button>
                               <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
-                                <FileDown size={10}/>.md
+                                <FileDown size={12}/>.md
                               </button>
                             </div>
-                            <p className="text-[var(--usb-fg-lo)] text-[9.5px] leading-relaxed">
+                            <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
                               Crea la nota en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.sourcesFolder}/</span> y el MOC en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.mocsFolder}/</span>. Copiar y .md son respaldos manuales.
                             </p>
                             <button onClick={() => setObsidianHelpOpen(v => !v)}
-                              className="text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] text-[9.5px] flex items-center gap-1 transition-colors">
-                              <Info size={10}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
+                              className="text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] flex items-center gap-1 transition-colors">
+                              <Info size={13}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
                             </button>
                             {obsidianHelpOpen && (
                               <ol className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-2.5 space-y-1.5">
@@ -4333,10 +4146,10 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                                   "Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
                                   "Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir.",
                                   "Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, y borra el bloqueo de obsidian.",
-                                  "Verifica el nombre con Probar vault (en Configurar): Obsidian avisa si no existe.",
+                                  "Verifica el nombre con Probar vault (en Ajustar): Obsidian avisa si no existe.",
                                   "Como respaldo siempre quedan Copiar (portapapeles) o .md (archivo).",
                                 ].map((s, i) => (
-                                  <li key={i} className="flex gap-2 text-[var(--usb-fg-mid)] text-[9.5px] leading-relaxed">
+                                  <li key={i} className="flex gap-2 text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
                                     <span className="w-3.5 h-3.5 rounded-full bg-[#6d4aff]/15 text-[#6d4aff] text-[8px] flex items-center justify-center shrink-0 mt-px" style={{ fontWeight: 700 }}>{i + 1}</span>
                                     <span>{s}</span>
                                   </li>
@@ -4344,9 +4157,6 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                               </ol>
                             )}
                           </>
-                          </Collapse>
-                        )}
-                        </AnimatePresence>
                       </ExportModule>
                   </div>
               )}
@@ -4389,7 +4199,7 @@ export function StudyAgentTab({ session, apiKeys = [] }: { session?: Session; ap
                         <div key={st.label} className="kx-hero-chip flex flex-col items-center gap-0.5 rounded-xl px-1.5 py-2">
                           <Icon name={st.icon} size={14} />
                           <span className="text-[11.5px] font-mono font-bold">{st.value}</span>
-                          <span className="text-[9.5px] font-medium opacity-80 truncate max-w-[56px]">{st.label}</span>
+                          <span className="text-[11px] font-medium opacity-80 truncate max-w-[56px]">{st.label}</span>
                         </div>
                       ))}
                     </div>

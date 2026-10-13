@@ -3,6 +3,7 @@
 // Fallback: IA Local (8010) → proveedor configurado → Gemini → Mock
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { toast } from "sonner";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -494,7 +495,12 @@ export function TranslationPipeline({
   }, [runCount]);
 
   const handleCopyPrompt = async () => {
-    await navigator.clipboard.writeText(TRANSLATION_PROMPT);
+    try {
+      await navigator.clipboard.writeText(TRANSLATION_PROMPT);
+    } catch {
+      toast.error("No se pudo copiar el prompt");
+      return;
+    }
     setPromptCopied(true);
     setTimeout(() => setPromptCopied(false), 2200);
   };
@@ -509,7 +515,7 @@ export function TranslationPipeline({
   const MODEL_LABEL: Record<ModelSource, string> = {
     local:      "IA Local · 8010",
     provider:   providerConfig ? PROVIDER_LABELS[providerConfig.kind] : "Proveedor",
-    gemini:     `Gemini Flash · ${apiKeys.filter(Boolean).length} keys`,
+    gemini:     "Gemini",
     mock:       "Mock · sin conexión",
   };
 
@@ -518,7 +524,7 @@ export function TranslationPipeline({
   // provider did the work (or vice versa).
   const effectiveModelLabel = actualBackend
     ? actualBackend === "local" ? "IA Local · 8010"
-      : actualBackend === "gemini" ? `Gemini Flash · ${apiKeys.filter(Boolean).length} keys`
+      : actualBackend === "gemini" ? "Gemini"
         : actualBackend === "provider" ? (providerConfig ? PROVIDER_LABELS[providerConfig.kind] : "Proveedor")
           : MODEL_LABEL[modelUsed]
     : MODEL_LABEL[modelUsed];
@@ -539,7 +545,7 @@ export function TranslationPipeline({
       <div className="flex items-center gap-2.5 min-h-[28px]">
         <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-[var(--usb-bg-3)] border border-[var(--usb-border)] text-amber-500">
           {isActive
-            ? <motion.span className="w-2 h-2 rounded-full bg-current" animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 0.8, repeat: Infinity }} />
+            ? <motion.span className="w-2 h-2 rounded-full bg-current" />
             : <Zap size={14} />}
         </span>
         <p className="text-[12.5px] font-bold tracking-tight text-[var(--usb-fg)] truncate">Pipeline SRT · EN → ES</p>
@@ -706,8 +712,6 @@ export function TranslationPipeline({
                     {isStreaming && (
                       <motion.span
                         className="w-1 h-3 bg-violet-600 rounded-sm"
-                        animate={{ opacity: [1, 0, 1] }}
-                        transition={{ duration: 0.45, repeat: Infinity }}
                       />
                     )}
                   </div>
@@ -721,8 +725,6 @@ export function TranslationPipeline({
                     {isStreaming && (
                       <motion.span
                         className="inline-block ml-[1px] w-[2px] h-[12px] bg-violet-600 rounded-sm align-middle"
-                        animate={{ opacity: [1, 0, 1] }}
-                        transition={{ duration: 0.5, repeat: Infinity }}
                       />
                     )}
                   </div>
@@ -739,9 +741,7 @@ export function TranslationPipeline({
                   {[55, 40, 65].map((w, i) => (
                     <motion.div
                       key={i}
-                      animate={{ opacity: [0.25, 0.6, 0.25] }}
-                      transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.18 }}
-                      className="h-2 rounded bg-[var(--usb-border-mid)]"
+                      className="h-2 opacity-40 rounded bg-[var(--usb-border-mid)]"
                       style={{ width: `${w}%` }}
                     />
                   ))}

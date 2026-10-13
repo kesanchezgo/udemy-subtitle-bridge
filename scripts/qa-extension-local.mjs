@@ -229,28 +229,40 @@ if (!sw) await fail('service worker never appeared', page, 'sw');
 console.log('   service worker up:', sw.url());
 
 step('Seeding provider config + Obsidian export config + clearing stale dock prefs');
-await sw.evaluate(({ cfg, obsidian, registry }) => {
+await sw.evaluate(({ cfg, obsidian, vocabSession }) => {
 	return new Promise((resolve) => {
-		chrome.storage.local.clear(() => {
-			chrome.storage.local.set({
-				usg_ai_provider_config: cfg,
-				enabled: true,
-				obsidian_export_config: obsidian,
-					usb_vocab_registry: registry,
-			}, resolve);
+		chrome.storage.sync.clear(() => {
+			chrome.storage.local.clear(() => {
+				chrome.storage.local.set({
+					usg_ai_provider_config: cfg,
+					enabled: true,
+					obsidian_export_config: obsidian,
+					// La sesión de vocabulario vive en LOCAL (chromeLocalStorage → chrome.storage.local).
+					'usb_vocab_session_java programming bootcamp: spring boot & rest apis|platform independence in java|en': vocabSession,
+				}, () => {
+					chrome.storage.sync.set({
+						usb_vocab_config: { rootDeck: 'Kinema', targetLang: 'en', targetLangLabel: 'English', baseLangLabel: 'español', minLevel: 'B1', maxWords: 8, audioMode: 'field' },
+					}, resolve);
+				});
+			});
 		});
 	});
 }, {
-		registry: {
-			'en|java': {
-				course: 'Java Programming Bootcamp: Spring Boot & REST APIs',
-				lesson: 'Platform Independence in Java',
-				date: '2026-10-01',
-				deck: 'Kinema::Vocabulary::English::QA',
-				word: 'java',
+		vocabSession: {
+			course: 'Java Programming Bootcamp: Spring Boot & REST APIs',
+			lesson: 'Platform Independence in Java',
+			config: { rootDeck: 'Kinema', targetLang: 'en', targetLangLabel: 'English', baseLangLabel: 'español', minLevel: 'B1', maxWords: 8, audioMode: 'field' },
+			candidates: [{
+				word: 'java', level: 'B1', pos: 'noun',
+				meaning: 'lenguaje de programación y plataforma',
 				phonetic: '/ˈdʒɑːvə/',
 				monolingual: 'a programming language and platform',
-			},
+				sentence: 'Java runs on many platforms without recompiling.',
+				sentenceTranslation: 'Java corre en muchas plataformas sin recompilar.',
+			}],
+			selected: ['java'],
+			demo: false,
+			exports: [],
 		},
 	cfg: PROVIDER_CFG,
 	obsidian: {
@@ -471,6 +483,13 @@ try {
 }
 
 step('Verifying glossary chip in the overlay (vocabulario de la lección)');
+// El mock alimenta el chip desde el portal de Ajustes (VocabularyPanel compact):
+// abrir Configuración › Mazo de idiomas empuja la sesión sembrada al overlay.
+await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-settings', { detail: { section: 'vocabulary' } })));
+await page.waitForTimeout(2500);
+const syncKeys = await sw.evaluate(() => new Promise((res) => chrome.storage.sync.get(null, (items) => res(Object.keys(items || {})))));
+await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-settings')));
+await page.waitForTimeout(1000);
 // Buscar el video al inicio de la cue "Every Java program starts with a class"
 await page.evaluate(() => {
 	const v = document.querySelector('video');
@@ -481,14 +500,24 @@ const glossAppear = await page.waitForFunction(
 	{ timeout: 25000 },
 ).then(() => true, () => false);
 if (!glossAppear) {
-	const dbg = await page.evaluate(() => ({
+	const dbg = await page.evaluate(() => {
+		const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const txt = sr?.textContent ?? '';
+		return {
 		chip: Boolean(document.getElementById('usb-gloss-chip')),
 		chipDisplay: document.getElementById('usb-gloss-chip')?.style.display ?? null,
 		chipText: document.getElementById('usb-gloss-chip')?.textContent?.slice(0, 60) ?? null,
 		glossaryLen: document.documentElement.dataset.usbGlossary ?? null,
+		vocabLoad: document.documentElement.dataset.usbVocabLoad ?? null,
+		storagePath: document.documentElement.dataset.usbStoragePath ?? null,
+		panelKey: document.documentElement.dataset.usbVocabKey ?? null,
 		state: document.documentElement.dataset.usbGlossState ?? null,
-	}));
-	console.error('DEBUG gloss:', JSON.stringify(dbg));
+		settingsShown: txt.includes('Proveedor de IA'),
+		vocabPortal: Boolean(sr?.querySelector('[data-vocabulary-preferences]')),
+		vocabSection: txt.includes('Mazo de idiomas'),
+		};
+	});
+	console.error('gloss dump:', JSON.stringify(dbg));
 	await fail('glossary chip no apareció en el overlay (falta /ˈdʒɑːvə/)', page, 'gloss-chip');
 }
 console.log('   ✅ chip de glosario visible (java + IPA + definición en pausa)');

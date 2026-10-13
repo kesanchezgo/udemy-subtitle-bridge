@@ -1,5 +1,9 @@
 type ChromeApi = typeof globalThis & {
   chrome?: {
+    runtime?: {
+      sendMessage?: (message: unknown, callback: (response?: unknown) => void) => void;
+      lastError?: { message?: string };
+    };
     storage?: {
       sync?: {
         get: (keys: string[] | string, cb: (items: Record<string, unknown>) => void) => void;
@@ -37,6 +41,33 @@ const FALLBACK_CHANGE_EVENT = "usb_storage_change";
 function getChromeStorageArea(area: "sync" | "local" = "sync") {
   const chromeApi = globalThis as ChromeApi;
   return chromeApi.chrome?.storage?.[area] ?? null;
+}
+
+/**
+ * Relay de storage vía service worker. El dock corre en el contexto de la
+ * PÁGINA, donde chrome.storage no existe: sin esto, las capas de servicio
+ * (chromeLocalStorage y compañía) caen al fallback localStorage, que nadie
+ * más lee, y features como la sesión de vocabulario parecen "vacías".
+ */
+function storageRelay(
+  kind: "get" | "set" | "remove",
+  area: "sync" | "local",
+  payload: { keys?: string[]; items?: Record<string, unknown> },
+): Promise<unknown> {
+  const chromeApi = (globalThis as ChromeApi).chrome;
+  if (!chromeApi?.runtime?.sendMessage) return Promise.reject(new Error("sin runtime"));
+  return new Promise((resolve, reject) => {
+    try {
+      chromeApi.runtime.sendMessage({ type: `USG_STORAGE_${kind.toUpperCase()}`, area, ...payload }, (response) => {
+        if (chromeApi.runtime?.lastError) { reject(new Error(chromeApi.runtime.lastError.message)); return; }
+        const res = response as { ok?: boolean; items?: unknown; error?: string } | undefined;
+        if (res?.ok) resolve(kind === "get" ? (res.items ?? {}) : null);
+        else reject(new Error(res?.error ?? "relay falló"));
+      });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function getFallbackStorage() {
@@ -83,6 +114,13 @@ export const chromeStorage = {
       } catch (_error) {
         return {};
       }
+    }
+
+    try {
+      const viaRelay = await storageRelay("get", "sync", { keys });
+      return (viaRelay ?? {}) as Record<string, unknown>;
+    } catch {
+      /* sin relay: último recurso = fallback localStorage */
     }
 
     const out: Record<string, unknown> = {};
@@ -155,6 +193,13 @@ export const chromeLocalStorage = {
       }
     }
 
+    try {
+      const viaRelay = await storageRelay("get", "local", { keys });
+      return (viaRelay ?? {}) as Record<string, unknown>;
+    } catch {
+      /* sin relay: último recurso = fallback localStorage */
+    }
+
     const out: Record<string, unknown> = {};
     for (const key of keys) {
       const rawValue = getFallbackStorage().getItem(fallbackKey("local", key));
@@ -180,6 +225,14 @@ export const chromeLocalStorage = {
         // that invalidated context so they don't surface as unhandled promises.
       }
       return;
+    }
+
+    try {
+      await storageRelay("set", "local", { items });
+      emitFallbackChange("local", items);
+      return;
+    } catch {
+      /* sin relay: último recurso = fallback localStorage */
     }
 
     for (const [key, value] of Object.entries(items)) {
