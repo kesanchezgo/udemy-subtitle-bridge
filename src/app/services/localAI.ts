@@ -166,7 +166,7 @@ function humanizeGeminiErrorClass(cls: GeminiErrorClass): string {
     case "rate_limit":   return "Gemini está limitando las peticiones (cuota alcanzada). Espera unos segundos y reintenta.";
     case "overloaded":   return "Gemini está saturado por alta demanda (HTTP 503). Reintenta en 1-2 minutos.";
     case "server_error": return "Error temporal en los servidores de Gemini. Reintenta en unos segundos.";
-    case "invalid_key":  return "La API key de Gemini no es válida o no tiene permisos. Verifícala en ⚙️ → API keys.";
+    case "invalid_key":  return "La API key de Gemini no es válida o no tiene permisos. Verifícala en Ajustes → API keys.";
     case "bad_request":  return "Gemini rechazó la petición (formato del prompt). Revisa los logs.";
     case "unknown":      return "Error desconocido al hablar con Gemini.";
   }

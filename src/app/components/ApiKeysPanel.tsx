@@ -105,6 +105,9 @@ export function ApiKeysPanel({
     }
     setValidating(false);
     setValidation(result);
+    // Un endpoint fuera de los hosts permanentes necesita permiso opcional:
+    // sin él, fetch fallaría con un error de red opaco tras "guardar bien".
+    void ensureHostPermission(provider.baseUrl);
     onSaveProvider(provider);
     setProviderSaved(true);
     setTimeout(() => setProviderSaved(false), 2600);
@@ -113,6 +116,23 @@ export function ApiKeysPanel({
   const productionRuntime = Boolean(
     (globalThis as typeof globalThis & { chrome?: { runtime?: { id?: string } } }).chrome?.runtime?.id
   );
+
+  /**
+   * Concede permiso de host opcional si el endpoint no está ya cubierto por
+   * host_permissions. Silencioso si el navegador lo deniega (el usuario puede
+   * repetirlo desde chrome://extensions).
+   */
+  const ensureHostPermission = (baseUrl: string) => {
+    const chromeApi = (globalThis as typeof globalThis & { chrome?: { permissions?: { contains?: Function; request?: Function } } }).chrome;
+    if (!chromeApi?.permissions?.request) return;
+    let origin: string | null = null;
+    try { origin = new URL(baseUrl).origin + '/*'; } catch { return; }
+    const already = chromeApi.permissions.contains?.({ origins: [origin] });
+    if (already === true) return;
+    void Promise.resolve(chromeApi.permissions.contains?.({ origins: [origin] }))
+      .then((granted: unknown) => { if (granted === true) return; return chromeApi.permissions?.request?.({ origins: [origin] }); })
+      .catch(() => undefined);
+  };
 
   const providerReady = provider.kind === "local"
     ? Boolean(provider.baseUrl)

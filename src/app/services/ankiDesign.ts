@@ -9,7 +9,7 @@
  *    "Default"): el .apkg incluye sus PROPIOS presets con ID propio y los
  *    mazos de la extensión apuntan a ellos.
  *  - Todo mazo de la extensión vive bajo el mazo raíz configurable
- *    (default "Udemy Bridge"), con dos ramas:
+ *    (default "Kinema"), con dos ramas:
  *        <Root>::Courses::<Curso>::<Lección>       → conceptos de la lección
  *        <Root>::Vocabulary::<Idioma>::<Curso>     → vocabulario del curso
  *  - El note type de vocabulario usa EXACTAMENTE los nombres de campo del
@@ -177,7 +177,7 @@ const PRISM_HEAD = `<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.2
 
 export const CONCEPT_MODEL_CSS = `/* ==========================================================
    SISTEMA DE DISEÑO DEVELOPER / INGENIERÍA DE SOFTWARE
-   Udemy Bridge · Conceptos de lección
+   Kinema · Conceptos de lección
    ========================================================== */
 
 /* --- TEMA CLARO (Clean IDE / GitHub Light) --- */
@@ -781,7 +781,7 @@ function vocabAudioBlocks(audioMode: VocabAudioMode): { word: string; sentence: 
 
 export const VOCAB_MODEL_CSS = `/* =========================================================
    SISTEMA DE DISEÑO MINIMALISTA / ELEGANTE (ADVANCED VOCAB)
-   Udemy Bridge · Vocabulario
+   Kinema · Vocabulario
    ========================================================== */
 
 /* --- TEMA CLARO (Editorial Minimal) --- */

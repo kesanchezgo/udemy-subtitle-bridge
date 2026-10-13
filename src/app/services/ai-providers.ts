@@ -45,7 +45,7 @@ export const DEFAULT_BASE_URLS: Record<AiProviderKind, string> = {
 export const DEFAULT_MODELS: Record<AiProviderKind, string> = {
   local: 'local-model',
   openai: 'gpt-4o-mini',
-  anthropic: 'claude-3-5-sonnet-latest',
+  anthropic: 'claude-sonnet-5',
   gemini: 'gemini-2.5-flash',
 };
 

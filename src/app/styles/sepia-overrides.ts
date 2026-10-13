@@ -926,11 +926,20 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   border-color: var(--usb-border) !important;
 }
 
+.usb-dock.dock-sepia select.kx-field,
+.usb-dock.dock-sepia select.kx-field:focus {
+  color-scheme: light;
+}
+
 /* Panel de IA/modelos: tarjeta blanca elevada flotando sobre la página */
 .usb-dock.dock-sepia .usb-ai-panel {
   background-color: #ffffff !important;
   box-shadow: var(--usb-elev-2) !important;
 }
+
+/* Interruptores: el estado manda (los botones primarios no deben pintarlos). */
+.usb-dock button[role="switch"][data-state="unchecked"] { background-color: color-mix(in srgb, var(--usb-fg) 30%, transparent) !important; box-shadow: none !important; }
+.usb-dock button[role="switch"][data-state="checked"] { background-color: #6d4aff !important; box-shadow: none !important; }
 
 /* Segmented control (Local/OpenAI/Claude/Gemini): track gris para que los
    segmentos activos/en repos se lean sobre blanco */
@@ -1262,8 +1271,8 @@ ${[
 }
 
 /* Botones primarios: sólido de marca + sombra de un solo tono (sin degradado) */
-.usb-dock button[class*="bg-violet-600"],
-.usb-dock button[class*="bg-violet-500 "] {
+.usb-dock button[class*="bg-violet-600"]:not([role="switch"]),
+.usb-dock button[class*="bg-violet-500 "]:not([role="switch"]) {
   background-image: none !important;
   box-shadow: 0 6px 16px -6px rgba(109,74,255,0.65), inset 0 0 0 1px rgba(212,201,255,0.22);
 }
@@ -1359,7 +1368,7 @@ ${[
 .usb-dock.dock-sepia .usb-video-surface [class*="text-violet-"] { color: #d4c9ff !important; }
 
 /* Botones primarios deshabilitados: neutros y legibles, no lila lavado */
-.usb-dock.usb-dock button:disabled[class*="bg-violet-"] {
+.usb-dock.usb-dock button:disabled[class*="bg-violet-"]:not([role="switch"]) {
   background-color: var(--usb-bg-4) !important;
   color: var(--usb-fg-lo) !important;
   opacity: 1 !important;
@@ -1422,11 +1431,11 @@ ${[
 .usb-dock.dock-sepia .rounded-xl.border[class*="bg-[#fff"] { box-shadow: var(--usb-elev-1); }
 
 /* Botón primario claro: sólido, sombra neutra */
-.usb-dock.dock-sepia button[class*="bg-violet-600"]:not(:disabled) {
+.usb-dock.dock-sepia button[class*="bg-violet-600"]:not(:disabled):not([role="switch"]) {
   background-color: #5b3df0 !important;
   box-shadow: 0 1px 2px rgba(20,22,35,0.2), 0 6px 14px -6px rgba(91,61,240,0.55), inset 0 1px 0 rgba(255,255,255,0.18) !important;
 }
-.usb-dock.dock-sepia button[class*="bg-violet-600"]:not(:disabled):hover { background-color: #4a2ed8 !important; }
+.usb-dock.dock-sepia button[class*="bg-violet-600"]:not(:disabled):not([role="switch"]):hover { background-color: #4a2ed8 !important; }
 
 /* Monitor: tinta neutra oscura, no violeta saturado */
 .usb-dock.dock-sepia .usb-video-surface { background-color: #181a26 !important; border-color: rgba(20,22,35,0.25) !important; }
@@ -1442,13 +1451,13 @@ ${[
 }
 
 /* Botones secundarios: blancos con borde y elevación (no rellenos grises) */
-.usb-dock.dock-sepia button.border:is(.rounded-xl, .rounded-lg):not([class*="bg-violet"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-rose"]):not([class*="bg-red"]):not(.kx-sync):not(.kx-seg *) {
+.usb-dock.dock-sepia button.border:is(.rounded-xl, .rounded-lg):not([class*="bg-violet"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-rose"]):not([class*="bg-red"]):not(.kx-sync):not(.kx-seg *):not(.kx-choice) {
   background-color: #fff !important;
   border-color: var(--usb-border-mid) !important;
   color: var(--usb-fg) !important;
   box-shadow: var(--usb-elev-1);
 }
-.usb-dock.dock-sepia button.border:is(.rounded-xl, .rounded-lg):not([class*="bg-violet"]):not(:disabled):not(.kx-sync):hover {
+.usb-dock.dock-sepia button.border:is(.rounded-xl, .rounded-lg):not([class*="bg-violet"]):not(:disabled):not(.kx-sync):not(.kx-choice):hover {
   border-color: rgba(91,61,240,0.45) !important;
   box-shadow: var(--usb-elev-2);
 }
@@ -1592,7 +1601,7 @@ ${[
 /* Botones y tarjetas: respuesta táctil */
 .usb-dock button { transition: transform .18s var(--usb-ease), box-shadow .2s, background-color .2s, border-color .2s, color .2s; }
 .usb-dock button:not(:disabled):active { transform: scale(.97); }
-.usb-dock button.border:is(.rounded-xl,.rounded-lg):not(:disabled):not(.kx-sync):hover {
+.usb-dock button.border:is(.rounded-xl,.rounded-lg):not(:disabled):not(.kx-sync):not(.kx-choice):hover {
   transform: translateY(-2px); border-color: var(--usb-accent-ring) !important;
   box-shadow: 0 10px 22px -12px var(--usb-accent-ring) !important;
 }
@@ -1867,6 +1876,8 @@ ${[
 
 /* OVERLAY */
 .usb-dock .kx-tile-btn[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn[data-on="1"] { background: #6d4aff !important; box-shadow: 0 8px 18px -10px #6d4aff; }
+.usb-dock .kx-tile-btn.kx-choice { box-shadow: none; transform: none !important; }
+.usb-dock.dock-sepia .kx-tile-btn.kx-choice { background: #fff; border-color: rgba(21,22,28,.12) !important; }
 .usb-dock .kx-tile-btn[data-on="1"], .usb-dock .kx-tile-btn[data-on="1"] *, .usb-dock.dock-sepia .kx-tile-btn[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn[data-on="1"] * { color: #fff !important; }
 .usb-dock .kx-ov-top > * { max-width: 608px; margin-left: auto; margin-right: auto; }
 .usb-dock .kx-ov-top .rounded-xl { border-radius: 16px; }
