@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { motion, useInView } from "motion/react";
-import { X, Icon, type IconName } from "./icons";
+import { Icon, type IconName } from "./icons";
+import { DockSheet } from "./DockSheet";
 import { ACHIEVEMENTS, getProgress, setDailyGoal, MASTERY_TIERS } from "../services/progress";
 import { getStreak } from "../services/streak";
 import { useDockTheme } from "../contexts/ThemeContext";
@@ -188,12 +189,6 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("usb:xp", h);
   }, []);
 
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
-
   const p = getProgress();
   const streak = getStreak();
   const pct = Math.min(100, Math.round((p.into / p.span) * 100));
@@ -241,32 +236,7 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
   ] as { v: number; s: string; l: string; icon: IconName; tone: Tone }[];
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.22, ease: EASE }}
-      className="kx-page absolute inset-x-0 top-[41px] bottom-0 z-40 overflow-y-auto bg-[var(--usb-bg-2)] border-t border-[var(--usb-border)] custom-scrollbar"
-      role="region"
-      aria-label="Tu progreso"
-    >
-      <div className="kx-cap px-4 py-5 space-y-4">
-        <div className="sticky top-0 z-10 -mx-4 -mt-5 px-4 pt-5 pb-3 flex items-center gap-3 backdrop-blur-md bg-[color-mix(in_srgb,var(--usb-bg-2)_88%,transparent)]">
-          <div className="min-w-0 flex-1">
-            <span className="kx-slate block" style={{ color: t(TONES.violet.dark, TONES.violet.light) }}>Tu progreso</span>
-            <h3 className="mt-1 text-[16px] font-extrabold tracking-tight leading-tight text-[var(--usb-fg-hi)] truncate">
-              Nivel {p.level} · {p.tier.name}
-            </h3>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Cerrar"
-            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 w-8 h-8 flex items-center justify-center rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors"
-          >
-            <X size={14} />
-          </button>
-        </div>
-
+    <DockSheet eyebrow="Tu progreso" title={`Nivel ${p.level} · ${p.tier.name}`} ariaLabel="Tu progreso" onClose={onClose}>
         {/* Hero */}
         <Reveal i={0} className="kx-hero-solid relative overflow-hidden rounded-2xl p-4 space-y-4">
           <span className="kx-ring kx-ring-1" aria-hidden="true" />
@@ -567,7 +537,6 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </Card>
-      </div>
-    </motion.div>
+    </DockSheet>
   );
 }

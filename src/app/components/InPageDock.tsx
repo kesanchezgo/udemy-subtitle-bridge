@@ -4,7 +4,7 @@ import { Toaster } from "sonner";
 import { ExtensionSidebar } from "./ExtensionSidebar";
 import { AuthGuard } from "./AuthGuard";
 import { KinemaBrand } from "./AppLogo";
-import { ChevronLeft, ChevronRight, Moon, Sun, Flame, Volume2, VolumeX } from "./icons";
+import { ChevronLeft, ChevronRight, Moon, Sun, Flame, Volume2, VolumeX, Settings } from "./icons";
 import { getStreak } from "../services/streak";
 import { getProgress } from "../services/progress";
 import { ProgressPanel } from "./ProgressPanel";
@@ -12,6 +12,9 @@ import { playSound, soundForClick, installToastSounds, isSoundEnabled, setSoundE
 import { CelebrationOverlay } from "./CelebrationOverlay";
 import { Session } from "@supabase/supabase-js";
 import { ThemeProvider, useDockTheme } from "../contexts/ThemeContext";
+import { DockSheetHostContext } from "./DockSheet";
+import { SettingsSheet, VocabularyMountContext } from "./SettingsSheet";
+import { getAiProviderConfig, type AiProviderConfig } from "../services/ai-providers";
 import {
   DOCK_COLLAPSED_WIDTH,
   DOCK_DEFAULT_WIDTH,
@@ -134,6 +137,19 @@ function useStoredDockWidth(): [number | null, (width: number) => void] {
 }
 
 function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageDockProps) {
+  const [providerKind, setProviderKind] = useState<AiProviderConfig["kind"]>(() => getAiProviderConfig().kind);
+  useEffect(() => {
+    const onChange = (e: Event) => { const kind = (e as CustomEvent<AiProviderConfig>).detail?.kind; if (kind) setProviderKind(kind); };
+    window.addEventListener("usb:provider-changed", onChange);
+    return () => window.removeEventListener("usb:provider-changed", onChange);
+  }, []);
+  const cloudName = ({ openai: "OpenAI", anthropic: "Claude", gemini: "Gemini" } as Record<string, string>)[providerKind];
+  const aiStatus = cloudName
+    ? { name: cloudName, state: "nube", tone: "cloud" as const, title: `Proveedor activo: ${cloudName}` }
+    : localAiConnected
+    ? { name: "IA local", state: "conectada", tone: "ok" as const, title: "Servidor de IA local conectado (127.0.0.1:8010)" }
+    : { name: "IA local", state: "sin conexión", tone: "off" as const, title: "Servidor de IA local sin conexión" };
+
   const textScale = useTextScale();
   // Scale the default and the bounds so a larger text size still fits.
   const defaultWidth = Math.round(DOCK_DEFAULT_WIDTH * textScale);
@@ -271,6 +287,77 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
   }, []);
   const [level, setLevel] = useState(() => getProgress().level);
   const [progressOpen, setProgressOpen] = useState(false);
+  const [sheetHost, setSheetHost] = useState<HTMLDivElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [devMode, setDevMode] = useState(false);
+  const gearClickRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    const handleSettingsState = (e: Event) => {
+      const custom = e as CustomEvent<{ settingsOpen?: boolean; devMode?: boolean }>;
+      if (custom.detail) {
+        if (typeof custom.detail.devMode === "boolean") {
+          setDevMode(custom.detail.devMode);
+        }
+      }
+    };
+    const toggle = () => setSettingsOpen(v => !v);
+    const openIt = () => { setSettingsOpen(true); setProgressOpen(false); };
+    const closeIt = () => setSettingsOpen(false);
+    window.addEventListener("usb:settings-state", handleSettingsState);
+    window.addEventListener("usb:toggle-settings", toggle);
+    window.addEventListener("usb:open-settings", openIt);
+    window.addEventListener("usb:close-settings", closeIt);
+    window.addEventListener("usb:toggle-dev", closeIt);
+    return () => {
+      window.removeEventListener("usb:settings-state", handleSettingsState);
+      window.removeEventListener("usb:toggle-settings", toggle);
+      window.removeEventListener("usb:open-settings", openIt);
+      window.removeEventListener("usb:close-settings", closeIt);
+      window.removeEventListener("usb:toggle-dev", closeIt);
+    };
+  }, []);
+  const [vocabularyMount, setVocabularyMount] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (settingsOpen) setProgressOpen(false);
+    window.dispatchEvent(new CustomEvent("usb:settings-open", { detail: { open: settingsOpen } }));
+  }, [settingsOpen]);
+
+  // Nv y engranaje comparten el mismo estado visual: pastilla con borde que se tiñe de violeta al estar abierta.
+  const pillClass = (active: boolean) =>
+    active
+      ? t("text-white bg-[#6d4aff]/20 border-[#8b6dff]/60", "text-[#4a2fd1] bg-[#6d4aff]/10 border-[#6d4aff]/45")
+      : t("text-white/90 bg-white/5 border-white/12 hover:bg-white/10", "text-[#15161c] bg-white border-black/12 hover:bg-black/5");
+
+  const handleGearClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setProgressOpen(false);
+    const now = Date.now();
+    // Cadena de clics: cada uno a <600 ms del anterior (no ventana total), más el conteo nativo del navegador.
+    const prev = gearClickRef.current;
+    const recentClicks = prev.length && now - prev[prev.length - 1] < 600 ? [...prev, now] : [now];
+    gearClickRef.current = recentClicks;
+
+    if (e.detail >= 3 || recentClicks.length >= 3) {
+      gearClickRef.current = [];
+      window.dispatchEvent(new CustomEvent("usb:toggle-dev"));
+      return;
+    }
+
+    window.dispatchEvent(new CustomEvent("usb:toggle-settings"));
+  };
+
+  // La insignia de nivel vive junto al logo (ExtensionSidebar); el panel sigue siendo del dock.
+  useEffect(() => {
+    const toggle = () => setProgressOpen(v => !v);
+    window.addEventListener("usb:toggle-progress", toggle);
+    return () => window.removeEventListener("usb:toggle-progress", toggle);
+  }, []);
+  useEffect(() => {
+    if (progressOpen) setSettingsOpen(false);
+    window.dispatchEvent(new CustomEvent("usb:progress-open", { detail: { open: progressOpen } }));
+  }, [progressOpen]);
+
   useEffect(() => {
     const h = () => setLevel(getProgress().level);
     window.addEventListener("usb:xp", h);
@@ -363,9 +450,6 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
 
               <div className="pb-4 flex items-center justify-center">
                 <span className={`relative flex h-2 w-2 ${localAiConnected ? "" : "opacity-50"}`}>
-                  {localAiConnected && (
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                  )}
                   <span className={`relative inline-flex rounded-full h-2 w-2 ${
                     localAiConnected ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" : t("bg-white/20", "bg-black/8")
                   }`} />
@@ -377,6 +461,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
 
           <motion.div
             key="expanded"
+            ref={setSheetHost}
             initial={false}
             animate={{ opacity: collapsed ? 0 : 1 }}
             transition={{ duration: 0.13 }}
@@ -386,39 +471,33 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
               <div className={`flex items-center justify-between px-3.5 py-1.5 border-b shrink-0 ${
                 t("bg-[#141516] border-white/6", "bg-[#f6f7f9] border-black/6")
               }`}>
-                <div
-                  className="flex items-center gap-2 min-w-0"
-                  title={localAiConnected ? "Servidor de IA local conectado (127.0.0.1:8010)" : "Servidor de IA local sin conexión"}
+                {/* Único indicador de IA: motor activo + estado. Clic → Configuración › Proveedor. */}
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "provider" } }))}
+                  title={`${aiStatus.title} · Abrir proveedor de IA`}
+                  aria-label={`${aiStatus.name} ${aiStatus.state}. Abrir proveedor de IA`}
+                  className={`-ml-1.5 inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium transition-colors hover:bg-[color-mix(in_srgb,currentColor_7%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a48bff] ${t("text-white/60 hover:text-white/85", "text-[#15161c]/60 hover:text-[#15161c]/85")}`}
                 >
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    {localAiConnected && (
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50" />
-                    )}
-                    <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                      localAiConnected ? "bg-emerald-400" : t("bg-white/30", "bg-[#3d3a38]/40")
-                    }`} />
-                  </span>
-                  <span className={`text-[11px] font-medium tracking-wide truncate ${t("text-white/75", "text-[#3d3a38]/85")}`}>
-                    {localAiConnected ? "IA local conectada" : "IA local sin conexión"}
-                  </span>
-                </div>
+                  <span className={`inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${
+                    aiStatus.tone === "ok" ? "bg-emerald-500" : aiStatus.tone === "cloud" ? "bg-[#6d4aff]" : "bg-amber-500"
+                  }`} />
+                  <span className="truncate">{aiStatus.name} · {aiStatus.state}</span>
+                </button>
 
                 <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => setProgressOpen((v) => !v)}
-                    aria-pressed={progressOpen}
-                    title="Tu progreso (nivel y rango)"
-                    aria-label="Abrir progreso"
-                    className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-[11.5px] font-semibold tabular-nums transition-colors ${
-                      t("text-white/90 bg-white/5 border-white/12 hover:bg-white/10", "text-[#15161c] bg-white border-black/12 hover:bg-black/5")
+                    onClick={handleGearClick}
+                    title="Configuración · triple clic para modo Dev"
+                    aria-label="Abrir configuración"
+                    aria-pressed={settingsOpen}
+                    className={`inline-flex items-center justify-center w-7 h-7 rounded-lg border transition-colors ${
+                      devMode && !settingsOpen
+                        ? t("text-amber-300 bg-amber-500/10 border-amber-400/40", "text-amber-800 bg-amber-50 border-amber-600/40")
+                        : pillClass(settingsOpen)
                     }`}
                   >
-                    {streak > 0 && (
-                      <span className={`inline-flex items-center gap-0.5 ${t("text-amber-300", "text-amber-700")}`}>
-                        <Flame size={12} weight="fill" />{streak}
-                      </span>
-                    )}
-                    <span>Nv {level}</span>
+                    <Settings size={13.5} />
                   </button>
 
                   <div
@@ -481,6 +560,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
               </AnimatePresence>
 
               <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                <DockSheetHostContext.Provider value={sheetHost}>
                 <MotionConfig reducedMotion="user">
                   <Toaster
                     theme={isSepia ? "light" : "dark"}
@@ -492,6 +572,8 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                     toastOptions={{ duration: 3500 }}
                   />
                   <CelebrationOverlay />
+                  <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} localConnected={localAiConnected} onVocabularyMount={setVocabularyMount} />
+                  <VocabularyMountContext.Provider value={vocabularyMount}>
                   <AuthGuard onSessionResolved={onSessionResolved}>
                     {(session, requestLogin, signOut) => (
                       <ExtensionSidebar
@@ -503,7 +585,9 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                       />
                     )}
                   </AuthGuard>
+                  </VocabularyMountContext.Provider>
                 </MotionConfig>
+                </DockSheetHostContext.Provider>
               </div>
             </motion.div>
         </div>

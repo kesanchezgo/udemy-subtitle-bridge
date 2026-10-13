@@ -43,6 +43,7 @@ type ExtensionMessage = {
 };
 
 const chromeApi = (globalThis as typeof globalThis & { chrome?: any }).chrome;
+const chrome = chromeApi;
 let localAiHealthCache: { checkedAt: number; ok: boolean } | null = null;
 
 void initGeminiKeys();
@@ -330,6 +331,55 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 	if (type === 'USG_KEEPALIVE') {
 		sendResponse({ ok: true });
 		return false;
+	}
+
+	// El dock corre en el contexto de la PÁGINA: no tiene acceso a chrome.storage.
+	// Sus capas de servicio (chromeLocalStorage) caen al fallback localStorage,
+	// que nadie más lee. Este relay les da acceso real a storage.local/sync.
+	if (type === 'USG_STORAGE_GET') {
+		const keys = Array.isArray((message as { keys?: unknown }).keys)
+			? ((message as { keys: unknown[] }).keys).map(String)
+			: [];
+		const area = (message as { area?: unknown }).area === 'sync' ? 'sync' : 'local';
+		(async () => {
+			try {
+				const store = area === 'sync' ? await chrome.storage.sync.get(keys) : await chrome.storage.local.get(keys);
+				sendResponse({ ok: true, items: store });
+			} catch (error) {
+				sendResponse({ ok: false, error: toErrorMessage(error) });
+			}
+		})();
+		return true;
+	}
+
+	if (type === 'USG_STORAGE_SET') {
+		const items = ((message as { items?: unknown }).items ?? {}) as Record<string, unknown>;
+		const area = (message as { area?: unknown }).area === 'sync' ? 'sync' : 'local';
+		(async () => {
+			try {
+				if (area === 'sync') await chrome.storage.sync.set(items); else await chrome.storage.local.set(items);
+				sendResponse({ ok: true });
+			} catch (error) {
+				sendResponse({ ok: false, error: toErrorMessage(error) });
+			}
+		})();
+		return true;
+	}
+
+	if (type === 'USG_STORAGE_REMOVE') {
+		const keys = Array.isArray((message as { keys?: unknown }).keys)
+			? ((message as { keys: unknown[] }).keys).map(String)
+			: [];
+		const area = (message as { area?: unknown }).area === 'sync' ? 'sync' : 'local';
+		(async () => {
+			try {
+				if (area === 'sync') await chrome.storage.sync.remove(keys); else await chrome.storage.local.remove(keys);
+				sendResponse({ ok: true });
+			} catch (error) {
+				sendResponse({ ok: false, error: toErrorMessage(error) });
+			}
+		})();
+		return true;
 	}
 
 	if (type === 'USG_GENERATE_COURSE_OBJECTIVES') {

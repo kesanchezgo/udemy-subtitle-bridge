@@ -79,6 +79,8 @@ const DEFAULT_CONFIG: OverlayConfig = {
 	showGlossary: true
 };
 
+const USB_TO_CONTENT_EVENT = 'usb_to_content';
+
 const EXT_RUNTIME_ID =
 	((globalThis as typeof globalThis & { chrome?: { runtime?: { id?: string } } }).chrome?.runtime?.id) ??
 	'local';
@@ -3023,11 +3025,8 @@ function startObserver() {
 
 function setupChromeMessageHandler() {
 	const chromeApi = (globalThis as typeof globalThis & { chrome?: { runtime?: { onMessage?: { addListener: (fn: (message: Record<string, unknown>, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void) => void } } } }).chrome;
-	if (!chromeApi?.runtime?.onMessage) {
-		return;
-	}
 
-	chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+	const onDockMessage = (message: Record<string, unknown>, sender: unknown, sendResponse: (response: unknown) => void): boolean | void => {
 		const type = message && (message as { type?: string }).type;
 		if (!type) {
 			return false;
@@ -3225,6 +3224,20 @@ function setupChromeMessageHandler() {
 		}
 
 		return false;
+	};
+
+	// Canal 1: runtime (mensajes desde el background/popup).
+	if (chromeApi?.runtime?.onMessage) {
+		chromeApi.runtime.onMessage.addListener(onDockMessage);
+	}
+	// Canal 2: ventana (el dock vive en el MISMO contexto que el content script;
+	// contentBridge entrega así los mensajes dock→página). Sin esto, mensajes
+	// como GLOSSARY_UPDATE se pierden en silencio.
+	window.addEventListener(USB_TO_CONTENT_EVENT, (event: Event) => {
+		try {
+			const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+			if (detail && typeof detail === 'object') onDockMessage(detail, window, () => undefined);
+		} catch { /* diagnostics must never throw */ }
 	});
 }
 

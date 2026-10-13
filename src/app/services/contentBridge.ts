@@ -32,6 +32,7 @@ export interface OverlayConfig {
   textColor: "white" | "yellow" | "cyan";
   shadowStrength: number;
   syncOffset: number;
+  showGlossary?: boolean;
 }
 
 export interface BridgeMessage {

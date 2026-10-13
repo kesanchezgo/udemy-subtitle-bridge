@@ -376,7 +376,7 @@ export function AuthGuard({
   if (session || isGuest) return <>{children(session, requestLogin, signOut)}</>;
 
   // ── Auth screen — mismo lenguaje que el resto del dock ────────────────────
-  const fieldCls = "kx-field w-full h-11 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[12.5px] text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-lo)] focus:outline-none focus:border-[#6d4aff] focus:ring-2 focus:ring-[#6d4aff]/25 transition-colors font-medium";
+  const fieldCls = "kx-field w-full h-10 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[12px] text-[var(--usb-fg-hi)] placeholder:text-[var(--usb-fg-mid)] outline-none focus:border-[#6d4aff]/60 focus:ring-2 focus:ring-[#6d4aff]/20 transition-colors font-medium";
   const iconCls = "absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--usb-fg-lo)] pointer-events-none transition-colors group-focus-within:text-[#6d4aff]";
   const violetInk = t("#b7a6ff", "#5b37e8");
   const rise = (i: number) => ({
