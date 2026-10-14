@@ -25,6 +25,26 @@ export function SettingsSheet({ open, onClose, localConnected, onVocabularyMount
 }) {
   const [providerConfig, setProviderConfig] = useState<AiProviderConfig>(() => getAiProviderConfig());
   const [cacheTtlDays, setCacheTtlDays] = usePersistedState<number>("cache_ttl_days", 7);
+  // Sección pedida por deep-link (usb:open-settings con {section}): se aplica
+  // al acordeón cuando la hoja ya está montada.
+  const [sectionRequest, setSectionRequest] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onSection = (e: Event) => {
+      const section = (e as CustomEvent<{ section?: string }>).detail?.section;
+      if (section) setSectionRequest(section);
+    };
+    window.addEventListener("usb:section-request", onSection);
+    return () => window.removeEventListener("usb:section-request", onSection);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !sectionRequest) return;
+    // El acordeón persiste en localStorage: escribir la clave lo abre directo.
+    try { localStorage.setItem("kinema_settings_open_section", sectionRequest); } catch { /* modo sin storage */ }
+    setSectionRequest(null);
+    window.dispatchEvent(new CustomEvent("usb:section-applied", { detail: { section: sectionRequest } }));
+  }, [open, sectionRequest]);
 
   useEffect(() => {
     let alive = true;

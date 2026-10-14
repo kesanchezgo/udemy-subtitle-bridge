@@ -302,7 +302,12 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
       }
     };
     const toggle = () => setSettingsOpen(v => !v);
-    const openIt = () => { setSettingsOpen(true); setProgressOpen(false); };
+    const openIt = (e?: Event) => {
+      setSettingsOpen(true);
+      setProgressOpen(false);
+      const section = (e as CustomEvent<{ section?: string }> | undefined)?.detail?.section;
+      if (section) window.dispatchEvent(new CustomEvent("usb:section-request", { detail: { section } }));
+    };
     const closeIt = () => setSettingsOpen(false);
     window.addEventListener("usb:settings-state", handleSettingsState);
     window.addEventListener("usb:toggle-settings", toggle);
