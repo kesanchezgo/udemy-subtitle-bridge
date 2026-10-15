@@ -130,7 +130,7 @@ export const DEFAULT_ROOT_DECK = 'Kinema';
 
 export const ROOT_DECK_DESCRIPTION =
 	'Mazos generados por Kinema a partir de las lecciones que estudias. ' +
-	'Usa presets propios (Udemy Bridge · Cursos / Vocabulario); no modifica otros mazos de tu colección.';
+	'Usa presets propios (Kinema · Cursos / Vocabulario); no modifica otros mazos de tu colección.';
 
 /** Rama de conceptos: <Root>::Courses::<Curso>::<Lección>. */
 export function conceptDeckPath(root: string, course: string, lesson: string): string {
@@ -1454,10 +1454,13 @@ export function buildVocabModel(audioMode: VocabAudioMode = 'field'): import('./
 //    tarjetas de audio.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const COURSES_PRESET_NAME = 'Udemy Bridge · Cursos';
-export const VOCAB_PRESET_NAME = 'Udemy Bridge · Vocabulario';
-export const COURSES_PRESET_ID = stableNumericId(COURSES_PRESET_NAME, 1_555_000_000_000);
-export const VOCAB_PRESET_ID = stableNumericId(VOCAB_PRESET_NAME, 1_555_000_000_000);
+// Nombres VISIBLES de los presets (marca Kinema). Los IDs son estables y ya no
+// se derivan del nombre: renombrar la etiqueta no crea un preset duplicado en
+// las colecciones que ya importaron antes del cambio.
+export const COURSES_PRESET_NAME = 'Kinema · Cursos';
+export const VOCAB_PRESET_NAME = 'Kinema · Vocabulario';
+export const COURSES_PRESET_ID = stableNumericId('Udemy Bridge · Cursos', 1_555_000_000_000);
+export const VOCAB_PRESET_ID = stableNumericId('Udemy Bridge · Vocabulario', 1_555_000_000_000);
 
 export interface DeckPresetConfig {
 	id: number;
