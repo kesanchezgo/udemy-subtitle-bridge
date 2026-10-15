@@ -415,45 +415,42 @@ const reopenStep5 = async () => {
 };
 await reopenStep5();
 const vocabDownload = page.waitForEvent('download', { timeout: 120000 }).then((d) => ({ d }), () => ({}));
-// Flujo de sesión de candidatas: proponer → (la IA llena la lista) → exportar.
-// El botón vive en el ExportModule del paso 5: es el ÚLTIMO con ese texto (el
-// de Ajustes, si su hoja quedó montada, aparece antes en el DOM).
-// El portal de Ajustes también monta el botón pero invisible: elegir el visible.
-// Dos secciones comparten título (el paso 5 y el portal de Configuración): hay
-// que pulsar la del panel visible debajo del panel de Configuración, así que se
-// cierra Configuración primero y luego se pulsa el módulo visible.
+// Asegurar el paso 5 con clics reales: cerrar Ajustes y usar el stepper.
+for (let attempt = 0; attempt < 4; attempt += 1) {
+	const inStep5 = await page.evaluate(() => {
+		const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const close = [...(sr?.querySelectorAll('button') ?? [])].find((b) => /Cerrar configuración/i.test(b.getAttribute('aria-label') || ''));
+		close?.click();
+		return /Tarjetas de la lección/.test(sr?.textContent ?? '');
+	});
+	if (inStep5) break;
+	const next = page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').last();
+	const prev = page.locator('[id^="usb-dock-host-"] button:has-text("Anterior")').last();
+	if (await next.count() && await next.isEnabled().catch(() => false)) {
+		await next.click({ timeout: 8000 }).catch(() => {});
+	} else if (await prev.count()) {
+		await prev.click({ timeout: 8000 }).catch(() => {});
+	}
+	await sleep(1500);
+}
+await sleep(2500);
+// Proponer palabras (botón del ExportModule del paso 5).
 const proposed = await page.evaluate(() => {
 	const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	if (!sr) return 'no-shadow';
 	const close = [...(sr?.querySelectorAll('button') ?? [])].find((b) => /Cerrar configuración/i.test(b.getAttribute('aria-label') || ''));
 	close?.click();
 	const sections = [...sr.querySelectorAll('section')].filter((s) => /Mazo de idiomas · opcional/i.test(s.textContent || ''));
-	// El módulo del paso 5 queda debajo de la hoja: es el que tiene offsetParent
-	// y no está dentro del contenedor de Ajustes.
-	const visible = sections.filter((s) => !s.closest('[aria-label="Configuración de Kinema"]'));
-	const target = visible[visible.length - 1];
-	if (!target) return 'no-module:' + sections.length;
+	const target = sections[sections.length - 1];
+	if (!target) return 'no-module';
 	const btn = [...target.querySelectorAll('button')].find((b) => /Proponer palabras/i.test(b.textContent || ''));
 	if (!btn) return 'no-button';
 	btn.click();
 	return 'clicked';
 });
-if (proposed !== 'clicked') console.log('   · proponer:', proposed);
-// Diagnóstico del flujo: qué panel está montado y qué dice el dock.
-const vocabDiag = await page.evaluate(() => {
-	const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-	const txt = sr?.textContent ?? '';
-	const module = [...(sr?.querySelectorAll('section') ?? [])].filter((s) => /Mazo de idiomas · opcional/i.test(s.textContent || ''));
-	return {
-		hasAjustesHeader: /Ajustes\s+Configuración/i.test(txt) || txt.includes('Configuración'),
-		proposeButtonText: [...(module[module.length - 1]?.querySelectorAll('button') ?? [])].map((b) => (b.textContent || '').trim()).filter((t) => /Proponer|Palabras de esta lección/i.test(t)),
-		hasCandidateList: /Palabras de esta lección/.test(txt) && !/Inicia sesión o continúa sin cuenta para ajustar/i.test(txt),
-	};
-});
-console.log('   diag:', JSON.stringify(vocabDiag));
-// Espera activa de la lista de candidatas (reemplaza al sleep ciego).
-await page.locator('[id^="usb-dock-host-"] >> text=/Palabras de esta lección/').first().waitFor({ timeout: 120000 }).catch(() => {});
-await sleep(1500);
+console.log('   proponer:', proposed);
+await page.locator('[id^="usb-dock-host-"] input[type=checkbox][aria-label^="Seleccionar "]').first().waitFor({ timeout: 180000 }).catch(() => console.log('   · lista de candidatas no apareció'));
+await sleep(2000);
 // Exportar la selección vigente.
 const exportBtn = page.locator('[id^="usb-dock-host-"] button').filter({ hasText: /^Exportar \d+ nuevas?$/ }).first();
 if (await exportBtn.count()) {
