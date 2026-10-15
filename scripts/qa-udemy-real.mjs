@@ -397,10 +397,71 @@ else console.log('   ✅ SRT Español presente en el curso real');
 step('Exporting REAL course vocabulary (.apkg)');
 let vocabOk = false;
 let vocabPhonetics = [];
-const vocabDownload = page.waitForEvent('download', { timeout: 90000 }).then((d) => ({ d }), () => ({}));
-await page.locator('[id^="usb-dock-host-"] button:has-text("Extraer vocabulario")').first().click({ timeout: 15000 });
-await sleep(3000);
-const vocabEv = await Promise.race([vocabDownload, sleep(95000).then(() => ({}))]);
+// Reasegurar el paso 5: tras exportar el .apkg el dock puede haber cambiado de
+// estado; si el módulo de vocabulario no está, volver a avanzar el stepper.
+const reopenStep5 = async () => {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		const present = await page.evaluate(() => {
+			const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			const close = [...(sr?.querySelectorAll('button') ?? [])].find((b) => /Cerrar configuración/i.test(b.getAttribute('aria-label') || ''));
+			close?.click();
+			window.dispatchEvent(new CustomEvent('usb:close-settings'));
+			return /Mazo de idiomas · opcional/.test(sr?.textContent ?? '');
+		});
+		if (present) return;
+		await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 8000 }).catch(() => {});
+		await sleep(1200);
+	}
+};
+await reopenStep5();
+const vocabDownload = page.waitForEvent('download', { timeout: 120000 }).then((d) => ({ d }), () => ({}));
+// Flujo de sesión de candidatas: proponer → (la IA llena la lista) → exportar.
+// El botón vive en el ExportModule del paso 5: es el ÚLTIMO con ese texto (el
+// de Ajustes, si su hoja quedó montada, aparece antes en el DOM).
+// El portal de Ajustes también monta el botón pero invisible: elegir el visible.
+// Dos secciones comparten título (el paso 5 y el portal de Configuración): hay
+// que pulsar la del panel visible debajo del panel de Configuración, así que se
+// cierra Configuración primero y luego se pulsa el módulo visible.
+const proposed = await page.evaluate(() => {
+	const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	if (!sr) return 'no-shadow';
+	const close = [...(sr?.querySelectorAll('button') ?? [])].find((b) => /Cerrar configuración/i.test(b.getAttribute('aria-label') || ''));
+	close?.click();
+	const sections = [...sr.querySelectorAll('section')].filter((s) => /Mazo de idiomas · opcional/i.test(s.textContent || ''));
+	// El módulo del paso 5 queda debajo de la hoja: es el que tiene offsetParent
+	// y no está dentro del contenedor de Ajustes.
+	const visible = sections.filter((s) => !s.closest('[aria-label="Configuración de Kinema"]'));
+	const target = visible[visible.length - 1];
+	if (!target) return 'no-module:' + sections.length;
+	const btn = [...target.querySelectorAll('button')].find((b) => /Proponer palabras/i.test(b.textContent || ''));
+	if (!btn) return 'no-button';
+	btn.click();
+	return 'clicked';
+});
+if (proposed !== 'clicked') console.log('   · proponer:', proposed);
+// Diagnóstico del flujo: qué panel está montado y qué dice el dock.
+const vocabDiag = await page.evaluate(() => {
+	const sr = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const txt = sr?.textContent ?? '';
+	const module = [...(sr?.querySelectorAll('section') ?? [])].filter((s) => /Mazo de idiomas · opcional/i.test(s.textContent || ''));
+	return {
+		hasAjustesHeader: /Ajustes\s+Configuración/i.test(txt) || txt.includes('Configuración'),
+		proposeButtonText: [...(module[module.length - 1]?.querySelectorAll('button') ?? [])].map((b) => (b.textContent || '').trim()).filter((t) => /Proponer|Palabras de esta lección/i.test(t)),
+		hasCandidateList: /Palabras de esta lección/.test(txt) && !/Inicia sesión o continúa sin cuenta para ajustar/i.test(txt),
+	};
+});
+console.log('   diag:', JSON.stringify(vocabDiag));
+// Espera activa de la lista de candidatas (reemplaza al sleep ciego).
+await page.locator('[id^="usb-dock-host-"] >> text=/Palabras de esta lección/').first().waitFor({ timeout: 120000 }).catch(() => {});
+await sleep(1500);
+// Exportar la selección vigente.
+const exportBtn = page.locator('[id^="usb-dock-host-"] button').filter({ hasText: /^Exportar \d+ nuevas?$/ }).first();
+if (await exportBtn.count()) {
+	await exportBtn.click({ timeout: 15000 }).catch(() => {});
+} else {
+	console.log('   · sin botón de exportación (nada seleccionado o todas exportadas)');
+}
+const vocabEv = await Promise.race([vocabDownload, sleep(120000).then(() => ({}))]);
 if (!vocabEv.d) {
 	await fail('vocabulario: download event no disparado (curso real)', page, 'vocab-download');
 } else {

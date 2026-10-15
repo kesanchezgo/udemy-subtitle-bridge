@@ -25,7 +25,7 @@ export interface AiProviderConfig {
   baseUrl: string;
   /** API key / bearer token. Sent as `Authorization: Bearer <apiKey>` when set. */
   apiKey: string;
-  /** Model id, e.g. `muse-spark-1.3-contributor-free`, `gpt-4o`, `claude-3-5-sonnet`. */
+  /** Model id, e.g. `muse-spark-1.3-contributor-free`, `gpt-4o`, `claude-sonnet-5`. */
   model: string;
 }
 
