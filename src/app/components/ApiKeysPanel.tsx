@@ -92,6 +92,23 @@ export function ApiKeysPanel({
     }));
   };
 
+  // Cuando el usuario concede el permiso en permission.html (otra pestaña), el
+  // service worker lo detecta con permissions.onAdded y lo reenvía hasta aquí.
+  // Se avisa para que el usuario sepa que ya puede pulsar Guardar.
+  useEffect(() => {
+    const onAdded = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string; origins?: string[] }>).detail;
+      if (detail?.type !== 'USG_HOST_PERMISSION_ADDED') return;
+      if (!(detail.origins ?? []).length) return;
+      toast.success("Permiso concedido", {
+        description: "Ya puedes pulsar «Probar conexión y guardar».",
+        duration: 8000,
+      });
+    };
+    window.addEventListener('usb_to_sidebar', onAdded as EventListener);
+    return () => window.removeEventListener('usb_to_sidebar', onAdded as EventListener);
+  }, []);
+
   const handleSaveProvider = async () => {
     // El permiso de host opcional NO se puede pedir desde aquí: este panel vive
     // en el content script, donde chrome.permissions no existe, y el service
@@ -111,8 +128,15 @@ export function ApiKeysPanel({
     // se gasta el intento.
     if (covered === false) {
       setValidating(false);
+      // id estable: sin él, un re-render del panel durante los primeros
+      // milisegundos hacía que sonner descartara el toast al instante (medido:
+      // vivía ~200 ms pese a duration: 15000) y el usuario no llegaba a ver
+      // ni el aviso ni el botón.
       toast.error("Sin permiso de red para ese endpoint", {
+        id: 'host-permission-missing',
         description: "Chrome bloquea las peticiones a hosts fuera de los permitidos.",
+        // sonner v2 acepta las dos formas de `action`: el objeto {label,onClick}
+        // de v1 sigue soportado (lo convierte en <button> él mismo).
         action: {
           label: "Conceder permiso",
           onClick: () => void openPermissionPage(provider.baseUrl),
@@ -166,25 +190,37 @@ export function ApiKeysPanel({
   };
 
   /**
-   * Abre la página propia de la extensión que SÍ puede pedir el permiso: allí
-   * `chrome.permissions` existe y el clic del usuario es un gesto válido.
+   * Abre la página propia de la extensión que SÍ puede pedir el permiso.
    *
-   * Se usa chrome.tabs.create en vez de openOptionsPage porque este necesita
-   * recibir el host concreto (?origin=…), y openOptionsPage no admite parámetros.
+   * Lo abre el service worker porque el panel vive en el content script, donde
+   * chrome.tabs es undefined (mismo caso que chrome.permissions). Abrir una
+   * pestaña no exige gesto: el gesto real ocurre después, cuando el usuario
+   * pulsa el botón dentro de la página.
    */
   const openPermissionPage = async (baseUrl: string): Promise<void> => {
     let origin: string | null = null;
     try { origin = new URL(baseUrl).origin; } catch { origin = null; }
-    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { id?: string; getURL?: Function }; tabs?: { create?: Function } } }).chrome?.runtime;
-    const tabs = (globalThis as typeof globalThis & { chrome?: { tabs?: { create?: Function } } }).chrome?.tabs;
-    if (!origin || !runtime?.getURL || !tabs?.create) {
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function } } }).chrome?.runtime;
+    if (!origin || !runtime?.sendMessage) {
       toast.error("No se pudo abrir la página de permisos", {
-        description: "Concédelo a mano en chrome://extensions → Kinema → Detalles.",
+        description: "Vuelve a intentarlo desde el panel del proveedor.",
       });
       return;
     }
     try {
-      await tabs.create({ url: `${runtime.getURL('permission.html')}?origin=${encodeURIComponent(origin)}` });
+      const response = await new Promise<{ ok?: boolean } | null>((resolve) => {
+        runtime.sendMessage({ type: 'USG_OPEN_PERMISSION_PAGE', origin }, (r: { ok?: boolean } | null) => resolve(r ?? null));
+      });
+      if (!response?.ok) {
+        toast.error("No se pudo abrir la página de permisos", {
+          description: "Vuelve a intentarlo desde el panel del proveedor.",
+        });
+        return;
+      }
+      toast.info("Concede el permiso en la pestaña que se abrió", {
+        description: "Luego pulsa Guardar aquí para validar el endpoint.",
+        duration: 12000,
+      });
     } catch {
       toast.error("No se pudo abrir la página de permisos");
     }
