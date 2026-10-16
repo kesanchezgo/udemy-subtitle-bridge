@@ -508,9 +508,23 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			sendResponse({ ok: false, covered: null, reason: 'unsupported' });
 			return false;
 		}
-		void Promise.resolve(chrome.permissions.contains({ origins: [origin] }))
-			.then((covered) => sendResponse({ ok: true, covered: covered === true }))
-			.catch((error) => sendResponse({ ok: false, covered: null, reason: toErrorMessage(error) }));
+		// Forma con callback, no promesa: chrome.permissions.contains resuelve
+		// fuera de la tarea del mensaje y, con el worker en reposo, la promesa
+		// se quedaba colgada hasta que Chrome cerraba el puerto ("The message
+		// port closed before a response was received"). Medido en la página
+		// real: el panel leía null y se atascaba en «Verificando conexión…».
+		try {
+			chrome.permissions.contains({ origins: [origin] }, (covered) => {
+				const err = (chrome.runtime as { lastError?: { message?: string } } | undefined)?.lastError;
+				if (err) {
+					sendResponse({ ok: false, covered: null, reason: err.message ?? 'error' });
+					return;
+				}
+				sendResponse({ ok: true, covered: covered === true });
+			});
+		} catch (error) {
+			sendResponse({ ok: false, covered: null, reason: toErrorMessage(error) });
+		}
 		return true;
 	}
 
