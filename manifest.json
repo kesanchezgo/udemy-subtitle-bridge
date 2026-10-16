@@ -21,6 +21,10 @@
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
+  "options_ui": {
+    "page": "permission.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_title": "Kinema \u2014 by Kivara",
     "default_icon": {
