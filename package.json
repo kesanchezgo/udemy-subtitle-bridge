@@ -10,6 +10,7 @@
     "qa:anki:import": "node scripts/qa-anki-import-verify.mjs",
     "qa:anki:all": "node scripts/qa-anki-all.mjs",
     "qa:vocab:ai": "node scripts/qa-vocab-ai.mjs",
+    "qa:full": "npm run build && node scripts/qa-full-flows.mjs",
     "qa:udemy:real": "node scripts/qa-udemy-real.mjs"
   },
   "dependencies": {
