@@ -329,6 +329,7 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 /* ── 5. Inputs & Textareas ── */
 
 .usb-dock.dock-sepia input:not([type="range"]),
+.usb-dock.dock-sepia select.kx-field,
 .usb-dock.dock-sepia textarea {
   background-color: var(--usb-input-bg) !important;
   border-color:     rgba(30,27,46,0.16) !important;
@@ -343,6 +344,7 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 }
 
 .usb-dock.dock-sepia input:not([type="range"]):focus,
+.usb-dock.dock-sepia select.kx-field:focus,
 .usb-dock.dock-sepia textarea:focus {
   border-color: #6d4aff !important;
   box-shadow:   0 0 0 3px rgba(109,74,255,0.14) !important;
@@ -926,8 +928,9 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   border-color: var(--usb-border) !important;
 }
 
-.usb-dock.dock-sepia select.kx-field,
-.usb-dock.dock-sepia select.kx-field:focus {
+/* El select nativo pinta su flecha y su dropdown con el color-scheme del
+   sistema: en sepia fuerzan el modo claro para que no salga oscuro. */
+.usb-dock.dock-sepia select.kx-field {
   color-scheme: light;
 }
 
@@ -1875,10 +1878,22 @@ ${[
 
 
 /* OVERLAY */
-.usb-dock .kx-tile-btn[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn[data-on="1"] { background: #6d4aff !important; box-shadow: 0 8px 18px -10px #6d4aff; }
+/* Los kx-choice son opciones tintadas, NO violeta sólido: por eso el estado
+   activo del tile genérico lleva el guard :not(.kx-choice). Sin él, las
+   opciones seleccionadas se veían violeta sólido (regresión). */
 .usb-dock .kx-tile-btn.kx-choice { box-shadow: none; transform: none !important; }
 .usb-dock.dock-sepia .kx-tile-btn.kx-choice { background: #fff; border-color: rgba(21,22,28,.12) !important; }
-.usb-dock .kx-tile-btn[data-on="1"], .usb-dock .kx-tile-btn[data-on="1"] *, .usb-dock.dock-sepia .kx-tile-btn[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn[data-on="1"] * { color: #fff !important; }
+.usb-dock .kx-tile-btn.kx-choice[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn.kx-choice[data-on="1"] { background: color-mix(in srgb, #6d4aff 16%, transparent) !important; border-color: #8b6dff !important; box-shadow: inset 0 0 0 1px #8b6dff !important; }
+.usb-dock .kx-tile-btn.kx-choice[data-on="1"], .usb-dock .kx-tile-btn.kx-choice[data-on="1"] * { color: #ddd3ff !important; }
+.usb-dock.dock-sepia .kx-tile-btn.kx-choice[data-on="1"] { background: color-mix(in srgb, #6d4aff 9%, #fff) !important; border-color: #6d4aff !important; box-shadow: inset 0 0 0 1px #6d4aff !important; }
+.usb-dock.dock-sepia .kx-tile-btn.kx-choice[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn.kx-choice[data-on="1"] * { color: #3f25c4 !important; }
+.usb-dock .kx-stepper-input, .usb-dock.dock-sepia input.kx-stepper-input, .usb-dock.dock-sepia input.kx-stepper-input:focus { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+.usb-dock .kx-scale-btn[data-on="1"] { background: #6d4aff; color: #fff !important; box-shadow: 0 4px 10px -6px #6d4aff; }
+.usb-dock.dock-sepia .kx-scale { background: #fff; }
+.usb-dock.dock-sepia .kx-picker-menu { background: #fff !important; box-shadow: 0 18px 40px -20px rgba(40,30,80,.35) !important; }
+.usb-dock.dock-sepia .kx-picker-menu [aria-selected="true"] svg { color: #4a2fd1 !important; }
+.usb-dock .kx-tile-btn:not(.kx-choice)[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn:not(.kx-choice)[data-on="1"] { background: #6d4aff !important; box-shadow: 0 8px 18px -10px #6d4aff; }
+.usb-dock .kx-tile-btn:not(.kx-choice)[data-on="1"], .usb-dock .kx-tile-btn:not(.kx-choice)[data-on="1"] *, .usb-dock.dock-sepia .kx-tile-btn:not(.kx-choice)[data-on="1"], .usb-dock.dock-sepia .kx-tile-btn:not(.kx-choice)[data-on="1"] * { color: #fff !important; }
 .usb-dock .kx-ov-top > * { max-width: 608px; margin-left: auto; margin-right: auto; }
 .usb-dock .kx-ov-top .rounded-xl { border-radius: 16px; }
 
@@ -1886,7 +1901,9 @@ ${[
 .usb-dock .kx-cap .kx-card .kx-card-flat { background: color-mix(in srgb, var(--usb-fg) 5%, transparent); box-shadow: none; }
 
 /* ── Notifications (sonner) — same card language as the rest of the dock ── */
-.usb-dock [data-sonner-toaster] { --width: 344px; font-family: inherit; }
+/* z-index y position: los avisos deben flotar sobre el dock (cuyo host llega a
+   2147483646) y sobre el vídeo de Udemy; sin ello pueden quedar debajo. */
+.usb-dock [data-sonner-toaster] { --width: 344px; font-family: inherit; z-index: 2147483647 !important; position: fixed !important; }
 .usb-dock [data-sonner-toast] {
   --tone: #6d4aff;
   position: relative; overflow: hidden; align-items: center; gap: 12px;
@@ -1894,6 +1911,7 @@ ${[
   background: var(--usb-bg-3) !important; border: 1px solid var(--usb-border) !important;
   box-shadow: 0 1px 2px rgba(0,0,0,.10), 0 14px 28px -14px rgba(0,0,0,.45) !important;
   color: var(--usb-fg-hi) !important;
+  z-index: 2147483647 !important;
 }
 .usb-dock.dock-sepia [data-sonner-toast] { box-shadow: 0 1px 2px rgba(60,40,10,.06), 0 14px 28px -16px rgba(60,40,10,.28) !important; }
 .usb-dock [data-sonner-toast][data-type="success"] { --tone: #059669; }
@@ -1916,6 +1934,21 @@ ${[
 .usb-dock [data-sonner-toast] [data-description] { font-size: 11.5px; font-weight: 500; line-height: 1.4; color: var(--usb-fg-mid) !important; }
 .usb-dock [data-sonner-toast] [data-close-button] { background: var(--usb-bg-2); border-color: var(--usb-border); color: var(--usb-fg-mid); }
 .usb-dock .kx-celebrate-tile svg { color: inherit !important; }
+
+/* ── Configuración (SettingsKit) en tema Sepia / Claro ── */
+/* Peligro en rojo sobre tinte translúcido, y campos con piel propia: sin esto,
+   en sepia los botones de borrado y los campos quedan sin estilo. */
+.usb-dock.dock-sepia .kx-danger-btn { color: #be123c !important; background: rgba(225, 29, 72, 0.07) !important; border-color: rgba(225, 29, 72, 0.32) !important; }
+.usb-dock.dock-sepia .kx-danger-text { color: #be123c !important; }
+.usb-dock.dock-sepia .kx-field {
+  background-color: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+  color: #1a1922 !important;
+}
+.usb-dock.dock-sepia .kx-field:focus {
+  border-color: #6d4aff !important;
+  box-shadow: 0 0 0 2px rgba(109, 74, 255, 0.2) !important;
+}
 `;
 
 /** @deprecated Use THEME_CSS — kept for backward-compat */

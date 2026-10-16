@@ -467,7 +467,25 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		handleAnkiDue(course, lesson, browse, rootDeck)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
+		return false;
+	}
 
+	// Permiso de host opcional para un endpoint propio. El panel vive en el
+	// content script (mundo aislado), donde chrome.permissions NO existe; el
+	// service worker sí lo tiene. Se pide aquí, en la tarea del mensaje que el
+	// gesto del usuario acaba de desencadenar, para que Chrome muestre el
+	// diálogo en vez de rechazarlo en silencio.
+	if (type === 'USG_REQUEST_HOST_PERMISSION') {
+		const baseUrl = String((message as { baseUrl?: unknown }).baseUrl || '');
+		let origin: string | null = null;
+		try { origin = new URL(baseUrl).origin + '/*'; } catch { origin = null; }
+		if (!origin || !chrome.permissions?.request) {
+			sendResponse({ ok: false, granted: null, reason: 'unsupported' });
+			return false;
+		}
+		void Promise.resolve(chrome.permissions.request({ origins: [origin] }))
+			.then((granted) => sendResponse({ ok: true, granted: granted === true }))
+			.catch((error) => sendResponse({ ok: false, granted: null, reason: toErrorMessage(error) }));
 		return true;
 	}
 
@@ -1201,9 +1219,9 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 	// This is the same fallback chain the objectives and refine paths use, and it
 	// is what makes the feature work without Gemini keys.
 	try {
-		console.log('[USG][study] trying configured provider…');
+		if (import.meta.env.DEV) console.log('[USG][study] trying configured provider…');
 		const text = await requestConfiguredProviderText(buildStudyPrompt(cleaned, metadata), 0.35, 8192);
-		console.info('[USG][study] raw provider response:', text);
+		if (import.meta.env.DEV) console.log('[USG][study] raw provider response:', text);
 		const parsed = safeJsonParse(text);
 		if (parsed && typeof parsed === 'object') {
 			console.info('[USG][study] JSON parse ok. Keys:', Object.keys(parsed as Record<string, unknown>));
@@ -1226,15 +1244,15 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 		let reply = '';
 		try {
 			prompt = buildStudyPrompt(cleaned, metadata);
-			console.info('[USG][study] prompt sent to Gemini:', prompt);
+			if (import.meta.env.DEV) console.log('[USG][study] prompt sent to Gemini:', prompt);
 
 			for (const maxTokens of [8192, 12000]) {
 				reply = await requestGeminiText(prompt, 0.35, maxTokens, 'study', (notice) => {
 					console.warn(`[USG][study] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
 					broadcastRetryNotice('study', notice);
 				}, apiKeys);
-				console.info(`[USG][study] raw Gemini response (${maxTokens} tokens):`, reply);
-				console.info('[USG][study] raw response length:', reply.length);
+				if (import.meta.env.DEV) console.log(`[USG][study] raw Gemini response (${maxTokens} tokens):`, reply);
+				if (import.meta.env.DEV) console.log('[USG][study] raw response length:', reply.length);
 				const parsed = safeJsonParse(reply);
 
 				if (parsed && typeof parsed === 'object') {
@@ -1652,17 +1670,17 @@ async function generateObjectivesViaGemini(
 	const prompt = buildObjectivesPrompt(courseName, description);
 
 	console.groupCollapsed('[USG][objectives] generate', { courseName, description: description.slice(0, 80) + (description.length > 80 ? '…' : '') });
-	console.log('[USG][objectives] prompt sent (first 400 chars):', prompt.slice(0, 400));
+	if (import.meta.env.DEV) console.log('[USG][objectives] prompt sent (first 400 chars):', prompt.slice(0, 400));
 
 	// Try Local AI first
 	try {
 		if (await checkLocalAiHealth()) {
-			console.log('[USG][objectives] trying Local AI (8010)…');
+			if (import.meta.env.DEV) console.log('[USG][objectives] trying Local AI (8010)…');
 			const text = await requestLocalText(prompt, 0.5, 600);
-			console.log('[USG][objectives] Local AI raw response:', text);
+			if (import.meta.env.DEV) console.log('[USG][objectives] Local AI raw response:', text);
 			const parsed = parseObjectivesJSON(text);
 			if (parsed) {
-				console.log('[USG][objectives] Local AI parsed successfully', parsed);
+				if (import.meta.env.DEV) console.log('[USG][objectives] Local AI parsed successfully', parsed);
 				console.groupEnd();
 				return { objectives: parsed, isMock: false, source: 'local' };
 			}
@@ -1677,11 +1695,11 @@ async function generateObjectivesViaGemini(
 	// Try the user-configured provider (OpenAI-compatible / Anthropic).
 	let providerError: unknown = null;
 	try {
-		console.log('[USG][objectives] trying configured provider…');
+		if (import.meta.env.DEV) console.log('[USG][objectives] trying configured provider…');
 		const text = await requestConfiguredProviderText(prompt, 0.5, 1500);
 		const parsed = parseObjectivesJSON(text);
 		if (parsed) {
-			console.log('[USG][objectives] Provider parsed successfully', parsed);
+			if (import.meta.env.DEV) console.log('[USG][objectives] Provider parsed successfully', parsed);
 			console.groupEnd();
 			return { objectives: parsed, isMock: false, source: 'local' };
 		}
@@ -1705,12 +1723,12 @@ async function generateObjectivesViaGemini(
 				broadcastRetryNotice('objectives', notice);
 			});
 			rawResponse = text;
-			console.log('[USG][objectives] Gemini raw response (full):');
-			console.log(text);
-			console.log('[USG][objectives] response length:', text.length, 'chars');
+			if (import.meta.env.DEV) console.log('[USG][objectives] Gemini raw response (full):');
+			if (import.meta.env.DEV) console.log(text);
+			if (import.meta.env.DEV) console.log('[USG][objectives] response length:', text.length, 'chars');
 			const parsed = parseObjectivesJSON(text);
 			if (parsed) {
-				console.log('[USG][objectives] Gemini parsed successfully', parsed);
+				if (import.meta.env.DEV) console.log('[USG][objectives] Gemini parsed successfully', parsed);
 				console.groupEnd();
 				return { objectives: parsed, isMock: false, source: 'gemini' };
 			}

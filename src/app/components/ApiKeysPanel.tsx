@@ -93,6 +93,24 @@ export function ApiKeysPanel({
   };
 
   const handleSaveProvider = async () => {
+    // El ENVÍO de la petición de permiso ocurre sincrónicamente aquí, en la
+    // tarea del gesto del usuario: eso es lo que Chrome exige para mostrar el
+    // diálogo en vez de rechazarlo. Esperar la respuesta después es seguro —
+    // el gesto ya quedó registrado. Sin esto, un endpoint propio quedaba
+    // "guardado" con sus fetch fallando por red porque el permiso nunca se
+    // concedía.
+    const permission = requestHostPermission(provider.baseUrl);
+    const granted = permission ? await permission : null;
+    if (granted === false) {
+      toast.error("Permiso denegado", {
+        description: "Chrome bloqueó el acceso a ese endpoint. Concede el permiso para poder usarlo.",
+      });
+      return;
+    }
+    await validateAndSaveProvider();
+  };
+
+  const validateAndSaveProvider = async () => {
     setValidating(true);
     setValidation(null);
     let result: Awaited<ReturnType<typeof validateProviderConfig>>;
@@ -105,9 +123,6 @@ export function ApiKeysPanel({
     }
     setValidating(false);
     setValidation(result);
-    // Un endpoint fuera de los hosts permanentes necesita permiso opcional:
-    // sin él, fetch fallaría con un error de red opaco tras "guardar bien".
-    void ensureHostPermission(provider.baseUrl);
     onSaveProvider(provider);
     setProviderSaved(true);
     setTimeout(() => setProviderSaved(false), 2600);
@@ -118,20 +133,30 @@ export function ApiKeysPanel({
   );
 
   /**
-   * Concede permiso de host opcional si el endpoint no está ya cubierto por
-   * host_permissions. Silencioso si el navegador lo deniega (el usuario puede
-   * repetirlo desde chrome://extensions).
+   * Pide permiso de host opcional para un endpoint propio, vía el service
+   * worker (el content script no tiene chrome.permissions). El ENVÍO del mensaje
+   * ocurre en la tarea del gesto del usuario —eso es lo que Chrome exige para
+   * mostrar el diálogo— y la respuesta (concedido/denegado) llega después.
+   * Devuelve una promesa con:
+   *   true  → concedido
+   *   false → el usuario lo denegó
+   *   null  → no aplica (sin runtime o baseUrl no parseable)
    */
-  const ensureHostPermission = (baseUrl: string) => {
-    const chromeApi = (globalThis as typeof globalThis & { chrome?: { permissions?: { contains?: Function; request?: Function } } }).chrome;
-    if (!chromeApi?.permissions?.request) return;
+  const requestHostPermission = (baseUrl: string): Promise<boolean | null> | null => {
     let origin: string | null = null;
-    try { origin = new URL(baseUrl).origin + '/*'; } catch { return; }
-    const already = chromeApi.permissions.contains?.({ origins: [origin] });
-    if (already === true) return;
-    void Promise.resolve(chromeApi.permissions.contains?.({ origins: [origin] }))
-      .then((granted: unknown) => { if (granted === true) return; return chromeApi.permissions?.request?.({ origins: [origin] }); })
-      .catch(() => undefined);
+    try { origin = new URL(baseUrl).origin + '/*'; } catch { return null; }
+    if (!origin) return null;
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function } } }).chrome?.runtime;
+    if (!runtime?.sendMessage) return null;
+    try {
+      return new Promise((resolve) => {
+        runtime.sendMessage({ type: 'USG_REQUEST_HOST_PERMISSION', baseUrl }, (response: { granted?: boolean } | null) => {
+          resolve(response ? response.granted === true : null);
+        });
+      });
+    } catch {
+      return null;
+    }
   };
 
   const providerReady = provider.kind === "local"
