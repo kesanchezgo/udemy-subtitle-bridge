@@ -470,22 +470,21 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		return false;
 	}
 
-	// Permiso de host opcional para un endpoint propio. El panel vive en el
-	// content script (mundo aislado), donde chrome.permissions NO existe; el
-	// service worker sí lo tiene. Se pide aquí, en la tarea del mensaje que el
-	// gesto del usuario acaba de desencadenar, para que Chrome muestre el
-	// diálogo en vez de rechazarlo en silencio.
-	if (type === 'USG_REQUEST_HOST_PERMISSION') {
-		const baseUrl = String((message as { baseUrl?: unknown }).baseUrl || '');
-		let origin: string | null = null;
-		try { origin = new URL(baseUrl).origin + '/*'; } catch { origin = null; }
-		if (!origin || !chrome.permissions?.request) {
-			sendResponse({ ok: false, granted: null, reason: 'unsupported' });
+	// ¿El endpoint ya tiene permiso de red? permissions.request NO se puede
+	// pedir desde aquí: Chrome lo rechaza con "must be called during a user
+	// gesture" y ese gesto no cruza el sendMessage desde el content script
+	// (comprobado en Chromium real). En cambio `contains` no exige gesto, así
+	// que sí se puede consultar desde el service worker, que es el único
+	// contexto con chrome.permissions.
+	if (type === 'USG_HOST_COVERED') {
+		const origin = String((message as { origin?: unknown }).origin || '');
+		if (!origin || !chrome.permissions?.contains) {
+			sendResponse({ ok: false, covered: null, reason: 'unsupported' });
 			return false;
 		}
-		void Promise.resolve(chrome.permissions.request({ origins: [origin] }))
-			.then((granted) => sendResponse({ ok: true, granted: granted === true }))
-			.catch((error) => sendResponse({ ok: false, granted: null, reason: toErrorMessage(error) }));
+		void Promise.resolve(chrome.permissions.contains({ origins: [origin] }))
+			.then((covered) => sendResponse({ ok: true, covered: covered === true }))
+			.catch((error) => sendResponse({ ok: false, covered: null, reason: toErrorMessage(error) }));
 		return true;
 	}
 
