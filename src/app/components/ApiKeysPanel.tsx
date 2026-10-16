@@ -93,27 +93,31 @@ export function ApiKeysPanel({
   };
 
   const handleSaveProvider = async () => {
-    // El permiso de host opcional NO se puede pedir desde aquí. Este panel vive
-    // en el content script, donde chrome.permissions no existe; el service
-    // worker sí lo tiene, pero Chrome rechaza allí permissions.request con
-    // "must be called during a user gesture" y ese gesto no cruza el
-    // sendMessage. Comprobado en Chromium real.
+    // El permiso de host opcional NO se puede pedir desde aquí: este panel vive
+    // en el content script, donde chrome.permissions no existe, y el service
+    // worker —que sí lo tiene— rechaza permissions.request con "must be called
+    // during a user gesture" porque ese gesto no cruza el sendMessage. Los dos
+    // casos comprobados en Chromium real.
     //
-    // Lo que sí se puede hacer es NO mentir: si el host ya está cubierto
-    // (los endpoints por defecto lo están: OpenAI, DeepSeek, OpenRouter,
-    // Anthropic, Gemini, 127.0.0.1, localhost) se guarda sin más. Si falta,
-    // se guarda igual pero se avisa de que los fetch fallarán hasta que el
-    // permiso se conceda, y se dice exactamente dónde.
+    // chrome://extensions → Acceso a sitios tampoco sirve: con permiso opcional
+    // solo deja activar los hosts que el manifest ya declara, no añadir uno
+    // nuevo. Por eso existe permission.html: es el único sitio donde el clic del
+    // usuario llega a la API.
     setValidating(true);
     setValidation(null);
     const covered = await isHostCovered(provider.baseUrl);
     // Si el host no tiene permiso, la validación fallaría con un error de red
-    // que no explica nada. Se avisa antes y no se gasta el intento.
+    // que no explica nada. Se avisa antes, con la acción que lo resuelve, y no
+    // se gasta el intento.
     if (covered === false) {
       setValidating(false);
       toast.error("Sin permiso de red para ese endpoint", {
-        description: "Chrome bloquea las peticiones a hosts fuera de los permitidos. Concédelo en chrome://extensions → Kinema → Detalles → Acceso a sitios.",
-        duration: 12000,
+        description: "Chrome bloquea las peticiones a hosts fuera de los permitidos.",
+        action: {
+          label: "Conceder permiso",
+          onClick: () => void openPermissionPage(provider.baseUrl),
+        },
+        duration: 15000,
       });
       return;
     }
@@ -158,6 +162,31 @@ export function ApiKeysPanel({
       });
     } catch {
       return null;
+    }
+  };
+
+  /**
+   * Abre la página propia de la extensión que SÍ puede pedir el permiso: allí
+   * `chrome.permissions` existe y el clic del usuario es un gesto válido.
+   *
+   * Se usa chrome.tabs.create en vez de openOptionsPage porque este necesita
+   * recibir el host concreto (?origin=…), y openOptionsPage no admite parámetros.
+   */
+  const openPermissionPage = async (baseUrl: string): Promise<void> => {
+    let origin: string | null = null;
+    try { origin = new URL(baseUrl).origin; } catch { origin = null; }
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { id?: string; getURL?: Function }; tabs?: { create?: Function } } }).chrome?.runtime;
+    const tabs = (globalThis as typeof globalThis & { chrome?: { tabs?: { create?: Function } } }).chrome?.tabs;
+    if (!origin || !runtime?.getURL || !tabs?.create) {
+      toast.error("No se pudo abrir la página de permisos", {
+        description: "Concédelo a mano en chrome://extensions → Kinema → Detalles.",
+      });
+      return;
+    }
+    try {
+      await tabs.create({ url: `${runtime.getURL('permission.html')}?origin=${encodeURIComponent(origin)}` });
+    } catch {
+      toast.error("No se pudo abrir la página de permisos");
     }
   };
 
