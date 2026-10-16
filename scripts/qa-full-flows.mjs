@@ -404,14 +404,24 @@ await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-setting
 // esperar a que existan, la prueba mide una hoja cerrada y reporta fallos falsos.
 const openaiBtn = page.locator(`${OUTER} button[role="radio"]`).filter({ hasText: /^OpenAI$/ }).first();
 const ep = page.locator(`${OUTER} input[placeholder="https://api.openai.com/v1"]`).first();
-let ready = false;
-for (let i = 0; i < 14 && !ready; i += 1) {
-	await page.waitForTimeout(700);
-	if (await openaiBtn.count().catch(() => 0) && await ep.count().catch(() => 0)) ready = true;
-}
 const saveBtn = page.locator(`${OUTER} button`).filter({ hasText: /Probar conexión y guardar/ }).first();
-if (ready && await saveBtn.count().catch(() => 0)) {
-	if (await openaiBtn.count().catch(() => 0)) { await openaiBtn.evaluate((el) => el.click()).catch(() => {}); await page.waitForTimeout(700); }
+// El campo Endpoint solo existe con el motor OpenAI elegido, y el proveedor
+// activo depende del estado previo (Local no lo muestra). Hay que seleccionar
+// OpenAI PRIMERO y esperar después: esperar el campo antes no lo crea.
+let ready = false;
+for (let i = 0; i < 16 && !ready; i += 1) {
+	await page.waitForTimeout(700);
+	if (await openaiBtn.count().catch(() => 0)) {
+		const isOpenAi = await page.evaluate(() => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			const on = [...root.querySelectorAll('button[role="radio"]')].find((b) => b.getAttribute('aria-checked') === 'true');
+			return /OpenAI/.test(on?.textContent ?? '');
+		});
+		if (!isOpenAi) { await openaiBtn.evaluate((el) => el.click()).catch(() => {}); await page.waitForTimeout(700); }
+	}
+	if (await ep.count().catch(() => 0) && await saveBtn.count().catch(() => 0)) ready = true;
+}
+if (ready) {
 	// Host sin permiso: debe avisar y ofrecer la acción, no guardar en silencio.
 	await ep.evaluate((el) => { el.value = 'http://192.168.1.50:8080/v1'; el.dispatchEvent(new Event('input', { bubbles: true })); });
 	await page.waitForTimeout(300);

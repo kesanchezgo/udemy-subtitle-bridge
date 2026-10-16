@@ -155,6 +155,18 @@ export function ApiKeysPanel({
     }
     setValidating(false);
     setValidation(result);
+    // Un resultado con error es un veredicto, no un fallo de la sonda: hay que
+    // mostrarlo. Antes se guardaba el proveedor igual y se marcaba «Guardado y
+    // activo», así que un endpoint caído (HTTP 503, sin red, llave inválida)
+    // quedaba configurado sin que el usuario viera por qué fallaba.
+    if (result.status !== 'ok') {
+      toast.error(result.status === 'unreachable' ? 'El endpoint no responde' : 'El endpoint respondió con error', {
+        id: 'provider-validation-failed',
+        description: result.message,
+        duration: 12000,
+      });
+      return;
+    }
     onSaveProvider(provider);
     setProviderSaved(true);
     setTimeout(() => setProviderSaved(false), 2600);
