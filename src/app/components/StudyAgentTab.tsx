@@ -1556,10 +1556,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           generationError = aiResult.error;
           console.warn("[study] AI panel failed:", aiResult.error, aiResult.debug);
           const debug = aiResult.debug as { promptPreview?: unknown; rawResponse?: unknown; rawResponseLength?: unknown } | undefined;
-          if (typeof debug?.promptPreview === "string") {
+          if (import.meta.env.DEV && typeof debug?.promptPreview === "string") {
             console.info("[USG][study][client] prompt sent to Gemini (preview):", debug.promptPreview);
           }
-          if (typeof debug?.rawResponse === "string") {
+          if (import.meta.env.DEV && typeof debug?.rawResponse === "string") {
             console.info("[USG][study][client] raw Gemini response:", debug.rawResponse);
             console.info("[USG][study][client] raw Gemini response length:", debug.rawResponseLength);
           }

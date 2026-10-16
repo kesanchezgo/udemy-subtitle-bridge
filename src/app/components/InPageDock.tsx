@@ -302,11 +302,15 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
       }
     };
     const toggle = () => setSettingsOpen(v => !v);
+    // Abre la hoja. La sección la aplica el listener de cada SettingsSection
+    // (SettingsKit) sobre el MISMO evento usb:open-settings. La hoja usa
+    // keepMounted, así que el acordeón está siempre montado y su listener
+    // siempre presente: no hace falta reenviar ni persistir nada aquí. Un
+    // re-despacho por rAF solo reintroduce el evento y arriesba a sobreescribir
+    // la sección que otro listener ya había fijado.
     const openIt = (e?: Event) => {
       setSettingsOpen(true);
       setProgressOpen(false);
-      const section = (e as CustomEvent<{ section?: string }> | undefined)?.detail?.section;
-      if (section) window.dispatchEvent(new CustomEvent("usb:section-request", { detail: { section } }));
     };
     const closeIt = () => setSettingsOpen(false);
     window.addEventListener("usb:settings-state", handleSettingsState);

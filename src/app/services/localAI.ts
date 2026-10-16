@@ -1267,7 +1267,7 @@ export async function generateCourseObjectives(
   });
 
   if (bgResult?.ok && Array.isArray(bgResult.objectives) && bgResult.objectives.length >= 3 && !bgResult.isMock) {
-    console.log("[USG][client] ✅ objectives received from", bgResult.source ?? "background", bgResult.objectives);
+    if (import.meta.env.DEV) console.log("[USG][client] ✅ objectives received from", bgResult.source ?? "background", bgResult.objectives);
     return {
       objectives: bgResult.objectives,
       isMock: false,

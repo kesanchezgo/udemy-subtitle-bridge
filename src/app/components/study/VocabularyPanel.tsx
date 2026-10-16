@@ -51,7 +51,9 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
           if (!current) throw new Error("La lección cambió.");
           if (generation.current !== version || vocabularyCriteriaKey(current.config) !== vocabularyCriteriaKey(config)) return current;
           return { ...current, config: { ...config } };
-        }).catch(() => undefined);
+        }).catch((error) => {
+          console.warn("[vocab] no se pudo alinear la config de la sesión en segundo plano:", error);
+        });
         if (compact) await pushGlossary(next, seen);
         return;
       }
@@ -76,7 +78,14 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
     };
     void load().catch(() => {});
     const unsubscribe = chromeLocalStorage.onChange(() => { void load().catch(() => {}); });
-    return () => { generation.current += 1; unsubscribe(); };
+    return () => {
+      generation.current += 1;
+      unsubscribe();
+      // La key queda en <html> como marca de la lección mostrada; si no se
+      // borra al desmontar, el glosario de una lección anterior sigue vigente
+      // para el content script cuando el panel desaparece.
+      try { delete document.documentElement.dataset.usbVocabKey; } catch {}
+    };
   }, [key, compact, course, lesson, JSON.stringify(config)]);
 
   const run = async (action: () => Promise<void>) => {
