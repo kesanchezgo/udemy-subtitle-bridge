@@ -53,3 +53,7 @@ temp_profile*/
 .e2e-harness-profile/
 udemy-network.txt
 udemy_curse_page.html
+
+# Cookies de sesión para la prueba contra Udemy real. NUNCA versionar:
+# contienen token de acceso y sesión completa.
+.qa-udemy-cookies.json

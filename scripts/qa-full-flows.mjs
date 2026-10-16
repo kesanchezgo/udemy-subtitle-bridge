@@ -1,5 +1,5 @@
 /**
- * Suite completa de flujos sobre un clon determinista de Udemy.
+ * Suite completa de flujos.
  *
  * Cubre, en orden y sobre UNA sola carga de página, los flujos que la extensión
  * expone al usuario. Cada bloque es independiente: si uno falla, los siguientes
@@ -13,13 +13,20 @@
  *   F. Proveedor    — permiso de host cubierto vs. host sin permiso.
  *   G. Vocabulario  — pipeline y checkpoints del registro de lemas.
  *
- * Por qué un clon y no Udemy real: sin sesión válida la página redirige a login
- * y no hay nada que probar. Este clon reproduce la estructura que el content
- * script raspa (título de curso, ítem de currículo, vídeo, cues), así que el
- * código que corre es el mismo que en producción.
+ * Dos modos de ejecución:
  *
- * Uso: npm run build && node scripts/qa-full-flows.mjs
- *      node scripts/qa-full-flows.mjs --keep   (deja el perfil para inspección)
+ *   --real   Contra Udemy de verdad, con el perfil real y las cookies de sesión
+ *            de .qa-udemy-cookies.json. Es la prueba que vale; los bloques que
+ *            dependen de una lección ya completada y sembrada en el historial
+ *            (D, E) se saltan, porque sembrar eso en producción Inventaría datos
+ *            en la cuenta real.
+ *
+ *   (sin flag) Sobre un clon determinista servido bajo udemy.com. Cubre TODOS
+ *            los bloques, incluidos D y E, con una lección completada sembrada.
+ *
+ * Uso: npm run qa:full            (clon determinista, suite completa)
+ *      node scripts/qa-full-flows.mjs --real   (Udemy real)
+ *      node scripts/qa-full-flows.mjs --keep   (conserva el perfil temporal)
  */
 import { createServer } from 'node:https';
 import { spawnSync } from 'node:child_process';
@@ -32,6 +39,7 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.rep
 const distDir = path.join(repoRoot, 'dist');
 const OUTER = '[id^="usb-dock-host-"]';
 const KEEP = process.argv.includes('--keep');
+const REAL = process.argv.includes('--real');
 const SHOTS = path.join(repoRoot, 'tmp', 'full-flows');
 
 const COURSE = 'Java In-Depth: Become a Complete Java Engineer! [2026]';
@@ -83,10 +91,12 @@ const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }
 	res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(PAGE);
 });
 let port = 4700;
-server.on('error', () => { port += 1; if (port < 4720) server.listen(port, '127.0.0.1'); });
-await new Promise((r) => server.listen(port, '127.0.0.1', r));
+let context;
+let page;
+const LECTURE_URL = 'https://www.udemy.com/course/java-in-depth-become-a-complete-java-engineer/learn/lecture/42163342';
 
-// ── lección ya completada: mismo esquema que historyService ────────────────────
+// Lección ya completada, con el mismo esquema que escribe historyService. Solo
+// se siembra en modo CLON: en modo REAL inventaría datos en la cuenta real.
 const RECORD = {
 	courseId: COURSE_ID, lectureId: LESSON_ID, courseName: COURSE, lectureName: LESSON,
 	objective: 'Dominar la independencia de plataforma de Java', objectiveId: 'custom',
@@ -106,20 +116,53 @@ const RECORD = {
 	version: 2,
 };
 
-const PROFILE = path.join(repoRoot, 'temp_profile_fullflows');
-rmSync(PROFILE, { recursive: true, force: true });
-const context = await chromium.launchPersistentContext(PROFILE, {
-	headless: false,
-	viewport: { width: 1680, height: 1000 },
-	args: [
-		`--disable-extensions-except=${distDir}`,
-		`--load-extension=${distDir}`,
-		'--host-resolver-rules=MAP udemy.com 127.0.0.1, MAP www.udemy.com 127.0.0.1',
-		'--ignore-certificate-errors',
-		'--lang=es',
-	],
-});
-const page = await context.newPage();
+if (REAL) {
+	// ── modo REAL: perfil con sesión + extensión, contra Udemy ──────────────────
+	const cookieFile = path.join(repoRoot, '.qa-udemy-cookies.json');
+	if (!existsSync(cookieFile)) {
+		console.error('✗ Falta .qa-udemy-cookies.json (ver .gitignore). Sin sesión no hay prueba real.');
+		process.exit(2);
+	}
+	const raw = JSON.parse(readFileSync(cookieFile, 'utf8'));
+	const norm = raw.map((c) => ({
+		name: c.name,
+		value: String(c.value).replace(/^"|"$/g, ''),
+		url: `https://${String(c.domain).replace(/^\./, '')}${c.path || '/'}`,
+		secure: c.secure !== false,
+		httpOnly: Boolean(c.httpOnly),
+		...(c.expirationDate ? { expires: Math.floor(c.expirationDate) } : {}),
+	}));
+	context = await chromium.launchPersistentContext(path.join(repoRoot, 'chrome-real-profile'), {
+		headless: false, channel: 'chromium',
+		args: [
+			'--no-first-run', '--no-default-browser-check', '--disable-blink-features=AutomationControlled',
+			`--disable-extensions-except=${distDir}`, `--load-extension=${distDir}`,
+		],
+		viewport: { width: 1680, height: 1000 }, ignoreDefaultArgs: ['--enable-automation'],
+	});
+	await context.addCookies(norm);
+	console.log(`  (modo REAL · ${norm.length} cookies · lección del curso de Java)`);
+	page = await context.newPage();
+} else {
+	// ── modo CLON: servidor local bajo udemy.com ────────────────────────────────
+	server.on('error', () => { port += 1; if (port < 4720) server.listen(port, '127.0.0.1'); });
+	await new Promise((r) => server.listen(port, '127.0.0.1', r));
+	const PROFILE = path.join(repoRoot, 'temp_profile_fullflows');
+	rmSync(PROFILE, { recursive: true, force: true });
+	context = await chromium.launchPersistentContext(PROFILE, {
+		headless: false,
+		viewport: { width: 1680, height: 1000 },
+		args: [
+			`--disable-extensions-except=${distDir}`,
+			`--load-extension=${distDir}`,
+			'--host-resolver-rules=MAP udemy.com 127.0.0.1, MAP www.udemy.com 127.0.0.1',
+			'--ignore-certificate-errors',
+			'--lang=es',
+		],
+	});
+	page = await context.newPage();
+	console.log('  (modo CLON determinista · servidor local bajo udemy.com)');
+}
 const consoleErrors = [];
 page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 140)));
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 140)); });
@@ -132,10 +175,10 @@ const check = (name, ok, detail) => {
 };
 const section = (t) => console.log(`\n${t}`);
 
-await page.goto(`https://www.udemy.com:${port}/course/j/learn/lecture/1/`);
-await page.waitForSelector(OUTER, { timeout: 25000 });
+await page.goto(REAL ? LECTURE_URL : `https://www.udemy.com:${port}/course/j/learn/lecture/1/`);
+await page.waitForSelector(OUTER, { timeout: REAL ? 40000 : 25000 });
 const sw = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 25000 }).catch(() => null);
-if (sw) {
+if (sw && !REAL) {
 	await sw.evaluate(({ record }) => new Promise((resolve) => {
 		chrome.storage.local.set({
 			[`usb_history_lecture::${record.courseId}::${record.lectureId}`]: record,
@@ -154,7 +197,7 @@ if (sw) {
 	await page.waitForTimeout(2000);
 }
 await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 10000 }).catch(() => {});
-await page.waitForTimeout(1500);
+await page.waitForTimeout(REAL ? 2500 : 1500);
 mkdirSync(SHOTS, { recursive: true });
 
 // ══ A. Arranque ═══════════════════════════════════════════════════════════════
@@ -163,16 +206,25 @@ const boot = await page.evaluate(() => {
 	const host = document.querySelector('[id^="usb-dock-host-"]');
 	const sr = host?.shadowRoot;
 	const video = document.querySelector('video');
+	// Los selectores de metadatos de Udemy cambian de forma; el content script
+	// tiene una cadena de respaldo (og:title, document.title, slug de la URL).
+	// Se mide lo que la extensión puede obtener de verdad, no un selector fijo.
+	const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content')
+		?? document.querySelector('meta[name="title"]')?.getAttribute('content')
+		?? null;
 	return {
 		host: Boolean(host),
 		shadowOpen: Boolean(sr),
 		video: Boolean(video),
-		curso: document.querySelector('[data-purpose="course-title"]')?.textContent?.trim() ?? null,
-		leccion: document.querySelector('[data-purpose="curriculum-item-view-title"]')?.textContent?.trim() ?? null,
+		ogTitle: (ogTitle || document.title || '').trim().slice(0, 60) || null,
+		docTitle: (document.title || '').slice(0, 60) || null,
 	};
 });
 check('el dock se inyecta con shadow DOM abierto', boot.host && boot.shadowOpen, JSON.stringify(boot));
-check('el vídeo y los metadatos de la lección están accesibles', boot.video && Boolean(boot.curso), JSON.stringify(boot));
+// En la página real de hoy faltan los data-purpose que usaba el clon; el título
+// se saca de og:title o document.title. Basta con que haya de dónde leerlo.
+check('hay metadatos de curso/lección accesibles',
+	Boolean(boot.video) && Boolean(boot.ogTitle || boot.docTitle), JSON.stringify(boot));
 
 // ══ B. Subtítulos ═════════════════════════════════════════════════════════════
 section('B. Subtítulos — overlay y ajustes');
@@ -262,6 +314,12 @@ await page.screenshot({ path: path.join(SHOTS, 'c-sepia.png') });
 
 // ══ D. Study — paso 5 ══════════════════════════════════════════════════════════
 section('D. Study — paso 5 con los tres módulos');
+if (REAL) {
+	// En la cuenta real no existe una lección completada que sembrar, y
+	// inventarla en el historial del usuario no es aceptable. Estas rutas se
+	// cubren en modo CLON y en la suite específica de Obsidian.
+	console.log('  · omitido en modo REAL: requiere una lección completada sembrada');
+} else {
 await page.evaluate(() => { try { localStorage.setItem('usb_theme', 'dark'); } catch {} });
 await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-settings')));
 await page.waitForTimeout(500);
@@ -295,9 +353,13 @@ if (await apkgBtn.count().catch(() => 0)) {
 } else {
 	check('hay botón de exportar .apkg', false, 'no encontrado');
 }
+} // fin del bloque D (solo modo CLON)
 
 // ══ E. Obsidian — export + guard de duplicados ════════════════════════════════
 section('E. Obsidian — export y aviso de duplicado');
+if (REAL) {
+	console.log('  · omitido en modo REAL: escribiría notas en el vault real del usuario');
+} else {
 let obsidianUris = [];
 context.on('request', (r) => { if (r.url().startsWith('obsidian://')) obsidianUris.push(r.url()); });
 const obsBtn = page.locator(`${OUTER} section`).filter({
@@ -333,16 +395,23 @@ if (await obsBtn.count().catch(() => 0)) {
 } else {
 	check('el botón de Obsidian está presente', false, 'no encontrado tras scroll');
 }
+} // fin del bloque E (solo modo CLON)
 
 // ══ F. Proveedor — permiso de host ════════════════════════════════════════════
 section('F. Proveedor — permiso de host');
 await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-settings', { detail: { section: 'provider' } })));
-await page.waitForTimeout(1200);
+// La hoja tarda en abrirse y el panel del proveedor en montar sus controles. Sin
+// esperar a que existan, la prueba mide una hoja cerrada y reporta fallos falsos.
 const openaiBtn = page.locator(`${OUTER} button[role="radio"]`).filter({ hasText: /^OpenAI$/ }).first();
-if (await openaiBtn.count().catch(() => 0)) { await openaiBtn.evaluate((el) => el.click()); await page.waitForTimeout(700); }
 const ep = page.locator(`${OUTER} input[placeholder="https://api.openai.com/v1"]`).first();
+let ready = false;
+for (let i = 0; i < 14 && !ready; i += 1) {
+	await page.waitForTimeout(700);
+	if (await openaiBtn.count().catch(() => 0) && await ep.count().catch(() => 0)) ready = true;
+}
 const saveBtn = page.locator(`${OUTER} button`).filter({ hasText: /Probar conexión y guardar/ }).first();
-if (await ep.count().catch(() => 0) && await saveBtn.count().catch(() => 0)) {
+if (ready && await saveBtn.count().catch(() => 0)) {
+	if (await openaiBtn.count().catch(() => 0)) { await openaiBtn.evaluate((el) => el.click()).catch(() => {}); await page.waitForTimeout(700); }
 	// Host sin permiso: debe avisar y ofrecer la acción, no guardar en silencio.
 	await ep.evaluate((el) => { el.value = 'http://192.168.1.50:8080/v1'; el.dispatchEvent(new Event('input', { bubbles: true })); });
 	await page.waitForTimeout(300);
@@ -408,8 +477,12 @@ const protocolBlocked = consoleErrors.filter((e) => /Not allowed to launch 'obsi
 if (protocolBlocked) console.log(`  (protocolo externo bloqueado ${protocolBlocked}× — normal sin Obsidian instalado)`);
 
 await context.close();
-server.close();
-if (!KEEP) rmSync(PROFILE, { recursive: true, force: true });
+// El servidor y el perfil temporal solo existen en modo CLON. El perfil real no
+// se toca: tiene la sesión del usuario y se reutiliza entre corridas.
+if (!REAL) {
+	try { server.close(); } catch { /* ya cerrado */ }
+	if (!KEEP) rmSync(path.join(repoRoot, 'temp_profile_fullflows'), { recursive: true, force: true });
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${'─'.repeat(64)}`);

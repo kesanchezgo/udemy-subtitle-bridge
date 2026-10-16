@@ -3265,6 +3265,26 @@ function watchUrlChanges() {
 	}, 1000);
 }
 
+// El service worker se destruye tras ~30 s sin recibir mensajes. Mientras el
+// dock está abierto, cualquier petición al SW (consultar un permiso de host,
+// validar un proveedor) puede caer en ese hueco y Chromium responde "Could not
+// establish connection. Receiving end does not exist", que el panel lee como
+// "no se pudo determinar". El handler USG_KEEPALIVE ya existe para esto, pero
+// nadie lo invocaba. Este latido lo mantiene vivo mientras la página está.
+function keepServiceWorkerAlive() {
+	const chromeApi = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void; lastError?: unknown } } }).chrome;
+	const sendMessage = chromeApi?.runtime?.sendMessage;
+	if (!sendMessage) return;
+	setInterval(() => {
+		try {
+			sendMessage.call(chromeApi.runtime, { type: 'USG_KEEPALIVE' }, () => {
+				// Leer lastError consume el error benigno (SW aún arrancando).
+				void chromeApi.runtime?.lastError;
+			});
+		} catch { /* el dock puede estar cerrándose */ }
+	}, 20000);
+}
+
 // ── Bootstrap ──
 
 function bootstrap() {
@@ -3273,6 +3293,7 @@ function bootstrap() {
 	syncUdemyRuntimeForUrl();
 	setupChromeMessageHandler();
 	watchUrlChanges();
+	keepServiceWorkerAlive();
 	void initAiProviderConfig();
 	void restoreDockWidth();
 

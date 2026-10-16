@@ -176,17 +176,31 @@ export function ApiKeysPanel({
     let origin: string | null = null;
     try { origin = new URL(baseUrl).origin + '/*'; } catch { return null; }
     if (!origin) return null;
-    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function } } }).chrome?.runtime;
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function; lastError?: unknown } } }).chrome?.runtime;
     if (!runtime?.sendMessage) return null;
-    try {
-      return await new Promise<boolean | null>((resolve) => {
+    const ask = () => new Promise<boolean | null>((resolve) => {
+      try {
         runtime.sendMessage({ type: 'USG_HOST_COVERED', origin }, (response: { covered?: boolean } | null) => {
+          // Leer lastError consume el error benigno (recarga de la extensión,
+          // puerto cerrado). Sin esto, Chrome lo reporta en consola como
+          // "Unchecked runtime.lastError".
+          const err = (runtime as { lastError?: { message?: string } }).lastError;
+          void err;
           resolve(response && typeof response.covered === 'boolean' ? response.covered : null);
         });
-      });
-    } catch {
-      return null;
+      } catch {
+        resolve(null);
+      }
+    });
+    // El service worker puede estar dormido: el primer mensaje lo despierta y
+    // se pierde. Se reintenta un par de veces antes de dudar. Medido en la
+    // página real — sin esto, la consulta devolvía null y el guard no saltaba.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const covered = await ask();
+      if (covered !== null) return covered;
+      await new Promise((r) => setTimeout(r, 900));
     }
+    return null;
   };
 
   /**
@@ -200,7 +214,7 @@ export function ApiKeysPanel({
   const openPermissionPage = async (baseUrl: string): Promise<void> => {
     let origin: string | null = null;
     try { origin = new URL(baseUrl).origin; } catch { origin = null; }
-    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function } } }).chrome?.runtime;
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function; lastError?: unknown } } }).chrome?.runtime;
     if (!origin || !runtime?.sendMessage) {
       toast.error("No se pudo abrir la página de permisos", {
         description: "Vuelve a intentarlo desde el panel del proveedor.",
@@ -209,7 +223,10 @@ export function ApiKeysPanel({
     }
     try {
       const response = await new Promise<{ ok?: boolean } | null>((resolve) => {
-        runtime.sendMessage({ type: 'USG_OPEN_PERMISSION_PAGE', origin }, (r: { ok?: boolean } | null) => resolve(r ?? null));
+        runtime.sendMessage({ type: 'USG_OPEN_PERMISSION_PAGE', origin }, (r: { ok?: boolean } | null) => {
+          void runtime.lastError; // consume el error benigno del puerto
+          resolve(r ?? null);
+        });
       });
       if (!response?.ok) {
         toast.error("No se pudo abrir la página de permisos", {
