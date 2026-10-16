@@ -58,8 +58,7 @@ export function PermissionPage() {
     setState('asking');
     setMessage('Chrome te preguntará si permitir este endpoint…');
     const api = (globalThis as typeof globalThis & { chrome?: { permissions?: { request?: (q: { origins: string[] }) => Promise<boolean> } } }).chrome;
-    const request = api?.permissions?.request;
-    if (!request) {
+    if (!api?.permissions?.request) {
       setState('denied');
       setMessage('Este navegador no permite conceder permisos desde la extensión.');
       return;
@@ -68,8 +67,10 @@ export function PermissionPage() {
       // Timeout propio: si el diálogo no llega a resolverse (navegador que lo
       // suprime, gesto perdido), la promesa se queda colgada y el usuario vería
       // la página congelada para siempre. Mejor decírselo y dejar reintentar.
+      // La llamada es directa al método, no a una referencia suelta: las APIs de
+      // Chrome rechazan la invocación sin su this ("Illegal invocation").
       const granted = await Promise.race([
-        request({ origins: [origin] }),
+        api.permissions.request({ origins: [origin] }),
         new Promise<boolean>((_, reject) => setTimeout(
           () => reject(new Error('Chrome no respondió a la petición de permiso.')),
           30000,
@@ -77,9 +78,10 @@ export function PermissionPage() {
       ]);
       if (granted) {
         setState('granted');
-        setMessage('Permiso concedido. Ya puedes volver al panel y guardar el proveedor.');
-        // Avisar al dock, por si sigue abierto, para que refresque su estado.
-        window.dispatchEvent(new CustomEvent('usb:host-permission-changed', { detail: { origin } }));
+        setMessage('Permiso concedido. Vuelve a la pestaña del curso y pulsa Guardar.');
+        // No se emite ningún evento local: esta pestaña no es la del dock y un
+        // CustomEvent no cruza pestañas. El aviso al panel lo reenvía el service
+        // worker al recibir chrome.permissions.onAdded.
       } else {
         setState('denied');
         setMessage('No se concedió el permiso. Las peticiones a ese endpoint seguirán bloqueadas.');

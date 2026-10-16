@@ -64,8 +64,17 @@ export function installToastSounds() {
   kinds.forEach((k) => {
     const orig = (toast as any)[k].bind(toast);
     (toast as any)[k] = (msg: any, opts: any = {}) => {
+      // El aviso repetido (mismo texto) no debe apilarse. Antes se hacía con
+      // toast.dismiss(id) en la misma tarea, y eso mataba el toast RECIÉN
+      // CREADO: sonner procesa el dismiss y la creación en el mismo lote y el
+      // id derivado del mensaje es el mismo, así que el nuevo se descartaba a
+      // sí mismo. Medido: los avisos con botón vivían ~200 ms y ese botón era
+      // inalcanzable pidiendo 15 s de duración.
+      //
+      // sonner ya hace esto solo: si el id coincide, reemplaza el toast en vez
+      // de duplicarlo. Así que aquí no hay que descartar nada — basta con
+      // propagar el id, que es lo que habilita ese reemplazo.
       const id = opts.id ?? (typeof msg === "string" ? `${k}:${msg}` : undefined);
-      if (id !== undefined) toast.dismiss(id);
       const s = sound[k];
       if (s) playSound(s);
       return orig(msg, { ...opts, id });

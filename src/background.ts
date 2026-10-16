@@ -49,6 +49,32 @@ let localAiHealthCache: { checkedAt: number; ok: boolean } | null = null;
 void initGeminiKeys();
 void initAiProviderConfig();
 
+// Cuando el usuario concede un permiso de host desde permission.html, el dock
+// (en la pestaña de Udemy) no se entera: la página vive en otra pestaña y el
+// CustomEvent que emite no cruza pestañas. El service worker sí ve el cambio,
+// así que lo reenvía a las pestañas de Udemy para que el panel pueda decir
+// «Permiso concedido, pulsa Guardar» en vez de quedarse con el aviso viejo.
+function broadcastHostPermissionAdded(): void {
+	try {
+		chrome?.permissions?.onAdded?.addListener((permissions) => {
+			const granted = permissions?.origins ?? [];
+			if (!granted.length) return;
+			chrome?.tabs?.query?.({ url: 'https://*.udemy.com/*' }, (tabs) => {
+				for (const tab of tabs ?? []) {
+					if (typeof tab.id !== 'number') continue;
+					try {
+						chrome?.tabs?.sendMessage?.(tab.id, {
+							type: 'USG_HOST_PERMISSION_ADDED',
+							origins: granted,
+						});
+					} catch { /* la pestaña puede haberse cerrado */ }
+				}
+			});
+		});
+	} catch { /* el listener es opcional */ }
+}
+broadcastHostPermissionAdded();
+
 function getConfiguredContentScriptFiles(): string[] {
 	const manifest = chromeApi?.runtime?.getManifest?.();
 	const contentScripts = manifest?.content_scripts as Array<{ matches?: string[]; js?: string[] }> | undefined;
@@ -486,6 +512,26 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			.then((covered) => sendResponse({ ok: true, covered: covered === true }))
 			.catch((error) => sendResponse({ ok: false, covered: null, reason: toErrorMessage(error) }));
 		return true;
+	}
+
+	// Abrir la página que SÍ puede pedir el permiso. Lo hace el service worker
+	// porque el panel vive en el content script, donde chrome.tabs es undefined
+	// (mismo caso que chrome.permissions). Abrir una pestaña no exige gesto: el
+	// gesto real ocurre después, cuando el usuario pulsa el botón de la página.
+	if (type === 'USG_OPEN_PERMISSION_PAGE') {
+		const origin = String((message as { origin?: unknown }).origin || '');
+		if (!origin || !chrome.tabs?.create) {
+			sendResponse({ ok: false, reason: 'unsupported' });
+			return false;
+		}
+		try {
+			const url = chrome.runtime.getURL(`permission.html?origin=${encodeURIComponent(origin)}`);
+			void chrome.tabs.create({ url });
+			sendResponse({ ok: true });
+		} catch (error) {
+			sendResponse({ ok: false, reason: toErrorMessage(error) });
+		}
+		return false;
 	}
 
 	if (type === 'USG_GENERATE_VOCABULARY') {

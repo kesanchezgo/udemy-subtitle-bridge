@@ -3044,6 +3044,16 @@ function setupChromeMessageHandler() {
 			return false;
 		}
 
+		// El usuario concedió un permiso de host desde permission.html. El service
+		// worker lo detecta con permissions.onAdded y lo manda aquí; se reenvía al
+		// dock para que el panel deje de mostrar el aviso de «sin permiso».
+		if (type === 'USG_HOST_PERMISSION_ADDED') {
+			try {
+				window.dispatchEvent(new CustomEvent('usb_to_sidebar', { detail: message }));
+			} catch { /* ignore */ }
+			return false;
+		}
+
 		if (type === 'TOGGLE_DOCK_VISIBILITY') {
 			const enabled = setDockVisibility(!dockEnabled);
 			sendResponse({ ok: true, enabled });

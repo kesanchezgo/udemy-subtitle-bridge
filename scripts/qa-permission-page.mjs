@@ -76,6 +76,9 @@ const covers = async () => {
 	return Array.isArray(all) && all.includes(PATTERN);
 };
 
+/** Pestañas abiertas del contexto (incluye las de la extensión). */
+const browserTabs = async () => context.pages().map((p) => ({ url: p.url() }));
+
 // ── A. La página carga y muestra el host ─────────────────────────────────────
 console.log('\n▶ A. permission.html carga y reconoce el host');
 const before = await covers();
@@ -120,7 +123,7 @@ if (after === true) {
 }
 
 // ── C. El panel del dock ofrece la acción solo cuando falta ──────────────────
-console.log('\n▶ C. el panel ofrece «Conceder permiso» cuando el host no está cubierto');
+console.log('\n▶ C. el panel ofrece «Conceder permiso» y ABRE la pestaña');
 await page.goto(`https://www.udemy.com:${port}/course/x/learn/lecture/1/`);
 await page.waitForSelector(OUTER, { timeout: 20000 });
 await page.waitForTimeout(1800);
@@ -136,31 +139,62 @@ if (await ep.count().catch(() => 0)) {
 }
 await page.waitForTimeout(300);
 const saveBtn = page.locator(`${OUTER} button`).filter({ hasText: /Probar conexión y guardar/ }).first();
-if (await saveBtn.count().catch(() => 0)) {
-	// Muestreo en la página: el toast y su acción viven poco.
-	const samples = await saveBtn.evaluate(async (btn) => {
-		const out = [];
-		const snap = () => {
-			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-			const toasts = [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((t) => (t.textContent ?? '').trim());
-			return { toasts: toasts.slice(0, 4) };
-		};
-		out.push(snap());
-		const t0 = performance.now();
-		await new Promise((done) => {
-			const iv = setInterval(() => { out.push(snap()); if (performance.now() - t0 > 4000) { clearInterval(iv); done(); } }, 100);
-			btn.click();
+	if (await saveBtn.count().catch(() => 0)) {
+		// 1) Clic en Guardar y captura del toast CON su botón de acción. El toast
+		//    dura 15 s, así que hay margen; se muestrea en la página para no
+		//    perderlo entre awaits.
+		const samples = await saveBtn.evaluate(async (btn) => {
+			const out = [];
+			const snap = () => {
+				const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+				const toasts = [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((t) => (t.textContent ?? '').trim());
+				const action = root?.querySelector('[data-sonner-toast] button[data-action], [data-sonner-toast] button[data-button]');
+				return { toasts: toasts.slice(0, 4), hasAction: Boolean(action) };
+			};
+			out.push(snap());
+			const t0 = performance.now();
+			await new Promise((done) => {
+				const iv = setInterval(() => { out.push(snap()); if (performance.now() - t0 > 2000) { clearInterval(iv); done(); } }, 80);
+				btn.click();
+			});
+			return out;
 		});
-		return out;
-	});
-	const allToasts = samples.flatMap((s) => s.toasts);
-	console.log('   toasts vistos:', JSON.stringify(allToasts.slice(0, 3)));
-	check('avisa «Sin permiso de red»', allToasts.some((t) => /Sin permiso de red/i.test(t)), JSON.stringify(allToasts).slice(0, 160));
-	check('ofrece la acción «Conceder permiso» en el toast',
-		allToasts.some((t) => /Conceder permiso/i.test(t)), JSON.stringify(allToasts).slice(0, 200));
-} else {
-	console.log('   · sin botón de guardar (skip C)');
-}
+		const allToasts = samples.flatMap((s) => s.toasts);
+		console.log('   toasts vistos:', JSON.stringify(allToasts.slice(0, 2)));
+		check('avisa «Sin permiso de red»', allToasts.some((t) => /Sin permiso de red/i.test(t)), JSON.stringify(allToasts).slice(0, 160));
+		check('ofrece la acción en el toast (no solo texto)',
+			allToasts.some((t) => /Conceder permiso/i.test(t)), JSON.stringify(allToasts).slice(0, 200));
+		check('NO manda a la ruta manual que no funciona',
+			!allToasts.some((t) => /chrome:\/\/extensions/i.test(t)), JSON.stringify(allToasts).slice(0, 200));
+
+		// 2) Pulsar ESA acción: debe abrirse una pestaña con permission.html.
+		//    Es el punto que el commit anterior no podía pasar, porque usaba
+		//    chrome.tabs desde el content script, donde no existe.
+		const beforePerm = (await browserTabs()).filter((t) => /permission\.html/.test(t.url ?? '')).length;
+		// El boton de accion existe pero el toast se desmonta rapido. Se espera
+		// activamente a que aparezca (con su texto) y se pulsa en el mismo tick.
+		const clicked = await page.evaluate(async () => {
+			const t0 = performance.now();
+			while (performance.now() - t0 < 4000) {
+				const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+				const toast = root?.querySelector('[data-sonner-toast]');
+				const btn = toast ? [...toast.querySelectorAll('button')].find((b) => /Conceder permiso/i.test(b.textContent ?? '')) : null;
+				if (btn) { btn.click(); return true; }
+				await new Promise((r) => setTimeout(r, 60));
+			}
+			return false;
+		});
+		await page.waitForTimeout(3000);
+		const tabs = await browserTabs();
+		const permTabs = tabs.filter((t) => /permission\.html/.test(t.url ?? ''));
+		console.log('   acción pulsada:', clicked, `| pestañas de permisos: ${beforePerm} → ${permTabs.length}`);
+		check('pulsar «Conceder permiso» abre una pestaña NUEVA con permission.html',
+			permTabs.length > beforePerm, `clicked=${clicked} permisos=${beforePerm}→${permTabs.length}`);
+		const fresh = permTabs[permTabs.length - 1];
+		if (fresh) check('la pestaña lleva el host en ?origin=', /[?&]origin=/.test(fresh.url ?? ''), fresh.url);
+	} else {
+		console.log('   · sin botón de guardar (skip C)');
+	}
 
 await context.close();
 server.close();
