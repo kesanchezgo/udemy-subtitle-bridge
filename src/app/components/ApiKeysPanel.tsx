@@ -93,26 +93,30 @@ export function ApiKeysPanel({
   };
 
   const handleSaveProvider = async () => {
-    // El ENVÍO de la petición de permiso ocurre sincrónicamente aquí, en la
-    // tarea del gesto del usuario: eso es lo que Chrome exige para mostrar el
-    // diálogo en vez de rechazarlo. Esperar la respuesta después es seguro —
-    // el gesto ya quedó registrado. Sin esto, un endpoint propio quedaba
-    // "guardado" con sus fetch fallando por red porque el permiso nunca se
-    // concedía.
-    const permission = requestHostPermission(provider.baseUrl);
-    const granted = permission ? await permission : null;
-    if (granted === false) {
-      toast.error("Permiso denegado", {
-        description: "Chrome bloqueó el acceso a ese endpoint. Concede el permiso para poder usarlo.",
+    // El permiso de host opcional NO se puede pedir desde aquí. Este panel vive
+    // en el content script, donde chrome.permissions no existe; el service
+    // worker sí lo tiene, pero Chrome rechaza allí permissions.request con
+    // "must be called during a user gesture" y ese gesto no cruza el
+    // sendMessage. Comprobado en Chromium real.
+    //
+    // Lo que sí se puede hacer es NO mentir: si el host ya está cubierto
+    // (los endpoints por defecto lo están: OpenAI, DeepSeek, OpenRouter,
+    // Anthropic, Gemini, 127.0.0.1, localhost) se guarda sin más. Si falta,
+    // se guarda igual pero se avisa de que los fetch fallarán hasta que el
+    // permiso se conceda, y se dice exactamente dónde.
+    setValidating(true);
+    setValidation(null);
+    const covered = await isHostCovered(provider.baseUrl);
+    // Si el host no tiene permiso, la validación fallaría con un error de red
+    // que no explica nada. Se avisa antes y no se gasta el intento.
+    if (covered === false) {
+      setValidating(false);
+      toast.error("Sin permiso de red para ese endpoint", {
+        description: "Chrome bloquea las peticiones a hosts fuera de los permitidos. Concédelo en chrome://extensions → Kinema → Detalles → Acceso a sitios.",
+        duration: 12000,
       });
       return;
     }
-    await validateAndSaveProvider();
-  };
-
-  const validateAndSaveProvider = async () => {
-    setValidating(true);
-    setValidation(null);
     let result: Awaited<ReturnType<typeof validateProviderConfig>>;
     try {
       result = await validateProviderConfig(provider);
@@ -133,25 +137,23 @@ export function ApiKeysPanel({
   );
 
   /**
-   * Pide permiso de host opcional para un endpoint propio, vía el service
-   * worker (el content script no tiene chrome.permissions). El ENVÍO del mensaje
-   * ocurre en la tarea del gesto del usuario —eso es lo que Chrome exige para
-   * mostrar el diálogo— y la respuesta (concedido/denegado) llega después.
-   * Devuelve una promesa con:
-   *   true  → concedido
-   *   false → el usuario lo denegó
-   *   null  → no aplica (sin runtime o baseUrl no parseable)
+   * ¿El endpoint ya tiene permiso de red? Lo consulta el service worker, que es
+   * quien tiene chrome.permissions. `contains` no exige gesto, así que aquí sí
+   * se puede usar. Devuelve:
+   *   true  → cubierto
+   *   false → falta (los fetch fallarán)
+   *   null  → no se pudo determinar (sin runtime o baseUrl no parseable)
    */
-  const requestHostPermission = (baseUrl: string): Promise<boolean | null> | null => {
+  const isHostCovered = async (baseUrl: string): Promise<boolean | null> => {
     let origin: string | null = null;
     try { origin = new URL(baseUrl).origin + '/*'; } catch { return null; }
     if (!origin) return null;
     const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: Function } } }).chrome?.runtime;
     if (!runtime?.sendMessage) return null;
     try {
-      return new Promise((resolve) => {
-        runtime.sendMessage({ type: 'USG_REQUEST_HOST_PERMISSION', baseUrl }, (response: { granted?: boolean } | null) => {
-          resolve(response ? response.granted === true : null);
+      return await new Promise<boolean | null>((resolve) => {
+        runtime.sendMessage({ type: 'USG_HOST_COVERED', origin }, (response: { covered?: boolean } | null) => {
+          resolve(response && typeof response.covered === 'boolean' ? response.covered : null);
         });
       });
     } catch {
