@@ -87,7 +87,7 @@ const panel = page.locator('[id^="usb-dock-host-"] .usb-ai-panel').first();
 const fld = (ph) => panel.locator(`input[placeholder*="${ph}"]`).first();
 await fld('api.openai.com').fill('http://127.0.0.1:6660/v1').catch(() => null);
 await fld('sk-').fill('gmifree').catch(() => null);
-await fld('gpt-4o').fill(process.env.USB_MODEL || 'muse-spark-1.3-contributor-free').catch(() => null);
+await fld('gpt-4o').fill(process.env.USB_MODEL || 'qoder/qwen3.8-flash').catch(() => null);
 const n = await panel.locator('input').count();
 for (let i = 0; i < n; i++) {
 	const el = panel.locator('input').nth(i);

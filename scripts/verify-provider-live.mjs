@@ -18,7 +18,7 @@ const profileDir = path.join(repoRoot, 'chrome-real-profile');
 
 const PROXY_URL = 'http://127.0.0.1:6660/v1';
 const PROXY_KEY = 'gmifree';
-const PROXY_MODEL = 'muse-spark-1.3-contributor-free';
+const PROXY_MODEL = 'qoder/qwen3.8-flash';
 
 // A page the extension is allowed to inject into would need host_permissions;
 // we use Udemy since that is where the dock actually lives.

@@ -7,7 +7,7 @@
 //      https://www.udemy.com/course/... using --host-resolver-rules + a
 //      throwaway self-signed cert (no hosts-file edits, no network), so the
 //      REAL content script injects,
-//   3. seeds chrome.storage with the local AI provider (muse-spark proxy) and
+//   3. seeds chrome.storage with the local AI provider (qoder/qwen3.8-flash proxy) and
 //      the Obsidian export config,
 //   4. generates objectives + a study session with REAL AI through the dock,
 //      drives the full stepper to "No olvidar" and verifies the export paths:
@@ -36,7 +36,7 @@ const PROVIDER_CFG = {
 	kind: 'openai',
 	baseUrl: process.env.USB_PROVIDER_BASE_URL || 'http://127.0.0.1:6660/v1',
 	apiKey: process.env.USB_PROVIDER_API_KEY || 'gmifree',
-	model: process.env.USB_MODEL || 'muse-spark-1.3-contributor-free',
+	model: process.env.USB_MODEL || 'qoder/qwen3.8-flash',
 };
 
 // Títulos fijos del fallback heurístico — verlos significa que el provider falló.

@@ -13,6 +13,14 @@ import {
 } from './shared/prompts';
 
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
+// Marcador de versión del worker. Chrome puede seguir ejecutando el SW
+// registrado de una build anterior aunque dist/ ya tenga otro código — los
+// síntomas son mensajes del panel que caen en 'port closed' y handlers que
+// parecen no existir. Con esta constante se verifica en un segundo qué código
+// corre de verdad: sw.evaluate(() => self.__KINEMA_SW_VERSION).
+const SW_VERSION = 'v2026-10-16-usg-host-covered';
+(self as unknown as { __KINEMA_SW_VERSION?: string }).__KINEMA_SW_VERSION = SW_VERSION;
+console.info('[USG] service worker iniciado, versión', SW_VERSION);
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const UDEMY_COURSE_MATCH = 'https://*.udemy.com/course/*';
 const LOCAL_AI_HEALTH_ENDPOINTS = [

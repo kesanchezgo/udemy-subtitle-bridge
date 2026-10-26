@@ -35,7 +35,7 @@ const cases = [
   { label: 'missing key', args: ['http://127.0.0.1:6660/v1', '', 'm'], expect: 'missing_fields' },
   { label: 'bad URL', args: ['not-a-url', 'k', 'm'], expect: 'bad_url' },
   { label: 'dead port', args: ['http://127.0.0.1:9999/v1', 'x', 'm'], expect: 'unreachable' },
-  { label: 'working proxy', args: ['http://127.0.0.1:6660/v1', 'gmifree', 'muse-spark-1.3-contributor-free'], expect: 'ok' },
+  { label: 'working proxy', args: ['http://127.0.0.1:6660/v1', 'gmifree', 'qoder/qwen3.8-flash'], expect: 'ok' },
 ];
 
 let pass = 0;

@@ -169,7 +169,7 @@ await page.evaluate(() => {
   const model = inputs.find((i) => /gpt-4o|modelo/i.test(i.placeholder || ''));
   if (baseUrl) setNative(baseUrl, 'http://127.0.0.1:6660/v1');
   if (key) setNative(key, 'gmifree');
-  if (model) setNative(model, 'muse-spark-1.3-contributor-free');
+  if (model) setNative(model, 'qoder/qwen3.8-flash');
   const save = Array.from(root.querySelectorAll('button')).find((b) => /Guardar proveedor/i.test(b.textContent || ''));
   save?.click();
 });

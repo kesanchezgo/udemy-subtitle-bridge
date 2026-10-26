@@ -21,7 +21,7 @@ const distDir = path.join(repoRoot, 'dist');
 const COOKIES_FILE = process.env.USB_COOKIES || path.join(tmpdir(), 'usb-qa-udemy-cookies.json');
 const COURSE_URL = process.env.USB_COURSE_URL || 'https://www.udemy.com/course/java-in-depth-become-a-complete-java-engineer/learn/lecture/42163342?start=0#overview';
 const MODEL_A = process.env.USB_MODEL_A || 'cline-free/gemini-3.8-flash';
-const MODEL_B = process.env.USB_MODEL_B || 'muse-spark-1.3-contributor-free';
+const MODEL_B = process.env.USB_MODEL_B || 'qoder/qwen3.8-flash';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const step = (m) => console.log(`\n▶ ${m}`);

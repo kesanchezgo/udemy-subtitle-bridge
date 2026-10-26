@@ -12,7 +12,7 @@ import {
 
 const PROXY = process.env.USB_PROXY || 'http://127.0.0.1:6660/v1/chat/completions';
 const API_KEY = process.env.USB_API_KEY || 'gmifree';
-const MODEL = process.env.USB_MODEL || 'muse-spark-1.3-contributor-free';
+const MODEL = process.env.USB_MODEL || 'qoder/qwen3.8-flash';
 
 async function ask(prompt, maxTokens = 2048, temperature = 0.2) {
 	const res = await fetch(PROXY, {
