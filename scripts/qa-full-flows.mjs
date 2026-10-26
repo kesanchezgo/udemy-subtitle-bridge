@@ -123,6 +123,14 @@ if (REAL) {
 		console.error('✗ Falta .qa-udemy-cookies.json (ver .gitignore). Sin sesión no hay prueba real.');
 		process.exit(2);
 	}
+	// El perfil persiste el service worker REGISTRADO de la extensión. Si el
+	// registro es anterior al último build, Chrome sigue ejecutando el código
+	// viejo (sin USG_HOST_COVERED, sin el keepalive) y los mensajes del panel
+	// caen en "port closed". Medido: la clave es la misma aunque dist cambie.
+	// Borrar el registro obliga a re-registrar con el dist actual. Los SW de
+	// Udemy se re-registran solos al cargar la página.
+	const swDir = path.join(repoRoot, 'chrome-real-profile', 'Default', 'Service Worker');
+	rmSync(swDir, { recursive: true, force: true });
 	const raw = JSON.parse(readFileSync(cookieFile, 'utf8'));
 	const norm = raw.map((c) => ({
 		name: c.name,

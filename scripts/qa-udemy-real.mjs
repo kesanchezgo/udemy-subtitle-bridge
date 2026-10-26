@@ -3,14 +3,14 @@
 //   1. dock montado en udemy.com real + metadatos raspados (curso/lección),
 //   2. captura de subtítulos EN del reproductor real (network VTT / textTracks
 //      / panel de transcripción),
-//   3. sesión de estudio generada con IA real (muse-spark vía proxy local),
+//   3. sesión de estudio generada con IA real (qoder/qwen3.8-flash vía proxy local),
 //   4. exportación .apkg descargada y auditada por SQLite (mazo Curso::Lección
 //      con las plantillas dev-card).
 //
 // Requisitos:
 //   - Cookies en USB_COOKIES (default: %TEMP%/usb-qa-udemy-cookies.json),
 //     exportadas desde una sesión logueada de Udemy (formato EditThisCookie).
-//   - El proxy del provider corriendo en 127.0.0.1:6660 con muse-spark.
+//   - El proxy del provider corriendo en 127.0.0.1:6660 con qoder/qwen3.8-flash.
 //
 // Run: node scripts/qa-udemy-real.mjs
 //   USB_COURSE_URL=... node scripts/qa-udemy-real.mjs
@@ -39,7 +39,7 @@ const PROVIDER_CFG = {
 	kind: 'openai',
 	baseUrl: process.env.USB_PROVIDER_BASE_URL || 'http://127.0.0.1:6660/v1',
 	apiKey: process.env.USB_PROVIDER_API_KEY || 'gmifree',
-	model: process.env.USB_MODEL || 'muse-spark-1.3-contributor-free',
+	model: process.env.USB_MODEL || 'qoder/qwen3.8-flash',
 };
 
 const step = (msg) => console.log(`\n▶ ${msg}`);

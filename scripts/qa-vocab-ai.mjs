@@ -1,6 +1,6 @@
 /**
  * Prueba de CONTENIDO del prompt de vocabulario contra el modelo real del
- * proxy local: genera con muse-spark-1.3-contributor-free, parsea y filtra
+ * proxy local: genera con qoder/qwen3.8-flash, parsea y filtra
  * con el CÓDIGO DE PRODUCCIÓN (buildVocabularyPrompt + parseVocabularyPayload
  * + filterVocabulary) y muestra las tarjetas resultantes.
  *
@@ -22,7 +22,7 @@ const {
 	buildVocabularySpec,
 } = await import('../src/app/services/vocabularyService.ts');
 
-const MODEL = process.env.QA_VOCAB_MODEL || 'muse-spark-1.3-contributor-free';
+const MODEL = process.env.QA_VOCAB_MODEL || 'qoder/qwen3.8-flash';
 const BASE = process.env.QA_PROXY_BASE || 'http://127.0.0.1:6660/v1';
 
 // Transcripción realista de una lección técnica de Udemy (Java/JVM).
