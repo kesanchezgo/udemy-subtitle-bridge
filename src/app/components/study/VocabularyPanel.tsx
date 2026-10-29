@@ -233,7 +233,7 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
     </SettingsGroup>
     <SettingsGroup title="Anki">
       <RowList>
-        <SettingRow label="Audio"><Picker label="Audio de las tarjetas" value={config.audioMode} onChange={id => onConfig({ audioMode: id })} options={[{ id: "field", label: "Archivo de calidad", hint: "HyperTTS / edge-tts" }, { id: "tts", label: "Voz del sistema", hint: "Instantáneo, sin conexión" }]} /></SettingRow>
+        <SettingRow label="Tarjeta para producir"><Picker label="Tarjeta para producir" value={config.production === false ? "no" : "si"} onChange={id => onConfig({ production: id === "si" })} options={[{ id: "si", label: "Activada", hint: "Reconocer + Producir (español →)" }, { id: "no", label: "Solo reconocer", hint: "Una tarjeta por palabra" }]} /></SettingRow>
         <div className="px-3 py-2.5 space-y-1.5">
           <label className="flex items-center justify-between gap-3"><span className="text-[12.5px] font-semibold text-[var(--usb-fg)]">Mazo raíz</span><input aria-label="Mazo raíz de Anki" className={`${fieldCls} !h-8 !w-40 !rounded-lg`} value={config.rootDeck} onChange={event => onConfig({ rootDeck: event.target.value })} /></label>
           <p className="text-[10.5px] text-[var(--usb-fg-mid)]">También agrupa las tarjetas de la lección.</p>

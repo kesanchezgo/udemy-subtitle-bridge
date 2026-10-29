@@ -22,11 +22,12 @@ import {
 	COURSES_PRESET,
 	DEFAULT_ROOT_DECK,
 	ROOT_DECK_DESCRIPTION,
-	VOCAB_MODEL_NAME,
 	VOCAB_PRESET,
 	buildVocabModel,
+	kinemaTags,
 	stableGuid,
 	vocabDeckPath,
+	vocabModelName,
 	type VocabAudioMode,
 } from './ankiDesign';
 import type { ApkgSpec } from './ankiApkgCore';
@@ -45,12 +46,13 @@ export interface VocabConfig {
 	/** Máximo de palabras nuevas por lección. */
 	maxWords: number;
 	/**
-	 * Fuente de audio de las tarjetas:
-	 *  - "field" (default): archivos de calidad en "word audio"/"sentence audio"
-	 *    (HyperTTS o el sistema externo con edge-tts). Sin archivo, sin botón.
-	 *  - "tts": voces del sistema de Anki ({{tts}}), instantáneo y offline.
+	 * B4 (deprecado): las plantillas nuevas usan el archivo si existe y la voz
+	 * del sistema si no — no hay selector. El campo se conserva para no romper
+	 * configs guardadas y se ignora al cargar.
 	 */
-	audioMode: VocabAudioMode;
+	audioMode?: VocabAudioMode;
+	/** B3: segunda tarjeta «Producir» (español → idioma objetivo). Por defecto activada. */
+	production: boolean;
 }
 
 export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
@@ -61,6 +63,7 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 	minLevel: 'B1',
 	maxWords: 8,
 	audioMode: 'field',
+	production: true,
 };
 
 const VOCAB_CONFIG_KEY = 'usb_vocab_config';
@@ -235,6 +238,9 @@ export function parseVocabularyPayload(payload: unknown): VocabularyWord[] {
 			// genera directamente (vacíos tolerados: la plantilla los oculta).
 			phonetic: cleanText(raw.phonetic),
 			monolingual: cleanText(raw.monolingual),
+			// B6: colocación frecuente y natural con la palabra («memory leak»);
+			// se tolera vacío — la plantilla la oculta.
+			collocation: cleanText(raw.collocation ?? raw.collocation),
 		});
 	}
 	return words;
@@ -294,7 +300,7 @@ export function buildVocabularySpec(
 	const deckPath = paths[paths.length - 1];
 
 	const notes = words.map((word) => ({
-		modelName: VOCAB_MODEL_NAME,
+		modelName: vocabModelName(config.targetLang),
 		deck: deckPath,
 		guid: stableGuid(`usb-vocab|${config.targetLang}|${normalizeLemma(word.word)}`),
 		fields: [
@@ -307,13 +313,19 @@ export function buildVocabularySpec(
 			'', // picture — la completa ANKI-IMAGE-SENTENCE
 			'', // sentence audio — archivos de calidad (HyperTTS o edge-tts en el sistema externo)
 			'', // word audio — ídem
+			// ── Campos nuevos (B5): al final, los 9 primeros intactos ──
+			word.level || config.minLevel, // nivel — el CEFR llega por fin a la tarjeta
+			word.collocation ?? '', // colocación — B6
+			word.t ? `▶ Escúchala en la lección (${word.t})` : '▶ Escúchala en la lección', // fuente (F2-1: con minuto)
+			config.production === false ? '' : '1', // producir — B3 (activado por defecto)
 		],
-		tags: [
-			'udemy-bridge',
-			`curso::${slugify(course)}`,
-			`leccion::${slugify(lesson)}`,
-			...(word.level ? [`cefr::${word.level.toLowerCase()}`] : []),
-		],
+		// A7: esquema jerárquico único; nada suelto en la raíz de tags.
+		tags: kinemaTags({
+			course,
+			lesson,
+			cefr: word.level,
+			pos: word.pos,
+		}),
 	}));
 
 	const spec: ApkgSpec = {
@@ -335,7 +347,7 @@ export function buildVocabularySpec(
 				desc: `Palabras de ${langLabel} extraídas de las lecciones de «${course}». Imágenes y audios los completa el pipeline externo.`,
 			},
 		],
-		models: [buildVocabModel(config.audioMode)],
+		models: [buildVocabModel(config.targetLang)],
 		dconfs: [COURSES_PRESET, VOCAB_PRESET],
 		notes,
 	};

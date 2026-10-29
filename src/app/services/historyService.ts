@@ -153,6 +153,8 @@ export interface LectureHistoryRecord {
   version: number;
   /** Primera exportación a Anki/Obsidian (unix ms) — alimenta el panel de memoria. */
   exportedAt?: number;
+  /** C3: última exportación a OBSIDIAN (unix ms) — independiente de Anki. */
+  obsidianExportedAt?: number;
   /** Última auto-evaluación de repaso marcada por el estudiante (unix ms). */
   reviewedAt?: number;
 }
@@ -302,6 +304,7 @@ export const historyService = {
           ? undefined
           : prev?.deletedAt,
       exportedAt: clearProgress ? partial.exportedAt : (prev?.exportedAt ?? partial.exportedAt),
+      obsidianExportedAt: clearProgress ? partial.obsidianExportedAt : (prev?.obsidianExportedAt ?? partial.obsidianExportedAt),
       reviewedAt: partial.reviewedAt ?? (clearProgress ? undefined : prev?.reviewedAt),
       version:      (prev?.version ?? 0) + 1,
     };

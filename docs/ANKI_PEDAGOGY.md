@@ -20,6 +20,28 @@ referencia.
 
 ## 1. Las dos familias de mazos NO son lo mismo
 
+### 1.2 Vocabulario v2 — Reconocer + Producir (2026-10-29)
+
+Dos tarjetas por palabra, con bury de hermanas y «plantilla primero»:
+
+- **Reconocer**: palabra + IPA + audio + oración con la palabra RESALTADA
+  (sin hueco). Es el paso receptivo.
+- **Producir** (activada por defecto; interruptor en Ajustes → Vocabulario):
+  significado + traducción + oración con `[ ... ]` en lugar de la palabra.
+  Sin IPA ni audio (darían la respuesta). Es el paso productivo.
+- **Colocación**: una combinación frecuente y natural con la palabra
+  («memory leak») en el reverso. Evidencia: Boers et al., collocations en L2.
+- **Audio con respaldo**: si el campo de archivo existe suena ese archivo;
+  si no, la voz del sistema vía `{{tts}}` con el locale del idioma (en_US,
+  fr_FR, de_DE, pt_BR, it_IT). Ya no hay selector: un solo comportamiento.
+- **Note type por idioma**: «Kinema · Vocab · English», ID derivado del
+  idioma (`kinema-vocab-v2|en`). Las notas viejas siguen en «Udemy Bridge
+  Vocab» y funcionan; el registro impide reexportar esas palabras; si se
+  vuelve a descargar un lote viejo, Anki lo omite por GUID (sin duplicados).
+- Campos nuevos al FINAL (los 9 del pipeline de imágenes intactos):
+  `nivel` (CEFR llega a la tarjeta), `colocacion`, `fuente`,
+  `producir` («1» = genera la tarjeta Producir).
+
 | | **Conceptos de lección** (`Courses`) | **Vocabulario de idiomas** (`Vocabulary`) |
 |---|---|---|
 | Objetivo | **Comprender, transferir y consolidar** lo visto en la lección | **Automatizar** el reconocimiento/recuerdo de unidades léxicas del idioma |
@@ -96,6 +118,16 @@ mazos demo (`scripts/qa-anki-samples.mjs`) muestran el diseño completo.
 
 ## 2. Configuración de estudio (presets) — racional
 
+### Orden de las nuevas y la verdad sobre FSRS (2026-10-29)
+
+- **Orden de entrada = orden de estudio.** `newGatherPriority: 1` (posición
+  ascendente) en los dos presets: Anki recorre los mazos de lección en orden
+  alfabético con el valor 0, y eso rompía el orden en que estudiaste.
+- **FSRS.** La marca `fsrs: true` del preset NO es como Anki activa FSRS: en
+  Anki es un ajuste global de la colección, no viaja en el .apkg. La guía de
+  importación lo dice: Activa FSRS en Opciones del mazo. `desiredRetention: 0.9`
+  se queda.
+
 - **Práctica de recuperación + espaciado** son las dos técnicas con mayor
   utilidad demostrada (Dunlosky et al. 2013; Cepeda et al. 2006 meta-análisis
   10.1037/0033-2909.132.3.354). Anki ya las implementa; el preset solo debe
@@ -128,6 +160,37 @@ no duplica); csum SHA-1 estándar de Anki. Nada del usuario se toca (verificado
 en importaciones reales).
 
 ## 4. Bibliografía (Scopus)
+
+### 4.1 Referencias de las decisiones de 2026-10-29 (verificadas por DOI)
+
+Consultadas vía Scopus API (queries en §5, bloque «Fase 1 — decisiones nuevas»).
+Salida completa: `tmp/scopus-refs.json`.
+
+- **Receptivo vs productivo** (Reconocer + Producir): «THREE DIMENSIONS of
+  VOCABULARY DEVELOPMENT», Studies in Second Language Acquisition, 1999,
+  DOI 10.1017/S0272263199002089 (362 citas). Henriksen: las dimensiones
+  receptiva y productiva son parciales y separadas — dominar una no implica
+  la otra, de ahí las dos tarjetas.
+- **Colocaciones en L2** (campo colocacion): «Formulaic sequences in second
+  language teaching: Principle and practice», Applied Linguistics, 2000,
+  DOI 10.1093/applin/21.4.463 (383 citas); y «Collocations in Corpus-Based
+  Language Learning Research…», Language Learning, 2017,
+  DOI 10.1111/lang.12225 (392 citas).
+- **Aprendizaje generativo** (summary con palabras propias en Obsidian):
+  Fiorella & Mayer, «Eight Ways to Promote Generative Learning»,
+  Educational Psychology Review, 2016, DOI 10.1007/s10648-015-9348-9
+  (751 citas). Resumir es una de las ocho estrategias generativas.
+- **Recuperación > relectura** (respuestas plegadas en Obsidian): Karpicke
+  & Blunt, «Retrieval practice produces more learning than elaborative
+  studying with concept mapping», Science, 2011, DOI 10.1126/science.1199327
+  (855 citas).
+- **Información mínima / carga cognitiva** (comparación por una dimensión,
+  proceso ≤4 pasos): Sweller, «Cognitive load theory, learning difficulty,
+  and instructional design», Learning and Instruction, 1994,
+  DOI 10.1016/0959-4752(94)90003-5 (2987 citas); y «Element interactivity
+  and intrinsic, extraneous, and germane cognitive load»,
+  Educational Psychology Review, 2010, DOI 10.1007/s10648-010-9128-5
+  (1678 citas).
 
 Consultada 2026-09-28 vía Scopus API (queries §5), ordenada por citas:
 

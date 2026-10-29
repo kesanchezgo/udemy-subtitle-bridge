@@ -17,6 +17,13 @@ export interface ApkgTemplateSpec {
 	name: string;
 	qfmt: string;
 	afmt: string;
+	/**
+	 * Campos (por ord) que deben estar NO vacíos para que esta tarjeta exista.
+	 * Sin requires, la tarjeta requiere el campo de orden (comportamiento
+	 * clásico). Así «Producir» solo se genera cuando el campo `producir` viene
+	 * lleno, mientras «Reconocer» siempre existe.
+	 */
+	requires?: number[];
 }
 
 export interface ApkgModelSpec {
@@ -128,8 +135,14 @@ export function buildModelEntry(model: ApkgModelSpec) {
 			did: null,
 			sticky: false,
 		})),
-		// Un solo template por note type: cada tarjeta requiere el campo 0.
-		req: model.templates.map((_, ord) => [ord, 'any', [model.sortf ?? 0]]),
+		// req por plantilla: o exige sus campos declarados (requires), o el
+		// campo de orden como toda la vida. 'any' = basta con que uno no esté
+		// vacío; Anki usa esto para saber si una nota genera esa tarjeta.
+		req: model.templates.map((template, ord) => [
+			ord,
+			'any',
+			template.requires && template.requires.length > 0 ? [...template.requires] : [model.sortf ?? 0],
+		]),
 		flds: model.fields.map((fieldName, ord) => ({
 			name: fieldName,
 			ord,
@@ -296,6 +309,7 @@ export async function buildCollectionBuffer(
 	// or Anki merges the new notes into the previous ones. Each call advances the
 	// base by a stride larger than any realistic card count.
 	const idBase = nowSec * 1000 + nextIdStride();
+	const cardStride = 1_000_000;
 
 	const db = new SQL.Database();
 	createCollectionSchema(db, spec);
@@ -308,7 +322,6 @@ export async function buildCollectionBuffer(
 		if (!deckId) throw new Error(`Mazo no declarado en el paquete: ${note.deck}`);
 
 		const noteId = idBase + index;
-		const cardId = idBase + index + 1_000_000;
 		const tags = Array.isArray(note.tags) ? sanitizeTags(note.tags) : '';
 		const fields = fieldsJoin(note.fields);
 		const sortf = model.sortf ?? 0;
@@ -334,26 +347,35 @@ export async function buildCollectionBuffer(
 			'',
 		]);
 
-		db.run(`INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
-			cardId,
-			noteId,
-			deckId,
-			0,
-			nowSec,
-			0,
-			0,
-			0,
-			index, // due: conserva el orden del autor dentro del mazo
-			0,
-			2500,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			'',
-		]);
+		// Una tarjeta por plantilla cuyo requisito esté cumplido. Las tarjetas
+		// de la misma nota comparten due y quedan enterradas entre sí (bury de
+		// hermanas, ya activo en los presets): «Producir» aparece otro día.
+		model.templates.forEach((template, ord) => {
+			const required = template.requires && template.requires.length > 0 ? template.requires : [sortf];
+			const satisfied = required.every((fieldOrd) => (note.fields[fieldOrd] ?? '').trim() !== '');
+			if (!satisfied) return;
+			const cardId = idBase + index * model.templates.length + cardStride + ord;
+			db.run(`INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+				cardId,
+				noteId,
+				deckId,
+				ord,
+				nowSec,
+				0,
+				0,
+				0,
+				index, // due: conserva el orden del autor dentro del mazo
+				0,
+				2500,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				'',
+			]);
+		});
 	}
 
 	const sqliteData = db.export();

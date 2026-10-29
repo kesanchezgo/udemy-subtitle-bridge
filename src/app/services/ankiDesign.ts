@@ -47,6 +47,8 @@ export interface ConceptCardInput {
 	 *  se muestra como píldora de color en la tarjeta, junto a la lección
 	 *  (señalización por tipo — ver docs/ANKI_PEDAGOGY.md §color). */
 	type?: string;
+	/** F2-1: minuto de la lección donde se enseña («mm:ss»). */
+	t?: string;
 }
 
 /** Valor del campo Tipo: span con data-tp para que el CSS de la tarjeta le
@@ -71,7 +73,18 @@ export function buildConceptSpec(
 ): ApkgSpec {
 	const lessonPath = conceptDeckPath(rootDeck, course, lesson);
 	const deckTree = conceptDeckTree(rootDeck, course, lesson);
-	const fuente = lessonUrl ? `<a href="${lessonUrl}">▶ Repasar esta lección</a>` : '';
+	const fuente = (card: { t?: string }) => {
+		// F2-1: con minuto, el enlace salta a ?start=<segundos> — el campo
+		// sigue siendo el mismo ('Fuente'), solo cambia el texto/enlace.
+		if (!lessonUrl) return '';
+		const base = `<a href="${lessonUrl}">▶ Repasar`;
+		if (card.t && /^\d{1,2}:\d{2}$/.test(card.t)) {
+			const [mm, ss] = card.t.split(':').map(Number);
+			const url = `${lessonUrl.split('#')[0].split('?')[0]}?start=${mm * 60 + ss}#overview`;
+			return `${base} este momento (${card.t})</a>`.replace('<a href="' + lessonUrl + '">', `<a href="${url}">`);
+		}
+		return lessonUrl ? `${base} esta lección</a>` : '';
+	};
 	const safeCourse = sanitizeDeckSegment(course);
 	const safeLesson = sanitizeDeckSegment(lesson);
 	return {
@@ -99,7 +112,7 @@ export function buildConceptSpec(
 			modelName: CONCEPT_MODEL.name,
 			deck: lessonPath,
 			guid: card.guid,
-			fields: [card.front, card.back, safeLesson, fuente, tipoFieldValue(card.type)],
+			fields: [card.front, card.back, safeLesson, fuente(card), tipoFieldValue(card.type)],
 			tags: card.tags,
 		})),
 	};
@@ -127,6 +140,42 @@ export function sanitizeDeckSegment(name: string): string {
 }
 
 export const DEFAULT_ROOT_DECK = 'Kinema';
+
+/**
+ * Esquema único de tags jerárquicos para TODOS los mazos de la extensión.
+ * Antes había tags sueltos en la raíz (java, concepto, udemy-bridge,
+ * curso::…, leccion::…, cefr::…) que ensuciaban la colección del usuario.
+ * Al volver a descargar, Anki actualiza los tags por GUID.
+ */
+export function kinemaTags(parts: {
+	course: string;
+	lesson: string;
+	type?: string;
+	aiTags?: string[];
+	cefr?: string;
+	pos?: string;
+}): string[] {
+	const slug = (value: string) =>
+		String(value || '')
+			.toLowerCase()
+			.normalize('NFKD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-|-$/g, '');
+	const tags: string[] = [];
+	const course = slug(parts.course);
+	if (course) tags.push(`kinema::curso::${course}`);
+	const lesson = slug(parts.lesson);
+	if (lesson) tags.push(`kinema::leccion::${lesson}`);
+	if (parts.type) tags.push(`kinema::tipo::${slug(parts.type)}`);
+	for (const ai of parts.aiTags ?? []) {
+		const slugAi = slug(ai);
+		if (slugAi) tags.push(`kinema::tema::${slugAi}`);
+	}
+	if (parts.cefr) tags.push(`kinema::cefr::${slug(parts.cefr)}`);
+	if (parts.pos) tags.push(`kinema::pos::${slug(parts.pos)}`);
+	return [...new Set(tags)];
+}
 
 export const ROOT_DECK_DESCRIPTION =
 	'Mazos generados por Kinema a partir de las lecciones que estudias. ' +
@@ -169,11 +218,11 @@ export function vocabDeckPath(root: string, language: string, course: string): s
 export const CONCEPT_MODEL_NAME = 'Udemy Bridge Concept';
 export const CONCEPT_MODEL_ID = stableNumericId(CONCEPT_MODEL_NAME, 1_650_000_000_000);
 
-const PRISM_HEAD = `<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-properties.min.js"></script>`;
+// Prism viaja DENTRO del .apkg como media (_kinema-prism-v1.*): resaltado
+// offline también en AnkiMobile/AnkiDroid, y para los 23 lenguajes del prompt
+// (antes solo java/markup/properties y solo con conexión).
+const PRISM_HEAD = `<link href="_kinema-prism-v1.css" rel="stylesheet">
+<script src="_kinema-prism-v1.js"></script>`;
 
 export const CONCEPT_MODEL_CSS = `/* ==========================================================
    SISTEMA DE DISEÑO DEVELOPER / INGENIERÍA DE SOFTWARE
@@ -741,10 +790,32 @@ export const CONCEPT_MODEL: import('./ankiApkgCore').ApkgModelSpec = {
 
 export type VocabAudioMode = 'field' | 'tts';
 
-export const VOCAB_MODEL_NAME = 'Udemy Bridge Vocab';
-export const VOCAB_MODEL_ID = stableNumericId(VOCAB_MODEL_NAME, 1_650_000_000_000);
+// Modelo legacy (las notas viejas se quedan ahí y siguen funcionando con
+// reconocimiento). Las exportaciones nuevas van por idioma (B1/B7).
+export const VOCAB_MODEL_NAME_LEGACY = 'Udemy Bridge Vocab';
+export const VOCAB_MODEL_ID_LEGACY = stableNumericId(VOCAB_MODEL_NAME_LEGACY, 1_650_000_000_000);
 
-export const VOCAB_FIELDS = [
+/** Etiqueta visible por código de idioma (usada en el nombre del note type). */
+export const VOCAB_LANG_LABEL: Record<string, string> = {
+	en: 'English', fr: 'French', de: 'German', pt: 'Portuguese', it: 'Italian',
+};
+
+/** Locale de TTS del sistema por código de idioma (B1/B4). */
+export const VOCAB_TTS_LOCALE: Record<string, string> = {
+	en: 'en_US', fr: 'fr_FR', de: 'de_DE', pt: 'pt_BR', it: 'it_IT',
+};
+
+/** Nombre del note type v2: uno por idioma (IDs distintos por idioma). */
+export function vocabModelName(lang: string): string {
+	return `Kinema · Vocab · ${VOCAB_LANG_LABEL[lang] ?? lang}`;
+}
+
+/** ID estable del note type v2: deriva del idioma, no de la etiqueta. */
+export function vocabModelId(lang: string): number {
+	return stableNumericId(`kinema-vocab-v2|${lang}`, 1_650_000_000_000);
+}
+
+export const VOCAB_FIELDS_BASE = [
 	'word',
 	'phonetic',
 	'sentence',
@@ -756,33 +827,70 @@ export const VOCAB_FIELDS = [
 	'word audio',
 ] as const;
 
-/** Bloque de audio del word/sentence según el modo elegido en la extensión. */
-function vocabAudioBlocks(audioMode: VocabAudioMode): { word: string; sentence: string } {
-	if (audioMode === 'tts') {
-		return {
-			word: `<div class="audio-inline-btn">
-        {{tts en_US:word}}
-      </div>`,
-			sentence: `<div class="audio-inline-btn mini-audio">
-          {{tts en_US:sentence}}
-        </div>`,
-		};
-	}
+/** Campos nuevos al final: el pipeline de imágenes selecciona por mazo +
+ *  picture vacío, así que el orden y nombre de los 9 primeros es intocable. */
+export const VOCAB_FIELDS_EXTRA = ['nivel', 'colocacion', 'fuente', 'producir'] as const;
+
+export const VOCAB_FIELDS = [...VOCAB_FIELDS_BASE, ...VOCAB_FIELDS_EXTRA] as const;
+
+/**
+ * Bloque de audio con RESPALDO (B4): si el campo de archivo existe (HyperTTS o
+ * edge-tts del sistema externo) suena ese archivo; si no, la voz del sistema
+ * vía {{tts}}. Antes, el modo por defecto ('field') no sonaba nada sin esos
+ * archivos, y el modo 'tts' fijaba en_US aunque el idioma fuera otro.
+ */
+function vocabAudioBlocks(lang: string): { word: string; sentence: string } {
+	const loc = VOCAB_TTS_LOCALE[lang] ?? 'en_US';
 	return {
 		word: `{{#word audio}}
       <div class="audio-inline-btn">
         {{word audio}}
+      </div>
+      {{/word audio}}
+      {{^word audio}}
+      <div class="audio-inline-btn">
+        {{tts ${loc}:word}}
       </div>
       {{/word audio}}`,
 		sentence: `{{#sentence audio}}
         <div class="audio-inline-btn mini-audio">
           {{sentence audio}}
         </div>
+        {{/sentence audio}}
+        {{^sentence audio}}
+        <div class="audio-inline-btn mini-audio">
+          {{tts ${loc}:sentence}}
+        </div>
         {{/sentence audio}}`,
 	};
 }
 
-export const VOCAB_MODEL_CSS = `/* =========================================================
+export const VOCAB_MODEL_CSS = `
+  /* B2: resaltado de la palabra en contexto — AA en claro y en nightMode */
+  mark.target {
+    background: rgba(109, 74, 255, 0.16);
+    color: inherit;
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 0 5px;
+    box-shadow: inset 0 -2px 0 rgba(109, 74, 255, 0.55);
+  }
+  .nightMode mark.target {
+    background: rgba(139, 109, 255, 0.30);
+    color: #e8e4ff;
+    box-shadow: inset 0 -2px 0 rgba(139, 109, 255, 0.7);
+  }
+  /* B3: pantalla de producir */
+  .produce-prompt { display: flex; flex-direction: column; gap: 10px; padding: 18px 0 6px; }
+  .produce-meaning { font-size: 1.15rem; font-weight: 700; color: var(--text-main); line-height: 1.45; }
+  .produce-translation { font-size: 0.95rem; color: var(--text-sub); line-height: 1.5; }
+  .cefr-chip {
+    display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+    padding: 2px 10px; border-radius: 999px;
+    background: rgba(109, 74, 255, 0.14); color: #4a2fd1; border: 1px solid rgba(109, 74, 255, 0.4);
+  }
+  .nightMode .cefr-chip { background: rgba(139, 109, 255, 0.2); color: #c9bcff; border-color: rgba(139, 109, 255, 0.5); }
+/* =========================================================
    SISTEMA DE DISEÑO MINIMALISTA / ELEGANTE (ADVANCED VOCAB)
    Kinema · Vocabulario
    ========================================================== */
@@ -1284,26 +1392,30 @@ hr {
  */
 const ESCAPE_REGEX_SPECIALS = '[.*+?^${}()|[\\]\\\\]';
 
-const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
+// ── B3 · Front de PRODUCIR ───────────────────────────────────────────────────
+// Da el significado y la traducción, y pide PRODUCIR la palabra en el idioma
+// objetivo: la oración trae [ ... ] en su lugar. Sin IPA y sin audio (darían
+// la respuesta). Solo existe cuando el campo `producir` viene lleno.
+const VOCAB_PRODUCE_FRONT_TEMPLATE = `<div class="anki-wrapper">
   <div class="card-box front-layout">
 
     <div class="front-header">
       <div class="eyebrow-tag">
         <span class="pulse-dot"></span>
-        <span>Palabra objetivo</span>
+        <span>Produce la palabra</span>
       </div>
-
-      {{AUDIO_WORD}}
+      {{#nivel}}
+      <span class="cefr-chip">{{nivel}}</span>
+      {{/nivel}}
     </div>
 
-    <div class="front-word-hero">
-      <h1 class="main-word front-word">{{word}}</h1>
-
-      {{#phonetic}}
-<div class="peek-phonetic" tabindex="0">
-  <span class="ipa-box">{{phonetic}}</span>
-</div>
-{{/phonetic}}
+    <div class="produce-prompt">
+      {{#bilingual}}
+      <div class="produce-meaning">{{bilingual}}</div>
+      {{/bilingual}}
+      {{#translation}}
+      <div class="produce-translation">{{translation}}</div>
+      {{/translation}}
     </div>
 
     <div id="hiddenWord" style="display:none">{{word}}</div>
@@ -1367,6 +1479,87 @@ const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
   })();
 </script>`;
 
+
+// ── B2 · Front de RECONOCER ──────────────────────────────────────────────────
+// La palabra va a la vista (con IPA y audio) y la oración la trae RESALTADA
+// (<mark class="target">, montado por DOM como el arreglo XSS del cloze):
+// sin hueco — el hueco vive en «Producir».
+const VOCAB_RECOGNIZE_FRONT_TEMPLATE = `<div class="anki-wrapper">
+  <div class="card-box front-layout">
+
+    <div class="front-header">
+      <div class="eyebrow-tag">
+        <span class="pulse-dot"></span>
+        <span>Palabra objetivo</span>
+      </div>
+
+      {{AUDIO_WORD}}
+    </div>
+
+    <div class="front-word-hero">
+      <h1 class="main-word front-word">{{word}}</h1>
+
+      {{#phonetic}}
+<div class="peek-phonetic" tabindex="0">
+  <span class="ipa-box">{{phonetic}}</span>
+</div>
+{{/phonetic}}
+    </div>
+
+    <div id="hiddenWord" style="display:none">{{word}}</div>
+    <div id="hiddenSentence" style="display:none">{{sentence}}</div>
+
+    <div id="highlightContainer" class="cloze-container" style="display:none;">
+      <div class="section-label">En contexto</div>
+      <p id="highlightOutput" class="cloze-sentence"></p>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  (function() {
+    var wordRaw = document.getElementById("hiddenWord").innerText.trim();
+    var sentenceRaw = document.getElementById("hiddenSentence").innerText.trim();
+    var container = document.getElementById("highlightContainer");
+    var output = document.getElementById("highlightOutput");
+
+    if (wordRaw && sentenceRaw) {
+      // Resaltado por DOM (nunca innerHTML): la palabra se escapa por si trae
+      // metacaracteres (C++, node.js) y cada coincidencia se marca.
+      container.style.display = "block";
+      try {
+        var escapeRe = new RegExp(${JSON.stringify(ESCAPE_REGEX_SPECIALS)}, "g");
+        var wordRe = new RegExp(wordRaw.replace(escapeRe, ${JSON.stringify('\\$&')}), "gi");
+        var match, lastIndex = 0, matched = false;
+        while ((match = wordRe.exec(sentenceRaw)) !== null) {
+          matched = true;
+          if (match.index > lastIndex) {
+            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, match.index)));
+          }
+          var mark = document.createElement("mark");
+          mark.className = "target";
+          mark.textContent = match[0];
+          output.appendChild(mark);
+          lastIndex = match.index + match[0].length;
+          if (match[0].length === 0) { wordRe.lastIndex += 1; }
+        }
+        if (matched) {
+          if (lastIndex < sentenceRaw.length) {
+            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex)));
+          }
+        } else {
+          container.style.display = "none";
+        }
+      } catch (e) {
+        container.style.display = "none";
+      }
+    } else {
+      container.style.display = "none";
+    }
+  })();
+</script>`;
+
 const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
   <div class="card-box back-layout">
 
@@ -1409,6 +1602,22 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
       {{picture}}
     </div>
     {{/picture}}
+
+    <!-- Colocación: combinación natural frecuente con la palabra (B6) -->
+    {{#colocacion}}
+    <section class="section-block">
+      <div class="section-label">Colocación</div>
+      <div class="definition-text">{{colocacion}}</div>
+    </section>
+    {{/colocacion}}
+
+    <!-- Fuente: volver al momento de la lección (fase 2 trae el minuto) -->
+    {{#fuente}}
+    <section class="section-block">
+      <div class="section-label">Fuente</div>
+      <div class="definition-text">{{fuente}}</div>
+    </section>
+    {{/fuente}}
 
     <!-- Ejemplo en Contexto -->
     {{#sentence}}
@@ -1463,18 +1672,33 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
 })();
 </script>`;
 
-export function buildVocabModel(audioMode: VocabAudioMode = 'field'): import('./ankiApkgCore').ApkgModelSpec {
-	const audio = vocabAudioBlocks(audioMode);
+/**
+ * Note type v2 POR IDIOMA (B1): «Kinema · Vocab · English», etc. Dos
+ * plantillas — «Reconocer» siempre existe; «Producir» solo cuando el campo
+ * `producir` viene lleno (B3, activado por defecto en Ajustes → Vocabulario).
+ * El campo de orden es 0 ('word'), así que «Reconocer» (req [0]) sale antes
+ * que «Producir» con newSortOrder 0 y bury de hermanas (A4).
+ */
+export function buildVocabModel(lang: string): import('./ankiApkgCore').ApkgModelSpec {
+	const audio = vocabAudioBlocks(lang);
+	const produceFieldOrd = VOCAB_FIELDS_BASE.length + VOCAB_FIELDS_EXTRA.indexOf('producir');
 	return {
-		id: VOCAB_MODEL_ID,
-		name: VOCAB_MODEL_NAME,
+		id: vocabModelId(lang),
+		name: vocabModelName(lang),
 		sortf: 0,
 		fields: VOCAB_FIELDS,
 		templates: [
 			{
-				name: 'EN → ES',
-				qfmt: VOCAB_FRONT_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word),
+				name: 'Reconocer',
+				qfmt: VOCAB_RECOGNIZE_FRONT_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word),
 				afmt: VOCAB_BACK_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word).replace('{{AUDIO_SENTENCE}}', audio.sentence),
+				requires: [0],
+			},
+			{
+				name: 'Producir',
+				qfmt: `{{#producir}}${VOCAB_PRODUCE_FRONT_TEMPLATE}{{/producir}}`.replace('{{AUDIO_WORD}}', '').replace('{{AUDIO_SENTENCE}}', ''),
+				afmt: VOCAB_BACK_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word).replace('{{AUDIO_SENTENCE}}', audio.sentence),
+				requires: [produceFieldOrd],
 			},
 		],
 		css: VOCAB_MODEL_CSS,
@@ -1557,7 +1781,9 @@ export function buildDeckPreset({ id, name, newPerDay, desiredRetention }: DeckP
 		interdayLearningMix: 0,
 		reviewOrder: 0,
 		newSortOrder: 0,
-		newGatherPriority: 0,
+		// Posición ascendente: las nuevas salen en el ORDEN EN QUE SE ESTUDIARON
+		// (los mazos de lección se recorren en orden alfabético con 0).
+		newGatherPriority: 1,
 		buryInterdayLearning: false,
 		desiredRetention,
 		ignoreRevlogsBeforeDate: '1970-01-01',

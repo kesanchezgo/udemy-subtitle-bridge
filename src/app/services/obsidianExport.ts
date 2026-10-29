@@ -37,6 +37,8 @@ export interface ObsidianExportConfig {
 	mocsFolder: string;
 	/** Incluir las tarjetas Anki en formato Spaced Repetition (#flashcards). */
 	includeCards: boolean;
+	/** C6: repasar también en Obsidian con el formato del plugin Spaced Repetition. Apagado por defecto: un solo planificador. */
+	srFlashcards?: boolean;
 	/** Exportar automáticamente al terminar de generar la sesión. */
 	autoExport: boolean;
 	/** Guardar el SRT crudo (EN) en raw/<plataforma>/<curso>/ junto a la sesión. */
@@ -58,6 +60,8 @@ export const DEFAULT_OBSIDIAN_EXPORT_CONFIG: ObsidianExportConfig = {
 
 /** Forma mínima del contenido de sesión que la nota necesita. */
 export interface ObsidianSessionData {
+	/** C9: ruta real del mazo Anki de la lección (frontmatter anki_deck). */
+	ankiDeck?: string;
 	courseName: string;
 	lessonName: string;
 	objective?: string;
@@ -94,6 +98,7 @@ export async function loadObsidianExportConfig(): Promise<ObsidianExportConfig> 
 			sourcesFolder: String(raw.sourcesFolder ?? DEFAULT_OBSIDIAN_EXPORT_CONFIG.sourcesFolder).replace(/^\/+|\/+$/g, ''),
 			mocsFolder: String(raw.mocsFolder ?? DEFAULT_OBSIDIAN_EXPORT_CONFIG.mocsFolder).replace(/^\/+|\/+$/g, ''),
 			includeCards: typeof raw.includeCards === 'boolean' ? raw.includeCards : true,
+		srFlashcards: raw.srFlashcards === true,
 			autoExport: typeof raw.autoExport === 'boolean' ? raw.autoExport : false,
 			includeRawSrt: typeof raw.includeRawSrt === 'boolean' ? raw.includeRawSrt : false,
 		};
@@ -153,6 +158,94 @@ export function slugifyVault(text: string, maxLen = 64): string {
 
 // ── HTML → Markdown ligero (para tarjetas y campos con HTML simple) ─────────
 
+/**
+ * C6: HTML → Markdown con fidelidad para la nota (reemplaza a
+ * htmlToMarkdownLite en tarjetas): <pre><code class="language-x"> → bloque
+ * cercado con su lenguaje; <table> → tabla Markdown; ol/ul → listas;
+ * p/br → párrafos y saltos; callouts concept/tip/warning/interview-box →
+ * citas con su etiqueta. Basado en regex sobre las formas que genera el
+ * propio prompt (no hay HTML arbitrario de terceros).
+ */
+export function htmlToMarkdown(html: string): string {
+	let s = String(html || '');
+	// 1. Bloques de código cercados (el lenguaje viene en class="language-x").
+	s = s.replace(/<pre[^>]*>\s*<code[^>]*class=["'][^"']*language-([a-z0-9+#]+)[^"']*["'][^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+		(_m, lang: string, code: string) => `\n\n\`\`\`${String(lang).toLowerCase()}\n${decodeEntities(String(code).replace(/\n$/, ''))}\n\`\`\`\n\n`);
+	s = s.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+		(_m, code: string) => `\n\n\`\`\`\n${decodeEntities(String(code).replace(/\n$/, ''))}\n\`\`\`\n\n`);
+	// 2. Tablas: filas <tr>, cabecera <th>, celdas con inline ya convertido.
+	s = s.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_m, body: string) => {
+		const rows: string[] = [];
+		const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+		let tr: RegExpExecArray | null;
+		while ((tr = trRe.exec(body)) !== null) {
+			const cells: string[] = [];
+			const tdRe = /<(th|td)[^>]*>([\s\S]*?)<\/(th|td)>/gi;
+			let td: RegExpExecArray | null;
+			while ((td = tdRe.exec(tr[1])) !== null) {
+				cells.push(inlineToMarkdown(td[2]).replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || ' ');
+			}
+			if (cells.length) rows.push(`| ${cells.join(' | ')} |`);
+		}
+		if (rows.length === 0) return '';
+		const width = rows[0].split('|').length - 2;
+		const divider = `| ${Array.from({ length: Math.max(width, 1) }, () => '---').join(' | ')} |`;
+		return `\n\n${rows[0]}\n${divider}\n${rows.slice(1).join('\n')}\n\n`;
+	});
+	// 3. Listas.
+	s = s.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_m, body: string) => {
+		let n = 0;
+		const liRe = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+		let li: RegExpExecArray | null;
+		const out: string[] = [];
+		while ((li = liRe.exec(body)) !== null) {
+			n += 1;
+			out.push(`${n}. ${inlineToMarkdown(li[1]).trim()}`);
+		}
+		return `\n${out.join('\n')}\n`;
+	});
+	s = s.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_m, body: string) => {
+		const liRe = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+		let li: RegExpExecArray | null;
+		const out: string[] = [];
+		while ((li = liRe.exec(body)) !== null) out.push(`- ${inlineToMarkdown(li[1]).trim()}`);
+		return `\n${out.join('\n')}\n`;
+	});
+	// 4. Callouts del prompt → citas con etiqueta.
+	s = s.replace(/<div class="(concept-box|tip-box|warning-box|interview-box)"[^>]*>([\s\S]*?)<\/div>/gi,
+		(_m, kind: string, body: string) => {
+			const label = kind === 'concept-box' ? 'Concepto' : kind === 'tip-box' ? 'Tip'
+				: kind === 'warning-box' ? 'Ojo' : 'Entrevista';
+			const inner = inlineToMarkdown(body).trim();
+			return `\n> [!${kind === 'warning-box' ? 'warning' : 'info'}] ${label}\n> ${inner.split('\n').join('\n> ')}\n`;
+		});
+	// 5. Resto de bloques e inline.
+	s = s.replace(/<p[^>]*>/gi, '\n').replace(/<\/(p|div|h[1-6])[^>]*>/gi, '\n')
+		.replace(/<br\s*\/?>/gi, '\n')
+		.replace(/<(b|strong)[^>]*>([\s\S]*?)<\/(b|strong)>/gi, '**$2**')
+		.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '_$2_')
+		.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+		.replace(/<[^>]+>/g, '');
+	return decodeEntities(s)
+		.replace(/[ \t]+/g, ' ')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+}
+
+function inlineToMarkdown(html: string): string {
+	return htmlToMarkdown(html);
+}
+
+function decodeEntities(s: string): string {
+	return String(s || '')
+		.replace(/&nbsp;/gi, ' ')
+		.replace(/&amp;/gi, '&')
+		.replace(/&lt;/gi, '<')
+		.replace(/&gt;/gi, '>')
+		.replace(/&quot;/gi, '"')
+		.replace(/&#39;/gi, "'");
+}
+
 export function htmlToMarkdownLite(html: string): string {
 	return String(html || '')
 		.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_m, code: string) => `\`${String(code).trim()}\``)
@@ -211,8 +304,13 @@ export function buildSessionNoteMarkdown(
 	lines.push(`lesson: ${yamlEscape(data.lessonName)}`);
 	if (data.objective) lines.push(`objective: ${yamlEscape(data.objective)}`);
 	lines.push(`relevance_score: ${Math.round(Number(c.relevance?.score) || 0)}`);
-	if (data.sourceUrl) lines.push(`source_url: ${yamlEscape(data.sourceUrl)}`);
-	lines.push(`tags: [${platform}, sesion, ${course}]`);
+	if (data.sourceUrl) lines.push(`lesson_url: ${yamlEscape(data.sourceUrl)}`);
+	if (data.ankiDeck) lines.push(`anki_deck: ${yamlEscape(data.ankiDeck)}`);
+	// F2-2: concepts en el frontmatter (grafo entre cursos).
+	const conceptTermsFront = (c as { conceptTerms?: string[] }).conceptTerms ?? [];
+	if (conceptTermsFront.length > 0) lines.push(`concepts: [${conceptTermsFront.map((x) => slugifyVault(x)).join(', ')}]`);
+	// C9: tags anidados de Obsidian (el MOC filtra por `course`, no por tag).
+	lines.push(`tags: [kinema/sesion, kinema/curso/${course}, ${platform}]`);
 	lines.push('---');
 	lines.push('');
 	lines.push(`# ${data.lessonName}`);
@@ -220,18 +318,69 @@ export function buildSessionNoteMarkdown(
 	lines.push(`Curso: [[${config.mocsFolder}/${course}|${data.courseName}]]`);
 	if (data.objective) lines.push(`Objetivo: ${data.objective}`);
 	lines.push('');
-	lines.push('## Resumen');
-	lines.push('');
-	lines.push(`${c.relevance?.reason || ''} (relevancia ${Math.round(Number(c.relevance?.score) || 0)}/100 para el objetivo).`);
-	lines.push('');
+	// C4: el Resumen es la síntesis generativa del prompt (con palabras
+	// propias); la relevancia pasa a línea aparte. Sin summary (historial
+	// viejo), la sección se llama «Relevancia» como antes.
+	const summary = (c as { summary?: string }).summary;
+	if (summary) {
+		lines.push('## Resumen');
+		lines.push('');
+		lines.push(summary);
+		lines.push('');
+		lines.push(`> Relevancia para tu objetivo: ${Math.round(Number(c.relevance?.score) || 0)}/100 — ${c.relevance?.reason || ''}`);
+		lines.push('');
+	} else {
+		lines.push('## Relevancia');
+		lines.push('');
+		lines.push(`${c.relevance?.reason || ''} (relevancia ${Math.round(Number(c.relevance?.score) || 0)}/100 para el objetivo).`);
+		lines.push('');
+	}
 	lines.push('## Ideas clave');
 	lines.push('');
-	(c.keyConcepts || []).forEach((k) => lines.push(`- ${k}`));
+	// F2-1: si el content trae t por idea (keyConcepts como {text,t}), el
+	// enlace salta al minuto. Retrocompatible: un string sigue siendo válido.
+	(c.keyConcepts || []).forEach((k, i) => {
+		const item = typeof k === 'string' ? { text: k, t: undefined } : (k as { text?: string; t?: string });
+		const text = item.text || String(k);
+		const url = data.sourceUrl && item.t && /^\d{1,2}:\d{2}$/.test(item.t)
+			? `${data.sourceUrl.split('#')[0].split('?')[0]}?start=${Number(item.t.split(':')[0]) * 60 + Number(item.t.split(':')[1])}#overview`
+			: null;
+		const link = url ? ` — [▶ ${item.t}](${url})` : '';
+		lines.push(`- ${text}${link}`);
+	});
 	lines.push('');
+	// F2-2: conceptos enlazables (grafo entre cursos). Los enlaces sin resolver
+	// son intencionados: el destilado del vault crea esas páginas.
+	const conceptTerms = (c as { conceptTerms?: string[] }).conceptTerms ?? [];
+	if (conceptTerms.length > 0) {
+		lines.push(`Conceptos: ${conceptTerms.map((term) => `[[wiki/conceptos/${slugifyVault(term)}|${term}]]`).join(' · ')}`);
+		lines.push('');
+	}
 	if (c.quickWin) {
 		lines.push('## Quick win');
 		lines.push('');
 		lines.push(`- ${c.quickWin}`);
+		lines.push('');
+	}
+	if ((c.questions || []).length > 0) {
+		lines.push('## Preguntas de calibración');
+		lines.push('');
+		// C5: autoevaluación real — cada pregunta es un callout PLEGADO con la
+		// pista y la respuesta dentro (recuperación antes que relectura).
+		c.questions.forEach((q) => {
+			const meta = [q.bloom, q.difficulty].filter(Boolean).join(' · ');
+			lines.push(`> [!question]- ${q.q}${meta ? ` _(${meta})_` : ''}`);
+			if (q.hint) lines.push(`> _Pista:_ ${q.hint}`);
+			if (q.answer) lines.push(`> **Respuesta:** ${q.answer}`);
+			lines.push('');
+		});
+	}
+	if (c.interviewQ?.q) {
+		lines.push('## Práctica oral');
+		lines.push('');
+		// C5: la estructura ideal va plegada — primero responde en voz alta.
+		lines.push(`> [!question]- ${c.interviewQ.q}`);
+		if (c.interviewQ.idealAnswer) lines.push(`> **Estructura ideal:** ${c.interviewQ.idealAnswer}`);
 		lines.push('');
 	}
 	if (c.application?.setup || c.application?.challenge) {
@@ -239,24 +388,12 @@ export function buildSessionNoteMarkdown(
 		lines.push('');
 		if (c.application.setup) lines.push(`**Escenario:** ${c.application.setup}`, '');
 		if (c.application.challenge) lines.push(`**Reto:** ${c.application.challenge}`, '');
-		if (c.application.solution) lines.push(`**Solución:** ${c.application.solution}`, '');
-	}
-	if ((c.questions || []).length > 0) {
-		lines.push('## Preguntas de calibración');
-		lines.push('');
-		c.questions.forEach((q, i) => {
-			const meta = [q.bloom, q.difficulty].filter(Boolean).join(' · ');
-			lines.push(`${i + 1}. **${q.q}**${meta ? ` _(${meta})_` : ''}`);
-			if (q.hint) lines.push(`   - Pista: ${q.hint}`);
-			if (q.answer) lines.push(`   - Respuesta: ${q.answer}`);
-		});
-		lines.push('');
-	}
-	if (c.interviewQ?.q) {
-		lines.push('## Práctica oral');
-		lines.push('');
-		lines.push(`**Pregunta:** ${c.interviewQ.q}`, '');
-		if (c.interviewQ.idealAnswer) lines.push(`**Estructura ideal:** ${c.interviewQ.idealAnswer}`, '');
+		if (c.application.solution) {
+			// C5: la solución va plegada.
+			lines.push(`> [!example]- Ver solución`);
+			lines.push(`> ${c.application.solution}`);
+			lines.push('');
+		}
 	}
 	if (c.nextAction) {
 		lines.push('## Próximo paso');
@@ -265,17 +402,36 @@ export function buildSessionNoteMarkdown(
 		lines.push('');
 	}
 	if (config.includeCards && (c.ankiCards || []).length > 0) {
-		lines.push('## Tarjetas Anki');
-		lines.push('');
-		lines.push('#flashcards');
-		c.ankiCards.forEach((card) => {
-			const front = htmlToMarkdownLite(card.front);
-			const back = htmlToMarkdownLite(card.back);
-			if (front && back) lines.push(`- ${front} :: ${back}`);
-		});
-		lines.push('');
-		lines.push('> [!info] El mazo con formato dev-card se exporta desde la extensión como `.apkg`.');
-		lines.push('');
+		// C6: por defecto, referencia plegada bien formateada y SIN #flashcards —
+		// un solo planificador (Anki). «Repasar también en Obsidian» activa el
+		// formato multilínea del plugin Spaced Repetition bajo #flashcards.
+		if (config.srFlashcards) {
+			lines.push('## Tarjetas de la lección');
+			lines.push('');
+			lines.push('#flashcards');
+			lines.push('');
+			c.ankiCards.forEach((card) => {
+				const front = htmlToMarkdown(card.front);
+				const back = htmlToMarkdown(card.back);
+				if (front && back) lines.push(`${front}\n?\n${back}\n`);
+			});
+			lines.push('> [!info] El mazo con formato dev-card se exporta desde la extensión como `.apkg`.');
+			lines.push('');
+		} else {
+			lines.push(`> [!example]- Tarjetas de esta lección (${c.ankiCards.length}) · repásalas en Anki`);
+			c.ankiCards.forEach((card) => {
+				const front = htmlToMarkdown(card.front);
+				const back = htmlToMarkdown(card.back);
+				if (front && back) {
+					lines.push(`> **${front}**`);
+					lines.push(`> ${back}`);
+					lines.push('>');
+				}
+			});
+			lines.push('');
+			lines.push('> [!info] El mazo con formato dev-card se exporta desde la extensión como `.apkg`.');
+			lines.push('');
+		}
 	}
 	return lines.join('\n');
 }
@@ -289,11 +445,13 @@ export function buildCourseMocPath(config: ObsidianExportConfig, courseName: str
 
 export function buildCourseMocMarkdown(
 	courseName: string,
-	options: { platform?: string; objective?: string; today?: Date } = {},
+	options: { platform?: string; objective?: string; today?: Date; sourcesFolder?: string } = {},
 ): string {
 	const course = slugifyVault(courseName);
 	const platform = slugifyVault(options.platform || 'curso', 24);
-	const sourcesFolderPlaceholder = 'wiki/fuentes';
+	// C1: la consulta respeta la carpeta configurada (antes iba fija a
+	// "wiki/fuentes" y el índice salía vacío con carpetas personalizadas).
+	const sourcesFolderPlaceholder = (options.sourcesFolder || '').replace(/^\/+|\/+$/g, '') || 'wiki/fuentes';
 	const lines: string[] = [];
 	lines.push('---');
 	lines.push(`title: ${yamlEscape(courseName)}`);
@@ -331,7 +489,7 @@ export function buildCourseMocMarkdown(
 	return lines.join('\n');
 }
 
-// ── Material cruto (raw/): SRT de la lección como nota inmutable ────────────
+// ── Material crudo (raw/): SRT de la lección como nota inmutable ────────────
 
 export function buildRawSrtNotePath(courseName: string, lessonName: string, options: { platform?: string } = {}): string {
 	const platform = slugifyVault(options.platform || 'udemy', 24);
@@ -360,7 +518,7 @@ export function buildRawSrtNoteMarkdown(
 	lines.push(`tags: [${platform}, raw, srt, ${course}]`);
 	lines.push('---');
 	lines.push('');
-	lines.push('> [!warning] Material cruto INMUTABLE (`raw/`). Fuente de verdad de la sesión;');
+	lines.push('> [!warning] Material crudo INMUTABLE (`raw/`). Fuente de verdad de la sesión;');
 	lines.push('> ni la extensión ni los agentes lo modifican. La sesión destilada vive en `wiki/fuentes/`.');
 	lines.push('');
 	lines.push('```srt');
@@ -569,10 +727,49 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 
 // ── URI scheme nativo de Obsidian ───────────────────────────────────────────
 
-export function buildObsidianNewUri(vaultName: string, note: VaultNote): string {
+export function buildObsidianNewUri(
+	vaultName: string,
+	note: VaultNote,
+	options: { overwrite?: boolean; clipboard?: boolean } = {},
+): string {
 	// encodeURIComponent (no URLSearchParams): Obsidian espera %20 para los
 	// espacios en los query params del scheme obsidian://.
-	return `obsidian://new?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(note.path)}&content=${encodeURIComponent(note.markdown)}`;
+	let uri = `obsidian://new?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(note.path)}`;
+	if (options.overwrite) uri += '&overwrite=true';
+	if (options.clipboard) uri += '&clipboard=true';
+	else uri += `&content=${encodeURIComponent(note.markdown)}`;
+	return uri;
+}
+
+/** Umbral C8: por encima, la URI es demasiado larga para el scheme. */
+const OBSIDIAN_URI_LIMIT = 30_000;
+
+/**
+ * C8: abre la nota; si la URI codificada pasa de 30 000 caracteres (SRT crudo
+ * de una lección larga), escribe el markdown en el portapapeles y abre con
+ * clipboard=true — Obsidian toma el contenido del portapapeles.
+ */
+export function openObsidianNote(vaultName: string, note: VaultNote, options: { overwrite?: boolean } = {}): void {
+	const encodedLength = encodeURIComponent(note.markdown).length;
+	if (encodedLength > OBSIDIAN_URI_LIMIT) {
+		try {
+			// El export corre dentro del gesto del clic: execCommand es la única
+			// copia síncrona fiable aquí (clipboard API async perdería el gesto).
+			const helper = document.createElement('textarea');
+			helper.value = note.markdown;
+			helper.style.position = 'fixed';
+			helper.style.opacity = '0';
+			document.body.appendChild(helper);
+			helper.select();
+			document.execCommand('copy');
+			helper.remove();
+		} catch {
+			/* sin portapapeles: la URI larga igual se intenta */
+		}
+		openObsidianUri(buildObsidianNewUri(vaultName, note, { ...options, clipboard: true }));
+		return;
+	}
+	openObsidianUri(buildObsidianNewUri(vaultName, note, options));
 }
 
 export function buildObsidianOpenVaultUri(vaultName: string): string {
@@ -607,33 +804,44 @@ export function exportSessionToObsidian(
 	config: ObsidianExportConfig,
 	orchestration: {
 		createdMocs: string[];
-		onMocCreated: (slug: string) => void;
+		onMocCreated: (key: string) => void;
 		today?: Date;
+		/** C7: «Reemplazar nota» — true solo en el reemplazo explícito. */
+		overwrite?: boolean;
 	},
 ): { notePath: string; mocPath: string | null } {
 	if (!config.vaultName.trim()) {
 		throw new Error('Configura el nombre del vault en Ajustes antes de exportar.');
 	}
+	const vault = config.vaultName.trim();
 	const courseSlug = slugifyVault(data.courseName);
+	// C2: el MOC se crea UNA VEZ POR VAULT — la clave incluye el vault. Las
+	// entradas viejas sin «|» (de antes de este cambio) se asignan al vault
+	// actual para no recrear MOCs al migrar.
+	const mocKey = `${vault}|${courseSlug}`;
+	const knownMocs = orchestration.createdMocs.map((m) => (m.includes('|') ? m : `${vault}|${m}`));
 	let mocPath: string | null = null;
-	if (!orchestration.createdMocs.includes(courseSlug)) {
+	if (!knownMocs.includes(mocKey)) {
 		const moc: VaultNote = {
 			path: buildCourseMocPath(config, data.courseName),
 			markdown: buildCourseMocMarkdown(data.courseName, {
 				platform: data.platform,
 				objective: data.objective,
 				today: orchestration.today,
+				sourcesFolder: config.sourcesFolder, // C1
 			}),
 		};
-		openObsidianUri(buildObsidianNewUri(config.vaultName, moc));
-		orchestration.onMocCreated(courseSlug);
+		openObsidianNote(vault, moc);
+		orchestration.onMocCreated(mocKey);
 		mocPath = moc.path;
 	}
 	const note: VaultNote = {
 		path: buildSessionNotePath(config, data.courseName, data.lessonName),
 		markdown: buildSessionNoteMarkdown(data, config, { today: orchestration.today }),
 	};
-	openObsidianUri(buildObsidianNewUri(config.vaultName, note));
+	// C7: overwrite=true SOLO en «Reemplazar nota» (el usuario pide pisar la
+	// nota en vez de crear "nombre 1.md").
+	openObsidianNote(vault, note, { overwrite: orchestration.overwrite });
 	return { notePath: note.path, mocPath };
 }
 

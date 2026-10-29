@@ -165,6 +165,7 @@ console.log(`  → tmp/qa-concept.apkg (${conceptApkg.length} bytes)`);
 	check('preset: 20 nuevas/día, pasos [1,10]', conf?.new?.perDay === 20 && JSON.stringify(conf?.new?.delays) === '[1,10]');
 	check('preset: lapso 30% + leech con tag', conf?.lapse?.mult === 0.3 && conf?.lapse?.leechAction === 1);
 	check('preset: NO es el id 1 (Default del usuario)', COURSES_PRESET.id !== 1 && VOCAB_PRESET.id !== 1);
+	check('A4: newGatherPriority 1 en los dos presets (orden de estudio)', COURSES_PRESET.config.newGatherPriority === 1 && VOCAB_PRESET.config.newGatherPriority === 1);
 	check('preset vocabulario también incluido', Boolean(col.dconf[String(VOCAB_PRESET.id)]) && col.dconf[String(VOCAB_PRESET.id)].new.perDay === 15);
 
 	check('3 notas insertadas', col.notes.length === 3);
@@ -234,14 +235,27 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 
 {
 	const col = await openCollection(vocabApkg);
-	const vocabModel = Object.values(col.models).find((m) => m.name === 'Udemy Bridge Vocab');
-	check('note type "Udemy Bridge Vocab" embebido', Boolean(vocabModel));
+	// B1: note type POR IDIOMA, con ID estable derivado del idioma.
+	const vocabModel = Object.values(col.models).find((m) => m.name === 'Kinema · Vocab · English');
+	check('note type "Kinema · Vocab · English" embebido (v2 por idioma)', Boolean(vocabModel));
 	const fieldNames = vocabModel?.flds?.map((f) => f.name) ?? [];
-	check('campos IDÉNTICOS a "English Cards" (pipeline de imágenes)', JSON.stringify(fieldNames) === JSON.stringify([
+	// B5: los 9 campos del pipeline de imágenes INTACTOS + los nuevos al final.
+	check('campos: 9 originales intactos + nivel/colocacion/fuente/producir', JSON.stringify(fieldNames) === JSON.stringify([
 		'word', 'phonetic', 'sentence', 'translation', 'bilingual', 'monolingual', 'picture', 'sentence audio', 'word audio',
+		'nivel', 'colocacion', 'fuente', 'producir',
 	]), JSON.stringify(fieldNames));
-	check('plantilla front con hero + cloze de contexto', vocabModel?.tmpls?.[0]?.qfmt.includes('front-word-hero') && vocabModel?.tmpls?.[0]?.qfmt.includes('cloze-gap'));
-
+	// B2/B3: dos plantillas — «Reconocer» (resaltado, sin hueco) y «Producir»
+	// (hueco cloze, envuelta en {{#producir}}), con req por plantilla.
+	const recognize = vocabModel?.tmpls?.find((tm) => tm.name === 'Reconocer');
+	const produce = vocabModel?.tmpls?.find((tm) => tm.name === 'Producir');
+	check('plantilla Reconocer: hero + resaltado mark.target (sin hueco)',
+		Boolean(recognize) && recognize.qfmt.includes('front-word-hero') && recognize.qfmt.includes(String.fromCharCode(109, 97, 114, 107)) && recognize.qfmt.includes(String.fromCharCode(34) + "target" + String.fromCharCode(34)) && !recognize.qfmt.includes('cloze-gap'));
+	check('plantilla Producir: hueco cloze + envuelta en {{#producir}}',
+		Boolean(produce) && produce.qfmt.includes('cloze-gap') && produce.qfmt.startsWith('{{#producir}}') && produce.qfmt.endsWith('{{/producir}}'));
+	check('req por plantilla (word / producir)', JSON.stringify(vocabModel?.req) === JSON.stringify([[0, 'any', [0]], [1, 'any', [12]]]), JSON.stringify(vocabModel?.req));
+	// B4: audio con respaldo de voz del sistema, locale por idioma.
+	check('audio: campo si existe, si no {{tts en_US}} (B4)', recognize.qfmt.includes('{{#word audio}}') && recognize.qfmt.includes('{{^word audio}}') && recognize.qfmt.includes('{{tts en_US:word}}'));
+	// B5: nivel CEFR llega a la tarjeta y producir va lleno por defecto (B3).
 	const note = col.notes[0];
 	const fields = note.flds.split('\x1f');
 	check('campos de texto completos (word, phonetic, sentence, translation, bilingual, monolingual)', fields[0] === 'bottleneck'
@@ -251,8 +265,15 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 		&& fields[4].startsWith('(noun)')
 		&& fields[5].length > 10
 		&& fields[6] === '' && fields[7] === '' && fields[8] === '');
-	check('tags con curso/lección/cefr jerárquicos', note.tags.includes('curso::usb-qa-curso-de-prueba') && note.tags.includes('cefr::b2'), note.tags);
+	check('campos nuevos: nivel B2, fuente, producir=1 (B3 default)', fields[9] === 'B2' && fields[11].length > 3 && fields[12] === '1', JSON.stringify(fields.slice(9)));
+	// A7: esquema jerárquico único, nada suelto en la raíz.
+	check('tags kinema:: jerárquicos (curso/lección/cefr/pos)', note.tags.includes('kinema::curso::usb-qa-curso-de-prueba') && note.tags.includes('kinema::leccion::01-leccion-de-prueba') && note.tags.includes('kinema::cefr::b2') && note.tags.includes('kinema::pos::noun'), note.tags);
+	const tagList = note.tags.split(' ');
+	check('sin tags sueltos de la era vieja (por token completo)', !tagList.includes('udemy-bridge') && !tagList.some((tg) => tg.startsWith('curso::') || tg.startsWith('leccion::') || tg.startsWith('cefr::')), note.tags);
 	check('GUID por (idioma|lema)', note.guid === stableGuid(`usb-vocab|en|bottleneck`));
+	// B3: dos tarjetas por nota (Reconocer ord 0 + Producir ord 1) compartiendo nota.
+	const noteCards = col.cards.filter((c) => c.nid === note.id);
+	check('2 tarjetas por nota (Reconocer + Producir), ords 0 y 1', noteCards.length === 2 && noteCards.map((c) => c.ord).sort().join(',') === '0,1', JSON.stringify(noteCards.map((c) => c.ord)));
 
 	const langDeck = Object.values(col.decks).find((d) => d.name === `${ROOT}::Vocabulary::English`);
 	check('mazo de idioma apunta al preset de Vocabulario', langDeck?.conf === VOCAB_PRESET.id);
