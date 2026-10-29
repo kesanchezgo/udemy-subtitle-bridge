@@ -62,14 +62,24 @@ assert(md.startsWith('---\ntitle: "Platform Independence in Java — Java Progra
 assert(md.includes('type: sesion') && md.includes('platform: udemy'), 'frontmatter type/platform');
 assert(md.includes('course: java-programming-bootcamp-spring-boot-rest-apis'), 'frontmatter course slug');
 assert(md.includes('relevance_score: 83'), 'relevance_score');
-assert(md.includes('source_url: "https://www.udemy.com/'), 'source_url');
+assert(md.includes('lesson_url: "https://www.udemy.com/'), 'lesson_url (C9); source_url ya no va en la sesión');
+assert(!md.includes('source_url:'), 'C9: sin source_url duplicado');
 assert(md.includes('[[cursos/java-programming-bootcamp-spring-boot-rest-apis|'), 'enlace al MOC');
 assert(md.includes('## Ideas clave') && md.includes('- javac compila a bytecode'), 'ideas clave');
-assert(md.includes('## Preguntas de calibración') && md.includes('Respuesta: Un .class'), 'preguntas');
+assert(md.includes('## Preguntas de calibración') && md.includes('> [!question]-') && md.includes('**Respuesta:** Un .class'), 'C5: preguntas plegadas con respuesta dentro');
+assert(!/\d+\. \*\*[^*]+\*\*[\s\S]*?Respuesta:/.test(md), 'C5: respuestas ya NO a la vista en lista');
+
 assert(md.includes('- [ ] Ejecutar con -XX:+PrintCompilation'), 'next action como task');
-assert(md.includes('#flashcards') && md.includes('- ¿Qué produce `javac`? :: **Bytecode** en `.class`'), 'tarjetas SR');
+assert(md.includes('> [!example]- Tarjetas de esta lección') && !md.includes('#flashcards'), 'C6: tarjetas como referencia plegada, sin #flashcards');
 assert(md.includes('¿Qué imprime `System.out.println(1+2)`?'), 'front con código inline');
-assert(md.includes('`System.out.println(1 + 2); // 3`'), 'código de bloque colapsado a inline en tarjeta');
+assert(md.includes('```java') && md.includes('System.out.println(1 + 2); // 3'), 'C6: código de bloque cercado con su lenguaje');
+{
+	// Los APERTURES de bloque (índices pares) deben declarar lenguaje; los
+	// cierres son ``` solos por naturaleza.
+	const fenceLines = md.split(String.fromCharCode(10)).filter((l) => l.startsWith('```'));
+	const openers = fenceLines.filter((_f, i) => i % 2 === 0);
+	assert(openers.length > 0 && openers.every((f) => f.length > 3), 'C6: todo bloque cercado declara su lenguaje');
+}
 assert(!md.includes('<pre') && !md.includes('<div'), 'sin HTML crudo en markdown');
 
 // MOC

@@ -16,7 +16,7 @@
  *    palabras ya vistas de lecciones anteriores dentro del mismo idioma.
  */
 import { chromeLocalStorage } from './chromeStorage';
-import { cefrRank, type VocabularyWord } from '../../shared/prompts';
+import { TIMED_TRANSCRIPT, cefrRank, type VocabularyWord } from '../../shared/prompts';
 import {
 	CONCEPT_MODEL,
 	COURSES_PRESET,
@@ -241,6 +241,8 @@ export function parseVocabularyPayload(payload: unknown): VocabularyWord[] {
 			// B6: colocación frecuente y natural con la palabra («memory leak»);
 			// se tolera vacío — la plantilla la oculta.
 			collocation: cleanText(raw.collocation ?? raw.collocation),
+			// Gate F2-1: sin transcripción temporizada, t del modelo es ruido.
+			t: TIMED_TRANSCRIPT && typeof raw.t === 'string' && raw.t.includes(':') ? raw.t : undefined,
 		});
 	}
 	return words;
@@ -293,7 +295,10 @@ export function buildVocabularySpec(
 	words: VocabularyWord[],
 	course: string,
 	lesson: string,
-	config: VocabConfig
+	config: VocabConfig,
+	/** URL de la lección: convierte la fuente en enlace real. Sin URL, el
+	 *  campo va vacío y la plantilla lo oculta (nada de texto muerto). */
+	lessonUrl?: string
 ): VocabSpecResult {
 	const langLabel = config.targetLangLabel || 'English';
 	const paths = vocabDeckPath(config.rootDeck || DEFAULT_ROOT_DECK, langLabel, course);
@@ -316,7 +321,16 @@ export function buildVocabularySpec(
 			// ── Campos nuevos (B5): al final, los 9 primeros intactos ──
 			word.level || config.minLevel, // nivel — el CEFR llega por fin a la tarjeta
 			word.collocation ?? '', // colocación — B6
-			word.t ? `▶ Escúchala en la lección (${word.t})` : '▶ Escúchala en la lección', // fuente (F2-1: con minuto)
+			// Fuente con enlace real (contrarrevisión punto 2). El minuto solo
+			// con F2-1 activo (TIMED_TRANSCRIPT); sin él, enlace a la lección.
+			(() => {
+				if (!lessonUrl) return '';
+				const base = lessonUrl.split('#')[0].split('?')[0];
+				const href = TIMED_TRANSCRIPT && word.t && word.t.includes(':')
+					? `${base}?start=${Number(word.t.split(':')[0]) * 60 + Number(word.t.split(':')[1])}#overview`
+					: base;
+				return `<a href="${href.replace(/"/g, '&quot;')}">▶ Escúchala en la lección${TIMED_TRANSCRIPT && word.t ? ` (${word.t})` : ''}</a>`;
+			})(),
 			config.production === false ? '' : '1', // producir — B3 (activado por defecto)
 		],
 		// A7: esquema jerárquico único; nada suelto en la raíz de tags.

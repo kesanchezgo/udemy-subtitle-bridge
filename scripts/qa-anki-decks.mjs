@@ -265,7 +265,14 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 		&& fields[4].startsWith('(noun)')
 		&& fields[5].length > 10
 		&& fields[6] === '' && fields[7] === '' && fields[8] === '');
-	check('campos nuevos: nivel B2, fuente, producir=1 (B3 default)', fields[9] === 'B2' && fields[11].length > 3 && fields[12] === '1', JSON.stringify(fields.slice(9)));
+	check('campos nuevos: nivel B2, fuente VACÍA sin URL (nada de texto muerto), producir=1 (B3 default)', fields[9] === 'B2' && fields[11] === '' && fields[12] === '1', JSON.stringify(fields.slice(9)));
+	// Con URL: la fuente es un <a> real a la lección (sin minuto: gate F2-1).
+	{
+		const { spec: specUrl } = buildVocabularySpec(freshWords, COURSE, LESSON, DEFAULT_VOCAB_CONFIG, 'https://www.udemy.com/course/x/learn/lecture/123?start=99#overview');
+		const fuenteUrl = specUrl.notes[0].fields[11];
+		check('fuente con URL es un <a> a la lección (sin ?start: gate F2-1)',
+			fuenteUrl.includes('<a href="https://www.udemy.com/course/x/learn/lecture/123">') && !fuenteUrl.includes('?start='), fuenteUrl);
+	}
 	// A7: esquema jerárquico único, nada suelto en la raíz.
 	check('tags kinema:: jerárquicos (curso/lección/cefr/pos)', note.tags.includes('kinema::curso::usb-qa-curso-de-prueba') && note.tags.includes('kinema::leccion::01-leccion-de-prueba') && note.tags.includes('kinema::cefr::b2') && note.tags.includes('kinema::pos::noun'), note.tags);
 	const tagList = note.tags.split(' ');

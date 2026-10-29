@@ -217,7 +217,7 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- type="entrevista" → MÁXIMO 1 por lección. Back con <div class="interview-box"> que abra con <div class="label">Entrevista</div> y estructure la respuesta en 3-4 puntos.',
 		'- Añade "summary" al JSON: 3-5 frases que sinteticen la lección CON TUS PALABRAS, en español (síntesis generativa). No repitas las keyConcepts literalmente.',
 		'- Añade "conceptTerms": 2-5 nombres canónicos en singular, tal como se usan en el curso (p. ej. "bytecode", "JIT"). Serán conceptos enlazables entre cursos.',
-		'- Cada ankiCard lleva además "t": "mm:ss" — el minuto de la transcripción donde se enseña ese contenido. Si no puedes situarlo con seguridad, omítelo.',
+		...(TIMED_TRANSCRIPT ? ['- Cada ankiCard lleva además "t": "mm:ss" — el minuto EXACTO marcado en la transcripción temporizada. Si no hay marca cerca, omítelo.'] : []),
 		'- <details><summary> solo para matices opcionales; la respuesta principal NUNCA dentro de details.',
 		'- PROHIBIDO: markdown (```), estilos inline (style=), clases distintas de las listadas, y prefijos tipo "CÓDIGO:" o "💻" al inicio del front o del back.',
 		'- Usa type="aplicacion" para casos, decisiones, ejercicios de transferencia, práctica profesional o uso real que no sea código.',
@@ -284,6 +284,21 @@ EJEMPLO B — lección NO técnica (cocina):
 }
 
 // ─── Vocabulario (aprendizaje de idiomas con el contenido del curso) ─────────
+
+/**
+ * F2-1 (GATE): ¿la transcripción que viaja al prompt lleva marcas [mm:ss]?
+ *
+ * HOY: false. collectTranscriptText une los cues con texto plano — el modelo
+ * no puede situar un minuto y los inventaría, y el único filtro (formato
+ * mm:ss) no comprueba contra la duración real. Con false, el prompt NO pide
+ * t y los parsers NO lo aceptan: los enlaces vuelven a «Repasar esta
+ * lección» / sin minuto. Cuando exista la recolección temporizada:
+ *   1. poner true;
+ *   2. validar t ≤ duración del video y que exista una marca cercana (±30 s)
+ *      en la transcripción enviada.
+ * Compartida entre la extensión y los QA (prompt-inspect la lee).
+ */
+export const TIMED_TRANSCRIPT = false;
 
 export type VocabularyWord = {
 	word: string;
@@ -379,7 +394,9 @@ export function buildVocabularyPrompt(transcriptText: string, options: Vocabular
 		'- Responde EXCLUSIVAMENTE con un objeto JSON válido. Sin markdown, sin ```json, sin texto extra.',
 		'- Sin comillas dobles dentro de los valores; usa « » si necesitas citar.',
 		'- Esquema exacto:',
-		'{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural.", "t": "03:12"}]}',
+		(TIMED_TRANSCRIPT
+			? '{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural.", "t": "03:12"}]}'
+			: '{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}'),
 		`- Máximo ${options.maxWords} elementos en "words".`,
 		'',
 		'Genera AHORA el JSON:',
