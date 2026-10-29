@@ -32,7 +32,12 @@ export interface OverlayConfig {
   textColor: "white" | "yellow" | "cyan";
   shadowStrength: number;
   syncOffset: number;
-  showGlossary?: boolean;
+  /** Chip de glosario sobre el video. El nombre REAL que envía
+   *  ExtensionSidebar — antes se declaraba showGlossary y el interruptor no
+   *  hacía nada en la extensión real (tsc no lo pillaba: payload sin tipar). */
+  showGlossaryChip?: boolean;
+  /** Posición libre arrastrada por el usuario (Captions → Posición libre). */
+  customPos?: { x: number; y: number } | null;
 }
 
 export interface BridgeMessage {
