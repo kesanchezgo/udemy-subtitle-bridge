@@ -20,7 +20,7 @@ const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 // corre de verdad: sw.evaluate(() => self.__KINEMA_SW_VERSION).
 const SW_VERSION = 'v2026-10-16-usg-host-covered';
 (self as unknown as { __KINEMA_SW_VERSION?: string }).__KINEMA_SW_VERSION = SW_VERSION;
-console.info('[USG] service worker iniciado, versión', SW_VERSION);
+if (import.meta.env.DEV) console.info('[USG] service worker iniciado, versión', SW_VERSION);
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const UDEMY_COURSE_MATCH = 'https://*.udemy.com/course/*';
 const LOCAL_AI_HEALTH_ENDPOINTS = [
@@ -542,12 +542,15 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 	// gesto real ocurre después, cuando el usuario pulsa el botón de la página.
 	if (type === 'USG_OPEN_PERMISSION_PAGE') {
 		const origin = String((message as { origin?: unknown }).origin || '');
+		// Solo se aceptan los dos temas del dock: cualquier otro valor cae a dark.
+		const requestedTheme = String((message as { theme?: unknown }).theme || 'dark');
+		const theme = requestedTheme === 'sepia' ? 'sepia' : 'dark';
 		if (!origin || !chrome.tabs?.create) {
 			sendResponse({ ok: false, reason: 'unsupported' });
 			return false;
 		}
 		try {
-			const url = chrome.runtime.getURL(`permission.html?origin=${encodeURIComponent(origin)}`);
+			const url = chrome.runtime.getURL(`permission.html?origin=${encodeURIComponent(origin)}&theme=${theme}`);
 			void chrome.tabs.create({ url });
 			sendResponse({ ok: true });
 		} catch (error) {
@@ -1753,7 +1756,7 @@ async function generateObjectivesViaGemini(
 			}
 			console.warn('[USG][objectives] Local AI response could not be parsed as JSON array.');
 		} else {
-			console.log('[USG][objectives] Local AI health check failed — skipping.');
+			if (import.meta.env.DEV) console.log('[USG][objectives] Local AI health check failed — skipping.');
 		}
 	} catch (localError) {
 		console.warn('[USG][objectives] Local AI error:', localError);
@@ -1783,7 +1786,7 @@ async function generateObjectivesViaGemini(
 	try {
 		await initGeminiKeys();
 		const keyCount = getGeminiApiKeys().length;
-		console.log(`[USG][objectives] Gemini keys configured: ${keyCount}`);
+		if (import.meta.env.DEV) console.log(`[USG][objectives] Gemini keys configured: ${keyCount}`);
 		if (keyCount > 0) {
 			const text = await requestGeminiText(prompt, 0.5, 1500, 'objectives', (notice) => {
 				console.warn(`[USG][objectives] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);

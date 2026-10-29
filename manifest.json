@@ -52,8 +52,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/page-network-bridge.js",
-        "src/app/styles/*"
+        "src/page-network-bridge.js"
       ],
       "matches": [
         "https://*.udemy.com/*"

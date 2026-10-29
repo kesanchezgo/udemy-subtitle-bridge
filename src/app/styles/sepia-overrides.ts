@@ -1520,7 +1520,7 @@ ${[
 
 /* Punto de estado: latido suave */
 @keyframes usb-breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); } 50% { box-shadow: 0 0 0 5px rgba(16,185,129,0); } }
-.usb-dock .bg-emerald-400.rounded-full.h-2 { animation: usb-breathe 2.4s ease-in-out infinite; }
+.usb-dock .bg-emerald-400.rounded-full.h-2 { animation: usb-breathe 2.4s ease-in-out 3 both; }
 
 /* Foco visible con anillo animado */
 @keyframes usb-ring { from { box-shadow: 0 0 0 0 rgba(109,74,255,0.5); } to { box-shadow: 0 0 0 4px rgba(109,74,255,0.22); } }
@@ -1563,7 +1563,7 @@ ${[
 .usb-dock .kx-hero-solid::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 28%;
   background: rgba(255,255,255,0.10); pointer-events: none; z-index: 0;
-  transform: translateX(-120%) skewX(-18deg); animation: kx-sweep 5.5s ease-in-out 1.2s infinite;
+  transform: translateX(-120%) skewX(-18deg); animation: kx-sweep 5.5s ease-in-out 1.2s 1 both;
 }
 .usb-dock .kx-hero-solid .kx-hero-t1 { color: #fff !important; }
 .usb-dock .kx-hero-solid .kx-hero-t2 { color: #e4dcff !important; }
@@ -1572,16 +1572,16 @@ ${[
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22);
 }
 .usb-dock .kx-hero-solid .kx-hero-chip * { color: inherit !important; }
-.usb-dock .kx-live-dot { width: 6px; height: 6px; border-radius: 999px; background: #86efac; animation: kx-live 2s ease-in-out infinite; }
+.usb-dock .kx-live-dot { width: 6px; height: 6px; border-radius: 999px; background: #86efac; animation: kx-live 2s ease-in-out 3 both; }
 .usb-dock .kx-ring {
   position: absolute; border-radius: 999px; border: 1.5px solid rgba(255,255,255,0.22); pointer-events: none; z-index: 0;
 }
 .usb-dock .kx-ring-1 { width: 150px; height: 150px; right: -44px; top: -56px; }
-.usb-dock .kx-ring-2 { width: 96px; height: 96px; right: -14px; top: -26px; border-color: rgba(255,255,255,0.32); animation: kx-ring-pulse 3.6s ease-out infinite; }
+.usb-dock .kx-ring-2 { width: 96px; height: 96px; right: -14px; top: -26px; border-color: rgba(255,255,255,0.32); animation: kx-ring-pulse 3.6s ease-out 2 both; }
 .usb-dock .kx-spark { position: absolute; z-index: 0; color: #e4dcff !important; pointer-events: none; }
-.usb-dock .kx-spark-a { right: 26px; top: 46px; animation: kx-float 4.2s ease-in-out infinite; }
-.usb-dock .kx-spark-b { right: 74px; top: 74px; animation: kx-twinkle 2.6s ease-in-out infinite; }
-.usb-dock .kx-spark-c { right: 16px; top: 88px; animation: kx-twinkle 3.2s ease-in-out .8s infinite; }
+.usb-dock .kx-spark-a { right: 26px; top: 46px; animation: kx-float 4.2s ease-in-out 2 both; }
+.usb-dock .kx-spark-b { right: 74px; top: 74px; animation: kx-twinkle 2.6s ease-in-out 2 both; }
+.usb-dock .kx-spark-c { right: 16px; top: 88px; animation: kx-twinkle 3.2s ease-in-out .8s 2 both; }
 .usb-dock .kx-hero-solid > .relative { z-index: 1; }
 
 /* Pestaña activa: violeta sólido */
@@ -1632,7 +1632,7 @@ ${[
 .usb-dock .kx-step-tile {
   background: var(--kx-step, #7c5cff) !important; color: #fff !important;
   box-shadow: 0 4px 10px -4px color-mix(in srgb, var(--kx-step, #7c5cff) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.3);
-  animation: kx-pop .5s var(--usb-ease) both, kx-bob 3.4s ease-in-out .6s infinite;
+  animation: kx-pop .5s var(--usb-ease) both, kx-bob 3.4s ease-in-out .6s 2 both;
 }
 .usb-dock .kx-step-tile * { color: #fff !important; }
 .usb-dock .kx-step-eyebrow { color: var(--kx-ink, var(--usb-accent)) !important; }
@@ -1653,8 +1653,6 @@ ${[
 .usb-dock .kx-check-off { border: 1.5px solid color-mix(in srgb, var(--kx-step, #0ea5e9) 70%, transparent) !important; background: color-mix(in srgb, var(--kx-step, #0ea5e9) 8%, transparent); }
 .usb-dock .kx-check-on { background: #10b981 !important; border-color: #10b981 !important; color: #fff !important; box-shadow: 0 4px 10px -3px rgba(16,185,129,.6); }
 .usb-dock .kx-check-on *, .usb-dock .kx-on-solid, .usb-dock .kx-on-solid * { color: #fff !important; }
-.usb-dock .kx-gen-tile { background: #6d4aff !important; color: #fff !important; box-shadow: 0 8px 18px -8px rgba(109,74,255,.6), inset 0 1px 0 rgba(255,255,255,.3); animation: kx-bob 2.2s ease-in-out infinite; }
-.usb-dock .kx-gen-tile * { color: #fff !important; }
 
 /* ── CONTRASTE: ajustes de auditoría (AA) ── */
 .usb-dock .kx-solid-btn { background: #6d4aff !important; box-shadow: 0 4px 10px -4px rgba(109,74,255,.5); }
@@ -1701,8 +1699,6 @@ ${[
 
 
 /* ── PANTALLA DE OBJETIVO + CARGA: color ── */
-@keyframes kx-orbit { to { transform: rotate(360deg); } }
-.usb-dock .kx-orbit { animation: kx-orbit 9s linear infinite; }
 .usb-dock .kx-orbit-ring { border: 1.5px dashed color-mix(in srgb, var(--usb-accent) 35%, transparent); }
 .usb-dock .kx-obj-tile, .usb-dock.dock-sepia .kx-obj-tile {
   background: color-mix(in srgb, var(--kx-step, var(--usb-accent)) 10%, var(--usb-bg-3)) !important;
@@ -1744,7 +1740,6 @@ ${[
 .usb-dock .kx-gen-row[data-st="done"] .kx-gen-ico { background: var(--kx-btn); }
 .usb-dock .kx-gen-row[data-st="done"] .kx-gen-ico, .usb-dock .kx-gen-row[data-st="done"] .kx-gen-ico *, .usb-dock.dock-sepia .kx-gen-row[data-st="done"] .kx-gen-ico * { color: #fff !important; }
 .usb-dock .kx-gen-row .kx-gen-ico *, .usb-dock.dock-sepia .kx-gen-row .kx-gen-ico * { color: inherit !important; }
-@media (prefers-reduced-motion: reduce) { .usb-dock .kx-orbit { animation: none; } }
 
 
 /* ── ESTUDIO: escala tipográfica, radios y contraste consistentes ── */

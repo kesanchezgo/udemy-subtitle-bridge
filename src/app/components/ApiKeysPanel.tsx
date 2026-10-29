@@ -8,6 +8,7 @@
 import { toast } from "sonner";
 import React, { useState, useEffect } from "react";
 import { Eye, EyeOff, CheckCircle2, Loader2, Zap, Sparkles, HardDrive, Brain, Icon } from "./icons";
+import { useDockTheme } from "../contexts/ThemeContext";
 import { Field, Notice, SettingsGroup, fieldCls, primaryBtnCls } from "./settings/SettingsKit";
 import {
   DEFAULT_BASE_URLS,
@@ -54,6 +55,7 @@ export function ApiKeysPanel({
   providerConfig,
   onSaveProvider,
 }: ApiKeysPanelProps) {
+  const { isSepia } = useDockTheme();
   const [provider, setProvider] = useState<AiProviderConfig>(providerConfig);
   const [providerSaved, setProviderSaved] = useState(false);
   const [providerKeyVisible, setProviderKeyVisible] = useState(false);
@@ -221,7 +223,8 @@ export function ApiKeysPanel({
    * Lo abre el service worker porque el panel vive en el content script, donde
    * chrome.tabs es undefined (mismo caso que chrome.permissions). Abrir una
    * pestaña no exige gesto: el gesto real ocurre después, cuando el usuario
-   * pulsa el botón dentro de la página.
+   * pulsa el botón dentro de la página. El tema viaja en la URL para que la
+   * página use los mismos tokens que el dock.
    */
   const openPermissionPage = async (baseUrl: string): Promise<void> => {
     let origin: string | null = null;
@@ -235,7 +238,7 @@ export function ApiKeysPanel({
     }
     try {
       const response = await new Promise<{ ok?: boolean } | null>((resolve) => {
-        runtime.sendMessage({ type: 'USG_OPEN_PERMISSION_PAGE', origin }, (r: { ok?: boolean } | null) => {
+        runtime.sendMessage({ type: 'USG_OPEN_PERMISSION_PAGE', origin, theme: isSepia ? 'sepia' : 'dark' }, (r: { ok?: boolean } | null) => {
           void runtime.lastError; // consume el error benigno del puerto
           resolve(r ?? null);
         });

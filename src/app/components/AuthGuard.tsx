@@ -6,6 +6,7 @@ import {
   CheckCircle2, LogIn, UserPlus,
 } from './icons';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
+import { hasSupabaseConfig } from '../services/supabaseClient';
 import { motion, AnimatePresence } from 'motion/react';
 import { KinemaBrand } from './AppLogo';
 import { toast } from 'sonner';
@@ -21,6 +22,14 @@ import {
 } from '../services/historyService';
 
 const GUEST_KEY  = 'subtitle_bridge_guest_mode';
+/**
+ * ¿Hay nube disponible en este build? En desarrollo siempre (el mock permite
+ * probar el flujo de login sin credenciales). En producción solo si el build
+ * trajo VITE_SUPABASE_*: sin ellas, el formulario «iniciaría sesión» contra
+ * el cliente mock con cualquier contraseña y las llamadas a la nube golpearían
+ * un host inválido — el usuario creería tener cuenta en la nube.
+ */
+const cloudAuthEnabled = hasSupabaseConfig || import.meta.env.DEV;
 const USB_PREFIX = 'usb_';
 // Max items per /migrate POST. Edge functions have a request size cap and
 // individual study records with AI feedback can be several KB each.
@@ -44,6 +53,9 @@ async function postMigrationItems(
   session: Session,
   items: Array<{ key: string; value: unknown }>
 ): Promise<number | null> {
+  // Sin credenciales de Supabase no hay host válido: cortar antes del fetch
+  // en vez de lanzar la petición contra "https://.supabase.co/…".
+  if (!cloudAuthEnabled) return null;
   if (items.length === 0) return 0;
 
   const chunks: Array<typeof items> = [];
@@ -93,6 +105,7 @@ async function syncHistoryToCloud(
 
 // ─── Cloud → local (reverse sync) ────────────────────────────────────────────
 async function reverseSyncFromCloud(session: Session): Promise<number> {
+  if (!cloudAuthEnabled) return 0;
   const doneKey = `subtitle_bridge_reverse_synced_${session.user.id}`;
   const alreadyReported = localStorage.getItem(doneKey) === 'true';
   try {
@@ -214,6 +227,17 @@ export function AuthGuard({
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
   useEffect(() => {
+    // Build de producción sin credenciales de Supabase: no hay formulario de
+    // login ni OAuth — el dock arranca en modo local con los datos de este
+    // navegador. Mostrar el formulario haría creer que hay cuenta en la nube.
+    if (!cloudAuthEnabled) {
+      setIsGuest(true); setLoading(false); onSessionResolved?.(null);
+      toast.info('Modo local', {
+        description: 'Tus datos se guardan en este navegador.',
+        duration: 6000,
+      });
+      return;
+    }
     const guestPref = localStorage.getItem(GUEST_KEY);
     if (guestPref === 'true') {
       setIsGuest(true); setLoading(false); onSessionResolved?.(null); return;
@@ -303,7 +327,17 @@ export function AuthGuard({
   }, [session]);
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
-  const requestLogin = () => { localStorage.removeItem(GUEST_KEY); setIsGuest(false); };
+  const requestLogin = () => {
+    // Sin nube no hay login al que volver: quedarse en modo local y decírselo.
+    if (!cloudAuthEnabled) {
+      toast.info('Modo local', {
+        description: 'Tus datos se guardan en este navegador. No requiere cuenta.',
+        duration: 6000,
+      });
+      return;
+    }
+    localStorage.removeItem(GUEST_KEY); setIsGuest(false);
+  };
   const signOut = async () => {
     localStorage.removeItem(GUEST_KEY); setIsGuest(false);
     await supabase.auth.signOut(); onSessionResolved?.(null);
@@ -318,21 +352,23 @@ export function AuthGuard({
         if (error) throw new Error(error.message);
       } else {
         let serverSignupCreated = false;
-        try {
-          const res = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/signup`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-              body: JSON.stringify({ email, password }),
-            }
-          );
-          const data = await res.json();
-          if (!res.ok || !data.success) throw new Error(data.error || `Error ${res.status}`);
-          serverSignupCreated = true;
-        } catch (signupErr) {
-          if (!isNetworkSignupFailure(signupErr)) throw signupErr;
-          console.warn('[AuthGuard] Signup endpoint unreachable; using local auth fallback.', signupErr);
+        if (cloudAuthEnabled) {
+          try {
+            const res = await fetch(
+              `https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/signup`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+                body: JSON.stringify({ email, password }),
+              }
+            );
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || `Error ${res.status}`);
+            serverSignupCreated = true;
+          } catch (signupErr) {
+            if (!isNetworkSignupFailure(signupErr)) throw signupErr;
+            console.warn('[AuthGuard] Signup endpoint unreachable; using local auth fallback.', signupErr);
+          }
         }
         if (!serverSignupCreated) {
           const { error: signupDirectErr } = await supabase.auth.signUp({ email, password });
