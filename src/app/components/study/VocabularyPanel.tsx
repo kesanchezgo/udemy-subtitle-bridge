@@ -20,6 +20,18 @@ interface Props {
   mount?: HTMLElement | null;
 }
 
+/**
+ * Serializa la config con claves ordenadas para compararla sin que el orden
+ * importe. chrome.storage reordena las claves alfabéticamente al escribir, así
+ * que JSON.stringify sobre un objeto recién leído nunca coincide con el objeto
+ * vivo del panel aunque los valores sean los mismos.
+ */
+function stableConfigString(config: VocabConfig): string {
+  return JSON.stringify(
+    Object.keys(config).sort().map(key => [key, (config as unknown as Record<string, unknown>)[key]])
+  );
+}
+
 
 export function VocabularyPanel({ course, lesson, config, onConfig, generate, compact = false, mount }: Props) {
   const key = vocabularySessionKey(course, lesson, config.targetLang);
@@ -41,7 +53,17 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
       const sequence = ++loadSequence;
       const [next, seen] = await Promise.all([readVocabularySession(key), exportedVocabularyKeys(config.targetLang)]);
       if (generation.current !== version || loadSequence !== sequence) return;
-      if (next && vocabularyCriteriaKey(next.config) === vocabularyCriteriaKey(config) && JSON.stringify(next.config) !== JSON.stringify(config)) {
+      // Comparación semántica, no JSON.stringify: chrome.storage reordena las
+      // claves alfabéticamente al escribir, así que una sesión recién leída
+      // "difiere" siempre en stringify aunque los valores sean idénticos. Con
+      // stringify cada apertura disparaba una realineación de escritura
+      // inútil, y el caso idéntico caía al else sin mostrar la sesión.
+      const differsOnlyNonCritical = Boolean(
+        next
+        && vocabularyCriteriaKey(next.config) === vocabularyCriteriaKey(config)
+        && stableConfigString(next.config) !== stableConfigString(config)
+      );
+      if (differsOnlyNonCritical) {
         // Solo difieren campos NO críticos (maxWords/audioMode/rootDeck): mostrar
         // la sesión existente y alinear su config en segundo plano. Retornar aquí
         // dejaba el panel vacío hasta que otro cambio volviera a disparar el efecto.
@@ -57,6 +79,11 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
         if (compact) await pushGlossary(next, seen);
         return;
       }
+      // Sin sesión, o sesión con criterios distintos (minLevel/idioma base): se
+      // muestra igual — la UI la marca con el aviso de «aplicar cambios». Ocultar
+      // aquí escondía una sesión guardada como si no existiera.
+      setSession(next);
+      setExported(seen);
       if (compact) await pushGlossary(next, seen);
     };
 

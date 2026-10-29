@@ -192,6 +192,21 @@ if (sw && !REAL) {
 			[`usb_history_lecture::${record.courseId}::${record.lectureId}`]: record,
 			obsidian_export_config: { vaultName: 'QA Vault', sourcesFolder: 'wiki/fuentes', mocsFolder: 'cursos', includeCards: true, autoExport: false, includeRawSrt: false },
 			obsidian_exported_notes: [`${record.courseId}::${record.lectureId}`],
+			// Sesión de vocabulario guardada con minLevel B2 (el panel carga B1):
+			// criterios distintos. El panel debe MOSTRARLA marcada como pendiente
+			// de aplicar, no esconderla como si no existiera. Es la regresión del
+			// bug que escondía sesiones guardadas al restaurarlas.
+			[`usb_vocab_session_${record.courseName.toLowerCase()}|${record.lectureName.toLowerCase()}|en`]: {
+				course: record.courseName,
+				lesson: record.lectureName,
+				config: { rootDeck: 'Kinema', targetLang: 'en', targetLangLabel: 'English', baseLangLabel: 'español', minLevel: 'B2', maxWords: 8, audioMode: 'field' },
+				candidates: [
+					{ word: 'bytecode', level: 'B1', pos: 'noun', meaning: 'código intermedio', sentence: 'The JVM interprets bytecode.', sentenceTranslation: 'La JVM interpreta bytecode.', phonetic: '/ˈbaɪtkoʊd/', monolingual: 'intermediate code' },
+				],
+				selected: [],
+				demo: false,
+				exports: [],
+			},
 		}, () => {
 			chrome.storage.sync.set({
 				agent_course_name: record.courseName,
@@ -460,23 +475,53 @@ if (ready) {
 }
 
 // ══ G. Vocabulario ════════════════════════════════════════════════════════════
-section('G. Vocabulario — pipeline y deduplicación');
+section('G. Vocabulario — restauración de la sesión guardada');
 // El pipeline de vocabulario (filtro CEFR, registro de lemas, GUID por
 // idioma|lema) es puro y no depende del navegador: lo cubre la suite
-// estructural qa-anki-decks.mjs, que verifica además que el reexport en otra
-// lección no duplica. Aquí solo se comprueba que la sección del panel existe
-// con sus controles, que es lo que depende del UI.
-const vocabUi = await page.evaluate(() => {
-	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-	const txt = (root?.textContent ?? '');
-	return {
-		panel: /Mazo de idiomas/i.test(txt),
-		cefr: /CEFR/i.test(txt),
-		nivel: /Desde el nivel/i.test(txt),
-	};
-});
-check('el panel de Mazo de idiomas se renderiza con sus controles',
-	vocabUi.panel && (vocabUi.cefr || vocabUi.nivel), JSON.stringify(vocabUi));
+// estructural qa-anki-decks.mjs. Aquí se comprueba lo que depende del UI:
+// que una sesión guardada se RESTAURE al volver al panel, incluso cuando
+// difiere en criterios (sembrada con B2, el panel carga B1). El bug original
+// la escondía como si no existiera.
+if (REAL) {
+	console.log('  · restauración omitida en modo REAL (requiere la sesión sembrada del clon)');
+} else {
+	await page.evaluate(() => { try { localStorage.setItem('usb_theme', 'dark'); } catch {} });
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-settings')));
+	await page.waitForTimeout(700);
+	// Volver a la vista Study (los ajustes la dejaron en segundo plano).
+	await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+	await page.waitForTimeout(1800);
+	const restored = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const txt = (root?.textContent ?? '').replace(/\s+/g, ' ');
+		return {
+			region: Boolean(root?.querySelector('[aria-label="Candidatas de vocabulario"]')),
+			palabra: /bytecode/i.test(txt),
+			contador: txt.match(/\d+ · \d+ sel\. · \d+ exp\./)?.[0] ?? null,
+			// Con criterios distintos el botón debe proponer APLICAR los cambios,
+			// no regenerar desde cero (la sesión existe y el usuario la conservó).
+			botonAplicar: /Aplicar cambios a la lista/i.test(txt),
+			botonProponer: /Proponer palabras/i.test(txt),
+		};
+	});
+	check('la sesión guardada con criterios distintos SE MUESTRA',
+		restored.region && restored.palabra, JSON.stringify(restored));
+	check('la sesión restaurada se marca como pendiente de aplicar (no se regenera)',
+		restored.botonAplicar && !restored.botonProponer, JSON.stringify(restored));
+	// El panel de ajustes conserva sus controles (mismo bloque, vista adicional).
+	const vocabUi = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const txt = (root?.textContent ?? '');
+		return {
+			panel: /Mazo de idiomas/i.test(txt),
+			cefr: /CEFR/i.test(txt),
+			nivel: /Desde el nivel/i.test(txt),
+		};
+	});
+	check('el panel de Mazo de idiomas se renderiza con sus controles',
+		vocabUi.panel && (vocabUi.cefr || vocabUi.nivel), JSON.stringify(vocabUi));
+	await page.screenshot({ path: path.join(SHOTS, 'g-vocabulario.png') });
+}
 
 // ══ Cierre ════════════════════════════════════════════════════════════════════
 section('Errores de consola');
