@@ -48,7 +48,6 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
     setSession(null);
     setArchiveChoice("latest");
     if (compact) void contentBridge.sendToContent({ type: "GLOSSARY_UPDATE", payload: { sessionKey: key, words: [] } });
-    try { document.documentElement.dataset.usbVocabKey = key; } catch {}
     const load = async () => {
       const sequence = ++loadSequence;
       const [next, seen] = await Promise.all([readVocabularySession(key), exportedVocabularyKeys(config.targetLang)]);
@@ -108,10 +107,6 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
     return () => {
       generation.current += 1;
       unsubscribe();
-      // La key queda en <html> como marca de la lección mostrada; si no se
-      // borra al desmontar, el glosario de una lección anterior sigue vigente
-      // para el content script cuando el panel desaparece.
-      try { delete document.documentElement.dataset.usbVocabKey; } catch {}
     };
   }, [key, compact, course, lesson, JSON.stringify(config)]);
 

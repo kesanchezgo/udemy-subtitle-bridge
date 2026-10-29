@@ -642,6 +642,9 @@ ${PRISM_HEAD}
     pill.innerText = pill.innerText.replace(/_/g, ' ').trim();
   }
 
+  // Los innerHTML de este bloque SOLO reescriben HTML que ya está en el DOM
+  // (quitando la etiqueta «CÓDIGO» y normalizando <br> dentro de <code>):
+  // nunca introducen texto externo, así que no abren puerta a XSS.
   var qaContainer = document.getElementById('qa');
   if (qaContainer) {
     qaContainer.innerHTML = qaContainer.innerHTML.replace(/^\\s*(💻\\s*CÓDIGO|CÓDIGO)\\s*/i, '');
@@ -1273,6 +1276,14 @@ hr {
   }
 }`;
 
+/**
+ * Fuente de la regex que escapa metacaracteres en la plantilla cloze. Va
+ * interpolada con JSON.stringify para que el JS generado reciba el literal
+ * correctamente citado sin pelear con el escapado del template literal.
+ * Cubre palabras como C++, node.js, (a) o ?.
+ */
+const ESCAPE_REGEX_SPECIALS = '[.*+?^${}()|[\\]\\\\]';
+
 const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
   <div class="card-box front-layout">
 
@@ -1314,10 +1325,42 @@ const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
     var output = document.getElementById("clozeOutput");
 
     if (wordRaw && sentenceRaw) {
+      // La frase puede venir de un subtítulo o de la IA: se monta por DOM
+      // (createTextNode / createElement), nunca con innerHTML — un
+      // <img onerror> en la frase no debe ejecutarse dentro de Anki. La
+      // palabra se escapa para que metacaracteres de regex (C++, node.js,
+      // (a), ?) no lancen una excepción ni marquen de más.
       container.style.display = "block";
-      var regex = new RegExp(wordRaw, "gi");
-      var result = sentenceRaw.replace(regex, "<span class='cloze-gap'>[ ... ]</span>");
-      output.innerHTML = result;
+      try {
+        // Paso 1: escapar los metacaracteres de la palabra (C++ → C\\+\\+).
+        var escapeRe = new RegExp(${JSON.stringify(ESCAPE_REGEX_SPECIALS)}, "g");
+        var wordRe = new RegExp(wordRaw.replace(escapeRe, ${JSON.stringify('\\$&')}), "gi");
+        // Paso 2: partir la frase por la palabra escapada y montar por DOM.
+        var match, lastIndex = 0, matched = false;
+        while ((match = wordRe.exec(sentenceRaw)) !== null) {
+          matched = true;
+          if (match.index > lastIndex) {
+            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, match.index)));
+          }
+          var gap = document.createElement("span");
+          gap.className = "cloze-gap";
+          gap.textContent = "[ ... ]";
+          output.appendChild(gap);
+          lastIndex = match.index + match[0].length;
+          if (match[0].length === 0) { wordRe.lastIndex += 1; }
+        }
+        if (matched) {
+          if (lastIndex < sentenceRaw.length) {
+            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex)));
+          }
+        } else {
+          // La palabra no aparece literalmente en la frase: sin hueco, se
+          // oculta el contenedor igual que cuando falta la palabra.
+          container.style.display = "none";
+        }
+      } catch (e) {
+        container.style.display = "none";
+      }
     } else {
       container.style.display = "none";
     }
@@ -1412,6 +1455,7 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
   }
 
   // 3. Limpieza de paréntesis vacíos en la definición bilingüe ()
+  // innerHTML seguro: solo reescribe HTML que ya estaba en el DOM.
   var bilingual = document.getElementById("bilingualField");
   if (bilingual) {
     bilingual.innerHTML = bilingual.innerHTML.replace(/\\(\\s*\\)/g, '').trim();

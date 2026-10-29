@@ -529,6 +529,7 @@ export function Icon({
       size={dim}
       {...(w === "regular" || w === "light" ? { strokeWidth: sw ? Math.min(2.2, Math.max(1.4, sw)) : typeof size === "number" && size < 16 ? 2 : 1.7 } : {})}
       aria-hidden="true"
+      {...({ focusable: "false" } as object)}
       className={`shrink-0 ${className ?? ""}`}
       {...(rest as object)}
     />

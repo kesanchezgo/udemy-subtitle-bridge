@@ -3539,8 +3539,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       {questionsComplete ? (
                         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-4 space-y-2 relative">
                           <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>¡Comprensión verificada!</p>
-                          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none animate-[spin_15s_linear_infinite]" />
-                          <div className="relative z-10 animate-[bounce_2s_ease-in-out_infinite] mt-2 text-emerald-300 drop-shadow-md"><Icon name="rocket" size={40} /></div>
+                          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none animate-[spin_15s_linear_1]" />
+                          <div className="relative z-10 animate-[bounce_1s_ease-out_2] mt-2 text-emerald-300 drop-shadow-md"><Icon name="rocket" size={40} /></div>
                           <p className="text-white/40 text-[10px] relative z-10 pt-1">La IA confirmó que captaste los conceptos clave. Continúa con la práctica.</p>
                         </motion.div>
                       ) : (

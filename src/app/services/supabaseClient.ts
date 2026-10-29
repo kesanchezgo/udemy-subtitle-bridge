@@ -43,7 +43,15 @@ type AuthClientSubset = {
 const STORAGE_KEY = 'usb_mock_supabase_session';
 const listeners = new Set<AuthListener>();
 
-const hasSupabaseConfig =
+/**
+ * ¿Hay credenciales reales de Supabase en este build? En producción sin
+ * VITE_SUPABASE_* el valor de info.tsx es vacío: sin esta marca, el registro
+ * haría fetch a "https://.supabase.co/…" (host inválido), fallaría por red y
+ * caería al cliente mock, que «inicia sesión» con cualquier contraseña — el
+ * usuario creería tener cuenta en la nube y la sincronización fallaría en
+ * silencio. Con esta marca, AuthGuard arranca en modo local sin formulario.
+ */
+export const hasSupabaseConfig =
   /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) &&
   publicAnonKey.length > 20;
 
