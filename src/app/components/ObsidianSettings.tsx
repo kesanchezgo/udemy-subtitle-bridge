@@ -51,7 +51,10 @@ export function ObsidianSettings({ active }: { active: boolean }) {
 
     <SettingsGroup title="La nota incluye">
       <div className="space-y-2.5">
-        <ToggleRow label="Preguntas de repaso" description="Para plugins de flashcards de Obsidian." checked={config.includeCards} onChange={value => set({ includeCards: value })} />
+        <ToggleRow label="Tarjetas de la lección" description="Van a la nota como referencia plegada, bien formateadas." checked={config.includeCards} onChange={value => set({ includeCards: value })} />
+        {config.includeCards && (
+          <ToggleRow label="Repasar también en Obsidian" description="Formato del plugin Spaced Repetition (#flashcards). Apagado por defecto: Anki es el único planificador." checked={config.srFlashcards === true} onChange={value => set({ srFlashcards: value })} />
+        )}
         <ToggleRow label="Subtítulos originales" description="La transcripción completa." checked={config.includeRawSrt} onChange={value => set({ includeRawSrt: value })} />
         <ToggleRow label="Guardar automáticamente" description="Al preparar cada lección. Si no, desde el final de Study." checked={config.autoExport} onChange={value => set({ autoExport: value })} />
       </div>

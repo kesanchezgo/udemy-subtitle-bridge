@@ -56,6 +56,39 @@ node scripts/test-obsidian-export.mjs   # asserts sobre los builders puros (Node
 npm run build                           # tsc + vite
 ```
 
+## Cambios 1.4.0 (2026-10-29)
+
+- **La nota sirve para autoevaluarse**: las respuestas van PLEGADAS — cada
+  pregunta de calibración es un callout `> [!question]-` con pista y respuesta
+  dentro; la estructura ideal de la práctica oral y la solución de la
+  aplicación también van plegadas. Recuperación antes que relectura
+  (Karpicke & Blunt 2011, DOI 10.1126/science.1199327).
+- **Resumen real**: sección «Resumen» con la síntesis generativa del prompt
+  (con palabras propias); la relevancia pasa a línea aparte. En historial
+  viejo sin summary, la sección se llama «Relevancia» como antes.
+- **Tarjetas de la lección**: por defecto van como referencia PLEGADA
+  (`> [!example]-`), bien formateadas con el conversor nuevo (bloques de
+  código cercados con su lenguaje, tablas Markdown, listas) y SIN
+  `#flashcards`. El interruptor «Repasar también en Obsidian» (apagado por
+  defecto) activa el formato multilínea del plugin Spaced Repetition bajo
+  `#flashcards`.
+- **Reemplazar nota**: el segundo export ofrece «Reemplazar nota»
+  (`overwrite=true`) — pisa también lo que hayas escrito en esa nota. «Copiar»
+  y «.md» siguen como respaldos.
+- **Notas largas por clipboard**: si la URI pasa de 30 000 caracteres (SRT
+  crudo de una lección larga), el markdown va al portapapeles y se abre
+  `obsidian://new?…&clipboard=true`. El SRT se pide antes de la primera URI.
+- **MOC por vault**: el índice del curso se crea una vez POR VAULT (clave
+  `vault|slug`); antes era una vez en total. Las entradas viejas se asignan
+  al vault actual.
+- **MOC con tu carpeta**: la consulta Dataview usa la carpeta configurada
+  (antes iba fija a `wiki/fuentes`).
+- **Frontmatter nuevo**: `anki_deck` (ruta real del mazo), `lesson_url`,
+  `concepts`. Tags anidados: `kinema/sesion`, `kinema/curso/<slug>`.
+- **Conceptos enlazables**: línea `Conceptos: [[wiki/conceptos/x|x]]` y
+  `concepts:` en el frontmatter — los enlaces sin resolver son intencionados
+  (el destilado del vault crea esas páginas).
+
 ## Limitaciones conocidas
 
 - Obsidian debe estar instalado; la primera vez Chrome pide permiso para el protocolo `obsidian://`.

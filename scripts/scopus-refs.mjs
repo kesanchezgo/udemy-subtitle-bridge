@@ -11,6 +11,12 @@ const queries = {
   learning_techniques: 'TITLE-ABS-KEY("elaborative interrogation" OR "self-explanation" OR "practice testing")',
   incidental_vocab: 'TITLE-ABS-KEY("incidental vocabulary" AND reading AND acquisition)',
   vocab_context: 'TITLE-ABS-KEY(vocabulary AND "sentence" AND (L2 OR "second language") AND learning)',
+  // Fase 1 — decisiones nuevas (paso 0 del informe pedagógico)
+  receptive_productive: 'TITLE-ABS-KEY("receptive" AND "productive" AND vocabulary AND learning)',
+  collocations_l2: 'TITLE-ABS-KEY(collocations AND "second language" AND learning)',
+  generative_learning: 'TITLE-ABS-KEY("generative learning" AND (summarizing OR "generative strategy"))',
+  retrieval_vs_reread: 'TITLE-ABS-KEY("retrieval practice" AND ("concept mapping" OR rereading))',
+  minimal_info: 'TITLE-ABS-KEY("element interactivity" AND (learning OR "cognitive load"))',
 };
 const out = {};
 for (const [name, q] of Object.entries(queries)) {

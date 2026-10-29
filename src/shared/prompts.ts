@@ -209,12 +209,15 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- La plantilla de Anki ya pone el marco visual (barra terminal, píldora de tipo, tipografía, resaltado de código). front y back aportan SOLO el HTML interno.',
 		'- FRONT: la pregunta en 1-2 líneas, texto plano o con <code> inline. Si la tarjeta pide completar o predecir código, incluye el bloque de código en el front. NUNCA incluyas la respuesta en el front.',
 		'- BACK: primera línea = respuesta directa con el término clave en <b>. Después máximo 2-3 bloques de apoyo, no más.',
-		'- Bloques de código SOLO así: <pre><code class="language-java">código</code></pre>. Lenguajes válidos: language-java, language-markup (HTML/XML), language-properties, language-sql, language-json, language-bash. Nunca código suelto fuera de <pre><code>.',
+		'- Bloques de código SOLO así: <pre><code class="language-LENGUAJE">código</code></pre>. Usa el lenguaje REAL del curso (no siempre java): válidos language-markup, language-css, language-javascript, language-typescript, language-jsx, language-tsx, language-python, language-java, language-kotlin, language-csharp, language-c, language-cpp, language-go, language-php, language-ruby, language-bash, language-powershell, language-sql, language-json, language-yaml, language-properties, language-docker (viajan embebidos en el .apkg, funcionan sin conexión). Nunca código suelto fuera de <pre><code>.',
 		'- Vocabulario HTML permitido en back (solo este): <p>, <b>, <em>, <code>, <pre><code>, <ul>/<ol>/<li>, <table>/<tr>/<th>/<td>, <blockquote>, <details>/<summary>, y los callouts <div class="concept-box">, <div class="tip-box">, <div class="warning-box">, <div class="interview-box"> (este último con <div class="label">Título</div> como primera línea).',
-		'- type="codigo" → back con el código solución en <pre><code class="language-java"> seguido de 1-2 líneas de explicación.',
-		'- type="comparacion" → back con <table> pequeña (2-3 filas, con <th> de cabecera).',
-		'- type="proceso" → back con <ol> de pasos cortos.',
-		'- type="entrevista" → back con <div class="interview-box"> que abra con <div class="label">Entrevista</div> y estructure la respuesta en 3-4 puntos.',
+		'- type="codigo" → back con el código solución en <pre><code class="language-LENGUAJE_REAL"> (el lenguaje del curso, de la lista de arriba) seguido de 1-2 líneas de explicación.',
+		'- type="comparacion" → A3 (info mínima): el FRONT pregunta por UNA dimensión discriminante («¿Cuándo compila el JIT frente al AOT y qué gana cada uno?»). El back abre con 1-2 líneas que responden esa dimensión; la tabla queda como apoyo con 3 filas como máximo.',
+		'- type="proceso" → A3 (info mínima): 4 pasos como máximo. Si el proceso tiene más, el front pregunta por el paso que falta o el que sigue («Después de X, ¿qué paso sigue y por qué?»). La secuencia completa en el back SOLO si tiene ≤4 pasos.',
+		'- type="entrevista" → MÁXIMO 1 por lección. Back con <div class="interview-box"> que abra con <div class="label">Entrevista</div> y estructure la respuesta en 3-4 puntos.',
+		'- Añade "summary" al JSON: 3-5 frases que sinteticen la lección CON TUS PALABRAS, en español (síntesis generativa). No repitas las keyConcepts literalmente.',
+		'- Añade "conceptTerms": 2-5 nombres canónicos en singular, tal como se usan en el curso (p. ej. "bytecode", "JIT"). Serán conceptos enlazables entre cursos.',
+		'- Cada ankiCard lleva además "t": "mm:ss" — el minuto de la transcripción donde se enseña ese contenido. Si no puedes situarlo con seguridad, omítelo.',
 		'- <details><summary> solo para matices opcionales; la respuesta principal NUNCA dentro de details.',
 		'- PROHIBIDO: markdown (```), estilos inline (style=), clases distintas de las listadas, y prefijos tipo "CÓDIGO:" o "💻" al inicio del front o del back.',
 		'- Usa type="aplicacion" para casos, decisiones, ejercicios de transferencia, práctica profesional o uso real que no sea código.',
@@ -227,12 +230,15 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- Si no es código, challenge debe ser un caso práctico, análisis, decisión o ejercicio aplicable.',
 		'- Todo en español excepto términos técnicos, marcas, comandos, APIs, librerías o nombres propios que convenga mantener.',
 		'- No inventes temas ajenos a la transcripción; si falta contexto, usa el curso/lección como guía.',
+		'- Back de TODAS las tarjetas: la 1.ª línea RESPONDE la pregunta y la 2.ª da el porqué o el mecanismo (elaboración). El front nunca pide recordar una tabla o lista completa.',
 		'- Responde SOLO con el JSON, sin texto adicional',
 		'',
 		'EJEMPLOS de nivel de calidad esperado (no copies su contenido, imita su precisión y atomicidad):',
 		`
 EJEMPLO A — lección técnica (Java/JVM):
 {
+  "summary": "La lección recorre el camino del código Java: javac lo compila a bytecode, la JVM de cada plataforma lo interpreta y el JIT traduce en caliente los hot spots a nativo. Ese reparto explica por qué el mismo .class corre en Windows y Linux sin recompilar, y por qué el rendimiento se acerca al nativo tras el warm-up.",
+  "conceptTerms": ["bytecode", "JVM", "JIT"],
   "relevance": {"score": 92, "reason": "La lección explica el mecanismo central de portabilidad de Java, directamente útil para entrevistas backend."},
   "keyConcepts": ["javac compila el fuente a bytecode, no a código nativo", "la JVM interpreta el bytecode en cada plataforma", "el JIT compila hot spots a nativo en runtime", "portabilidad = un .class corre donde exista JVM"],
   "quickWin": "Compila HolaMundo.java con javac y ejecútalo en otra máquina distinta",
@@ -248,7 +254,7 @@ EJEMPLO A — lección técnica (Java/JVM):
   "ankiCards": [
     {"id": "card-001", "type": "concepto", "front": "¿Qué produce <code>javac</code> a partir del código fuente?", "back": "<p><b>Bytecode</b> en archivos <code>.class</code>, no código máquina nativo.</p><div class='concept-box'>El bytecode es un formato intermedio: solo la JVM puede ejecutarlo.</div>", "tags": ["java", "compilacion"]},
     {"id": "card-002", "type": "codigo", "front": "¿Qué imprime <code>System.out.println(1 + 2 + 3)</code> y por qué?", "back": "<p>Imprime <b>6</b>: los tres operandos son <code>int</code>, así que <code>+</code> suma aritméticamente.</p><pre><code class='language-java'>System.out.println(1 + 2 + 3); // imprime 6</code></pre>", "tags": ["java", "tipos"]},
-    {"id": "card-003", "type": "comparacion", "front": "JIT vs compilador AOT (C++)", "back": "<table><tr><th></th><th>JIT</th><th>AOT</th></tr><tr><td>Cuándo compila</td><td>en runtime</td><td>antes de ejecutar</td></tr><tr><td>Ventaja</td><td>ve perfiles reales</td><td>arranque rápido, sin warm-up</td></tr></table>", "tags": ["java", "rendimiento"]},
+    {"id": "card-003", "type": "comparacion", "front": "¿Cuándo compila el JIT frente al AOT y qué gana cada uno?", "back": "<p><b>JIT compila en runtime</b> (gana optimización con perfiles reales); <b>AOT antes de ejecutar</b> (gana arranque inmediato, sin warm-up).</p><table><tr><th></th><th>JIT</th><th>AOT</th></tr><tr><td>Cuándo</td><td>en runtime</td><td>antes de ejecutar</td></tr></table>", "tags": ["java", "rendimiento"]},
     {"id": "card-004", "type": "entrevista", "front": "¿Por qué Java es portable pero rápido?", "back": "<div class='interview-box'><div class='label'>Entrevista</div><ul><li><b>Portabilidad:</b> el bytecode corre donde haya JVM.</li><li><b>Velocidad:</b> el JIT compila hot spots a nativo en caliente.</li><li><b>Frase de cierre:</b> «compila una vez, ejecuta donde haya JVM; acelera en caliente con JIT».</li></ul></div>", "tags": ["java", "entrevista"]}
   ]
 }
@@ -269,7 +275,7 @@ EJEMPLO B — lección NO técnica (cocina):
   "nextAction": "Practica el test del bocado con dos formas de pasta distintas",
   "ankiCards": [
     {"id": "card-001", "type": "concepto", "front": "Define «al dente»", "back": "Firme al morder, con el núcleo apenas húmedo", "tags": ["cocina", "pasta"]},
-    {"id": "card-002", "type": "proceso", "front": "¿Para qué sirve el agua de cocción reservada?", "back": "El almidón emulsiona y liga la salsa con la pasta", "tags": ["cocina", "salsas"]},
+    {"id": "card-002", "type": "concepto", "front": "¿Para qué sirve el agua de cocción reservada?", "back": "El almidón emulsiona y liga la salsa con la pasta", "tags": ["cocina", "salsas"]},
     {"id": "card-003", "type": "aplicacion", "front": "¿Por qué sacar la pasta 1 minuto antes del tiempo del paquete?", "back": "Termina de cocerse con calor residual y al saltearse con la salsa", "tags": ["cocina", "tecnica"]}
   ]
 }
@@ -290,6 +296,11 @@ export type VocabularyWord = {
 	phonetic: string;
 	/** Definición simple EN EL IDIOMA OBJETIVO (aprendizaje monolingüe). */
 	monolingual: string;
+	/** B6: colocación frecuente y natural con la palabra (2-5 palabras, p. ej.
+	 *  «memory leak»). Vacío tolerado: la plantilla oculta la sección. */
+	collocation?: string;
+	/** Fase 2: minuto de la lección donde se enseña («mm:ss»). */
+	t?: string;
 };
 
 const CEFR_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -361,13 +372,14 @@ export function buildVocabularyPrompt(transcriptText: string, options: Vocabular
 		'REGLAS DE PRONUNCIACIÓN Y DEFINICIÓN MONOLINGÜE:',
 		'- "phonetic": la pronunciación de la palabra en su sistema nativo. Para la mayoría de idiomas: IPA entre barras (ej. "/liːk/"), acento marcado. Para japonés: la LECTURA de la palabra en hiragana (ej. "かくにん"), sin barras.',
 		'- "monolingual": una definición SIMPLE escrita EN ' + options.targetLang + ' (NO en ' + options.baseLang + '), de 6 a 14 palabras, clara para un estudiante del nivel ' + options.minLevel + '.',
+		'- "collocation": UNA combinación frecuente y natural con la palabra en el idioma objetivo, de 2 a 5 palabras (p. ej. "memory leak", "plug a leak"). Si no existe una natural, cadena vacía.',
 		'- La definición monolingüe NUNCA usa la palabra que define ni derivadas obvias.',
 		'',
 		'FORMATO DE SALIDA (CRÍTICO):',
 		'- Responde EXCLUSIVAMENTE con un objeto JSON válido. Sin markdown, sin ```json, sin texto extra.',
 		'- Sin comillas dobles dentro de los valores; usa « » si necesitas citar.',
 		'- Esquema exacto:',
-		'{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}',
+		'{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural.", "t": "03:12"}]}',
 		`- Máximo ${options.maxWords} elementos en "words".`,
 		'',
 		'Genera AHORA el JSON:',

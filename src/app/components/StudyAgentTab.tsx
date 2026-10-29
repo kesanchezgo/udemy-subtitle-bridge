@@ -13,7 +13,7 @@ import type { IconName } from "./icons";
 import { FrameMarks } from "./AppLogo";
 import { motion, AnimatePresence } from "motion/react";
 import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
-import { buildAnkiApkg, downloadApkg } from "../services/ankiApkg";
+import { buildAnkiApkg, downloadApkg, PRISM_MEDIA_FILES } from "../services/ankiApkg";
 import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
 import {
   DEFAULT_VOCAB_CONFIG, loadVocabConfig, parseVocabularyPayload, saveVocabConfig,
@@ -43,6 +43,7 @@ import { usePersistedState } from "../hooks/usePersistedState";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
+import { conceptDeckPath, kinemaTags } from "../services/ankiDesign";
 import {
   buildSessionNoteMarkdown, buildSessionNotePath, buildRawSrtNoteMarkdown, buildRawSrtNotePath,
   createVaultScaffold, sessionExportKey,
@@ -80,10 +81,16 @@ interface AnkiCard {
   front: string;
   back: string;
   tags: string[];
+  /** F2-1: minuto de la lección donde se enseña («mm:ss»). Opcional. */
+  t?: string;
 }
 
 interface StudyContent {
   relevance: { score: number; reason: string };
+  /** C4: síntesis generativa (3-5 frases con palabras propias). */
+  summary?: string;
+  /** F2-2: conceptos enlazables entre cursos (nombres canónicos). */
+  conceptTerms?: string[];
   keyConcepts: string[];
   quickWin: string;
   questions: { q: string; bloom: string; difficulty: ConfidenceLevel; hint: string; answer: string; conceptRefs?: number[] }[];
@@ -233,7 +240,6 @@ const CARD_META: Record<CardType, { label: string; icon: IconName; color: string
   comparacion: { label: "Comparación", icon: "compare", color: "text-amber-400",   accent: "#fcd34d" },
   proceso:     { label: "Proceso",     icon: "steps", color: "text-fuchsia-400", accent: "#e879f9" },
 };
-const ANKI_NOTE_TYPE = "Subtitle Bridge Basic";
 
 const QUESTIONS_FOR: Record<ConfidenceLevel, ConfidenceLevel[]> = {
   confused: ["confused"],
@@ -439,6 +445,11 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
   const keyConcepts = Array.isArray(raw.keyConcepts)
     ? raw.keyConcepts.map((v) => asText(v)).filter(Boolean).slice(0, 4)
     : fallback.keyConcepts;
+  // C4/F2-2: summary y conceptTerms son opcionales y retrocompatibles.
+  const summary = typeof raw.summary === 'string' ? raw.summary.trim() : undefined;
+  const conceptTerms = Array.isArray(raw.conceptTerms)
+    ? raw.conceptTerms.map((v) => asText(v)).filter(Boolean).slice(0, 5)
+    : undefined;
   const questions = Array.isArray(raw.questions)
     ? raw.questions.slice(0, 4).map((item, i) => {
         const q = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
@@ -468,6 +479,7 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
         return {
           id: asText(card.id, `card-${String(i + 1).padStart(3, "0")}`),
           type: normalizeCardType(card.type, fb.type),
+          t: typeof card.t === 'string' && /^\d{1,2}:\d{2}$/.test(card.t) ? card.t : undefined,
           front: asText(card.front, fb.front),
           back: asText(card.back, fb.back),
           tags,
@@ -480,6 +492,8 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
       score: clampScore(relevance.score ?? fallback.relevance.score),
       reason: asText(relevance.reason, fallback.relevance.reason),
     },
+    summary,
+    conceptTerms,
     keyConcepts,
     quickWin: asText(raw.quickWin, fallback.quickWin),
     questions: questions.length >= 4 ? questions : fallback.questions,
@@ -853,60 +867,6 @@ function cardTextToHtml(s: string): string {
     .replace(/\n/g, "<br>");
 }
 
-function buildAnkiTxt(cards: AnkiCard[], course: string, lesson: string): string {
-  const cell = (s: string) => cardTextToHtml(s).replace(/\t/g, " ");
-  const lines = [
-    "#separator:tab",
-    "#html:true",
-    "#tags column:3",
-    `#notetype:${ANKI_NOTE_TYPE}`,
-    `#deck:${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}`,
-  ];
-  for (const c of cards) {
-    const tags = [...c.tags, c.type].map(t => t.replace(/\s+/g, "_")).join(" ");
-    lines.push(`${cell(c.front)}\t${cell(c.back)}\t${tags}`);
-  }
-  return lines.join("\n");
-}
-
-const ANKI_CSS = `.card {
-  font-family: "Plus Jakarta Sans", -apple-system, "Segoe UI", sans-serif;
-  font-size: 18px;
-  line-height: 1.55;
-  text-align: left;
-  color: #1c1b22;
-  background: #f7f6fb;
-  padding: 20px;
-}
-.nightMode .card, .night_mode .card { color: #ecebf3; background: #17161d; }
-.front { font-weight: 600; }
-.back { margin-top: 12px; }
-hr#answer { border: 0; border-top: 1px solid #d4c9ff; margin: 16px 0; }
-code { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 0.9em; padding: 1px 6px; border-radius: 6px; background: rgba(109, 74, 255, 0.12); color: #6d4aff; }
-pre { padding: 12px 14px; border-radius: 10px; background: rgba(109, 74, 255, 0.08); overflow-x: auto; }
-pre code { background: transparent; padding: 0; }
-`;
-
-function buildTemplateGuide(course: string, lesson: string): string {
-  return [
-    `PLANTILLA ANKI — ${ANKI_NOTE_TYPE}`,
-    `Curso: ${course}`,
-    `Lección: ${lesson}`,
-    "",
-    "1. En Anki: Herramientas → Gestionar tipos de nota → Añadir → «Básico».",
-    `2. Nómbralo exactamente: ${ANKI_NOTE_TYPE}`,
-    "3. Campos: Front, Back.",
-    "4. Tarjetas → Plantilla frontal:",
-    '   <div class="front">{{Front}}</div>',
-    "5. Plantilla trasera:",
-    '   {{FrontSide}}<hr id="answer"><div class="back">{{Back}}</div>',
-    "6. Estilo: pega el contenido de anki-card-styles.css.",
-    "7. Archivo → Importar → selecciona el .txt de tarjetas.",
-    "",
-    "Consejo: el paquete .apkg instala todo esto automáticamente.",
-  ].join("\n");
-}
-
 async function exportApkgFile(
   cards: AnkiCard[],
   course: string,
@@ -923,7 +883,7 @@ async function exportApkgFile(
       // GUID probado: hash de curso|lección|front — reimportar ACTUALIZA en vez de duplicar.
       guid: stableAnkiGuid(course, lesson, c),
       type: c.type,
-      tags: [...c.tags, c.type].map((t) => t.replace(/\s+/g, "_")),
+      tags: kinemaTags({ course, lesson, type: c.type, aiTags: c.tags }),
     })),
     course,
     lesson,
@@ -931,10 +891,10 @@ async function exportApkgFile(
     lessonUrl,
   );
   onProgress?.("Empaquetando tarjetas…");
-  const apkg = await buildAnkiApkg(spec, onProgress);
+  const apkg = await buildAnkiApkg(spec, onProgress, PRISM_MEDIA_FILES);
   const safe = (s: string) => s.replace(/[^a-z0-9]/gi, "_");
   downloadApkg(apkg, `${safe(lesson)}_conceptos.apkg`);
-  return `${sanitizeDeckSegment(root)}::${sanitizeDeckSegment(course)}::${sanitizeDeckSegment(lesson)}`;
+  return conceptDeckPath(root, course, lesson);
 }
 
 // GUID por contenido (curso|lección|front): reimportar la misma lección
@@ -1219,7 +1179,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [showCardPreview, setShowCardPreview]       = useState(false);
   const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
   const [apkgProgress, setApkgProgress]             = useState("");
-  const [txtSetupCourses, setTxtSetupCourses]       = useState<Set<string>>(new Set());
   const [showHint, setShowHint]                     = useState(false);
   const [showModelAnswer, setShowModelAnswer]       = useState(false);
   const [questionAnswers, setQuestionAnswers]       = useState<Record<number, string>>({});
@@ -1251,6 +1210,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
   const [createdMocs, setCreatedMocs]             = useState<string[]>([]);
   const [exportedNotes, setExportedNotes]                    = useState<string[]>([]);
+  const [obsidianExportedAt, setObsidianExportedAt]           = useState<number | null>(null);
 
   // Focus navigator (one step at a time)
   const [focusStep, setFocusStep] = useState(0);
@@ -1327,10 +1287,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       exportedNotesRef.current = notes;
       setExportedNotes(notes);
     }).catch(() => undefined);
-    void chromeLocalStorage.get(["agent_anki_txt_setup_courses"]).then((data) => {
-      const stored = data.agent_anki_txt_setup_courses;
-      if (alive && Array.isArray(stored)) setTxtSetupCourses(new Set(stored.map(String)));
-    });
     const unsubscribe = chromeLocalStorage.onChange(changes => {
       if ("obsidian_export_config" in changes) void loadObsidianExportConfig().then(config => { if (alive) setObsidianCfg(config); });
     });
@@ -2260,35 +2216,26 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setOralFeedback({ status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock });
   };
 
-  const handleExport = () => {
+  // C3: marca la sesión como exportada a OBSIDIAN, sin tocar exportedAt (que
+  // alimenta el «en Anki» del historial).
+  const persistObsidianAndComplete = () => {
     if (!content) return;
-    const courseKey = slugify(courseName);
-    const isFirst = !txtSetupCourses.has(courseKey);
-    const safe = (s: string) => s.replace(/[^a-z0-9]/gi, "_");
-    downloadFile(buildAnkiTxt(content.ankiCards, courseName, lessonName), `${safe(lessonName)}_tarjetas.txt`);
-    if (isFirst) {
-      setTimeout(() => downloadFile(ANKI_CSS, "anki-card-styles.css", "text/css"), 300);
-      setTimeout(() => downloadFile(buildTemplateGuide(courseName, lessonName), "PLANTILLA-ANKI.txt"), 600);
-      const next = Array.from(new Set([...txtSetupCourses, courseKey]));
-      setTxtSetupCourses(new Set(next));
-      void chromeLocalStorage.set({ agent_anki_txt_setup_courses: next });
-    }
-    setAnkiExported(true);
-    persistAnkiAndComplete();
-    celebrate({ type: "export_done", silent: completesSession(), rewardKey: `anki-txt::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Tarjetas exportadas!", subtitle: "Archivo TXT listo para importar en Anki", icon: <Download className="text-emerald-400" /> });
-  };
-
-  const handleDownloadTxtSetup = () => {
-    const courseKey = slugify(courseName);
-    downloadFile(ANKI_CSS, "anki-card-styles.css", "text/css");
-    setTimeout(() => downloadFile(buildTemplateGuide(courseName, lessonName), "PLANTILLA-ANKI.txt"), 300);
-    const next = Array.from(new Set([...txtSetupCourses, courseKey]));
-    setTxtSetupCourses(new Set(next));
-    void chromeLocalStorage.set({ agent_anki_txt_setup_courses: next });
-    toast.success("Setup TXT descargado", {
-      description: `Usa CSS + plantilla si necesitas reparar o recrear ${ANKI_NOTE_TYPE}.`,
-      icon: <Download className="text-emerald-400" size={18} />,
-    });
+    const cards: StoredAnkiCard[] = content.ankiCards.map(c => ({
+      id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
+    }));
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      studyContent: content as StoredStudyContent,
+      ankiCards: cards,
+      ankiCardsCount: cards.length,
+      questionsComplete: true,
+      conceptsAcknowledged: true,
+      focusStep: 4,
+      status: "completed",
+      obsidianExportedAt: Date.now(),
+    }).then(() => historyService.markCompleted(slugify(courseName), slugify(lessonName)))
+      .catch(err => console.error("[history] complete (obsidian)", err));
   };
 
   const persistAnkiAndComplete = () => {
@@ -2313,6 +2260,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
   const handleExportApkg = async () => {
     markQa("apkg-click");
+    const wasExported = ankiExported;
     if (!content || apkgStatus === "loading") { markQa("apkg-skip:" + (content ? "loading" : "no-content")); return; }
     setApkgStatus("loading");
     setApkgProgress("Iniciando…");
@@ -2325,6 +2273,14 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       setAnkiExported(true);
       markQa("apkg-done:" + deckName.slice(0, 60));
       persistAnkiAndComplete();
+      // A9: regenerar cambia los fronts, así que los GUID nuevos no reemplazan
+      // las tarjetas viejas. Aviso informativo, sin controles nuevos.
+      if (wasExported) {
+        toast.info("Ya exportaste otra versión de esta lección", {
+          description: "Anki conservará las anteriores. Si solo quieres las nuevas, borra el mazo de la lección antes de importar.",
+          duration: 12000,
+        });
+      }
       celebrate({ type: "anki_export", silent: completesSession(), rewardKey: `anki-apkg::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
       setTimeout(() => setApkgStatus("idle"), 4000);
     } catch (err) {
@@ -2370,6 +2326,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       objective: getActiveObjectiveText() || undefined,
       sourceUrl: typeof window !== "undefined" ? window.location.href : undefined,
       platform: "udemy",
+      ankiDeck: conceptDeckPath(vocabCfg.rootDeck || "Kinema", courseName, lessonName),
       content: content as ObsidianSessionData["content"],
     };
   };
@@ -2392,8 +2349,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     if (exportedNotesRef.current.includes(key)) {
       markQa("exportar-guard");
       toast.warning("Esta sesión ya fue exportada a Obsidian", {
-        description: "Reexportar crea una copia (\"nombre 1.md\"). «Copiar» te da el markdown sin duplicar.",
-        action: { label: "Exportar copia", onClick: () => doExportObsidian(data, false) },
+        description: "Reemplazar nota pisa también lo que hayas escrito en esa nota. «Copiar» te da el markdown sin tocar nada.",
+        action: { label: "Reemplazar nota", onClick: () => doExportObsidian(data, false, { overwrite: true }) },
         duration: 10000,
         icon: <BookMarked className="text-amber-400" size={18} />,
       });
@@ -2402,18 +2359,25 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     doExportObsidian(data, true);
   };
 
-  const doExportObsidian = (data: ObsidianSessionData, markExported: boolean) => {
+  const doExportObsidian = async (data: ObsidianSessionData, markExported: boolean, options: { overwrite?: boolean } = {}) => {
     try {
+      // C8: si va a viajar el SRT crudo, pedirlo ANTES de abrir la primera URI
+      // (el fetch es asíncrono y después perderíamos el gesto del clic).
+      const srt = obsidianCfg.includeRawSrt ? await fetchEnSrtForExport() : "";
       const result = exportSessionToObsidian(data, obsidianCfg, {
         createdMocs,
-        onMocCreated: (slug) => {
-          const next = [...createdMocs, slug];
+        onMocCreated: (key) => {
+          const next = [...createdMocs, key];
           setCreatedMocs(next);
           void saveCreatedMocs(next);
         },
+        overwrite: options.overwrite,
       });
       setObsidianStatus("done");
-      setAnkiExported(true); persistAnkiAndComplete();
+      // C3: exportar a Obsidian NO marca la lección como «en Anki» — estados
+      // separados. La sesión se da por completada igualmente.
+      setObsidianExportedAt(Date.now());
+      persistObsidianAndComplete();
       toast.success("Exportado a Obsidian", {
         description: result.mocPath
           ? `Nota: ${result.notePath} · MOC: ${result.mocPath}`
@@ -2430,12 +2394,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
 
       // SRT crudo → raw/ (material inmutable para el destilado posterior).
+      // El SRT ya se pidió antes de la primera URI (C8).
       if (obsidianCfg.includeRawSrt) {
-        void fetchEnSrtForExport().then((srt) => {
-          if (!srt) {
-            toast.info("SRT crudo no disponible todavía — raw/ omitido en esta exportación.");
-            return;
-          }
+        if (!srt) {
+          toast.info("SRT crudo no disponible todavía — raw/ omitido en esta exportación.");
+        } else {
           const rawPath = buildRawSrtNotePath(data.courseName, data.lessonName, { platform: "udemy" });
           openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
             path: rawPath,
@@ -2445,7 +2408,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             }),
           }));
           toast.success("SRT crudo guardado en raw/", { description: rawPath });
-        });
+        }
       }
     } catch (err) {
       setObsidianStatus("error");
@@ -2522,7 +2485,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     void saveObsidianExportConfig(next);
   };
 
-  const isFirstExport = !txtSetupCourses.has(slugify(courseName));
   // BUG FIX: only show apply if questionsComplete (not allQsAnswered with wrong ratings)
   const showApply = confidence !== null && questionsComplete;
 
@@ -4034,15 +3996,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                                 ? <><RefreshCw size={12}/>Reintentar</>
                                 : <><Package size={12}/>Exportar .apkg</>}
                         </button>
-                        <button onClick={handleExport} disabled={!showApply} className={`${exportGhostBtnCls} h-9`}>
-                          <FileDown size={12}/>.txt
-                        </button>
                       </div>
-                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                        {isFirstExport
-                          ? ".txt es manual: la primera vez de cada curso incluye CSS y plantilla."
-                          : ".txt usa el setup que ya creaste para este curso."}
-                      </p>
                       <div className="flex items-center gap-4">
                         <button onClick={() => setShowCardPreview(v => !v)} aria-expanded={showCardPreview}
                           className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
@@ -4072,38 +4026,15 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                                   "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
                                   "FSRS queda activado automáticamente en los dos presets al importar (sin pasos). Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
                                   "Tus demás mazos y tu preset Default NO se tocan nunca.",
-                                  `Audio del vocabulario (${vocabCfg.audioMode === "tts" ? "voz del sistema" : "archivos de calidad"}): cambia el modo en Configuración › Mazo de idiomas. Imagen y fonética las completa tu sistema de imágenes.`,
+                                  `Audio del vocabulario: usa el archivo si tu sistema externo lo generó (HyperTTS / edge-tts) y la voz del sistema de Anki si no. Imagen y fonética las completa tu sistema de imágenes.`,
                                 ].map((s, i) => (
                                   <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i + 1}. {s}</p>
                                 ))}
                               </div>
                               <div className="pt-2 border-t border-[var(--usb-divider)]" />
-                              {isFirstExport ? (
-                                <>
-                                  <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Guía TXT manual · solo si no usas .apkg</p>
-                                  {[
-                                    { file:"anki-card-styles.css", color:"text-[#d97706]", steps:[`Crea o selecciona el tipo ${ANKI_NOTE_TYPE}`,"Ábrelo con cualquier editor (Notepad, VS Code…)","Selecciona todo (Ctrl+A) y cópialo","En Anki: Cards → Styling","Selecciona todo, pega el CSS y guarda"] },
-                                    { file:"PLANTILLA-ANKI.txt",   color:"text-[#6d4aff]",   steps:[`En ${ANKI_NOTE_TYPE} → Cards`,"Ábrelo y ve al final del archivo","Anverso: selecciona todo → pega el bloque FRONT","Reverso: selecciona todo → pega el bloque BACK → guarda"] },
-                                    { file:`${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt`, color:"text-[#059669]", steps:["En Anki: Archivo → Importar → selecciona este archivo","Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar"] },
-                                  ].map(({ file, color, steps }) => (
-                                    <div key={file} className="space-y-1 pt-2 border-t border-[var(--usb-divider)]">
-                                      <p className={`font-mono text-[11px] ${color}`}>{file}</p>
-                                      {steps.map((s,i) => <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed pl-2">{i+1}. {s}</p>)}
-                                    </div>
-                                  ))}
-                                </>
-                              ) : (
-                                <>
-                                  <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>TXT manual · siguientes lecciones</p>
-                                  {["Archivo → Importar en Anki",`Selecciona "${lessonName.replace(/[^a-z0-9]/gi,"_")}_tarjetas.txt"`,"Verifica columnas: Front, Back, Tags | HTML activado","Clic en Importar y revisa el resumen antes de confirmar"].map((s,i) => (
-                                    <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i+1}. {s}</p>
-                                  ))}
-                                  <button onClick={handleDownloadTxtSetup}
-                                    className="w-full h-7 rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all">
-                                    <FolderPlus size={13}/>Descargar CSS + plantilla otra vez
-                                  </button>
-                                </>
-                              )}
+                              <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
+                                Doble clic en el archivo .apkg → Anki importa el mazo con su configuración. Si algo sale mal, vuelve a descargar el .apkg: las notas se actualizan por GUID, nunca se duplican.
+                              </p>
                             </div>
                           </motion.div>
                         )}

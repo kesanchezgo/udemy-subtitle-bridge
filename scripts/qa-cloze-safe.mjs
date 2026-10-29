@@ -11,8 +11,15 @@ import { chromium } from 'playwright';
 
 const { buildVocabModel } = await import('../src/app/services/ankiDesign.ts');
 
-// La plantilla real que viaja al .apkg, con los bloques de audio por defecto.
-const VOCAB_FRONT_TEMPLATE = buildVocabModel('field').templates[0].qfmt;
+// La plantilla real que viaja al .apkg. CLOZE_TEMPLATE=produce (default) usa
+// «Producir» (hueclo cloze); CLOZE_TEMPLATE=recognize usa «Reconocer»
+// (resaltado mark.target). Ambas envueltas/parametrizadas como en el .apkg.
+const WHICH = process.env.CLOZE_TEMPLATE === 'recognize' ? 0 : 1;
+let VOCAB_FRONT_TEMPLATE = buildVocabModel('en').templates[WHICH].qfmt;
+VOCAB_FRONT_TEMPLATE = VOCAB_FRONT_TEMPLATE.replace(/^\{\{#producir\}\}/, '').replace(/\{\{\/producir\}\}$/, '');
+const CONTAINER_ID = WHICH === 0 ? 'highlightContainer' : 'contextContainer';
+const OUTPUT_ID = WHICH === 0 ? 'highlightOutput' : 'clozeOutput';
+const GAP_SELECTOR = WHICH === 0 ? 'mark.target' : 'span.cloze-gap';
 
 // La plantilla trae {{word}}/{{sentence}} de Mustache: sustituir como lo hace
 // Anki al renderizar, con los valores de la tarjeta problemática.
@@ -38,18 +45,19 @@ page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 120)))
 await page.setContent(html, { waitUntil: 'load' });
 await page.waitForTimeout(500);
 
-const st = await page.evaluate(() => {
-  const out = document.getElementById('clozeOutput');
-  const container = document.getElementById('contextContainer');
+const st = await page.evaluate((ids) => {
+  const OUTPUT_ID = ids.outputId, CONTAINER_ID = ids.containerId, GAP_SELECTOR = ids.gapSelector;
+  const out = document.getElementById(OUTPUT_ID);
+  const container = document.getElementById(CONTAINER_ID);
   return {
     containerVisible: container ? container.style.display !== 'none' : null,
     html: out ? out.innerHTML : null,
     text: out ? out.textContent : null,
-    gaps: out ? out.querySelectorAll('span.cloze-gap').length : -1,
+    gaps: out ? out.querySelectorAll(GAP_SELECTOR).length : -1,
     xss: window.__xss === 1,
     tieneImg: out ? Boolean(out.querySelector('img')) : null,
   };
-});
+}, { outputId: OUTPUT_ID, containerId: CONTAINER_ID, gapSelector: GAP_SELECTOR });
 console.log('RESULTADO:', JSON.stringify(st, null, 1));
 console.log('alerts:', alerts.length);
 const expectVisible = process.env.CLOZE_EXPECT_VISIBLE !== 'no';
