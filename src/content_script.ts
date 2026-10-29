@@ -29,7 +29,7 @@ type OverlayConfig = {
 	offsetMs: number;
 	shadowStrength: number;
 	customPos: OverlayCustomPos;
-	showGlossary: boolean;
+	showGlossaryChip: boolean;
 };
 
 type CapturedCue = {
@@ -76,7 +76,7 @@ const DEFAULT_CONFIG: OverlayConfig = {
 	offsetMs: 0,
 	shadowStrength: 60,
 	customPos: null,
-	showGlossary: true
+	showGlossaryChip: true
 };
 
 const USB_TO_CONTENT_EVENT = 'usb_to_content';
@@ -2703,7 +2703,12 @@ function updateGlossChip() {
 		glossChipEl.style.display = 'none';
 		return;
 	}
-	if (currentConfig.showGlossary === false) {
+	try {
+		document.documentElement.dataset.usbGlossDebug = JSON.stringify({
+			chip: currentConfig.showGlossaryChip, time: getCurrentVideoTime(), gloss: lessonGlossary.length,
+		});
+	} catch {}
+	if (currentConfig.showGlossaryChip === false) {
 		glossChipEl.style.display = 'none';
 		return;
 	}
@@ -3339,6 +3344,8 @@ function bootstrap() {
 				textColor?: OverlayTone;
 				syncOffset?: number | number[];
 				customPos?: OverlayCustomPos;
+				/** Legado (configs/scripts anteriores al renombre showGlossaryChip). */
+				showGlossary?: boolean;
 			};
 
 			currentConfig = {
@@ -3359,12 +3366,23 @@ function bootstrap() {
 				offsetMs: typeof payload.offsetMs === 'number' ? payload.offsetMs : readNumber(payload.syncOffset, currentConfig.offsetMs),
 				shadowStrength: typeof payload.shadowStrength === 'number' ? payload.shadowStrength : currentConfig.shadowStrength,
 				customPos: payload.customPos === undefined ? currentConfig.customPos : readCustomPos(payload.customPos),
-				showGlossary: typeof payload.showGlossary === 'boolean' ? payload.showGlossary : currentConfig.showGlossary
+				// showGlossaryChip es el nombre real del payload; showGlossary se
+				// acepta como legado por configs/scripts viejos.
+				showGlossaryChip: typeof payload.showGlossaryChip === 'boolean'
+					? payload.showGlossaryChip
+					: typeof payload.showGlossary === 'boolean'
+						? payload.showGlossary
+						: currentConfig.showGlossaryChip
 			};
 			if (payload.customPos === null) {
 				lastSyncedOverlayPosKey = '';
 			}
 			applyOverlayStyle();
+			// El chip del glosario depende de showGlossaryChip: re-evaluarlo
+			// AHORA y no esperar al scan de 250 ms — si el video está pausado,
+			// el scan no cambia el texto y el interruptor parecería no hacer
+			// nada al volver a encenderlo.
+			updateGlossChip();
 			return;
 		}
 

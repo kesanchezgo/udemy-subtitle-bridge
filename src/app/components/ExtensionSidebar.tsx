@@ -16,7 +16,7 @@ import { DevTab } from "./DevTab";
 import { VocabularyMountContext } from "./SettingsSheet";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
-import { contentBridge } from "../services/contentBridge";
+import { contentBridge, type OverlayConfig } from "../services/contentBridge";
 import { KinemaBrand, FrameMarks } from "./AppLogo";
 import { Session } from "@supabase/supabase-js";
 import { useDockTheme } from "../contexts/ThemeContext";
@@ -594,7 +594,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     const t = setTimeout(() => {
       contentBridge.sendToContent({
         type: "OVERLAY_CONFIG_UPDATE",
-        payload: {
+        // Tipado contra OverlayConfig: si un campo del payload y el campo que
+        // lee el content script dejan de coincidir, tsc lo detecta (así no
+        // vuelve a pasar lo del glosario, que se mandaba con otro nombre).
+        payload: ({
           show: showOverlay,
           visible: showOverlay,
           enabled: showOverlay,
@@ -609,6 +612,11 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           syncOffset: syncOffset[0],
           showGlossaryChip,
           customPos: hasCustomPos ? { x: customPosX, y: customPosY } : null,
+        }) as Partial<OverlayConfig> & {
+          enabled?: boolean;
+          visible?: boolean;
+          tone?: OverlayConfig["textColor"];
+          offsetMs?: number;
         },
       });
       setSyncPulse(true);

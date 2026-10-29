@@ -523,7 +523,51 @@ if (REAL) {
 	await page.screenshot({ path: path.join(SHOTS, 'g-vocabulario.png') });
 }
 
-// ══ Cierre ════════════════════════════════════════════════════════════════════
+// ══ H. Glosario — el interruptor de Captions llega al content script ═════════
+section('H. Glosario — showGlossaryChip aceptado por el content script');
+// Bug: ExtensionSidebar enviaba showGlossaryChip y el content script leía
+// showGlossary — el interruptor no hacía nada sobre el video. El contrato se
+// verifica con el breadcrumb del content script (data-usb-gloss-debug, que
+// updateGlossChip refresca con el flag ACEPTADO, el tiempo del video y el
+// tamaño del glosario) — exactamente el estado del que depende el chip.
+if (REAL) {
+	console.log('  · omitido en modo REAL (requiere la sesión sembrada del clon)');
+} else {
+	const glossDebug = () => page.evaluate(() => {
+		try { return JSON.parse(document.documentElement.dataset.usbGlossDebug || 'null'); }
+		catch { return null; }
+	});
+	// Glosario con contenido (el chip depende de que haya palabras).
+	await page.evaluate(() => {
+		window.dispatchEvent(new CustomEvent('usb_to_content', {
+			detail: { type: 'GLOSSARY_UPDATE', payload: { words: [{ word: 'platform', meaning: 'plataforma' }] } },
+		}));
+	});
+	await page.waitForTimeout(600);
+	const seeded = await glossDebug();
+	check('GLOSSARY_UPDATE aceptado (glosario con 1 entrada)', Boolean(seeded) && seeded.gloss === 1, JSON.stringify(seeded));
+	// OFF por el MISMO canal que usa el interruptor: el flag aceptado debe caer.
+	await page.evaluate(() => {
+		window.dispatchEvent(new CustomEvent('usb_to_content', {
+			detail: { type: 'OVERLAY_CONFIG_UPDATE', payload: { showGlossaryChip: false } },
+		}));
+	});
+	await page.waitForTimeout(700);
+	const off = await glossDebug();
+	check('glosario OFF: showGlossaryChip=false aceptado por el content script', Boolean(off) && off.chip === false, JSON.stringify(off));
+	// ON de nuevo: el flag vuelve (y updateGlossChip re-evalúa el chip al instante).
+	await page.evaluate(() => {
+		window.dispatchEvent(new CustomEvent('usb_to_content', {
+			detail: { type: 'OVERLAY_CONFIG_UPDATE', payload: { showGlossaryChip: true } },
+		}));
+	});
+	await page.waitForTimeout(700);
+	const on = await glossDebug();
+	check('glosario ON: showGlossaryChip=true aceptado de nuevo', Boolean(on) && on.chip === true, JSON.stringify(on));
+	await page.screenshot({ path: path.join(SHOTS, 'h-glosario.png') });
+}
+
+// ══ Cierre// ══ Cierre// ══ Cierre ════════════════════════════════════════════════════════════════════
 section('Errores de consola');
 // El bloqueo de protocolos externos es esperado y es la prueba de que la URI se
 // emitió: sin Obsidian instalado, Chrome rechaza obsidian:// y lo registra.
