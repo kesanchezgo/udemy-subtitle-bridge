@@ -144,7 +144,10 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
     if (!redownload && vocabularyCriteriaKey(current.config) !== vocabularyCriteriaKey(config)) throw new Error("Actualiza las candidatas para aplicar la configuración nueva.");
     if (!words.length) throw new Error("Selecciona al menos una palabra nueva.");
     if (!redownload && words.length > snapshot.maxWords) throw new Error("La selección supera el máximo configurado.");
-    const { spec, deckPath } = buildVocabularySpec(words, current.course, current.lesson, snapshot);
+    // Fuente enlazable: la misma URL que usa el export de conceptos. Sin URL
+    // (preview/local), el campo va vacío y la plantilla lo oculta.
+    const lessonUrl = /^https?:/.test(window.location.href) ? window.location.href : undefined;
+    const { spec, deckPath } = buildVocabularySpec(words, current.course, current.lesson, snapshot, lessonUrl);
     const apkg = await buildAnkiApkg(spec);
     downloadApkg(apkg, `${current.lesson.replace(/[^a-z0-9]/gi, "_")}_vocabulario_${snapshot.targetLang}.apkg`);
     if (!redownload) {

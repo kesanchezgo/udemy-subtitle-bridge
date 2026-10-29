@@ -1,4 +1,5 @@
 import { fieldCls, textareaCls } from "./settings/SettingsKit";
+import { TIMED_TRANSCRIPT } from "../../shared/prompts";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Target, Sparkles, Wand2, Check, Edit3, ArrowRight, Brain,
@@ -479,7 +480,9 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
         return {
           id: asText(card.id, `card-${String(i + 1).padStart(3, "0")}`),
           type: normalizeCardType(card.type, fb.type),
-          t: typeof card.t === 'string' && /^\d{1,2}:\d{2}$/.test(card.t) ? card.t : undefined,
+          // Gate F2-1: sin transcripción temporizada, cualquier t del modelo
+          // es inventada — se descarta siempre.
+          t: TIMED_TRANSCRIPT && typeof card.t === 'string' && /^\d{1,2}:\d{2}$/.test(card.t) ? card.t : undefined,
           front: asText(card.front, fb.front),
           back: asText(card.back, fb.back),
           tags,
