@@ -291,6 +291,26 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 	// GUID estable ante reexport del mismo lema en otra lección (misma palabra → misma nota)
 	const { spec: spec2 } = buildVocabularySpec(freshWords, COURSE, '02 — Otra Lección', DEFAULT_VOCAB_CONFIG);
 	check('reexport en otra lección conserva GUID (update, no duplicado)', spec2.notes[0].guid === note.guid);
+
+	// Guarda estructural del formato media (bug hallado importando en Anki
+	// real): las claves de la tabla media deben existir como entradas
+	// NUMÉRICAS del zip, y ningún archivo debe aparecer bajo su nombre real.
+	{
+		const { addApkgEntries } = await import('../src/app/services/ankiApkgCore.ts');
+		const zipCheck = new JSZip();
+		addApkgEntries(zipCheck, new Uint8Array(10), [
+			{ name: '_kinema-prism-v1.js', data: 'PRISM_JS_BYTES' },
+			{ name: '_kinema-prism-v1.css', data: 'PRISM_CSS_BYTES' },
+		]);
+		const mediaTable = JSON.parse(await zipCheck.file('media').async('string'));
+		const keys = Object.keys(mediaTable);
+		check('media: cada clave existe como entrada NUMÉRICA del zip',
+			keys.length === 2 && keys.every((k) => zipCheck.file(k) !== null), JSON.stringify(keys));
+		check('media: ningún archivo bajo su nombre real (formato Anki)',
+			keys.every((k) => zipCheck.file(mediaTable[k]) === null), JSON.stringify(keys));
+		const entry0 = await zipCheck.file('0').async('string');
+		check('la entrada 0 contiene el contenido del media 0', entry0 === 'PRISM_JS_BYTES');
+	}
 	col.db.close();
 }
 

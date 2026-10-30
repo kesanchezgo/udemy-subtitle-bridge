@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Kinema \u2014 by Kivara",
   "description": "Traduce subt\u00edtulos de Udemy al espa\u00f1ol conservando la jerga t\u00e9cnica en ingl\u00e9s. Estudia con IA, notas y flashcards.",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "permissions": [
     "storage",
     "activeTab",

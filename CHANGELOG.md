@@ -1,3 +1,13 @@
+## [1.4.1] — 2026-10-29
+
+### Corrección crítica
+- El .apkg de LECCIÓN (conceptos) no importaba en Anki real: los archivos de
+  media de Prism se guardaban en el zip bajo su nombre real en vez de bajo su
+  número («0», «1»…). Hallado importando en Anki Desktop (AnkiConnect).
+  El empaquetado vive ahora en addApkgEntries (ankiApkgCore.ts, función pura
+  compartida por la extensión y el QA). Verificado: conceptos + Prism
+  importan sin error y los 2 archivos aparecen en collection.media.
+
 ## [1.4.0] — 2026-10-29
 
 ### Anki · Conceptos

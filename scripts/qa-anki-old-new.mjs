@@ -73,22 +73,18 @@ const PRISM_MEDIA = [
 ];
 
 function assembleApkg(spec, media) {
+	// addApkgEntries es el EMPAQUETADOR DE PRODUCCIÓN (ankiApkgCore.ts): el QA
+	// usa exactamente el mismo código que la extensión.
 	return buildCollectionBuffer(spec, SQL).then((sqliteData) => {
-		const zip = new JSZip();
-		zip.file('collection.anki2', sqliteData);
-		const mediaMap = {};
-		media.forEach((entry, index) => {
-			mediaMap[String(index)] = entry.name;
-			zip.file(String(index), entry.data);
-		});
-		zip.file('media', JSON.stringify(mediaMap));
-		return zip.generateAsync({ type: 'uint8array' });
+		const zip = new (require("jszip"))();
+		addApkgEntries(zip, sqliteData, media);
+		return zip.generateAsync({ type: "uint8array" });
 	});
 }
 
 // Palabras del fixture de qa-anki-decks (mismos GUIDs que el lote viejo).
 const { buildVocabularySpec: bvsRepo, DEFAULT_VOCAB_CONFIG: dvcRepo } = await import('../src/app/services/vocabularyService.ts');
-const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { addApkgEntries, buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
 const { createRequire: cr2 } = await import('node:module');
 const req2 = cr2(import.meta.url);
 const initSqlJs = req2('sql.js');
@@ -217,6 +213,32 @@ for (const card of (await call('cardsInfo', { cards: renderInfo.cards }))) {
 }
 await browser.close();
 console.log('  capturas:', shots.map((s) => path.basename(s)).join(', '));
+
+// ── D2. Ruta de producción: concept .apkg con media Prism ────────────────────
+console.log('\n══ D2. Ruta de producción: conceptos + Prism en Anki ══');
+{
+	// buildAnkiApkg (la ruta REAL de la extensión) no se importa en Node por
+	// sus ?raw de prismjs. En su lugar: buildCollectionBuffer + addApkgEntries
+	// (la función pura que AHORA usa buildAnkiApkg) — el mismo empaquetador.
+	const { buildConceptSpec } = await import('../src/app/services/ankiDesign.ts');
+	const conceptCards = [
+		{ front: '¿Qué produce <code>javac</code>?', back: '<p>Bytecode en <code>.class</code></p><pre><code class="language-java">javac App.java</code></pre>', guid: 'usbqa-concept-1', tags: ['kinema::curso::qa', 'kinema::tipo::concepto'], type: 'concepto' },
+	];
+	const conceptSpec = buildConceptSpec(
+		conceptCards.map((c) => ({ ...c, tags: c.tags })),
+		'USB QA — Curso de Prueba', '01 — Lección de Prueba', 'Kinema', 'https://www.udemy.com/course/qa/learn/lecture/42',
+	);
+	const conceptBuf = await assembleApkg(conceptSpec, PRISM_MEDIA);
+	const conceptPath = path.resolve('tmp/qa-concept-production.apkg').split('\\').join('/');
+	fs.writeFileSync(conceptPath, conceptBuf);
+	await call('importPackage', { path: conceptPath });
+	console.log('  ✓ .apkg de conceptos (con media Prism) importado sin error');
+	const conceptNids = await call('findNotes', { query: `deck:"${ROOT_QA}::Courses"` });
+	check('las notas de concepto existen tras el import', conceptNids.length >= 1, String(conceptNids.length));
+	const mediaNames = await call('getMediaFilesNames', { pattern: '_kinema-prism*' });
+	check('los 2 archivos de Prism en collection.media (ruta de producción)',
+		mediaNames.includes('_kinema-prism-v1.js') && mediaNames.includes('_kinema-prism-v1.css'), JSON.stringify(mediaNames));
+}
 
 // ── E. Limpieza (SOLO el árbol QA) ───────────────────────────────────────────
 console.log('\n══ E. Limpieza (solo el árbol Kinema de QA) ══');
