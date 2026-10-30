@@ -58,6 +58,49 @@ export interface ApkgNoteSpec {
 	tags?: string[];
 }
 
+/**
+ * Un archivo de media para el .apkg. `data` puede ser texto (JS/CSS) o bytes.
+ */
+export interface ApkgMediaFile {
+	name: string;
+	data: string | Uint8Array;
+}
+
+/**
+ * Subconjunto de JSZip que addApkgEntries necesita. Evita depender de JSZip
+ * en el núcleo puro: la extensión pasa su JSZip real y los scripts de QA
+ * pasan el mismo, así que el código empaquetador es EXACTAMENTE el de
+ * producción en ambos casos.
+ */
+export interface ApkgZipLike {
+	file(name: string, data: string | Uint8Array, options?: Record<string, unknown>): unknown;
+}
+
+/**
+ * Ensambla las entradas del .apkg sobre un zip existente: collection.anki2 +
+ * los archivos de media + su tabla.
+ *
+ * CRÍTICO: Anki espera cada archivo de media bajo su NÚMERO ("0", "1", …) en
+ * el zip, con la tabla `media` mapeando número → nombre real. Guardar el
+ * archivo bajo su nombre rompe el import con "There is no item named '0' in
+ * the archive" — bug hallado importando en Anki Desktop real (el chequeo
+ * estructural que solo lee la tabla no lo detecta).
+ */
+export function addApkgEntries(
+	zip: ApkgZipLike,
+	sqlite: Uint8Array,
+	media: ApkgMediaFile[],
+	fileOptions?: Record<string, unknown>,
+): void {
+	zip.file('collection.anki2', sqlite, fileOptions);
+	const mediaMap: Record<string, string> = {};
+	media.forEach((entry, index) => {
+		mediaMap[String(index)] = entry.name;
+		zip.file(String(index), entry.data, fileOptions);
+	});
+	zip.file('media', JSON.stringify(mediaMap), fileOptions);
+}
+
 export interface ApkgSpec {
 	decks: ApkgDeckSpec[];
 	models: ApkgModelSpec[];
