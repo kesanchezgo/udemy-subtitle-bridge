@@ -17,7 +17,8 @@ const initSqlJs = require('sql.js');
 const JSZip = require('jszip');
 
 const NEW = await import('../src/app/services/ankiDesign.ts');
-const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { addApkgEntries, buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { loadPrismMedia } = await import('./prism-media.mjs');
 
 async function call(action, params = {}) {
 	const res = await fetch('http://127.0.0.1:8765', { method: 'POST', body: JSON.stringify({ action, version: 6, params }) });
@@ -94,8 +95,7 @@ const spec = {
 
 const sqlite = await buildCollectionBuffer(spec, await initSqlJs());
 const zip = new JSZip();
-zip.file('collection.anki2', sqlite);
-zip.file('media', '{}');
+addApkgEntries(zip, sqlite, loadPrismMedia());
 const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 const apkg = path.resolve('tmp/design-demo.apkg').replace(/\\/g, '/');
 fs.mkdirSync(path.dirname(apkg), { recursive: true });

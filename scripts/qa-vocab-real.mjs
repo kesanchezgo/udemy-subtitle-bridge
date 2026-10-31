@@ -70,12 +70,12 @@ const { spec, deckPath } = buildVocabularySpec(final_, COURSE, LESSON, config);
 // ankiApkg.ts importa 'sql.js/dist/sql-wasm.wasm?url' (sintaxis Vite): en Node
 // se compone el .apkg con el core puro + jszip, el MISMO código de producción
 // que la extensión usa dentro de buildAnkiApkg.
-const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { addApkgEntries, buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { loadPrismMedia } = await import('./prism-media.mjs');
 const sqlite = await buildCollectionBuffer(spec, await initSqlJs());
 const JSZipMod = require('jszip');
 const zip = new JSZipMod();
-zip.file('collection.anki2', sqlite);
-zip.file('media', '{}');
+addApkgEntries(zip, sqlite, loadPrismMedia());
 const apkg = await zip.generateAsync({ type: 'nodebuffer' });
 fs.mkdirSync('tmp', { recursive: true });
 fs.writeFileSync('tmp/qa-vocab-real.apkg', apkg);

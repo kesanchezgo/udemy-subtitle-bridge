@@ -31,7 +31,8 @@ const require = createRequire(import.meta.url);
 const initSqlJs = require('sql.js');
 const JSZip = require('jszip');
 
-const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { addApkgEntries, buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { loadPrismMedia } = await import('./prism-media.mjs');
 const {
 	CONCEPT_MODEL,
 	COURSES_PRESET,
@@ -66,8 +67,7 @@ function check(name, condition, detail = '') {
 
 async function zipApkg(sqliteData) {
 	const zip = new JSZip();
-	zip.file('collection.anki2', sqliteData);
-	zip.file('media', '{}');
+	addApkgEntries(zip, sqliteData, loadPrismMedia());
 	return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 

@@ -18,7 +18,8 @@ const JSZip = require('jszip');
 
 const NEW = await import('../src/app/services/ankiDesign.ts');
 const OLD = await import('../tmp/ankiDesign-old.ts');
-const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { addApkgEntries, buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { loadPrismMedia } = await import('./prism-media.mjs');
 const { stableGuid } = await import('../src/app/services/ankiDesign.ts');
 
 async function call(action, params = {}) {
@@ -30,8 +31,7 @@ async function call(action, params = {}) {
 
 async function zipApkg(sqliteData) {
 	const zip = new JSZip();
-	zip.file('collection.anki2', sqliteData);
-	zip.file('media', '{}');
+	addApkgEntries(zip, sqliteData, loadPrismMedia());
 	return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
@@ -56,6 +56,26 @@ const vocabWord = {
 	sentenceTranslation: 'Muchos equipos ignoran este escollo común antes de lanzar software a producción.',
 };
 
+// Campos derivados del note type de cada variante: el diseño ANTERIOR tiene
+// 4 campos de concepto y 9 de vocabulario; el NUEVO añade 'Tipo' y los extras
+// (nivel/colocacion/fuente/producir). Contenido idéntico, rellenado por nombre.
+const conceptFields = (model) => {
+	const base = [conceptCard.front, conceptCard.back, '01 · Lección de prueba', '<a href="#">▶ Repasar esta lección</a>'];
+	return model.fields.map((f, i) => (i < base.length ? base[i] : f === 'Tipo' ? 'concepto' : ''));
+};
+const vocabFields = (model) => {
+	const base = [
+		vocabWord.word, vocabWord.phonetic, vocabWord.sentence, vocabWord.sentenceTranslation,
+		`(${vocabWord.pos}) ${vocabWord.meaning}`, vocabWord.monolingual, '', '', '',
+	];
+	return model.fields.map((f, i) => {
+		if (i < base.length) return base[i];
+		if (f === 'nivel') return vocabWord.level;
+		if (f === 'producir') return '1';
+		return '';
+	});
+};
+
 function buildSpec(modelConcept, modelVocab, branchLabel) {
 	const cDeck = CONCEPT_DECK(branchLabel);
 	const vDeck = VOCAB_DECK(branchLabel);
@@ -72,16 +92,13 @@ function buildSpec(modelConcept, modelVocab, branchLabel) {
 			{
 				modelName: modelConcept.name, deck: cDeck,
 				guid: stableGuid(`cmp-${branchLabel}|concepto|${conceptCard.front}`),
-				fields: [conceptCard.front, conceptCard.back, '01 · Lección de prueba', '<a href="#">▶ Repasar esta lección</a>', 'concepto'],
+				fields: conceptFields(modelConcept),
 				tags: conceptCard.tags,
 			},
 			{
 				modelName: modelVocab.name, deck: vDeck,
 				guid: stableGuid(`cmp-${branchLabel}|vocab|${vocabWord.word}`),
-				fields: [
-					vocabWord.word, vocabWord.phonetic, vocabWord.sentence, vocabWord.sentenceTranslation,
-					`(${vocabWord.pos}) ${vocabWord.meaning}`, vocabWord.monolingual, '', '', '',
-				],
+				fields: vocabFields(modelVocab),
 				tags: ['cefr::c1'],
 			},
 		],

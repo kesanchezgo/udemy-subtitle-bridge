@@ -44,7 +44,8 @@ const check = (name, ok, detail = '') => {
 };
 
 // ── construir los dos .apkg con el código de producción ──────────────────────
-const { buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { addApkgEntries, buildCollectionBuffer } = await import('../src/app/services/ankiApkgCore.ts');
+const { loadPrismMedia } = await import('./prism-media.mjs');
 const SQL = await initSqlJs();
 
 const lessonUrl = 'https://www.udemy.com/course/qa/learn/lecture/1';
@@ -67,8 +68,7 @@ const { spec: vocabSpec } = buildVocabularySpec(vocabWords, COURSE, ISSUE, {
 
 async function toApkg(spec) {
 	const zip = new JSZip();
-	zip.file('collection.anki2', await buildCollectionBuffer(spec, SQL));
-	zip.file('media', '{}');
+		addApkgEntries(zip, await buildCollectionBuffer(spec, SQL), loadPrismMedia());
 	return zip.generateAsync({ type: 'nodebuffer' });
 }
 
