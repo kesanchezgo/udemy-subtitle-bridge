@@ -19,7 +19,7 @@ import { chromium } from 'playwright';
 const OUT = 'tmp/redesign-shots';
 const distDir = path.resolve('dist');
 const repoRoot = process.cwd();
-const MODEL = process.env.USB_MODEL || 'cline-free/mimo-v2.6-flash';
+const MODEL = process.env.USB_MODEL || 'qoder/qwen3.8-flash';
 
 const COURSE = 'Java Programming Bootcamp: Spring Boot & REST APIs';
 const LESSON = 'Platform Independence in Java';

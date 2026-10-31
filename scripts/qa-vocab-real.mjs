@@ -16,7 +16,7 @@ const initSqlJs = require("sql.js");
 const { buildVocabularyPrompt } = await import('../src/shared/prompts.ts');
 const { buildVocabularySpec, parseVocabularyPayload } = await import('../src/app/services/vocabularyService.ts');
 
-const MODEL = process.env.USB_MODEL || 'cline-free/mimo-v2.6-flash';
+const MODEL = process.env.USB_MODEL || 'qoder/qwen3.8-flash';
 const COURSE = 'Java In-Depth: Become a Complete Java Engineer! [2026]';
 const LESSON = '8. Platform Dependency + Demo';
 
