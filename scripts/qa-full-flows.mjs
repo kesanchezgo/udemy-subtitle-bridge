@@ -190,26 +190,10 @@ const RECORD = {
 
 /** Siembra el historial/vocab/proveedor vía el SW (reutilizable: la sección E
  *  re-siembra porque el Reiniciar del flujo limpia el registro con clearProgress). */
-async function writeSeedViaSw(opts = {}) {
+async function writeSeedViaSw() {
 	const svc = context.serviceWorkers().at(-1)
 		?? await context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
 	if (!svc) throw new Error('SW no disponible para el seed');
-	// D.4: variante v2 con tarjetas de refuerzo — restauración directa a Fijar
-	// con chips «Refuerzo» que ejercitan los tokens AA del §1.
-	const record = opts.reinforceCards
-		? {
-			...RECORD,
-			flowVersion: 2,
-			focusStep: 3,
-			finishedAt: RECORD.updatedAt,
-			questionsDone: true,
-			ankiCards: RECORD.ankiCards.map((c, i) => ({
-				...c,
-				conceptRefs: [i],
-				reinforce: true,
-			})),
-		}
-		: RECORD;
 	await Promise.race([
 		svc.evaluate(({ record, qaPort }) => new Promise((resolve, reject) => {
 			chrome.storage.local.set({
@@ -232,7 +216,7 @@ async function writeSeedViaSw(opts = {}) {
 				if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
 				resolve();
 			});
-		}), { record, qaPort: QA_PORT }),
+		}), { record: RECORD, qaPort: QA_PORT }),
 		new Promise((_, rej) => setTimeout(() => rej(new Error('seed timeout')), 15000)),
 	]);
 	await Promise.race([
@@ -313,8 +297,6 @@ const consoleErrors = [];
 const nativeDialogs = [];
 page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 140)));
 page.on('dialog', (d) => { nativeDialogs.push(d.message()); d.dismiss().catch(() => {}); });
-const d4Traces = [];
-page.on('console', (m) => { if (/d4trace/.test(m.text())) d4Traces.push(m.text().slice(0, 160)); });
 page.on('console', (m) => {
 	if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 140));
 });
@@ -613,7 +595,7 @@ if (await apkgBtn.count().catch(() => 0)) {
 }
 
 // ── D.1 — flujo mínimo: nivel → 1 respuesta → Hacerlo después → Terminar ───
-// Lección NUEVA: Reiniciar (aceptando la confirmación nativa) lleva a objetivo.
+// Lección NUEVA: Reiniciar (confirmando en el dock) lleva a objetivo.
 const MIN_LESSON = 'Flujo minimo QA';
 await clickInShadow(/Reiniciar/);
 await page.waitForTimeout(400);
@@ -820,10 +802,26 @@ await page.waitForTimeout(500);
 const recAfterCancel = await readHistoryRecord(SKIP_LESSON);
 check('«Cancelar» no borra el progreso (questionsDone sigue en true)',
 	Boolean(recAfterCancel?.questionsDone), String(Boolean(recAfterCancel)));
-await page.waitForTimeout(5500); // sin acción: la confirmación se revierte sola a los 5 s
+// v1.5.2: el foco vuelve al botón «Reiniciar» al cancelar.
+const focusAfterCancel = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	return (root?.activeElement ?? null)?.textContent?.trim() ?? '(sin foco)';
+});
+check('el foco vuelve al botón «Reiniciar» tras «Cancelar»',
+	/^Reiniciar$/.test(focusAfterCancel), focusAfterCancel);
+// Temporizador real: segunda confirmación y 5,5 s SIN tocar nada.
+await clickInShadow(/Reiniciar/);
+await page.waitForTimeout(500);
+const d3txt2 = await shadow();
+check('la segunda confirmación aparece («¿Borrar respuestas?»)',
+	/¿Borrar respuestas\??/.test(d3txt2), d3txt2.slice(0, 140));
+await page.waitForTimeout(5500);
 const d3back = await shadow();
-check('tras 5,5 s sin acción vuelve el botón «Reiniciar»',
+check('tras 5,5 s sin tocar nada vuelve «Reiniciar» y desaparece la confirmación',
 	/Reiniciar/.test(d3back) && !/¿Borrar respuestas\??/.test(d3back), d3back.slice(0, 180));
+const recAfterTimer = await readHistoryRecord(SKIP_LESSON);
+check('revertirse sola no borra nada (questionsDone sigue en true)',
+	Boolean(recAfterTimer?.questionsDone), String(Boolean(recAfterTimer)));
 await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') });
 
 } // fin del bloque D (solo modo CLON)

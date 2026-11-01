@@ -1245,15 +1245,38 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   // no sigue los temas y dentro de Udemy bloquea página y vídeo.
   const [confirmingReset, setConfirmingReset]       = useState(false);
   const confirmingResetTimerRef                     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resetBtnRef                                 = useRef<HTMLButtonElement>(null);
+  const confirmGroupRef                             = useRef<HTMLSpanElement>(null);
+  const restoreResetFocusRef                        = useRef(false);
   useEffect(() => () => {
     if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
   }, []);
+  // v1.5.2: Cancelar, Escape y el temporizador de 5 s pasan por AQUÍ. Si el
+  // foco seguía dentro del grupo de confirmación, vuelve al botón «Reiniciar»
+  // (quien navegaba con teclado/lector no pierde su sitio en el header).
+  const closeResetConfirm = () => {
+    const root = confirmGroupRef.current?.getRootNode() as Document | ShadowRoot | undefined;
+    const active = root?.activeElement ?? null;
+    if (confirmGroupRef.current && active && confirmGroupRef.current.contains(active as Node)) {
+      restoreResetFocusRef.current = true;
+    }
+    if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
+    setConfirmingReset(false);
+  };
   // Escape cancela la confirmación (además del botón «Cancelar»).
   useEffect(() => {
     if (!confirmingReset) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setConfirmingReset(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeResetConfirm(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  });
+  // Restauración del foco al desmontar el grupo de confirmación.
+  useEffect(() => {
+    if (confirmingReset) return;
+    if (restoreResetFocusRef.current) {
+      restoreResetFocusRef.current = false;
+      resetBtnRef.current?.focus();
+    }
   }, [confirmingReset]);
   const [showInterviewAnswer, setShowInterviewAnswer] = useState(false);
   const [oralAnswer, setOralAnswer]                 = useState("");
@@ -3438,7 +3461,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     </span>
                   )}
                   {confirmingReset ? (
-                    <span role="group" aria-label="Confirmar reinicio" className="inline-flex items-center gap-1.5">
+                    <span ref={confirmGroupRef} role="group" aria-label="Confirmar reinicio" className="inline-flex items-center gap-1.5">
                       <span className="text-[10px] font-medium text-[var(--usb-fg-mid)]">¿Borrar respuestas?</span>
                       <button
                         onClick={() => {
@@ -3452,10 +3475,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       </button>
                       <button
                         autoFocus
-                        onClick={() => {
-                          if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
-                          setConfirmingReset(false);
-                        }}
+                        onClick={closeResetConfirm}
                         className="text-[10px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors"
                       >
                         Cancelar
@@ -3463,10 +3483,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     </span>
                   ) : (
                     <button
+                      ref={resetBtnRef}
                       onClick={() => {
                         setConfirmingReset(true);
                         if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
-                        confirmingResetTimerRef.current = setTimeout(() => setConfirmingReset(false), 5000);
+                        confirmingResetTimerRef.current = setTimeout(() => closeResetConfirm(), 5000);
                       }}
                       title="¿Reiniciar? Se borran tus respuestas de esta lección"
                       className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)] hover:text-violet-400 transition-colors font-medium"

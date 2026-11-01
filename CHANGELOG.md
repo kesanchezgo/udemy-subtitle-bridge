@@ -1,3 +1,7 @@
+## [1.5.2] — 2026-11-01
+
+- El foco vuelve a «Reiniciar» al cancelar la confirmación (Cancelar, Escape y el temporizador de 5 s comparten `closeResetConfirm`; si el foco seguía en el grupo, se restaura — quien navega con teclado no pierde su sitio).
+
 ## [1.5.1] — 2026-11-01
 
 - Contraste AA en claro: paleta semántica con tokens (`--usb-ok/err/info/retry/accent-text`) en claro y oscuro; los textos de estado (ámbar, esmeralda, rosa/rojo, sky, fucsia, violet-200) usan el token de su familia en vez de tonos 600 que no llegaban a 4.5:1. Fondos y bordes intactos.
@@ -6,6 +10,7 @@
 - El indicador de subtítulos dice «Vista previa sin extensión · Se usará una sesión de ejemplo» fuera del runtime y la píldora «N líneas» solo aparece con subtítulos reales.
 - Eliminada la barra en bucle de «Preparando tu sesión» (sin animaciones infinitas; el chip «Generando…» y el spinner del paso activo bastan).
 - La confirmación de «Reiniciar» ocurre dentro del dock («¿Borrar respuestas? · Sí, reiniciar · Cancelar», se revierte sola a los 5 s, Escape cancela) en vez del diálogo nativo.
+
 ## [1.5.0] — 2026-10-31
 
 ### Study · flujo flowVersion 2 (4 pasos, un solo modo)
