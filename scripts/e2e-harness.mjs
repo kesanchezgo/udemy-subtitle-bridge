@@ -159,8 +159,16 @@ const expectations = [
 ];
 for (const { t, expect } of expectations) {
   await page.evaluate((sec) => window.__seek(sec), t);
-  await page.waitForTimeout(700);
-  const s = await readOverlay();
+  // Al cambiar de línea el subtítulo desaparece un instante (el cue se
+  // vacía hasta el siguiente timeupdate): esperar a que APAREZCA el texto
+  // esperado antes de medirlo, en vez de una espera fija. No era un fallo
+  // de la aplicación.
+  let s = await readOverlay();
+  const deadline = Date.now() + 3000;
+  while (!(s.text && s.text.includes(expect)) && Date.now() < deadline) {
+    await page.waitForTimeout(150);
+    s = await readOverlay();
+  }
   const ok = s.text && s.text.includes(expect);
   if (!ok) mismatches += 1;
   console.log(`  ${ok ? '✓' : '✗'} t=${t}s -> "${s.text}"`);
