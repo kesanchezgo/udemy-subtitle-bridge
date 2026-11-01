@@ -103,6 +103,9 @@ export interface StoredAnkiCard {
   back: string;
   tags?: string[];
   type?: string;            // concepto | aplicacion | codigo | entrevista | comparacion | proceso
+  conceptRefs?: number[];   // índices de keyConcepts que evalúa (para tarjetas de refuerzo)
+  reinforce?: boolean;      // tarjeta de refuerzo generada desde un fallo de Study
+  excluded?: boolean;       // el estudiante la quitó del paquete (no se exporta)
 }
 
 export interface StoredStudyQuestion {
@@ -136,17 +139,31 @@ export interface LectureHistoryRecord {
   confidence?: ConfidenceLevel;      // paso 3 — "¿Lo sé?"
   checkedConceptIndexes?: number[];  // paso 2 — conceptos que el estudiante dice entender
   conceptsAcknowledged?: boolean;    // permite continuar incluso con 0 conceptos marcados
-  questionsComplete?: boolean;       // paso 3 desbloqueado aunque no haya respuestas correctas
-  focusStep?: number;                // último paso visible 0..4 para reanudar
+  questionsComplete?: boolean;       // (v1) paso 3 desbloqueado — legado, migrado a questionsDone
+  focusStep?: number;                // último paso visible 0..3 (flowVersion 2)
+  flowVersion?: number;              // 2 = flujo de 4 pasos; ausente = v1 (5 pasos)
   keyConcepts?: string[];            // snapshot de StudyContent.keyConcepts
-  questions: QuestionAttempt[];      // paso 3
-  codeChallenge?: CodeChallengeAttempt; // paso 4 — "Practícalo"
-  ankiCards?: StoredAnkiCard[];      // paso 5 — guardamos inline (offline-safe)
+  questions: QuestionAttempt[];      // paso 2 — Comprobar
+  codeChallenge?: CodeChallengeAttempt; // paso 3 — Aplicar
+  ankiCards?: StoredAnkiCard[];      // paso 4 — guardamos inline (offline-safe)
   ankiCardsCount: number;
   status: LectureStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
+  // ── flowVersion 2 ──────────────────────────────────────────────────────────
+  /** Recuerdo libre del paso 1 (viaja a Obsidian como «Lo que recordé sin mirar»). */
+  recallNotes?: string;
+  /** Paso 2 completado explícitamente (respondido o saltado) — nunca se infiere. */
+  questionsDone?: boolean;
+  /** El estudiante usó «Saltar» en el paso 2. */
+  questionsSkipped?: boolean;
+  /** Paso 3: intentado / correcto / «Hacerlo después». */
+  practiceStatus?: "done" | "correct" | "later";
+  /** «Terminar lección» — el cierre real; exportar ya no es requisito. */
+  finishedAt?: number;
+  /** GUIDs de la última exportación — para avisar solo si el paquete cambió. */
+  exportedGuids?: string[];
   /** Tombstone used to sync deletes/resets across devices without resurrecting old cloud data. */
   deletedAt?: number;
   /** Monotonic edit counter — survives clock skew. Higher wins on merge. */
@@ -209,6 +226,28 @@ export const CLOUD_HISTORY_LEGACY_BUNDLE_KEY = "__history__";
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
+/**
+ * Migración v1 (5 pasos) → v2 (4 pasos), en memoria al leer.
+ * Sin flowVersion: 0,1→0 · 2→1 · 3→2 · 4→3; status "completed" → finishedAt.
+ * `questionsDone` hereda del flag v1 questionsComplete; `practiceStatus` se
+ * infiere del reto de código si existe.
+ */
+const V1_STEP_MAP: Record<number, number> = { 0: 0, 1: 0, 2: 1, 3: 2, 4: 3 };
+
+function normalizeRecord(rec: LectureHistoryRecord): LectureHistoryRecord {
+  if (rec.flowVersion === 2) return rec;
+  return {
+    ...rec,
+    flowVersion: 2,
+    focusStep: typeof rec.focusStep === "number" ? (V1_STEP_MAP[rec.focusStep] ?? 3) : rec.focusStep,
+    finishedAt: rec.finishedAt ?? (rec.status === "completed" ? (rec.updatedAt ?? rec.startedAt) : undefined),
+    questionsDone: rec.questionsDone ?? (rec.questionsComplete ?? undefined),
+    practiceStatus: rec.practiceStatus ?? (rec.codeChallenge
+      ? (rec.codeChallenge.rating === "correct" || rec.codeChallenge.rating === "excellent" ? "correct" : "done")
+      : undefined),
+  };
+}
+
 export const historyService = {
   hasProgress(rec: LectureHistoryRecord | null | undefined): boolean {
     if (!rec) return false;
@@ -246,10 +285,10 @@ export const historyService = {
     return () => onChanged.removeListener(listener);
   },
 
-  /** Read a single lecture record. */
+  /** Read a single lecture record (normalized to flowVersion 2). */
   async getLecture(courseId: string, lectureId: string): Promise<LectureHistoryRecord | null> {
     const rec = (await sGet(lectureKey(courseId, lectureId))) as LectureHistoryRecord | undefined;
-    return rec ?? null;
+    return rec ? normalizeRecord(rec) : null;
   },
 
   /** Create or merge-update a lecture record. Returns the persisted record. */
@@ -280,6 +319,16 @@ export const historyService = {
       conceptsAcknowledged: partial.conceptsAcknowledged ?? (impliesQuestionsComplete ? true : clearProgress ? false : prev?.conceptsAcknowledged),
       questionsComplete: partial.questionsComplete ?? (impliesQuestionsComplete ? true : clearProgress ? false : prev?.questionsComplete),
       focusStep: partial.focusStep ?? (clearProgress ? 0 : prev?.focusStep),
+      flowVersion: 2,
+      recallNotes: partial.recallNotes ?? (clearProgress ? undefined : prev?.recallNotes),
+      // Paso 2 se marca explícitamente al responder o saltar — nunca se infiere de "una correcta".
+      questionsDone: partial.questionsDone ?? (clearProgress ? undefined : prev?.questionsDone ?? prev?.questionsComplete),
+      questionsSkipped: partial.questionsSkipped ?? (clearProgress ? undefined : prev?.questionsSkipped),
+      practiceStatus: partial.practiceStatus ?? (clearProgress ? undefined : prev?.practiceStatus),
+      finishedAt: partial.finishedAt
+        ?? (partial.status === "completed" ? (prev?.finishedAt ?? now) : undefined)
+        ?? (clearProgress ? undefined : prev?.finishedAt),
+      exportedGuids: partial.exportedGuids ?? (clearProgress ? undefined : prev?.exportedGuids),
       keyConcepts:  partial.keyConcepts  ?? (clearProgress ? undefined : prev?.keyConcepts),
       questions:    partial.questions    ?? (clearProgress ? [] : prev?.questions)    ?? [],
       codeChallenge: partial.codeChallenge ?? (clearProgress ? undefined : prev?.codeChallenge),
@@ -352,7 +401,7 @@ export const historyService = {
     for (const k of keys) {
       if (!k.startsWith("lecture::")) continue;
       const rec = (await sGet(k)) as LectureHistoryRecord | undefined;
-      if (rec) out.push(rec);
+      if (rec) out.push(normalizeRecord(rec));
     }
     out.sort((a, b) => b.updatedAt - a.updatedAt);
     return out;
@@ -415,6 +464,7 @@ export const historyService = {
       conceptsAcknowledged: false,
       questionsComplete: false,
       focusStep: 0,
+      flowVersion: 2,
       questions: [],
       ankiCardsCount: 0,
       status: "in_progress",

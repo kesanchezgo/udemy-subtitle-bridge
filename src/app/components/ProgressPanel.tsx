@@ -19,7 +19,7 @@ const TONES = {
 } as const;
 type Tone = keyof typeof TONES;
 
-const TIER_ICON: IconName[] = ["star", "zap", "target", "award", "trophy"];
+const TIER_ICON: IconName[] = ["compass", "zap", "brain", "diamond", "trophy"];
 const GOALS = [30, 50, 100, 150];
 const EASE = [0.22, 1, 0.36, 1] as const;
 const FILTERS = [
@@ -36,7 +36,6 @@ type Prog = ReturnType<typeof getProgress>;
 function achValue(id: string, p: Prog, streak: number): number {
   switch (id) {
     case "first": case "c25": case "c100": return p.correct;
-    case "combo3": return p.bestCombo || 0;
     case "code1": return p.codeChallenges || 0;
     case "s1": case "s10": return p.sessions;
     case "e1": return p.exports || 0;
@@ -44,6 +43,22 @@ function achValue(id: string, p: Prog, streak: number): number {
     case "l5": case "l10": return p.level;
     default: return 0;
   }
+}
+
+/** Repasos pendientes en todo el mazo raíz (AnkiConnect; null si no responde). */
+async function fetchAnkiDue(): Promise<number | null> {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { id?: string; sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void } };
+  }).chrome;
+  if (!chromeApi?.runtime?.id || !chromeApi.runtime.sendMessage) return null;
+  return new Promise((resolve) => {
+    try {
+      chromeApi.runtime!.sendMessage!({ type: "USG_ANKI_DUE", course: "", lesson: "", browse: false, rootDeck: "Kinema", scope: "all" }, (res: unknown) => {
+        const due = (res as { due?: number } | null)?.due;
+        resolve(typeof due === "number" ? due : null);
+      });
+    } catch { resolve(null); }
+  });
 }
 
 function useCountUp(target: number, ms = 800) {
@@ -182,11 +197,18 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
   const { t } = useDockTheme();
   const [, tick] = useState(0);
   const [selectedFilter, setSelectedFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
+  const [ankiDue, setAnkiDue] = useState<number | null>(null);
 
   useEffect(() => {
     const h = () => tick((n) => n + 1);
     window.addEventListener("usb:xp", h);
     return () => window.removeEventListener("usb:xp", h);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetchAnkiDue().then((d) => { if (alive) setAnkiDue(d); });
+    return () => { alive = false; };
   }, []);
 
   const p = getProgress();
@@ -297,6 +319,29 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
             <p className="text-[12px] leading-snug font-medium">{msg.text}</p>
           </div>
         </Reveal>
+
+        {/* Aprendizaje — evidencia de estudio, arriba del todo */}
+        <Card
+          i={1} tone="violet" icon="brain" title="Aprendizaje"
+          right={<span className="text-[11px] font-semibold text-[var(--usb-fg-mid)]">evidencia, no clics</span>}
+        >
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { icon: "bookOpen" as IconName, v: `${p.weekLessons} / ${p.sessions}`, l: "Lecciones (semana / total)" },
+              { icon: "checkCircle2" as IconName, v: p.firstTryPct === null ? "—" : `${p.firstTryPct}%`, l: "Aciertos a la primera · últ. 20" },
+              { icon: "refreshCcw" as IconName, v: p.reinforced, l: "Puntos reforzados" },
+              { icon: "repeat2" as IconName, v: ankiDue === null ? "—" : ankiDue, l: "Repasos pendientes en Anki" },
+            ] as { icon: IconName; v: number | string; l: string }[]).map((x) => (
+              <div key={x.l} className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 flex items-center gap-2.5 min-w-0">
+                <Tile icon={x.icon} tone="violet" size={26} />
+                <div className="min-w-0">
+                  <p className="text-[15px] leading-none font-extrabold tabular-nums text-[var(--usb-fg-hi)]">{x.v}</p>
+                  <p className="truncate text-[10px] font-medium text-[var(--usb-fg-mid)] mt-0.5">{x.l}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
 
         {/* Estadísticas */}
         <Reveal i={1} className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl grid grid-cols-4 divide-x divide-[var(--usb-divider)]">

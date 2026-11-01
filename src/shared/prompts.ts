@@ -185,7 +185,7 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'  "interviewQ": { "q": "pregunta oral/de cierre", "idealAnswer": "estructura ideal de respuesta" },',
 		'  "nextAction": "siguiente paso recomendado",',
 		'  "ankiCards": [',
-		'    { "id": "card-001", "type": "concepto|aplicacion|codigo|entrevista|comparacion|proceso", "front": "pregunta clara (HTML simple)", "back": "respuesta estructurada (HTML del vocabulario permitido)", "tags": ["tag1", "tag2"] }',
+		'    { "id": "card-001", "type": "concepto|aplicacion|codigo|entrevista|comparacion|proceso", "conceptRefs": [0], "front": "pregunta clara (HTML simple)", "back": "respuesta estructurada (HTML del vocabulario permitido)", "tags": ["tag1", "tag2"] }',
 		'  ]',
 		'}',
 		'',
@@ -194,6 +194,7 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- Genera exactamente 4 keyConcepts. El indice de cada concepto (0, 1, 2, 3) se usara para calibrar preguntas.',
 		'- Genera exactamente 4 preguntas, una por difficulty: confused, partial, clear, mastered.',
 		'- Cada pregunta DEBE incluir conceptRefs con 1-3 indices de keyConcepts que evalua. Usa indices validos entre 0 y 3.',
+		'- Cada ankiCard DEBE incluir conceptRefs con 1-3 indices de keyConcepts que refuerza (los mismos indices validos 0-3).',
 		'- Las preguntas deben enfocarse en verificar comprension aplicable, no repetir literalmente el subtitulo.',
 		'- Usa el objetivo para decidir el enfoque de preguntas y tarjetas. Ejemplo: si el objetivo es entrevista, favorece explicación oral, comparaciones, trade-offs y preguntas tipo entrevista, PERO solo cuando se justifiquen desde la transcripción.',
 		`- Genera entre ${cardTarget.min} y ${cardTarget.max} tarjetas Anki útiles y específicas de la lección. No rellenes por cantidad: una lección corta debe tener pocas tarjetas de alta calidad; una lección densa puede tener más.`,
@@ -252,10 +253,10 @@ EJEMPLO A — lección técnica (Java/JVM):
   "interviewQ": {"q": "Explica en 60 segundos cómo Java logra independencia de plataforma sin perder velocidad.", "idealAnswer": "Dos capas: compilación a bytecode (portabilidad) + JVM con JIT (velocidad). Mencionar write-once-run-anywhere y warm-up."},
   "nextAction": "Ejecuta tu app con -XX:+PrintCompilation y observa el JIT en acción",
   "ankiCards": [
-    {"id": "card-001", "type": "concepto", "front": "¿Qué produce <code>javac</code> a partir del código fuente?", "back": "<p><b>Bytecode</b> en archivos <code>.class</code>, no código máquina nativo.</p><div class='concept-box'>El bytecode es un formato intermedio: solo la JVM puede ejecutarlo.</div>", "tags": ["java", "compilacion"]},
-    {"id": "card-002", "type": "codigo", "front": "¿Qué imprime <code>System.out.println(1 + 2 + 3)</code> y por qué?", "back": "<p>Imprime <b>6</b>: los tres operandos son <code>int</code>, así que <code>+</code> suma aritméticamente.</p><pre><code class='language-java'>System.out.println(1 + 2 + 3); // imprime 6</code></pre>", "tags": ["java", "tipos"]},
-    {"id": "card-003", "type": "comparacion", "front": "¿Cuándo compila el JIT frente al AOT y qué gana cada uno?", "back": "<p><b>JIT compila en runtime</b> (gana optimización con perfiles reales); <b>AOT antes de ejecutar</b> (gana arranque inmediato, sin warm-up).</p><table><tr><th></th><th>JIT</th><th>AOT</th></tr><tr><td>Cuándo</td><td>en runtime</td><td>antes de ejecutar</td></tr></table>", "tags": ["java", "rendimiento"]},
-    {"id": "card-004", "type": "entrevista", "front": "¿Por qué Java es portable pero rápido?", "back": "<div class='interview-box'><div class='label'>Entrevista</div><ul><li><b>Portabilidad:</b> el bytecode corre donde haya JVM.</li><li><b>Velocidad:</b> el JIT compila hot spots a nativo en caliente.</li><li><b>Frase de cierre:</b> «compila una vez, ejecuta donde haya JVM; acelera en caliente con JIT».</li></ul></div>", "tags": ["java", "entrevista"]}
+    {"id": "card-001", "type": "concepto", "conceptRefs": [0], "front": "¿Qué produce <code>javac</code> a partir del código fuente?", "back": "<p><b>Bytecode</b> en archivos <code>.class</code>, no código máquina nativo.</p><div class='concept-box'>El bytecode es un formato intermedio: solo la JVM puede ejecutarlo.</div>", "tags": ["java", "compilacion"]},
+    {"id": "card-002", "type": "codigo", "conceptRefs": [1], "front": "¿Qué imprime <code>System.out.println(1 + 2 + 3)</code> y por qué?", "back": "<p>Imprime <b>6</b>: los tres operandos son <code>int</code>, así que <code>+</code> suma aritméticamente.</p><pre><code class='language-java'>System.out.println(1 + 2 + 3); // imprime 6</code></pre>", "tags": ["java", "tipos"]},
+    {"id": "card-003", "type": "comparacion", "conceptRefs": [2], "front": "¿Cuándo compila el JIT frente al AOT y qué gana cada uno?", "back": "<p><b>JIT compila en runtime</b> (gana optimización con perfiles reales); <b>AOT antes de ejecutar</b> (gana arranque inmediato, sin warm-up).</p><table><tr><th></th><th>JIT</th><th>AOT</th></tr><tr><td>Cuándo</td><td>en runtime</td><td>antes de ejecutar</td></tr></table>", "tags": ["java", "rendimiento"]},
+    {"id": "card-004", "type": "entrevista", "conceptRefs": [1, 2], "front": "¿Por qué Java es portable pero rápido?", "back": "<div class='interview-box'><div class='label'>Entrevista</div><ul><li><b>Portabilidad:</b> el bytecode corre donde haya JVM.</li><li><b>Velocidad:</b> el JIT compila hot spots a nativo en caliente.</li><li><b>Frase de cierre:</b> «compila una vez, ejecuta donde haya JVM; acelera en caliente con JIT».</li></ul></div>", "tags": ["java", "entrevista"]}
   ]
 }
 
@@ -274,9 +275,9 @@ EJEMPLO B — lección NO técnica (cocina):
   "interviewQ": {"q": "Explica a un principiante el error más común al cocer pasta.", "idealAnswer": "Pasarse de cocción por ignorar el calor residual; corregir probando antes y terminando en la sartén."},
   "nextAction": "Practica el test del bocado con dos formas de pasta distintas",
   "ankiCards": [
-    {"id": "card-001", "type": "concepto", "front": "Define «al dente»", "back": "Firme al morder, con el núcleo apenas húmedo", "tags": ["cocina", "pasta"]},
-    {"id": "card-002", "type": "concepto", "front": "¿Para qué sirve el agua de cocción reservada?", "back": "El almidón emulsiona y liga la salsa con la pasta", "tags": ["cocina", "salsas"]},
-    {"id": "card-003", "type": "aplicacion", "front": "¿Por qué sacar la pasta 1 minuto antes del tiempo del paquete?", "back": "Termina de cocerse con calor residual y al saltearse con la salsa", "tags": ["cocina", "tecnica"]}
+    {"id": "card-001", "type": "concepto", "conceptRefs": [0], "front": "Define «al dente»", "back": "Firme al morder, con el núcleo apenas húmedo", "tags": ["cocina", "pasta"]},
+    {"id": "card-002", "type": "concepto", "conceptRefs": [3], "front": "¿Para qué sirve el agua de cocción reservada?", "back": "El almidón emulsiona y liga la salsa con la pasta", "tags": ["cocina", "salsas"]},
+    {"id": "card-003", "type": "aplicacion", "conceptRefs": [2], "front": "¿Por qué sacar la pasta 1 minuto antes del tiempo del paquete?", "back": "Termina de cocerse con calor residual y al saltearse con la salsa", "tags": ["cocina", "tecnica"]}
   ]
 }
 	`,

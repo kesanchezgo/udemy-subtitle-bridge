@@ -733,6 +733,10 @@ function buildCollectedLinesSrtCandidate(): { srt: string; cueCount: number; sou
 // ── Collect all available transcript text ──
 
 function collectTranscriptText(maxChars: number): { text: string; source: string; cueCount: number; truncated: boolean } {
+	// Mínimo útil para un panel de estudio: igual al umbral de generación del
+	// background. Una captura por debajo cae a la fuente siguiente (el panel
+	// completo o el VTT de red pueden tener el material que a la captura le falta).
+	const MIN_USEFUL_TRANSCRIPT = 120;
 	refreshCapturedCuesFromVideo();
 	const validCollectedLines = collectedLines.filter((l) => isValidSubtitleText(l.text));
 
@@ -745,7 +749,7 @@ function collectTranscriptText(maxChars: number): { text: string; source: string
 		if (truncated) {
 			text = text.slice(0, maxChars);
 		}
-		if (text.trim()) {
+		if (text.trim().length >= MIN_USEFUL_TRANSCRIPT) {
 			return {
 				text,
 				source: shouldPreferCollected ? 'dom-observer' : 'network-vtt',
@@ -753,6 +757,7 @@ function collectTranscriptText(maxChars: number): { text: string; source: string
 				truncated
 			};
 		}
+		// Captura parcial (p. ej. 1 línea al abrir): sigue buscando fuente completa.
 	}
 
 	// Priority 2: Video textTracks
@@ -764,7 +769,7 @@ function collectTranscriptText(maxChars: number): { text: string; source: string
 		if (truncated) {
 			text = text.slice(0, maxChars);
 		}
-		if (text.trim()) {
+		if (text.trim().length >= MIN_USEFUL_TRANSCRIPT) {
 			return { text, source: 'video-text-tracks', cueCount: validCues.length, truncated };
 		}
 	}
@@ -776,7 +781,7 @@ function collectTranscriptText(maxChars: number): { text: string; source: string
 		if (truncated) {
 			text = text.slice(0, maxChars);
 		}
-		if (text.trim()) {
+		if (text.trim().length >= MIN_USEFUL_TRANSCRIPT) {
 			return { text, source: 'dom-observer', cueCount: validCollectedLines.length, truncated };
 		}
 	}

@@ -58,6 +58,17 @@ export const DEFAULT_OBSIDIAN_EXPORT_CONFIG: ObsidianExportConfig = {
 	includeRawSrt: false,
 };
 
+/** Resumen de cierre de la lección (el mismo que muestra Study, §1.4). */
+export interface StudyResultSummary {
+	/** Título del cierre: «Lección dominada» / «Lección completada» / «… · con puntos a reforzar». */
+	title: string;
+	remembered: { count: number; total: number };
+	check: { firstTry: number; improved: number; skipped: boolean };
+	practice: 'done' | 'correct' | 'later';
+	calibration?: { said: string; shown: string; message: string };
+	cards: { total: number; reinforce: number; destination: 'anki' | 'obsidian' | 'none' };
+}
+
 /** Forma mínima del contenido de sesión que la nota necesita. */
 export interface ObsidianSessionData {
 	/** C9: ruta real del mazo Anki de la lección (frontmatter anki_deck). */
@@ -68,6 +79,12 @@ export interface ObsidianSessionData {
 	/** URL de la lección (la página donde corre el dock). */
 	sourceUrl?: string;
 	platform?: string;
+	/** Recuerdo libre del paso 1 (viaja como «Lo que recordé sin mirar»). */
+	recallNotes?: string;
+	/** Preguntas respondidas mal o parcial: la pregunta con su respuesta correcta. */
+	weakPoints?: { q: string; answer: string }[];
+	/** Resumen de cierre del flujo (§1.4) para la nota. */
+	result?: StudyResultSummary;
 	content: {
 		relevance: { score: number; reason: string };
 		keyConcepts: string[];
@@ -400,6 +417,43 @@ export function buildSessionNoteMarkdown(
 		lines.push('');
 		lines.push(`- [ ] ${c.nextAction}`);
 		lines.push('');
+	}
+	// flowVersion 2: el cierre de Study viaja a la nota — resultado, recuerdo
+	// libre y puntos a reforzar, antes de las tarjetas.
+	if (data.result) {
+		const r = data.result;
+		lines.push('## Resultado de la sesión');
+		lines.push('');
+		lines.push(`**${r.title}**`);
+		lines.push('');
+		const parts = [
+			`Recordaste ${r.remembered.count} de ${r.remembered.total} ideas (marcadas por ti)`,
+			`Comprobación: ${r.check.firstTry} a la primera${r.check.improved ? ` · ${r.check.improved} tras corregir` : ''}${r.check.skipped ? ' · saltada' : ''}`,
+			`Práctica: ${r.practice === 'correct' ? 'correcta' : r.practice === 'done' ? 'hecha' : 'pendiente'}`,
+			`Tarjetas: ${r.cards.total} (${r.cards.reinforce} de refuerzo) · ${r.cards.destination === 'anki' ? 'en Anki' : r.cards.destination === 'obsidian' ? 'en Obsidian' : 'sin exportar'}`,
+		];
+		parts.forEach((p) => lines.push(`- ${p}`));
+		if (r.calibration) {
+			lines.push('');
+			lines.push(`> [!info] Calibración: dijiste «${r.calibration.said}», mostraste «${r.calibration.shown}». ${r.calibration.message}`);
+		}
+		lines.push('');
+	}
+	if (data.recallNotes?.trim()) {
+		lines.push('## Lo que recordé sin mirar');
+		lines.push('');
+		lines.push(data.recallNotes.trim());
+		lines.push('');
+	}
+	if ((data.weakPoints || []).length > 0) {
+		lines.push('## Puntos a reforzar');
+		lines.push('');
+		// C5: la respuesta correcta va plegada — primero intenta recordar.
+		data.weakPoints!.forEach((w) => {
+			lines.push(`> [!question]- ${w.q}`);
+			lines.push(`> **Respuesta:** ${w.answer}`);
+			lines.push('');
+		});
 	}
 	if (config.includeCards && (c.ankiCards || []).length > 0) {
 		// C6: por defecto, referencia plegada bien formateada y SIN #flashcards —

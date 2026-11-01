@@ -39,7 +39,6 @@ import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, typ
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
 import { HistoryPanel } from "./HistoryPanel";
-import { projectId } from "../../../utils/supabase/info";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
@@ -84,6 +83,14 @@ interface AnkiCard {
   tags: string[];
   /** F2-1: minuto de la lección donde se enseña («mm:ss»). Opcional. */
   t?: string;
+  /** Índices de keyConcepts que refuerza (flowVersion 2, §3). */
+  conceptRefs?: number[];
+  /** Tarjeta de refuerzo generada desde un fallo de Study (§3). */
+  reinforce?: boolean;
+  /** El estudiante la quitó del paquete: no se exporta. */
+  excluded?: boolean;
+  /** El back ya es HTML de confianza (tarjetas de refuerzo): no se re-escapa. */
+  isHtml?: boolean;
 }
 
 interface StudyContent {
@@ -129,9 +136,7 @@ type LearningPanelResponse = {
 const CONFIDENCE = [
   {
     id: "confused" as ConfidenceLevel,
-    emoji: "😵‍💫",
-    bars: 1,
-    tag: "Dominio 1",
+    icon: "face1" as IconName,
     label: "Confuso",
     desc: "Reforzar desde la base",
     ring: "ring-rose-500/40",
@@ -142,9 +147,7 @@ const CONFIDENCE = [
   },
   {
     id: "partial" as ConfidenceLevel,
-    emoji: "🤔",
-    bars: 2,
-    tag: "Dominio 2",
+    icon: "face2" as IconName,
     label: "Más o menos",
     desc: "Cerrar dudas puntuales",
     ring: "ring-amber-500/40",
@@ -155,9 +158,7 @@ const CONFIDENCE = [
   },
   {
     id: "clear" as ConfidenceLevel,
-    emoji: "😊",
-    bars: 3,
-    tag: "Dominio 3",
+    icon: "face3" as IconName,
     label: "Entendido",
     desc: "Comprobar y afianzar",
     ring: "ring-emerald-500/40",
@@ -168,9 +169,7 @@ const CONFIDENCE = [
   },
   {
     id: "mastered" as ConfidenceLevel,
-    emoji: "😎",
-    bars: 4,
-    tag: "Dominio 4",
+    icon: "face4" as IconName,
     label: "Lo domino",
     desc: "Desafío de alto nivel",
     ring: "ring-violet-500/40",
@@ -181,12 +180,13 @@ const CONFIDENCE = [
   },
 ];
 
-const STEP_META: { hue: string; inkDark: string; inkLight: string; icon: IconName; title: string; sub: string }[] = [
-  { hue: "#6d4aff", inkDark: "#b7a6ff", inkLight: "#5b37e8", icon: "compass",   title: "Calibra tu sesión",       sub: "Dinos cómo te fue en la clase" },
-  { hue: "#0284c7", inkDark: "#5cc8fb", inkLight: "#0369a1", icon: "lightbulb", title: "Lo esencial de la clase", sub: "Marca lo que ya tienes claro" },
-  { hue: "#d97706", inkDark: "#fbbf45", inkLight: "#a15207", icon: "brain",     title: "Recupera de memoria",     sub: "Responde sin mirar, ahí se aprende" },
-  { hue: "#059669", inkDark: "#4ade9f", inkLight: "#047857", icon: "rocket",    title: "Llévalo a la práctica",   sub: "Un caso real para aplicar lo visto" },
-  { hue: "#e11d48", inkDark: "#fb7185", inkLight: "#be123c", icon: "layers",    title: "Fíjalo en memoria",       sub: "Tarjetas listas para repasar" },
+// Única fuente de nombres del flujo (flowVersion 2): stepper, banner y
+// vista previa toman short/title/sub de aquí. flowVersion 2 = 4 pasos.
+const STEP_META: { short: string; hue: string; inkDark: string; inkLight: string; icon: IconName; title: string; sub: string }[] = [
+  { short: "Recordar",  hue: "#6d4aff", inkDark: "#b7a6ff", inkLight: "#5b37e8", icon: "compass",   title: "Lo que recuerdas",      sub: "Tu nivel y lo que recuerdas sin mirar" },
+  { short: "Comprobar", hue: "#0284c7", inkDark: "#5cc8fb", inkLight: "#0369a1", icon: "brain",     title: "Ponte a prueba",        sub: "Responde sin mirar, ahí se aprende" },
+  { short: "Aplicar",   hue: "#059669", inkDark: "#4ade9f", inkLight: "#047857", icon: "rocket",    title: "Llévalo a la práctica", sub: "Un caso real para aplicar lo visto" },
+  { short: "Fijar",     hue: "#e11d48", inkDark: "#fb7185", inkLight: "#be123c", icon: "layers",    title: "Fíjalo en memoria",     sub: "Tarjetas listas para repasar" },
 ];
 
 function SectionTitle({ icon, hue, children }: { icon: IconName; hue: number; children: React.ReactNode }) {
@@ -208,7 +208,7 @@ function StepBanner({ step }: { step: number }) {
         <Icon name={m.icon} size={24} weight="duotone" />
       </div>
       <div className="min-w-0 relative">
-        <span className="kx-step-eyebrow text-[9.5px] font-extrabold tracking-[0.14em] uppercase">Paso {step + 1} de 5</span>
+        <span className="kx-step-eyebrow text-[9.5px] font-extrabold tracking-[0.14em] uppercase">{m.short} · Paso {step + 1} de 4</span>
         <p className="kx-step-title text-[14px] font-bold leading-tight mt-0.5">{m.title}</p>
         <p className="kx-step-sub text-[11px] leading-snug mt-0.5">{m.sub}</p>
       </div>
@@ -216,19 +216,12 @@ function StepBanner({ step }: { step: number }) {
   );
 }
 
-const CONFIDENCE_HINT: Record<ConfidenceLevel, string> = {
-  confused:  "Sin problema — empezamos desde los fundamentos. El 80% de los expertos también lo vivió así al inicio.",
-  partial:   "Normal en el primer intento. Vamos a cerrar esos gaps con preguntas muy concretas.",
-  clear:     "Bien. Ahora lo comprobamos con preguntas de aplicación real para solidificar.",
-  mastered:  "Perfecto. Te espera un desafío de análisis profundo para confirmar el dominio.",
-};
-
-// Coach bubble post-selection (motivational, personalized per level)
-const COACH_BUBBLE: Record<ConfidenceLevel, { icon: IconName; title: string; tip: string }> = {
-  confused:  { icon: "flame", title: "¡La honestidad es el primer paso real!", tip: "Cada experto que conoces pasó exactamente por aquí. Las preguntas están calibradas para tu nivel — sin saltos abruptos." },
-  partial:   { icon: "target", title: "Ya tienes la base.", tip: "Solo necesitas conectar los puntos. Las preguntas cerrarán exactamente los gaps que detectaste." },
-  clear:     { icon: "zap", title: "Buen nivel de comprensión.", tip: "Ahora viene la prueba real: aplicarlo sin mirar. Eso es lo que separa entender de dominar." },
-  mastered:  { icon: "flame", title: "¡Nivel alto, vamos a confirmarlo!", tip: "Te espera un análisis en profundidad. Demuestra que no solo sabes — sabes por qué funciona." },
+// Línea de coach neutra por nivel — sin frases inventadas ni hype.
+const COACH_LINE: Record<ConfidenceLevel, { icon: IconName; tip: string }> = {
+  confused:  { icon: "compass", tip: "Sin problema: empezamos por la base y subimos desde ahí." },
+  partial:   { icon: "target",  tip: "Normal en el primer intento; vamos a cerrar justo los puntos que faltaron." },
+  clear:     { icon: "zap",     tip: "Bien. Ahora lo comprobamos con preguntas de aplicación." },
+  mastered:  { icon: "flame",   tip: "Perfecto: te espera un desafío para confirmar el nivel." },
 };
 
 
@@ -242,12 +235,8 @@ const CARD_META: Record<CardType, { label: string; icon: IconName; color: string
   proceso:     { label: "Proceso",     icon: "steps", color: "text-fuchsia-400", accent: "#e879f9" },
 };
 
-const QUESTIONS_FOR: Record<ConfidenceLevel, ConfidenceLevel[]> = {
-  confused: ["confused"],
-  partial:  ["confused", "partial"],
-  clear:    ["partial", "clear"],
-  mastered: ["clear", "mastered"],
-};
+// Orden canónico de dificultad para la lógica adaptativa (§1.2).
+const DIFF_ORDER: ConfidenceLevel[] = ["confused", "partial", "clear", "mastered"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function sendRuntimeMessage<T>(message: unknown): Promise<T | null> {
@@ -277,6 +266,11 @@ function isExtensionRuntime(): boolean {
   }).chrome;
   return Boolean(chromeApi?.runtime?.id && typeof chromeApi.runtime.sendMessage === "function");
 }
+
+// §5: en la extensión los campos arrancan vacíos (la detección los llena).
+// Los valores de demo solo existen fuera de runtime (preview/prototipo),
+// misma regla que el vocabulario de demo.
+const IS_EXTENSION = isExtensionRuntime();
 
 function fingerprintKey(apiKey: string): string {
   const key = String(apiKey || "").trim();
@@ -517,6 +511,24 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
     nextAction: asText(raw.nextAction, fallback.nextAction),
     ankiCards: cards.length >= 3 ? cards : fallback.ankiCards,
   };
+}
+
+// §1.2: primera pregunta de la dificultad elegida; desempate por conceptos
+// no marcados (los débiles primero). El contenido trae una por dificultad.
+function pickStartQuestion(conf: ConfidenceLevel, cnt: StudyContent, unchecked: Set<number>): number {
+  const candidates = cnt.questions
+    .map((q, i) => ({ q, i }))
+    .filter(({ q }) => q.difficulty === conf);
+  const pool = candidates.length > 0
+    ? candidates
+    : cnt.questions.map((q, i) => ({ q, i })).filter(({ q }) => q.difficulty === DIFF_ORDER[Math.max(0, DIFF_ORDER.indexOf(conf) - 1)]);
+  const pool2 = pool.length > 0 ? pool : cnt.questions.map((q, i) => ({ q, i }));
+  const weakFirst = [...pool2].sort((a, b) => {
+    const aWeak = (a.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
+    const bWeak = (b.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
+    return bWeak - aWeak;
+  });
+  return weakFirst[0]?.i ?? 0;
 }
 
 function getOralPracticeMeta(content: StudyContent, objective: string) {
@@ -879,14 +891,17 @@ async function exportApkgFile(
 ): Promise<string> {
   const root = rootDeck.trim() || "Kinema";
   const lessonUrl = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
+  const selected = cards.filter((c) => !c.excluded);
   const spec = buildConceptSpec(
-    cards.map((c) => ({
-      front: cardTextToHtml(c.front),
-      back: cardTextToHtml(c.back),
+    selected.map((c) => ({
+      front: c.isHtml ? c.front : cardTextToHtml(c.front),
+      back: c.isHtml ? c.back : cardTextToHtml(c.back),
       // GUID probado: hash de curso|lección|front — reimportar ACTUALIZA en vez de duplicar.
       guid: stableAnkiGuid(course, lesson, c),
       type: c.type,
-      tags: kinemaTags({ course, lesson, type: c.type, aiTags: c.tags }),
+      // §3: las de refuerzo se ordenan primero dentro de buildConceptSpec.
+      reinforce: c.reinforce,
+      tags: kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.reinforce ? "study" : undefined }),
     })),
     course,
     lesson,
@@ -900,10 +915,12 @@ async function exportApkgFile(
   return conceptDeckPath(root, course, lesson);
 }
 
-// GUID por contenido (curso|lección|front): reimportar la misma lección
-// actualiza las notas en vez de duplicarlas aunque cambie el orden o la cantidad.
-function stableAnkiGuid(course: string, lesson: string, card: { front: string }): string {
-  const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.front}`;
+// GUID por contenido (curso|lección|[study:]front): reimportar la misma
+// lección actualiza las notas en vez de duplicarlas aunque cambie el orden
+// o la cantidad. Las de refuerzo llevan el prefijo "study:" (§3), así que
+// una tarjeta de refuerzo y la generada por IA no colisionan nunca.
+function stableAnkiGuid(course: string, lesson: string, card: { front: string; reinforce?: boolean }): string {
+  const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.reinforce ? "study:" : ""}${card.front}`;
   let hash = 2166136261;
   for (let i = 0; i < source.length; i += 1) {
     hash ^= source.charCodeAt(i);
@@ -1084,14 +1101,14 @@ function VerifyDoneReview({
         className="w-full flex items-center justify-center gap-1.5 text-[11px] text-violet-200 bg-violet-500/14 hover:bg-violet-500/22 border border-violet-500/28 py-2.5 rounded-xl transition-all"
         style={{ fontWeight: 600 }}
       >
-        Continuar a practicar<ArrowRight size={12} />
+        Continuar a Aplicar<ArrowRight size={12} />
       </button>
     </div>
   );
 }
 
 // ─── Anki flip-card preview ───────────────────────────────────────────────────
-function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
+function AnkiFlipPreview({ cards, onToggleExclude }: { cards: AnkiCard[]; onToggleExclude?: (id: string) => void }) {
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   if (!cards.length) return null;
@@ -1106,8 +1123,13 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
         className="w-full text-left rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-3.5 py-3.5 min-h-[112px] transition-colors hover:border-[#6d4aff]/40"
       >
         <div className="flex items-center justify-between mb-2">
-          <span className={`flex items-center gap-1.5 text-[9.5px] ${meta.color}`} style={{ fontWeight: 600 }}>
-            <Icon name={meta.icon} size={11} />{meta.label}
+          <span className="flex items-center gap-1.5">
+            <span className={`flex items-center gap-1.5 text-[9.5px] ${meta.color}`} style={{ fontWeight: 600 }}>
+              <Icon name={meta.icon} size={11} />{meta.label}
+            </span>
+            {card.reinforce && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" style={{ fontWeight: 700 }}>Refuerzo</span>
+            )}
           </span>
           <span className="flex items-center gap-1 text-[var(--usb-fg-lo)] text-[9.5px] font-medium">
             <FlipHorizontal size={10} />{flipped ? "Reverso" : "Frente"}
@@ -1130,9 +1152,23 @@ function AnkiFlipPreview({ cards }: { cards: AnkiCard[] }) {
           <ChevronLeft size={13} />
         </button>
         <span className="text-[var(--usb-fg-lo)] text-[10px] font-medium">{idx + 1} / {cards.length}</span>
-        <button onClick={() => go(1)} aria-label="Tarjeta siguiente" className="p-1.5 rounded-lg text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-2)] transition-colors">
-          <ChevronRight size={13} />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onToggleExclude && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleExclude(card.id); }}
+              className={`text-[10px] font-semibold px-2 py-1 rounded-lg border transition-colors ${
+                card.excluded
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/45"
+                  : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)]"
+              }`}
+            >
+              {card.excluded ? "Incluir" : "Quitar"}
+            </button>
+          )}
+          <button onClick={() => go(1)} aria-label="Tarjeta siguiente" className="p-1.5 rounded-lg text-[var(--usb-fg-lo)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-2)] transition-colors">
+            <ChevronRight size={13} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1145,13 +1181,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // Si ya hay contenido en cache o estamos en prototipo, permitir iniciar en ready si existe
     return "objective";
   });
-  const [selectedObj, setSelectedObj] = usePersistedState<string>("agent_selected_obj", "spring-interview");
+  const [selectedObj, setSelectedObj] = usePersistedState<string>("agent_selected_obj", IS_EXTENSION ? "" : "spring-interview");
   const [customObj, setCustomObj]     = usePersistedState<string>("agent_custom_obj", "");
   const [refinedObj, setRefinedObj]   = useState("");
   const [refinedFromText, setRefinedFromText] = useState("");
   const [isRefining, setIsRefining]   = useState(false);
-  const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", "Java In-Depth: Become a Complete Java Engineer!");
-  const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", "What is Java & JVM?");
+  const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", IS_EXTENSION ? "" : "Java In-Depth: Become a Complete Java Engineer!");
+  const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", IS_EXTENSION ? "" : "What is Java & JVM?");
   const [courseDescription, setCourseDescription] = usePersistedState<string>("agent_course_description", "");
   const [courseAIContext, setCourseAIContext]           = useState("");
   const [courseAIContextSlug, setCourseAIContextSlug]   = useState("");
@@ -1187,8 +1223,22 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [questionAnswers, setQuestionAnswers]       = useState<Record<number, string>>({});
   const [questionFeedbacks, setQuestionFeedbacks]   = useState<Record<number, FeedbackState>>({});
   const [currentQIdx, setCurrentQIdx]               = useState(0);
-  const [questionsComplete, setQuestionsComplete]   = useState(false);
-  const [sessionComplete, setSessionComplete]       = useState(false);
+  // §1.2: cola adaptativa de preguntas (índices canónicos de content.questions).
+  const [questionQueue, setQuestionQueue]           = useState<number[]>([]);
+  const [questionsComplete, setQuestionsComplete]   = useState(false); // paso 2 terminado (respondido o saltado)
+  const [questionsSkipped, setQuestionsSkipped]     = useState(false);
+  const [challengeUsed, setChallengeUsed]           = useState(false); // «Un reto más» ya usado
+  // §1.3: el paso Aplicar nunca bloquea; «Hacerlo después» cuenta como pendiente.
+  const [practiceStatus, setPracticeStatus]         = useState<"done" | "correct" | "later" | null>(null);
+  // §1.4: finished = finishedAt != null — exportar ya no es requisito.
+  const [finishedAt, setFinishedAt]                 = useState<number | null>(null);
+  const [showOralPractice, setShowOralPractice]     = useState(false);
+  // §1.5: indicador REAL de transcripción en la pantalla de objetivo.
+  const [transcriptState, setTranscriptState]       = useState<{ status: "checking" | "ready" | "waiting" | "none"; cues: number | null }>({ status: "checking", cues: null });
+  const [courseDueCount, setCourseDueCount]         = useState<number | null>(null);
+  // §2: nivel/logros desbloqueados en el flujo se muestran DENTRO del cierre.
+  const [pendingLevelUp, setPendingLevelUp]         = useState<number | null>(null);
+  const [pendingUnlocked, setPendingUnlocked]       = useState<string[]>([]);
   const [showInterviewAnswer, setShowInterviewAnswer] = useState(false);
   const [oralAnswer, setOralAnswer]                 = useState("");
   const [oralFeedback, setOralFeedback]             = useState<FeedbackState>(IDLE_FB);
@@ -1223,11 +1273,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [sessionXp, setSessionXp]       = useState(0);
   const [streakCount, setStreakCount]   = useState(() => getStreak());
   const [userProgress, setUserProgress] = useState(() => getProgress());
-  const [consecutiveStreak, setConsecutiveStreak] = useState(0); // combo aciertos seguidos
-  const [floatingXp, setFloatingXp]     = useState<{ id: number; amount: number; text?: string; combo?: number } | null>(null);
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);
-  const [shakeQuestionIdx, setShakeQuestionIdx] = useState<number | null>(null);
-  const [glintQuestionIdx, setGlintQuestionIdx] = useState<number | null>(null);
 
   // Refs
   const sessionStartRef    = useRef<number>(Date.now());
@@ -1240,6 +1286,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const sessionCelebratedRef = useRef(false);
   const qRewardedRef       = useRef<Set<string>>(new Set());
   const conceptRewardedRef = useRef<Set<number>>(new Set());
+  // Preguntas correctas al PRIMER intento — alimenta calibración honesta (§1.6)
+  // y el resumen de cierre (§1.4).
+  const firstTryCorrectRef = useRef<Set<string>>(new Set());
+  // §1.5: estudiante que vuelve (ya hay historial u objetivo en el curso).
+  const [returningStudent, setReturningStudent] = useState(false);
+  const [showCourseFields, setShowCourseFields] = useState(false);
+  const [showCustomObjFold, setShowCustomObjFold] = useState(false);
   const scrollRef          = useRef<HTMLDivElement>(null);
   const conceptsRef        = useRef<HTMLDivElement>(null);
   const questionsRef       = useRef<HTMLDivElement>(null);
@@ -1248,29 +1301,17 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
   useEffect(() => { selectedObjRef.current = selectedObj; }, [selectedObj]);
 
-  const triggerXpGain = useCallback((amount: number, text?: string, activityType?: string, comboBonus?: number) => {
-    setSessionXp(prev => prev + amount);
-    // Gains that come with a celebration card show their XP inside it; the pill is only for quiet gains.
-    if (activityType !== "question_correct" && activityType !== "code_challenge") {
-      setFloatingXp({ id: Date.now(), amount, text, combo: comboBonus });
-    }
-    
-    // question_correct is recorded by CelebrationOverlay (same moment, via celebrate), so skip it here to avoid double XP.
-    if (activityType && activityType !== "question_correct") {
-      const res = recordActivity(activityType);
-      if (res.unlocked && res.unlocked.length > 0) {
-        setUnlockedBadges(prev => [...prev, ...res.unlocked.map(u => u.title)]);
-      }
-      const queue: Parameters<typeof celebrate>[0][] = [];
-      if (res.levelUp) queue.push({ type: "level_up", title: `Nivel ${res.levelUp}`, subtitle: "Sigues subiendo." });
-      res.unlocked.forEach(u => queue.push({ type: "achievement", title: u.title, subtitle: `Logro desbloqueado · ${u.desc}` }));
-      queue.forEach(c => celebrate(c));
+  // §2: el XP registra el esfuerzo de aprendizaje; los logros/nivel no abren
+  // overlays en cola — se muestran dentro de la tarjeta de cierre (§1.4).
+  const recordXp = useCallback((activityType: string, bonus = 0): number => {
+    const res = recordActivity(activityType, { bonus });
+    if (res.levelUp) setPendingLevelUp(res.levelUp);
+    if (res.unlocked.length > 0) {
+      setUnlockedBadges(prev => [...prev, ...res.unlocked.map(u => u.title)]);
+      setPendingUnlocked(prev => [...new Set([...prev, ...res.unlocked.map(u => u.title)])]);
     }
     setUserProgress(getProgress());
-
-    setTimeout(() => {
-      setFloatingXp(curr => (curr && Date.now() - curr.id >= 1900 ? null : curr));
-    }, 2100);
+    return res.gained;
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -1333,48 +1374,67 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     void saveVocabConfig(next);
   };
 
-  const handleOpenAnkiDue = useCallback(() => {
+  const handleOpenAnkiDue = useCallback((scope: "lesson" | "course" = "course") => {
     if (ankiOpening) return;
     setAnkiOpening(true);
-    const count = ankiDue ?? 0;
-    const targetDeck = `Kinema::Courses::${courseName}::${lessonName}`;
-
-    celebrate({
-      type: "achievement",
-      title: "Repaso en Anki",
-      subtitle: `${count} tarjetas pendientes · ${lessonName}`,
-      icon: <Repeat2 className="text-amber-400" />,
-    });
-
     void sendRuntimeMessage({
       type: "USG_ANKI_DUE",
       course: courseName,
       lesson: lessonName,
       browse: true,
       rootDeck: vocabCfg.rootDeck,
+      scope,
     });
-
     setTimeout(() => {
       setAnkiOpening(false);
     }, 1200);
-  }, [ankiOpening, ankiDue, courseName, lessonName, vocabCfg.rootDeck]);
+  }, [ankiOpening, courseName, lessonName, vocabCfg.rootDeck]);
 
   // ── Verdict sound is handled centrally by celebrate() ──────────────────────
 
-  // ── Auto-advance focus navigator when steps complete ─────────────────────
+  // ── §1.2: SIN auto-avance al completar Comprobar — el estudiante lee el
+  // feedback y decide («Un reto más» es opcional); Continuar a Aplicar es manual.
+  // ── §1.5: indicador real de transcripción en la pantalla de objetivo ──────
+  // Consulta el bridge con maxChars mínimo y reintenta cada 5 s (máx. 12).
   useEffect(() => {
-    if (confidence && focusStep === 0) { setFocusDir(1); setFocusStep(1); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confidence]);
+    if (phase !== "objective" || !isExtensionRuntime()) return;
+    let tries = 0;
+    let alive = true;
+    const check = async () => {
+      tries += 1;
+      // Mismo canal que la generación: runtime si responde, bridge del
+      // content script si no (el background no maneja GET_STUDY_TRANSCRIPT).
+      const res = await requestStudyTranscript(200);
+      if (!alive) return;
+      if (res?.ok && typeof res.cueCount === "number" && res.cueCount > 0) {
+        setTranscriptState({ status: "ready", cues: res.cueCount });
+      } else if (tries >= 12) {
+        setTranscriptState({ status: "none", cues: null });
+      } else {
+        setTranscriptState({ status: "waiting", cues: null });
+      }
+    };
+    void check();
+    const iv = setInterval(() => {
+      if (tries >= 12) { clearInterval(iv); return; }
+      void check();
+    }, 5000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [phase, courseName, lessonName]);
 
+  // ── §1.5: repasos pendientes del CURSO en la pantalla de objetivo ─────────
   useEffect(() => {
-    if (questionsComplete && focusStep <= 2) {
-      setFocusDir(1);
-      setFocusStep(3);
-      // Victory sound
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionsComplete]);
+    if (phase !== "objective" || !courseName.trim()) return;
+    let alive = true;
+    void sendRuntimeMessage<{ ok?: boolean; due?: number }>({
+      type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, browse: false,
+      rootDeck: vocabCfg.rootDeck, scope: "course",
+    }).then((r) => {
+      if (!alive) return;
+      setCourseDueCount(r?.ok && typeof r.due === "number" ? r.due : null);
+    });
+    return () => { alive = false; };
+  }, [phase, courseName, lessonName, vocabCfg.rootDeck]);
 
   // NO auto-advance step 3→4: el usuario lee el feedback y decide cuándo continuar
 
@@ -1570,14 +1630,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         status: "in_progress",
       }).catch(err => console.error("[history] upsert on generate", err));
 
-      // Auto-save Anki cards to Supabase if logged in
-      if (session?.user && newContent.ankiCards.length > 0) {
-        fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e0dd828c/anki?userId=${session.user.id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newContent.ankiCards)
-        }).catch(err => console.error("Failed to sync Anki cards", err));
-      }
+      // §5: el autosync de tarjetas a Supabase queda eliminado del flujo — la
+      // edge function aún identificaba al usuario por ?userId= en la URL, sin
+      // Authorization. Cuando la función valide el JWT (requisito fuera de
+      // este repo), se reactiva con Authorization: Bearer y sin userId en URL.
 
       toast.message("¡Material de estudio listo!", {
         description: usedFallback
@@ -1632,15 +1688,25 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       if (q.prompt) attemptsByPrompt.set(q.prompt, q);
     });
 
+    // §1.2: la cola se reconstruye del historial — los intentos guardados
+    // (por prompt) fijan el orden presentado; sin intentos, la pregunta de
+    // arranque según el nivel declarado.
     const restoredConfidence = rec.confidence ?? null;
-    const canonicalQuestions = restoredConfidence
-      ? restored.questions.filter((q) => QUESTIONS_FOR[restoredConfidence].includes(q.difficulty))
-      : [];
+    const canonicalQuestions = rec.questions
+      .map((a) => a.prompt)
+      .map((prompt) => (prompt ? restored.questions.findIndex((q) => q.q === prompt) : -1))
+      .filter((i) => i >= 0);
+    const restoredQueue = canonicalQuestions.length > 0
+      ? canonicalQuestions
+      : restoredConfidence
+        ? [pickStartQuestion(restoredConfidence, restored, new Set(Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : []))]
+        : [];
 
     const answers: Record<number, string> = {};
     const feedbacks: Record<number, FeedbackState> = {};
 
-    canonicalQuestions.forEach((cq, i) => {
+    restoredQueue.forEach((cqIdx, i) => {
+      const cq = restored.questions[cqIdx];
       const attempt = attemptsByPrompt.get(cq.q);
       if (!attempt) return;
       answers[i] = attempt.answer ?? "";
@@ -1653,26 +1719,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
     });
 
-    // Legacy snapshots (no prompt stored) fall back to positional mapping.
-    if (!attemptsByPrompt.size && rec.questions.length) {
-      rec.questions.forEach((q, i) => {
-        answers[i] = q.answer ?? "";
-        if (q.feedback || q.rating) {
-          feedbacks[i] = {
-            status: "done",
-            content: q.feedback ?? "",
-            rating: (q.rating ?? "unknown") as AIRating,
-          };
-        }
-      });
-    }
-
     setQuestionAnswers(answers);
     setQuestionFeedbacks(feedbacks);
+    setQuestionQueue(restoredQueue);
+    setCurrentQIdx(Object.keys(feedbacks).length);
 
     const checkedConceptIndexes = Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : [];
     setConceptsChecked(Object.fromEntries(checkedConceptIndexes.map((idx) => [idx, true])));
     setConceptsAcknowledged(Boolean(rec.conceptsAcknowledged));
+    setRecallNotes(rec.recallNotes ?? "");
+    if (rec.recallNotes || rec.confidence) setRecallRevealed(true);
 
     if (rec.codeChallenge) {
       setAppAnswer(rec.codeChallenge.answer ?? "");
@@ -1687,31 +1743,43 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
     const hasCodeChallenge = Boolean(rec.codeChallenge);
     if (hasCodeChallenge) { setAppAttempts(2); appRewardedRef.current = true; }
+    setPracticeStatus(rec.practiceStatus ?? (hasCodeChallenge ? "done" : null));
+    setQuestionsComplete(Boolean(rec.questionsDone));
+    setQuestionsSkipped(Boolean(rec.questionsSkipped));
+    setFinishedAt(rec.finishedAt ?? null);
+    // Exportaciones previas restauran su estado sin completar la lección:
+    // terminar es una acción explícita (§1.4).
     const hasAnkiExport = Boolean(rec.ankiCards && rec.ankiCards.length > 0);
-    const done = rec.status === "completed" || hasAnkiExport;
-    const restoredQuestionsComplete =
-      done ||
-      hasCodeChallenge ||
-      Boolean(rec.questionsComplete) ||
-      rec.questions.some(q => q.rating === "correct" || q.rating === "excellent");
-    setQuestionsComplete(restoredQuestionsComplete);
-    setSessionComplete(done);
-    if (hasAnkiExport) { setAnkiExported(true); setOralSkipped(true); setRecallRevealed(true); }
+    if (hasAnkiExport) { setAnkiExported(true); setOralSkipped(true); }
+    if (rec.obsidianExportedAt) setObsidianExportedAt(rec.obsidianExportedAt);
+    // Flags de refuerzo/exclusión persistidos vuelven al contenido.
+    if (hasAnkiExport && rec.ankiCards?.length) {
+      const byFront = new Map(rec.ankiCards.map((c) => [c.front, c]));
+      setContent((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          ankiCards: prev.ankiCards.map((c) => {
+            const stored = byFront.get(c.front);
+            return stored ? { ...c, reinforce: stored.reinforce, excluded: stored.excluded } : c;
+          }),
+        };
+      });
+    }
+    const done = rec.finishedAt != null || rec.status === "completed";
     const restoredStep = typeof rec.focusStep === "number"
-      ? Math.max(0, Math.min(4, Math.round(rec.focusStep)))
+      ? Math.max(0, Math.min(3, Math.round(rec.focusStep)))
       : done
-        ? 4
-        : rec.codeChallenge
-          ? 3
-          : restoredQuestionsComplete
-            ? 3
-            : rec.questions.length > 0
-              ? 2
-              : rec.conceptsAcknowledged
-                ? 2
-                : rec.confidence
-                  ? 1
-                  : 0;
+        ? 3
+        : hasCodeChallenge
+          ? 2
+          : Boolean(rec.questionsDone)
+            ? 2
+            : restoredQueue.length > 0
+              ? 1
+              : rec.confidence
+                ? 0
+                : 0;
     setFocusStep(restoredStep);
     setPhase("result");
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1750,6 +1818,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
       // Most recent objective used in this course (lectures are already sorted desc).
       // Prefer objectiveId from newer records; fall back to matching old records by text.
+      setReturningStudent(lectures.length > 0);
       const lastLectureWithObjective = lectures.find(l => l.objectiveId || l.objective);
       const objs = cache && !cache.isMock ? cache.objectives : [];
       const lastObjRaw = lastLectureWithObjective?.objectiveId ?? lastLectureWithObjective?.objective ?? null;
@@ -1886,14 +1955,20 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   };
 
   const handleReset = () => {
+    // §2: Reiniciar pide confirmación — antes borraba sin preguntar.
+    if (!window.confirm("¿Reiniciar? Se borran tus respuestas de esta lección.")) return;
     setPhase("objective"); setContent(null); setConfidence(null);
     setActiveSessionObjective(null);
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
     setConceptsAcknowledged(false);
     setShowAppSolution(false); setShowAppHint(false); setAppAttempts(0); appRewardedRef.current = false; setQuestionAnswers({}); setQuestionFeedbacks({});
-    setCurrentQIdx(0); setQuestionsComplete(false); setSessionComplete(false);
+    setCurrentQIdx(0); setQuestionsComplete(false); setQuestionsSkipped(false); setChallengeUsed(false);
+    setQuestionQueue([]); setPracticeStatus(null); setFinishedAt(null); setShowOralPractice(false);
+    setPendingLevelUp(null); setPendingUnlocked([]);
+    firstTryCorrectRef.current.clear();
     setAnkiExported(false); setShowAnkiGuide(false); setShowHint(false);
-    setShowModelAnswer(false); setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setOralSkipped(false); setRecallRevealed(false); qRewardedRef.current.clear(); conceptRewardedRef.current.clear();
+    setShowModelAnswer(false); setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setOralSkipped(false); setRecallRevealed(false); setRecallNotes("");
+    qRewardedRef.current.clear(); conceptRewardedRef.current.clear();
     setApkgStatus("idle"); setApkgProgress("");
     setFocusStep(0); setFocusDir(1);
     sessionCelebratedRef.current = false;
@@ -1913,7 +1988,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     toast.message("Sesión reiniciada", { icon: <RotateCcw className="text-violet-400" size={18} /> });
   };
 
-  // BUG FIX: reset question state when confidence changes
+  // §1.1: elegir nivel (único requisito del paso Recordar) y preparar la cola
+  // adaptativa del paso Comprobar con la pregunta de la dificultad elegida.
   const handleConfidenceChange = (c: ConfidenceLevel) => {
     setConfidence(c);
     historyService.upsertLecture({
@@ -1922,35 +1998,27 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       confidence: c,
       objectiveId: getActiveObjectiveId(),
       objective: getActiveObjectiveText(),
-      focusStep: 1,
+      focusStep: 0,
     }).catch(err => console.error("[history] upsert confidence", err));
     setCurrentQIdx(0);
     setQuestionsComplete(false);
-    setQuestionAnswers({});          // ← was missing
-    setQuestionFeedbacks({});        // ← was missing
+    setQuestionsSkipped(false);
+    setChallengeUsed(false);
+    firstTryCorrectRef.current.clear();
+    setQuestionAnswers({});
+    setQuestionFeedbacks({});
     setShowHint(false);
     setConceptsAcknowledged(false);
-    toast.info("Adaptando las preguntas a tu nivel...", {
-      icon: (
-        <div className="p-1.5 rounded-full bg-blue-500/10 border border-blue-500/20">
-          <Brain className="text-blue-400 w-4 h-4" />
-        </div>
-      )
-    });
     setShowModelAnswer(false);
     setAppAnswer("");
     setAppFeedback(IDLE_FB);
     setShowAppSolution(false);
-    setSessionComplete(false);
+    setQuestionQueue(content ? [pickStartQuestion(c, content, new Set(Object.keys(conceptsChecked).filter(k => conceptsChecked[Number(k)]).map(Number)))] : []);
   };
 
+  // §1.1: marcar conceptos es autodeclarado — ya no da XP (§2).
   const handleConceptToggle = (idx: number) => {
-    if (questionsComplete) return;
     const isNowChecked = !conceptsChecked[idx];
-    if (isNowChecked && !conceptRewardedRef.current.has(idx)) {
-      conceptRewardedRef.current.add(idx);
-      triggerXpGain(2, "+2 XP Concepto", "concept_ack");
-    }
     setConceptsChecked(p => {
       const next = { ...p, [idx]: isNowChecked };
       const checkedConceptIndexes = Object.entries(next)
@@ -1962,7 +2030,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         lectureName: lessonName,
         checkedConceptIndexes,
         conceptsAcknowledged: false,
-        focusStep: 1,
+        focusStep: 0,
       }).catch(err => console.error("[history] upsert concepts", err));
       return next;
     });
@@ -1979,40 +2047,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     [conceptsChecked],
   );
 
-  const visibleQuestions = useMemo(() => {
-    if (!content || !confidence) return [];
-    const base = content.questions.filter(q => QUESTIONS_FOR[confidence].includes(q.difficulty));
-    const totalConcepts = content.keyConcepts.length;
-    if (totalConcepts <= 0 || base.length <= 1) return base;
+  // §1.2: las preguntas presentadas son la COLA adaptativa (en orden), no un
+  // filtro fijo: empieza en la dificultad elegida y puede añadir consolidación.
+  const queueQuestions = useMemo(() => {
+    if (!content) return [];
+    return questionQueue.map((qi) => content.questions[qi]).filter(Boolean);
+  }, [content, questionQueue]);
 
-    const weakConcepts = new Set<number>();
-    for (let i = 0; i < totalConcepts; i += 1) {
-      if (!conceptsChecked[i]) weakConcepts.add(i);
-    }
-    if (weakConcepts.size === 0 || weakConcepts.size === totalConcepts) return base;
-
-    return [...base].sort((a, b) => {
-      const aRefs = a.conceptRefs ?? [];
-      const bRefs = b.conceptRefs ?? [];
-      const aWeak = aRefs.some(ref => weakConcepts.has(ref)) ? 1 : 0;
-      const bWeak = bRefs.some(ref => weakConcepts.has(ref)) ? 1 : 0;
-      return bWeak - aWeak;
-    });
-  // conceptSelectionSignature intentionally makes the dependency stable by checked indexes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, confidence, conceptSelectionSignature]);
-
-  // Persist attempts in the canonical question order (content.questions), not in
-  // the weakness-sorted visibleQuestions order. Rehydration maps by prompt, so a
-  // reorder while answering can no longer shuffle answer/feedback across cards.
   const persistQuestionsInCanonicalOrder = (idx: number, fb: FeedbackState): QuestionAttempt[] => {
-    const baseQuestions = content
-      ? content.questions.filter(q => confidence && QUESTIONS_FOR[confidence].includes(q.difficulty))
-      : [];
-    const canonical = baseQuestions.length ? baseQuestions : visibleQuestions;
-
-    return canonical.map((cq) => {
-      const vi = visibleQuestions.findIndex(vq => vq.q === cq.q);
+    return content ? content.questions.map((cq) => {
+      const vi = queueQuestions.findIndex(vq => vq.q === cq.q);
       const f = vi === idx ? fb : vi >= 0 ? questionFeedbacks[vi] : undefined;
       return {
         prompt: cq.q,
@@ -2021,27 +2065,27 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         feedback: f?.content,
         answeredAt: vi === idx ? Date.now() : undefined,
       };
-    });
+    }) : [];
   };
 
   const persistQuestionProgress = (idx: number, fb: FeedbackState) => {
-    if (!visibleQuestions[idx]) return;
+    if (!queueQuestions[idx]) return;
     const attempts: QuestionAttempt[] = persistQuestionsInCanonicalOrder(idx, fb);
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
       questions: attempts,
-      focusStep: 2,
+      focusStep: 1,
     }).catch(err => console.error("[history] upsert question", err));
   };
 
   const handleEvalQuestion = async (idx: number) => {
-    if (!content || !visibleQuestions[idx]) return;
+    if (!content || !queueQuestions[idx]) return;
     const userAns = questionAnswers[idx] || "";
     if (!userAns.trim()) return;
     const prevRating = questionFeedbacks[idx]?.rating;
     setQuestionFeedbacks(p => ({ ...p, [idx]: { status: "loading", content: "", rating: "unknown" } }));
-    const q = visibleQuestions[idx];
+    const q = queueQuestions[idx];
     const aiContext = getStudyAIContext(content);
 
     // Attempt streaming evaluation first
@@ -2062,6 +2106,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
       persistQuestionProgress(idx, fb);
+      if (fb.status === "done") applyEvalOutcome(idx, q, fb, userAns, prevRating);
       // No auto-advance on fallback path either
       setTimeout(() => scrollToBottom(), 120);
       return;
@@ -2070,54 +2115,115 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const fb: FeedbackState = { status: "done", content: res.content, rating: res.rating, isMock: res.isMock };
     setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
     persistQuestionProgress(idx, fb);
-    
-    const isGoodNow = res.rating === "correct" || res.rating === "excellent";
-    const alreadyRewarded = qRewardedRef.current.has(q.q) || prevRating === "correct" || prevRating === "excellent";
+    applyEvalOutcome(idx, q, fb, userAns, prevRating);
+
+    // NO auto-advance — the user reads the feedback and clicks "Siguiente" manually
+    setTimeout(() => scrollToBottom(), 120);
+  };
+
+  // §2/§1.2: XP por esfuerzo y completado del paso — común a streaming y fallback.
+  const applyEvalOutcome = (idx: number, q: StudyContent["questions"][number], fb: FeedbackState, userAns: string, prevRating?: AIRating) => {
+    const isGoodNow = fb.rating === "correct" || fb.rating === "excellent";
+    const firstAttempt = !qRewardedRef.current.has(q.q);
     const improved = isGoodNow && (prevRating === "partial" || prevRating === "wrong");
-    if (isGoodNow && !alreadyRewarded) {
+    if (firstAttempt) {
       qRewardedRef.current.add(q.q);
-      const nextStreak = consecutiveStreak + 1;
-      setConsecutiveStreak(nextStreak);
-      setGlintQuestionIdx(idx);
-      setTimeout(() => setGlintQuestionIdx(null), 1200);
-
-      const comboBonus = nextStreak >= 2 ? nextStreak * 5 : 0;
-      const improveBonus = improved ? 5 : 0;
-      const totalGain = 10 + comboBonus + improveBonus;
-      const comboText = nextStreak >= 2 ? `+${totalGain} XP (Racha x${nextStreak})` : `+${totalGain} XP`;
-
-      triggerXpGain(totalGain, comboText, "question_correct", nextStreak >= 2 ? nextStreak : undefined);
-
-      const praises = [
-        { title: nextStreak >= 2 ? `¡Racha x${nextStreak}! Impecable` : "¡Excelente deducción!", subtitle: "Tu razonamiento es sólido", icon: <Target className="text-violet-400" /> },
-        { title: "¡Impecable!", subtitle: "Eso es dominio real del tema", icon: <Zap className="text-amber-400" /> },
-        { title: "¡Muy bien respondido!", subtitle: "Bloom diría que vas a nivel 4", icon: <Rocket className="text-violet-400" /> },
-        { title: "¡Exacto! Sigue así", subtitle: "Cada respuesta correcta es progreso real", icon: <Sparkles className="text-emerald-400" /> },
-        { title: "¡Brillante!", subtitle: "Respuesta correcta al 100%", icon: <Diamond className="text-violet-400" /> },
-      ];
-      const pick = praises[Math.floor(Math.random() * praises.length)];
-      celebrate(improved
-        ? { type: "question_correct", bonusXp: comboBonus + improveBonus, combo: nextStreak, title: "¡Lo corregiste!", subtitle: `${comboText} · de ${prevRating === "partial" ? "Parcial" : "Revisemos"} a ${res.rating === "excellent" ? "Excelente" : "Correcto"}`, icon: <Target className="text-violet-400" /> }
-        : { type: "question_correct", bonusXp: comboBonus + improveBonus, combo: nextStreak, title: pick.title, subtitle: `${comboText} · nivel «${q.bloom}» · ${(Object.values({ ...questionFeedbacks, [idx]: fb }) as FeedbackState[]).filter(f => f.rating === "correct" || f.rating === "excellent").length} de ${content?.questions.length ?? "?"} dominadas`, icon: pick.icon });
-    } else if (!isGoodNow) {
-      setConsecutiveStreak(0);
-      setShakeQuestionIdx(idx);
-      setTimeout(() => setShakeQuestionIdx(null), 600);
-
-      if (res.rating === "partial") {
-        triggerXpGain(5, "+5 XP", "question_combo");
-        toast.info("Vas por buen camino, veamos el detalle.", {
-          icon: (
-            <div className="p-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-              <Sparkles className="text-amber-400 w-4 h-4" />
-            </div>
-          )
-        });
+      let gained = 0;
+      if (userAns.trim().length >= 20) gained += recordXp("answer_submitted"); // una vez por pregunta
+      if (isGoodNow) {
+        gained += recordXp("first_try_correct");
+        firstTryCorrectRef.current.add(q.q);
+      } else {
+        recordXp("first_try_miss"); // sin XP: alimenta el % de aciertos a la primera
       }
+      setSessionXp(prev => prev + gained);
+    } else if (improved) {
+      const gained = recordXp("answer_improved");
+      setSessionXp(prev => prev + gained);
+    }
+
+    // §1.2: correcta a la primera en la pregunta inicial → paso completado (con
+    // «Un reto más» opcional). Cualquier pregunta de consolidación/reto
+    // (idx > 0) completa el paso con su resultado, sea cual sea.
+    const isFirstQuestion = idx === 0;
+    if ((isGoodNow && isFirstQuestion) || idx > 0) {
+      setQuestionsComplete(true);
+      persistQuestionsDone(false);
     }
 
     // NO auto-advance — the user reads the feedback and clicks "Siguiente" manually
     setTimeout(() => scrollToBottom(), 120);
+  };
+
+  // §1.2: consolidación — tras fallar, «Siguiente» trae una pregunta del nivel
+  // anterior; con esa (sea cual sea el resultado) el paso se completa (máx. 2).
+  const goNextQuestion = (idx: number) => {
+    if (!content) return;
+    const current = queueQuestions[idx];
+    const used = new Set(questionQueue);
+    const currentDiff = DIFF_ORDER.indexOf(current?.difficulty ?? "partial");
+    const lowerDiff = DIFF_ORDER[Math.max(0, currentDiff - 1)];
+    const candidate = content.questions
+      .map((q, i) => ({ q, i }))
+      .filter(({ q, i }) => !used.has(i) && q.difficulty === lowerDiff)
+      .sort((a, b) => {
+        const unchecked = new Set(content.keyConcepts.map((_, i) => i).filter(i => !conceptsChecked[i]));
+        const aWeak = (a.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
+        const bWeak = (b.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
+        return bWeak - aWeak;
+      })[0];
+    if (candidate) {
+      setQuestionQueue(prev => [...prev, candidate.i]);
+      setCurrentQIdx(idx + 1);
+      setShowHint(false);
+      setShowModelAnswer(false);
+    } else {
+      // Sin candidata (p. ej. en confused) → el paso se completa igual.
+      setQuestionsComplete(true);
+      persistQuestionsDone(false);
+    }
+  };
+
+  // «Un reto más» (opcional): la pregunta del nivel siguiente, si existe.
+  const goChallengeQuestion = () => {
+    if (!content || challengeUsed) return;
+    const used = new Set(questionQueue);
+    const topDiff = DIFF_ORDER.length - 1;
+    const candidate = content.questions
+      .map((q, i) => ({ q, i }))
+      .filter(({ q, i }) => !used.has(i) && DIFF_ORDER.indexOf(q.difficulty) === topDiff)[0]
+      ?? content.questions.map((q, i) => ({ q, i })).filter(({ i }) => !used.has(i))[0];
+    if (candidate) {
+      setChallengeUsed(true);
+      setQuestionQueue(prev => [...prev, candidate.i]);
+      setCurrentQIdx(queueQuestions.length);
+      setShowHint(false);
+      setShowModelAnswer(false);
+    }
+  };
+
+  const persistQuestionsDone = (skipped: boolean) => {
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      questionsDone: true,
+      questionsSkipped: skipped,
+      focusStep: 1,
+    }).catch(err => console.error("[history] upsert questions done", err));
+  };
+
+  // Bug §1.2: «Ir al desafío» ya no pasa por handleForceComplete — completa sin toast.
+  const completeQuestions = () => {
+    setQuestionsComplete(true);
+    persistQuestionsDone(false);
+  };
+
+  // «Saltar» (único camino del toast «Evaluación saltada»).
+  const handleSkipQuestions = () => {
+    setQuestionsComplete(true);
+    setQuestionsSkipped(true);
+    persistQuestionsDone(true);
+    toast.message("Evaluación saltada", { icon: <FastForward className="text-violet-400" size={18} /> });
   };
 
   const handleEvalApp = async () => {
@@ -2134,72 +2240,67 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       aiContext,
     );
 
-    if (!res.success || !res.content.trim()) {
-      const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer, aiContext);
-      const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
-      setAppFeedback(fb);
-      if (fb.status === "done") setAppAttempts(n => n + 1);
+    // §2: la práctica y el código son lo mejor pagado; el intento cuenta.
+    const firstAttempt = !appRewardedRef.current;
+    const markAttempted = () => {
+      if (firstAttempt) {
+        appRewardedRef.current = true;
+        const gained = recordXp("practice_attempted");
+        setSessionXp(prev => prev + gained);
+      }
+    };
+    const markCorrect = (bonus: number) => {
+      const gained = recordXp("practice_correct", bonus);
+      setSessionXp(prev => prev + gained);
+      setPracticeStatus("correct");
+    };
+    const persistCode = (rating: AIRating, feedback: string) => {
       historyService.upsertLecture({
         courseName,
         lectureName: lessonName,
-        codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating: fb.rating, feedback: fb.content, answeredAt: Date.now() },
-        questionsComplete: true,
-        conceptsAcknowledged: true,
-        focusStep: 3,
+        codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating, feedback, answeredAt: Date.now() },
+        practiceStatus: rating === "correct" || rating === "excellent" ? "correct" : "done",
+        focusStep: 2,
       }).catch(err => console.error("[history] upsert code", err));
-      if (fallback.success && (fallback.rating === "correct" || fallback.rating === "excellent")) {
-        const firstCode = !appRewardedRef.current;
-        if (firstCode) { appRewardedRef.current = true; triggerXpGain(50, "+50 XP Reto Código", "code_challenge"); }
-        celebrate({ type: "code_correct", title: "¡Código brillante!", subtitle: firstCode ? "Tu solución es correcta · +50 XP" : "Tu solución es correcta", icon: <Flame className="text-orange-400" /> });
+    };
+
+    if (!res.success || !res.content.trim()) {
+      const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer, aiContext, confidence ?? undefined);
+      const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
+      setAppFeedback(fb);
+      if (fb.status === "done") {
+        setAppAttempts(n => n + 1);
+        markAttempted();
+        const isGood = fallback.rating === "correct" || fallback.rating === "excellent";
+        setPracticeStatus(prev => (prev === "correct" ? prev : isGood ? "correct" : "done"));
+        if (isGood && firstAttempt) markCorrect(content.application.isCode ? 20 : 0);
+        persistCode(fb.rating, fb.content);
       }
-      if (fallback.success && !sessionComplete) setTimeout(() => setSessionComplete(true), 800);
       return;
     }
 
     setAppFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
     setAppAttempts(n => n + 1);
+    markAttempted();
+    const isGood = res.rating === "correct" || res.rating === "excellent";
+    setPracticeStatus(prev => (prev === "correct" ? prev : isGood ? "correct" : "done"));
+    if (isGood && firstAttempt) markCorrect(content.application.isCode ? 20 : 0);
+    persistCode(res.rating, res.content);
+    // §1.3: sin banner «¡Sesión completada!» — el cierre ocurre en Fijar.
+  };
+
+  // §1.3: «Hacerlo después» — el estudiante decide; queda marcado como pendiente.
+  const handlePracticeLater = () => {
+    setPracticeStatus(prev => prev ?? "later");
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
-      codeChallenge: { prompt: content.application.challenge, answer: appAnswer, rating: res.rating, feedback: res.content, answeredAt: Date.now() },
-      questionsComplete: true,
-      conceptsAcknowledged: true,
-      focusStep: 3,
-    }).catch(err => console.error("[history] upsert code", err));
-    
-    if (res.rating === "correct" || res.rating === "excellent") {
-      const firstCode = !appRewardedRef.current;
-        if (firstCode) { appRewardedRef.current = true; triggerXpGain(50, "+50 XP Reto Código", "code_challenge"); }
-      celebrate({ type: "code_correct", title: "¡Código brillante!", subtitle: firstCode ? "Tu solución es correcta · +50 XP" : "Tu solución es correcta", icon: <Flame className="text-orange-400" /> });
-    } else if (res.rating === "partial") {
-      triggerXpGain(15, "+15 XP Progreso", "question_combo");
-      toast.info("Buena aproximación, revisemos el feedback.", {
-        icon: (
-          <div className="p-1.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-            <Wand2 className="text-amber-400 w-4 h-4" />
-          </div>
-        )
-      });
-    }
-
-    if (!sessionComplete) setSessionComplete(true);
+      practiceStatus: "later",
+      focusStep: 2,
+    }).catch(err => console.error("[history] upsert practice later", err));
+    goToStep(3);
   };
 
-  const handleForceComplete = () => { 
-    setQuestionsComplete(true); 
-    setShowHint(false); 
-    setShowModelAnswer(false); 
-    historyService.upsertLecture({
-      courseName,
-      lectureName: lessonName,
-      questionsComplete: true,
-      focusStep: 3,
-    }).catch(err => console.error("[history] upsert force complete", err));
-    toast.message("Evaluación saltada", { icon: <FastForward className="text-violet-400" size={18} /> });
-  };
-
-  // The export that closes the lesson hands the stage to the session-complete celebration.
-  const completesSession = () => !sessionCelebratedRef.current && oralDone && steps.slice(0, 4).every(s => s.done);
 
   const handleEvaluateOral = async () => {
     if (!content?.interviewQ || !oralAnswer.trim() || oralFeedback.status === "loading" || oralFeedback.status === "streaming") return;
@@ -2220,71 +2321,80 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   };
 
   // C3: marca la sesión como exportada a OBSIDIAN, sin tocar exportedAt (que
-  // alimenta el «en Anki» del historial).
-  const persistObsidianAndComplete = () => {
+  // alimenta el «en Anki» del historial). Exportar NO completa la lección:
+  // terminar es la acción explícita «Terminar lección» (§1.4).
+  const persistObsidianExport = () => {
     if (!content) return;
     const cards: StoredAnkiCard[] = content.ankiCards.map(c => ({
       id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
+      conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
     }));
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
       studyContent: content as StoredStudyContent,
       ankiCards: cards,
-      ankiCardsCount: cards.length,
-      questionsComplete: true,
-      conceptsAcknowledged: true,
-      focusStep: 4,
-      status: "completed",
+      ankiCardsCount: cards.filter(c => !c.excluded).length,
+      questionsDone: questionsComplete || undefined,
+      questionsSkipped: questionsSkipped || undefined,
+      practiceStatus: practiceStatus ?? "later",
+      focusStep: 3,
       obsidianExportedAt: Date.now(),
-    }).then(() => historyService.markCompleted(slugify(courseName), slugify(lessonName)))
-      .catch(err => console.error("[history] complete (obsidian)", err));
+      recallNotes: recallNotes.trim() || undefined,
+    }).catch(err => console.error("[history] export (obsidian)", err));
   };
 
-  const persistAnkiAndComplete = () => {
+  const persistAnkiExport = (guids: string[]) => {
     if (!content) return;
-    const cards: StoredAnkiCard[] = content.ankiCards.map(c => ({
+    const cards: StoredAnkiCard[] = allCardsWithReinforce.map(c => ({
       id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
+      conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
     }));
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
       studyContent: content as StoredStudyContent,
       ankiCards: cards,
-      ankiCardsCount: cards.length,
-      questionsComplete: true,
-      conceptsAcknowledged: true,
-      focusStep: 4,
-      status: "completed",
+      ankiCardsCount: cards.filter(c => !c.excluded).length,
+      questionsDone: questionsComplete || undefined,
+      questionsSkipped: questionsSkipped || undefined,
+      practiceStatus: practiceStatus ?? "later",
+      focusStep: 3,
       exportedAt: Date.now(),
-    }).then(() => historyService.markCompleted(slugify(courseName), slugify(lessonName)))
-      .catch(err => console.error("[history] complete", err));
+      exportedGuids: guids,
+      recallNotes: recallNotes.trim() || undefined,
+    }).catch(err => console.error("[history] export", err));
   };
 
   const handleExportApkg = async () => {
     markQa("apkg-click");
-    const wasExported = ankiExported;
     if (!content || apkgStatus === "loading") { markQa("apkg-skip:" + (content ? "loading" : "no-content")); return; }
     setApkgStatus("loading");
     setApkgProgress("Iniciando…");
     try {
-      const deckName = await exportApkgFile(content.ankiCards, courseName, lessonName, vocabCfg.rootDeck, (msg) => {
+      const deckName = await exportApkgFile(allCardsWithReinforce, courseName, lessonName, vocabCfg.rootDeck, (msg) => {
         setApkgProgress(msg);
         markQa("apkg-progress:" + msg.slice(0, 40));
       });
+      const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
       setApkgStatus("done");
       setAnkiExported(true);
       markQa("apkg-done:" + deckName.slice(0, 60));
-      persistAnkiAndComplete();
-      // A9: regenerar cambia los fronts, así que los GUID nuevos no reemplazan
-      // las tarjetas viejas. Aviso informativo, sin controles nuevos.
-      if (wasExported) {
-        toast.info("Ya exportaste otra versión de esta lección", {
-          description: "Anki conservará las anteriores. Si solo quieres las nuevas, borra el mazo de la lección antes de importar.",
-          duration: 12000,
-        });
-      }
-      celebrate({ type: "anki_export", silent: completesSession(), rewardKey: `anki-apkg::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
+      // §3: el aviso de reexportación solo si el CONJUNTO de tarjetas cambió.
+      try {
+        const rec = await historyService.getLecture(slugify(courseName), slugify(lessonName));
+        const prev = rec?.exportedGuids;
+        if (prev && (prev.length !== guids.length || prev.some((g, i) => g !== guids[i]))) {
+          toast.info("Ya exportaste otra versión de esta lección", {
+            description: "Anki conservará las anteriores. Si solo quieres las nuevas, borra el mazo de la lección antes de importar.",
+            duration: 12000,
+          });
+        }
+      } catch {}
+      persistAnkiExport(guids);
+      // §2: export_done una vez por lección (Anki u Obsidian) — silencioso,
+      // la celebración grande es la del cierre.
+      celebrate({ type: "anki_export", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
       setTimeout(() => setApkgStatus("idle"), 4000);
     } catch (err) {
       console.error("[apkg export]", err);
@@ -2323,6 +2433,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   // ── Obsidian export ──────────────────────────────────────────────────────────
   const getObsidianSessionData = (): ObsidianSessionData | null => {
     if (!content) return null;
+    // §6: el cierre de Study viaja a la nota — recuerdo libre, puntos débiles
+    // (preguntas falladas/parciales con su respuesta) y el resumen final.
+    const weakPoints = queueQuestions
+      .map((q, i) => ({ q, fb: questionFeedbacks[i] }))
+      .filter(({ fb }) => fb?.status === "done" && (fb.rating === "partial" || fb.rating === "wrong"))
+      .map(({ q }) => ({ q: q.q, answer: q.answer }));
     return {
       courseName,
       lessonName,
@@ -2330,6 +2446,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       sourceUrl: typeof window !== "undefined" ? window.location.href : undefined,
       platform: "udemy",
       ankiDeck: conceptDeckPath(vocabCfg.rootDeck || "Kinema", courseName, lessonName),
+      recallNotes: recallNotes.trim() || undefined,
+      weakPoints: weakPoints.length > 0 ? weakPoints : undefined,
+      result: buildResultSummary(),
       content: content as ObsidianSessionData["content"],
     };
   };
@@ -2378,9 +2497,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       });
       setObsidianStatus("done");
       // C3: exportar a Obsidian NO marca la lección como «en Anki» — estados
-      // separados. La sesión se da por completada igualmente.
+      // separados. §2: XP de exportación compartido, una vez por lección.
       setObsidianExportedAt(Date.now());
-      persistObsidianAndComplete();
+      persistObsidianExport();
+      celebrate({ type: "export_done", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "Exportado a Obsidian" });
       toast.success("Exportado a Obsidian", {
         description: result.mocPath
           ? `Nota: ${result.notePath} · MOC: ${result.mocPath}`
@@ -2488,25 +2608,33 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     void saveObsidianExportConfig(next);
   };
 
-  // BUG FIX: only show apply if questionsComplete (not allQsAnswered with wrong ratings)
+  // §1.2: Comprobar terminado (respondido o saltado) habilita Aplicar.
   const showApply = confidence !== null && questionsComplete;
 
-  // ── Focus navigator helpers ───────────────────────────────────────────────
+  // §1.5: estudiante que vuelve → objetivo/curso plegados y CTA corto.
+  const returningMode = Boolean(
+    returningStudent &&
+    dynamicObjectives &&
+    !objectivesExpanded &&
+    (lastUsedObjectiveId || (selectedObj && selectedObj !== "custom"))
+  );
+  // §1.5: sin transcripción (esperando o sin subtítulos) el CTA no arranca en la extensión.
+  const transcriptBlocksCta = IS_EXTENSION && (transcriptState.status === "none" || transcriptState.status === "waiting");
+
+  // ── Focus navigator helpers (flowVersion 2: 4 pasos) ─────────────────────
   const stepUnlocked = [
-    true,                    // 0 Autocalibrar
-    confidence !== null,      // 1 Conceptos
-    confidence !== null,      // 2 Verificar
-    questionsComplete,        // 3 Aplicar
-    showApply,               // 4 Anki + Entrevista
+    true,                     // 0 Recordar
+    confidence !== null,      // 1 Comprobar
+    questionsComplete,        // 2 Aplicar
+    questionsComplete,        // 3 Fijar (Aplicar no bloquea: «Hacerlo después» cuenta)
   ] as const;
 
-  const canGoNext = focusStep < 4 && stepUnlocked[focusStep + 1 as 0|1|2|3|4];
+  const canGoNext = focusStep < 3 && stepUnlocked[focusStep + 1 as 0|1|2|3];
   const canGoPrev = focusStep > 0;
 
   const goToStep = (target: number) => {
-    if (target < 0 || target > 4) return;
-    if (!stepUnlocked[target as 0|1|2|3|4]) return;
-    if (focusStep === 1 && target === 2) setConceptsAcknowledged(true);
+    if (target < 0 || target > 3) return;
+    if (!stepUnlocked[target as 0|1|2|3]) return;
     // Reset scroll ANTES del re-render — evita que AnimatePresence empuje hacia abajo
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setFocusDir(target > focusStep ? 1 : -1);
@@ -2516,68 +2644,199 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         courseName,
         lectureName: lessonName,
         focusStep: target,
-        conceptsAcknowledged: focusStep === 1 && target === 2 ? true : undefined,
       }).catch(err => console.error("[history] upsert focus step", err));
     }
   };
 
+  // §1.1: el CTA del paso Recordar — solo el toque de nivel bloquea.
   const handleGoVerify = () => {
     const checkedConceptIndexes = Object.entries(conceptsChecked)
       .filter(([, checked]) => checked)
       .map(([key]) => Number(key))
       .filter(Number.isFinite);
-    setConceptsAcknowledged(true);
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
       checkedConceptIndexes,
       conceptsAcknowledged: true,
-      focusStep: 2,
+      recallNotes: recallNotes.trim() || undefined,
+      focusStep: 1,
     }).catch(err => console.error("[history] upsert concept acknowledgement", err));
-    goToStep(2);
+    goToStep(1);
   };
 
-  // BUG FIX: once questionsComplete, conceptsDone is locked true (prevents unmark on back-nav)
   const conceptsMarkedCount = Object.values(conceptsChecked).filter(Boolean).length;
-  const conceptsDone = questionsComplete || conceptsAcknowledged || conceptsMarkedCount >= 2;
 
-  const oralDone = !content?.interviewQ || oralFeedback.status === "done" || oralSkipped;
+  // §1.3: la práctica nunca bloquea — status único en vez de appPassed.
+  const practiceLabel = practiceStatus === "correct" ? "correcta" : practiceStatus === "done" ? "hecha" : "pendiente";
+  const oralPracticeMeta = content ? getOralPracticeMeta(content, activeSessionObjective || getActiveObjectiveText()) : null;
 
-  // "Wrong" blocks the step until a 2nd attempt or until the reference solution was opened; an AI error never blocks.
-  const appPassed = appFeedback.status === "done" && (appFeedback.rating !== "wrong" || appAttempts >= 2 || showAppSolution);
-
-  // Stepper state
+  // Stepper (nombres de STEP_META, 4 pasos)
   const steps = [
-    { label: "Mi nivel",    done: confidence !== null,  active: confidence === null },
-    { label: "Lo que vi",   done: conceptsDone,         active: confidence !== null && !conceptsDone },
-    { label: "¿Lo sé?",    done: questionsComplete,    active: confidence !== null && !questionsComplete },
-    { label: "Practícalo", done: appPassed, active: showApply && !appPassed },
-    { label: "No olvidar", done: ankiExported && oralDone, active: showApply },
+    { label: STEP_META[0].short, done: confidence !== null, active: confidence === null },
+    { label: STEP_META[1].short, done: questionsComplete, active: confidence !== null && !questionsComplete },
+    { label: STEP_META[2].short, done: practiceStatus !== null, active: showApply && practiceStatus === null },
+    { label: STEP_META[3].short, done: finishedAt !== null, active: showApply },
   ];
 
-  const allStepsComplete = steps.every(s => s.done);
   const hasUsableObjective = Boolean(
     customObj.trim() ||
     (dynamicObjectives?.some(o => o.id === selectedObj) && !objectivesMock)
   );
+  const hasCourseContext = Boolean(courseName.trim() && lessonName.trim());
 
-  // Celebrate once per session when every step is done (not on rehydrate, not on re-toggle).
+  // ── §1.6: calibración honesta ─────────────────────────────────────────────
+  // Demostrado = la dificultad MÁS ALTA respondida correcta a la primera.
+  // Si ninguna, un nivel por debajo del declarado (mínimo «Confuso»).
+  const calibration = useMemo(() => {
+    if (!content || !confidence || queueQuestions.length === 0) return null;
+    const firstTryCorrect = queueQuestions.filter((q) => firstTryCorrectRef.current.has(q.q));
+    const shownIdx = firstTryCorrect.length > 0
+      ? Math.max(...firstTryCorrect.map(q => DIFF_ORDER.indexOf(q.difficulty)))
+      : Math.max(0, DIFF_ORDER.indexOf(confidence) - 1);
+    const saidIdx = DIFF_ORDER.indexOf(confidence);
+    const label = (i: number) => CONFIDENCE.find(c => c.id === DIFF_ORDER[i])?.label ?? "";
+    const diff = shownIdx - saidIdx;
+    const message = diff === 0
+      ? "Tu autoevaluación fue precisa."
+      : diff < 0
+        ? "Te sentías más seguro de lo que mostraste; justo eso repasarás en Anki."
+        : "Sabes más de lo que creías; la próxima vez empieza un nivel más arriba.";
+    return { said: label(saidIdx), shown: label(shownIdx), message };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, confidence, questionQueue, questionFeedbacks]);
+
+  // ── §1.4: resumen de cierre con datos reales ─────────────────────────────
+  const firstTryCount = queueQuestions.filter((q) => firstTryCorrectRef.current.has(q.q)).length;
+  const improvedCount = queueQuestions.filter((_, i) => {
+    const fb = questionFeedbacks[i];
+    return fb?.status === "done" && (fb.rating === "correct" || fb.rating === "excellent");
+  }).length - firstTryCount;
+  const resultTitle = (() => {
+    const totalQ = queueQuestions.length;
+    const practiceOk = practiceStatus === "correct";
+    const practiceLater = practiceStatus === null || practiceStatus === "later";
+    if (totalQ > 0 && firstTryCount === totalQ && practiceOk) return "Lección dominada";
+    if (firstTryCount < totalQ || practiceLater) return "Lección completada · con puntos a reforzar";
+    return "Lección completada";
+  })();
+
+  const buildResultSummary = (): import("../services/obsidianExport").StudyResultSummary => {
+    const selected = content?.ankiCards.filter(c => !c.excluded) ?? [];
+    const reinforceCount = selected.filter(c => c.reinforce).length;
+    const destination: "anki" | "obsidian" | "none" = ankiExported ? "anki" : obsidianExportedAt ? "obsidian" : "none";
+    return {
+      title: resultTitle,
+      remembered: { count: conceptsMarkedCount, total: content?.keyConcepts.length ?? 0 },
+      check: { firstTry: firstTryCount, improved: Math.max(0, improvedCount), skipped: questionsSkipped },
+      practice: practiceStatus === "correct" ? "correct" : practiceStatus === "done" ? "done" : "later",
+      calibration: calibration ? { said: calibration.said, shown: calibration.shown, message: calibration.message } : undefined,
+      cards: { total: selected.length, reinforce: reinforceCount, destination },
+    };
+  };
+
+  // ── §3: conceptos débiles → tarjetas de refuerzo (máx. 2 nuevas) ──────────
+  const reinforcePlan = useMemo(() => {
+    if (!content) return [];
+    const weak = new Set<number>();
+    content.keyConcepts.forEach((_, i) => { if (!conceptsChecked[i]) weak.add(i); });
+    queueQuestions.forEach((q, i) => {
+      const fb = questionFeedbacks[i];
+      if (fb?.status === "done" && (fb.rating === "partial" || fb.rating === "wrong")) {
+        (q.conceptRefs ?? []).forEach(r => weak.add(r));
+      }
+    });
+    const cards = content.ankiCards.map(c => ({
+      ...c,
+      reinforce: (c.conceptRefs ?? []).some(r => weak.has(r)) || Boolean(c.reinforce),
+    }));
+    const covered = new Set(cards.filter(c => c.reinforce).flatMap(c => c.conceptRefs ?? []));
+    const uncoveredWeak = new Set([...weak].filter(i => !covered.has(i)));
+    if (uncoveredWeak.size === 0) return cards;
+    let added = 0;
+    const extras: AnkiCard[] = [];
+    for (const q of queueQuestions) {
+      if (added >= 2) break;
+      const hits = (q.conceptRefs ?? []).filter(r => uncoveredWeak.has(r));
+      if (hits.length === 0) continue;
+      extras.push({
+        id: `study-refuerzo-${added + 1}`,
+        type: "concepto",
+        front: q.q,
+        back: `<p><b>${escapeHtml(q.answer)}</b></p>`,
+        tags: [],
+        conceptRefs: hits,
+        reinforce: true,
+        isHtml: true,
+      });
+      hits.forEach(r => { uncoveredWeak.delete(r); covered.add(r); });
+      added += 1;
+    }
+    return [...extras, ...cards];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, conceptsChecked, queueQuestions, questionFeedbacks]);
+
+  // El contenido exportable lleva los flags del plan de refuerzo.
+  const exportCards: AnkiCard[] = content
+    ? content.ankiCards.map((c) => reinforcePlan.find(p => p.id === c.id) ?? c)
+    : [];
+  const allCardsWithReinforce: AnkiCard[] = content
+    ? [...reinforcePlan.filter(p => !content.ankiCards.some(c => c.id === p.id)), ...exportCards]
+    : [];
+
+  // §3: solo se exporta lo que el estudiante acepta — quitar/incluir por tarjeta.
+  const handleToggleExcludeCard = (id: string) => {
+    setContent(prev => prev ? { ...prev, ankiCards: prev.ankiCards.map(c => c.id === id ? { ...c, excluded: !c.excluded } : c) } : prev);
+  };
+
+  // Las tarjetas de refuerzo recién creadas pasan al contenido (una sola vez)
+  // para que la vista previa y las exclusiones operen sobre un único origen.
   useEffect(() => {
-    if (!allStepsComplete || sessionCelebratedRef.current) return;
-    const id = setTimeout(() => {
-      if (sessionCelebratedRef.current) return;
+    if (!content) return;
+    const missing = reinforcePlan.filter(p => !content.ankiCards.some(c => c.id === p.id));
+    if (missing.length === 0) return;
+    setContent(prev => prev ? { ...prev, ankiCards: [...missing, ...prev.ankiCards] } : prev);
+  }, [reinforcePlan, content]);
+
+  // ── §1.4: «Terminar lección» — siempre disponible, sin exportar ───────────
+  const handleFinishLesson = () => {
+    if (finishedAt) return;
+    const now = Date.now();
+    setFinishedAt(now);
+    const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      finishedAt: now,
+      status: "completed",
+      focusStep: 3,
+      questionsDone: questionsComplete || undefined,
+      questionsSkipped: questionsSkipped || undefined,
+      practiceStatus: practiceStatus ?? "later",
+      recallNotes: recallNotes.trim() || undefined,
+      ankiCards: allCardsWithReinforce.map(c => ({
+        id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
+        conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
+      })),
+      ankiCardsCount: allCardsWithReinforce.filter(c => !c.excluded).length,
+      exportedGuids: ankiExported || obsidianExportedAt ? guids : undefined,
+    }).catch(err => console.error("[history] finish", err));
+    // XP de cierre + la ÚNICA celebración grande, con nivel/logros dentro.
+    if (!sessionCelebratedRef.current) {
       sessionCelebratedRef.current = true;
       celebrate({
         type: "session_complete",
         rewardKey: `session::${slugify(courseName)}::${slugify(lessonName)}`,
-        title: "¡Lección Dominada!",
-        subtitle: `${lessonName ? `«${lessonName}»: ` : ""}evaluada, practicada y fijada en tu memoria`,
+        title: resultTitle,
+        subtitle: lessonName ? `«${lessonName}» · ${practiceLabel === "pendiente" ? "práctica pendiente" : `práctica ${practiceLabel}`}` : undefined,
         icon: <Icon name="graduation" size={24} />,
+        mergeFollowUps: true,
+        levelUp: pendingLevelUp,
+        unlockedTitles: pendingUnlocked,
       });
       setTimeout(() => scrollToBottom(), 300);
-    }, 500);
-    return () => clearTimeout(id);
-  }, [allStepsComplete, scrollToBottom]);
+    }
+  };
 
   // duplicate allStepsComplete effect removed — first useEffect above handles chord + scroll
 
@@ -2641,7 +2900,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                 <HistoryPanel
-                  onExportLesson={async rec => { await exportApkgFile((rec.ankiCards ?? []).map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concept" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck); }}
+                  onExportLesson={async rec => { await exportApkgFile((rec.ankiCards ?? []).filter(card => !card.excluded).map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concept" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck); }}
                   hideToggle
                   defaultOpen
                   onOpenLecture={(rec) => {
@@ -2685,7 +2944,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                   <div className="kx-hero-chip w-7 h-7 rounded-xl flex items-center justify-center">
                     <Icon name="brain" size={18} weight="duotone" />
                   </div>
-                  <span className="kx-hero-t2 text-[11px] font-bold tracking-wider uppercase">Study Agent</span>
+                  <span className="kx-hero-t2 text-[11px] font-bold tracking-wider uppercase">Estudio</span>
                 </div>
                 <span className="kx-hero-chip text-[10px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
                   <span className="kx-live-dot" />Kinema AI
@@ -2698,7 +2957,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 Evaluaciones interactivas por lección y tarjetas inteligentes de retención con Anki.
               </p>
               <div className="relative flex flex-wrap gap-1.5 mt-3.5">
-                {([["steps", "5 pasos"], ["timer", "~8 min"], ["zap", "+XP por clase"]] as const).map(([ic, label]) => (
+                {([["steps", "4 pasos"], ["timer", "~4–10 min"], ["zap", "+XP por clase"]] as const).map(([ic, label]) => (
                   <span key={label} className="kx-hero-chip text-[10.5px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
                     <Icon name={ic} size={13} weight="duotone" />{label}
                   </span>
@@ -2877,11 +3136,20 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             </div>
 
 
+            {/* §1.5: para quien vuelve, el objetivo propio va plegado */}
+            {returningMode && !showCustomObjFold && (
+              <button onClick={() => setShowCustomObjFold(true)}
+                className="kx-chip w-full h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1.5">
+                Objetivo propio <ChevronDown size={12}/>
+              </button>
+            )}
+
             {/* Custom objective */}
             {(() => {
+              if (returningMode && !showCustomObjFold) return null;
               const isCustomActive = selectedObj === "custom" && customObj.trim().length > 0;
               const textChangedSinceRefine = refinedObj && customObj.trim() !== refinedFromText.trim();
-              const fallbackId = dynamicObjectives?.[0]?.id ?? lastUsedObjectiveId ?? "spring-senisenior";
+              const fallbackId = dynamicObjectives?.[0]?.id ?? lastUsedObjectiveId ?? (IS_EXTENSION ? "" : "spring-senisenior");
               return (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -2957,7 +3225,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               );
             })()}
 
+            {/* §1.5: para quien vuelve, los datos del curso van plegados */}
+            {returningMode && !showCourseFields && (
+              <button onClick={() => setShowCourseFields(true)}
+                className="kx-chip w-full h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1.5">
+                Editar curso o lección <ChevronDown size={12}/>
+              </button>
+            )}
+
             {/* Course info */}
+            {!returningMode || showCourseFields ? (
             <div className="space-y-3">
               <SectionTitle icon="bookOpen" hue={2}>Datos del curso</SectionTitle>
               <input value={courseName} onChange={e => { setCourseName(e.target.value); courseNameEditedRef.current = true; }} placeholder="Nombre del curso (para mazo Anki)"
@@ -2968,22 +3245,60 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 placeholder="Descripción breve del curso (ayuda a la IA a generar mejores objetivos)"
                 className={`${textareaCls} h-[74px] custom-scrollbar-thin`}/>
             </div>
+            ) : null}
 
-            {/* Transcript indicator */}
-            <div className="kx-ok-strip flex items-center gap-2.5 rounded-2xl px-3.5 py-3">
+            {/* §1.5: indicador de transcripción REAL (nada de texto fijo) */}
+            <div className={`kx-ok-strip flex items-center gap-2.5 rounded-2xl px-3.5 py-3 ${transcriptState.status === "none" ? "opacity-70" : ""}`}>
               <span className="kx-ok-tile w-8 h-8 rounded-xl flex items-center justify-center shrink-0"><Icon name="fileText" size={17} weight="duotone"/></span>
               <div className="min-w-0">
-                <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">Transcripción capturada</p>
-                <p className="text-[10.5px] text-[var(--usb-fg-lo)] font-medium">Lista para analizar</p>
+                <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">
+                  {transcriptState.status === "ready"
+                    ? "Subtítulos listos"
+                    : transcriptState.status === "waiting"
+                      ? "Esperando subtítulos"
+                      : transcriptState.status === "none"
+                        ? "Sin subtítulos en esta lección"
+                        : "Comprobando subtítulos…"}
+                </p>
+                <p className="text-[10.5px] text-[var(--usb-fg-lo)] font-medium">
+                  {transcriptState.status === "waiting"
+                    ? "Activa los subtítulos en inglés en el video"
+                    : transcriptState.status === "ready"
+                      ? "Listos para analizar"
+                      : transcriptState.status === "none"
+                        ? "El estudio usará el curso como contexto"
+                        : "Un momento…"}
+                </p>
               </div>
-              <span className="kx-ok-pill text-[11px] font-bold tabular-nums ml-auto px-2.5 py-1 rounded-full">248 líneas</span>
+              <span className="kx-ok-pill text-[11px] font-bold tabular-nums ml-auto px-2.5 py-1 rounded-full">
+                {transcriptState.status === "ready" && transcriptState.cues ? `${transcriptState.cues} líneas` : "…"}
+              </span>
             </div>
 
-            {/* Preview de los 5 pasos */}
+            {/* §1.5: repasos pendientes del curso — la fila discreta que faltaba */}
+            {courseDueCount != null && courseDueCount > 0 && (
+              <button onClick={() => handleOpenAnkiDue("course")}
+                className="w-full flex items-center gap-2.5 rounded-2xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-3.5 py-2.5 text-left hover:border-[#6d4aff]/40 transition-colors">
+                <Icon name="repeat2" size={15} weight="duotone" className="text-amber-400 shrink-0" />
+                <span className="flex-1 min-w-0 text-[11.5px] font-semibold text-[var(--usb-fg-hi)]">
+                  {courseDueCount} {courseDueCount === 1 ? "tarjeta de este curso para repasar hoy" : "tarjetas de este curso para repasar hoy"}
+                </span>
+                <span className="shrink-0 text-[10.5px] font-bold flex items-center gap-1" style={{ color: t("#b7a6ff", "#5b37e8") }}>
+                  Abrir en Anki <ArrowRight size={11} />
+                </span>
+              </button>
+            )}
+
+            {/* Preview de los 4 pasos: una línea para quien vuelve */}
+            {returningMode ? (
+              <p className="kx-slate text-center text-[11px] font-semibold tracking-wide">
+                {STEP_META.map(m => m.short).join(" · ")}
+              </p>
+            ) : (
             <div className="kx-card rounded-2xl p-4 space-y-3.5" style={{ "--kx-step": STEP_META[0].hue } as React.CSSProperties}>
-            <p className="kx-slate">Tu recorrido · 5 pasos</p>
-            <div className="relative grid grid-cols-5 gap-1.5">
-              <span className="absolute left-[10%] right-[10%] top-5 h-px bg-[var(--usb-border)]" aria-hidden="true" />
+            <p className="kx-slate">Tu recorrido · 4 pasos</p>
+            <div className="relative grid grid-cols-4 gap-1.5">
+              <span className="absolute left-[12%] right-[12%] top-5 h-px bg-[var(--usb-border)]" aria-hidden="true" />
               {STEP_META.map((m, i) => (
                 <div key={i} className="group flex flex-col items-center gap-2 min-w-0" style={{ "--kx-step": m.hue, "--kx-ink": t(m.inkDark, m.inkLight) } as React.CSSProperties}>
                   <span className="relative w-10 h-10 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:-translate-y-0.5"
@@ -2991,19 +3306,30 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     <Icon name={m.icon} size={19} weight="duotone" />
                   </span>
                   <span className="text-[10.5px] font-bold tracking-tight text-[var(--usb-fg-hi)] leading-none truncate max-w-full">
-                    {["Nivel", "Repaso", "Recordar", "Práctica", "Anki"][i]}
+                    {m.short}
                   </span>
                 </div>
               ))}
             </div>
             </div>
+            )}
 
             {/* Generate CTA */}
-            <button onClick={handleGenerate} disabled={!hasUsableObjective}
+            <button onClick={handleGenerate}
+              disabled={!hasUsableObjective || !hasCourseContext || transcriptBlocksCta}
               className="kx-gen-cta w-full h-12 rounded-2xl disabled:cursor-not-allowed text-[12.5px] font-bold flex items-center justify-center gap-2 transition-all">
-              <Icon name="sparkles" size={17} weight="duotone"/>Generar sesión de aprendizaje
+              <Icon name="sparkles" size={17} weight="duotone"/>{returningMode ? "Empezar" : "Generar sesión de aprendizaje"} · ~4–10 min
               <ArrowRight size={14}/>
             </button>
+            {(!hasCourseContext || !hasUsableObjective || transcriptBlocksCta) && (
+              <p className="text-[11px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
+                {!hasCourseContext
+                  ? "Escribe el nombre del curso y de la lección para empezar."
+                  : !hasUsableObjective
+                    ? "Elige o escribe un objetivo para empezar."
+                    : "Sin transcripción todavía — activa los subtítulos en inglés o reintenta."}
+              </p>
+            )}
           </motion.div>
         )}
 
@@ -3013,7 +3339,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             className="kx-study flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
             {(() => {
               const cur = STEP_META[Math.min(genStep, STEP_META.length - 1)];
-              const pct = Math.round((Math.min(genStep, 5) / 5) * 100);
               return (
                 <>
                   <div className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5">
@@ -3024,22 +3349,26 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         <div className="kx-hero-chip w-7 h-7 rounded-xl flex items-center justify-center">
                           <Icon name="brain" size={18} weight="duotone" />
                         </div>
-                        <span className="kx-hero-t2 text-[11px] font-bold tracking-wider uppercase">Study Agent</span>
+                        <span className="kx-hero-t2 text-[11px] font-bold tracking-wider uppercase">Estudio</span>
                       </div>
                       <span className="kx-hero-chip text-[10px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
-                        <span className="kx-live-dot" />Paso {Math.min(genStep + 1, 5)} de 5
+                        <span className="kx-live-dot" />Generando…
                       </span>
                     </div>
                     <p className="kx-hero-t1 relative text-[21px] font-extrabold tracking-tight leading-tight">Preparando tu sesión</p>
                     <p className="kx-hero-t2 relative text-[12px] leading-relaxed mt-1.5">Calibrando conceptos y práctica personalizada</p>
+                    {/* §1.5: barra indeterminada — nada de avance cronometrado falso */}
                     <div className="relative mt-3.5 h-1.5 rounded-full bg-white/25 overflow-hidden">
-                      <div className="h-full rounded-full bg-white transition-all duration-500" style={{ width: `${Math.max(pct, 6)}%` }} />
+                      <motion.div className="h-full w-1/3 rounded-full bg-white"
+                        initial={{ x: "-110%" }} animate={{ x: "330%" }}
+                        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }} />
                     </div>
                   </div>
 
                   <div className="kx-card rounded-2xl p-2 space-y-0.5" style={{ "--kx-step": cur.hue } as React.CSSProperties}>
                     {GEN_STEPS.map((label, i) => {
-                      const m = STEP_META[i];
+                      // GEN_STEPS son estados, no pasos: el color cicla el set de 4.
+                      const m = STEP_META[i % STEP_META.length];
                       const st = i < genStep ? "done" : i === genStep ? "now" : "todo";
                       return (
                         <div key={label} style={{ "--kx-step": m.hue, "--kx-ink": t(m.inkDark, m.inkLight) } as React.CSSProperties}
@@ -3054,7 +3383,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             {st === "done" ? <Check size={17} strokeWidth={3} /> : st === "now" ? <Loader2 size={17} className="animate-spin" /> : <Icon name={m.icon} size={19} weight="duotone" />}
                           </span>
                           <div className="min-w-0 flex-1">
-                            <p className="kx-slate">Paso {i + 1}</p>
+                            <p className="kx-slate">{st === "done" ? "Listo" : st === "now" ? "En curso" : "En cola"}</p>
                             <p className={`truncate text-[12.5px] mt-0.5 ${st === "now" ? "font-bold text-[var(--usb-fg-hi)]" : "font-medium text-[var(--usb-fg-mid)]"}`}>{label}</p>
                           </div>
                         </div>
@@ -3081,36 +3410,28 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                   <span className="text-[11px] font-semibold text-[var(--usb-fg-hi)] truncate">{lessonName}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-2">
-                  {consecutiveStreak >= 2 && (
-                    <motion.span
-                      key={consecutiveStreak}
-                      initial={{ scale: 0.8 }}
-                      animate={{ scale: 1 }}
-                      transition={{ type: "spring", stiffness: 420, damping: 14 }}
-                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[10px] font-bold"
-                    >
-                      <Flame size={10} className="fill-orange-400" />
-                      x{consecutiveStreak}
-                    </motion.span>
-                  )}
                   {sessionXp > 0 && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[10px] font-semibold tracking-tight">
                       <Zap size={10} className="fill-amber-400 text-amber-400" />
                       +{sessionXp} XP
                     </span>
                   )}
-                  <button onClick={handleReset} className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)] hover:text-violet-400 transition-colors font-medium">
+                  <button
+                    onClick={handleReset}
+                    title="¿Reiniciar? Se borran tus respuestas de esta lección"
+                    className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)] hover:text-violet-400 transition-colors font-medium"
+                  >
                     <RotateCcw size={10}/>Reiniciar
                   </button>
                 </div>
               </div>
 
-              {/* Live Level & XP Progress bar */}
+              {/* Live Level & XP Progress bar (§2: tokens de tema, AA en claro y sepia) */}
               <div className="flex items-center gap-2 mb-2 px-0.5">
-                <div className="flex items-center gap-1 text-[9.5px] font-semibold text-white/50 shrink-0">
-                  <span className="text-violet-300 font-bold">Nv. {userProgress.level}</span>
+                <div className="flex items-center gap-1 text-[9.5px] font-semibold text-[var(--usb-fg-mid)] shrink-0">
+                  <span className="font-bold" style={{ color: t("#b7a6ff", "#5b37e8") }}>Nv. {userProgress.level}</span>
                 </div>
-                <div className="h-1 flex-1 bg-white/6 rounded-full overflow-hidden">
+                <div className="h-1 flex-1 bg-[var(--usb-border)] rounded-full overflow-hidden">
                   <motion.div
                     className="h-full bg-gradient-to-r from-violet-500 via-amber-400 to-emerald-400 rounded-full"
                     initial={{ width: 0 }}
@@ -3118,53 +3439,15 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     transition={{ duration: 0.6, ease: "easeOut" }}
                   />
                 </div>
-                <span className="text-[9px] font-mono text-white/35 tabular-nums shrink-0">
+                <span className="text-[9px] font-mono text-[var(--usb-fg-mid)] tabular-nums shrink-0">
                   {userProgress.into}/{userProgress.span} XP
                 </span>
               </div>
-
-              {/* Floating XP Toast / Pill */}
-              <AnimatePresence>
-                {floatingXp && (
-                  <motion.div
-                    key={floatingXp.id}
-                    initial={{ opacity: 0, y: 10, scale: 0.8 }}
-                    animate={{ opacity: 1, y: -2, scale: 1 }}
-                    exit={{ opacity: 0, y: -10, scale: 0.85 }}
-                    transition={{ duration: 0.25 }}
-                    className="absolute right-4 top-full mt-2 pointer-events-none z-30 flex items-center gap-1 px-2.5 py-1 rounded-full kx-on-solid kx-cta text-[10px] font-extrabold"
-                  >
-                    <Zap size={11} />
-                    <span>{floatingXp.text || `+${floatingXp.amount} XP`}</span>
-                  </motion.div>
-                )}
-              </AnimatePresence>
 
               <ProgressStepper steps={steps} focus={focusStep}/>
             </div>
 
             <div className="p-4 space-y-4">
-
-              {/* Session complete banner */}
-              <AnimatePresence>
-                {sessionComplete && !allStepsComplete && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95, y: -6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -6 }}
-                    transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                    className="bg-emerald-500/8 border border-emerald-500/22 rounded-xl p-3 flex items-center gap-3 relative overflow-hidden">
-                    <motion.span 
-                      animate={{ rotate: [0, -10, 10, -10, 10, 0] }}
-                      transition={{ duration: 0.5, delay: 0.2 }}
-                      className="text-2xl shrink-0 relative z-10"
-                    >
-                      <Icon name="graduation" size={26} />
-                    </motion.span>
-                    <div className="relative z-10">
-                      <p className="text-white/80 text-[11px]" style={{ fontWeight: 600 }}>¡Sesión completada!</p>
-                      <p className="text-white/35 text-[10px] mt-0.5">Practicaste activamente. Exporta las tarjetas para no perder lo aprendido.</p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
 
               {/* ── Relevance bar ── */}
               {focusStep === 0 && (
@@ -3178,17 +3461,29 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 <span className="text-emerald-400 text-[11px] font-bold tabular-nums shrink-0">{content.relevance.score}%</span>
               </div>
               )}
+              {focusStep === 0 && content.relevance.score < 50 && (
+                <div className="kx-card-flat flex items-center gap-2.5 rounded-xl px-3 py-2.5">
+                  <p className="flex-1 text-[10.5px] text-[var(--usb-fg-mid)] leading-relaxed">
+                    Esta lección aporta poco a tu objetivo: puedes ir directo a Comprobar.
+                  </p>
+                  {stepUnlocked[1] && (
+                    <button onClick={() => goToStep(1)} className="kx-chip shrink-0 h-7 px-2.5 rounded-full text-[10.5px] font-semibold">
+                      Ir a Comprobar
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* ── FOCUS NAV ── */}
               <div className="flex items-center justify-between gap-2">
                 <button onClick={() => goToStep(focusStep - 1)} disabled={!canGoPrev}
-                  className={`kx-nav-btn flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoPrev ? "text-white/60 hover:bg-white/8 cursor-pointer" : "text-white/15 cursor-not-allowed"}`}>
+                  className={`kx-nav-btn flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoPrev ? "text-[var(--usb-fg-mid)] hover:bg-[var(--usb-bg-3)] cursor-pointer" : "text-[var(--usb-fg-lo)] opacity-50 cursor-not-allowed"}`}>
                   <ChevronLeft size={13} /> Anterior
                 </button>
-                <span className="kx-step-count text-[10px] font-bold tabular-nums px-2.5 py-1 rounded-full">{focusStep + 1} / 5</span>
+                <span className="kx-step-count text-[10px] font-bold tabular-nums px-2.5 py-1 rounded-full">{focusStep + 1} / 4</span>
                 <button onClick={() => goToStep(focusStep + 1)} disabled={!canGoNext}
-                  title={!canGoNext && focusStep < 4 ? "Completa este paso primero" : ""}
-                  className={`kx-nav-btn flex items-center gap-1 pl-3 pr-2 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoNext ? "kx-next cursor-pointer" : "text-white/15 cursor-not-allowed"}`}>
+                  title={!canGoNext && focusStep < 3 ? "Completa este paso primero" : ""}
+                  className={`kx-nav-btn flex items-center gap-1 pl-3 pr-2 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoNext ? "kx-next cursor-pointer" : "text-[var(--usb-fg-lo)] opacity-50 cursor-not-allowed"}`}>
                   Siguiente <ChevronRight size={13} />
                 </button>
               </div>
@@ -3210,7 +3505,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               {focusStep === 0 && (
               <div className="space-y-3.5">
                 <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-4">
-                  <StepHeader n={1} label="¿Cómo llegaste al video?" subLabel="mi nivel" status={confidence ? "done" : "active"}/>
+                  <StepHeader n={1} label="¿Qué tan claro te quedó el video?" subLabel={`paso 1 · ${STEP_META[0].short.toLowerCase()}`} status={confidence ? "done" : "active"}/>
                   <div className="grid grid-cols-2 gap-2.5">
                     {CONFIDENCE.map(c => {
                       const isSelected = confidence === c.id;
@@ -3225,40 +3520,18 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                               ? `${c.bg} ${c.border} ring-1 ${c.ring} shadow-md`
                               : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] hover:bg-[var(--usb-bg-2)]/70 hover:shadow-2xs"
                           }`}>
-                          {/* Top indicator row: emoji badge + tag */}
+                          {/* Top indicator row: icono del set propio (sin emoji) */}
                           <div className="flex items-center justify-between w-full mb-3">
                             <span
-                              className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs transition-all group-hover:scale-110 text-[20px] select-none"
+                              className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs transition-all group-hover:scale-110"
                               style={{
                                 background: `color-mix(in srgb, ${c.color} ${isSelected ? "18%" : "8%"}, var(--usb-bg-3))`,
                                 borderColor: `color-mix(in srgb, ${c.color} ${isSelected ? "40%" : "20%"}, var(--usb-border))`,
+                                color: c.color,
                               }}
                             >
-                              {c.emoji}
+                              <Icon name={c.icon} size={20} weight="duotone" />
                             </span>
-
-                            {/* Tag + Level meter */}
-                            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full border bg-[var(--usb-bg-2)]/90 border-[var(--usb-border)] shadow-2xs">
-                              <span className="text-[9.5px] font-bold tracking-tight text-[var(--usb-fg-lo)]">
-                                {c.tag}
-                              </span>
-                              <div className="flex items-end gap-0.5">
-                                {[1, 2, 3, 4].map(barIndex => (
-                                  <span
-                                    key={barIndex}
-                                    className={`w-1 rounded-full transition-all ${
-                                      barIndex <= c.bars
-                                        ? "bg-current"
-                                        : "bg-[var(--usb-border)]"
-                                    }`}
-                                    style={{
-                                      height: `${barIndex * 2.5 + 3}px`,
-                                      color: isSelected ? c.color : "var(--usb-fg-mid)",
-                                    }}
-                                  />
-                                ))}
-                              </div>
-                            </div>
                           </div>
 
                           {/* Label & Description */}
@@ -3280,7 +3553,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     })}
                   </div>
 
-                  {/* Coach bubble — appears after selection */}
+                  {/* Línea de coach neutra — una sola frase por nivel (§1.1) */}
                   <AnimatePresence>
                     {confidence && (
                       <motion.div
@@ -3290,15 +3563,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         transition={{ type: "spring", stiffness: 380, damping: 28, delay: 0.15 }}
                         className="mt-3.5 pt-3.5 border-t border-[var(--usb-border)] flex items-start gap-3 bg-[var(--usb-bg-2)]/50 p-3 rounded-xl"
                       >
-                        <motion.span
-                          animate={{ rotate: [0, -8, 8, -4, 0] }}
-                          transition={{ duration: 0.5, delay: 0.3 }}
-                          className="text-[20px] shrink-0 leading-none mt-0.5 text-violet-400"
-                        ><Icon name={COACH_BUBBLE[confidence].icon} size={22} weight="duotone" /></motion.span>
-                        <div>
-                          <p className="text-[var(--usb-fg-hi)] text-[12px] leading-tight mb-1 font-bold">{COACH_BUBBLE[confidence].title}</p>
-                          <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{COACH_BUBBLE[confidence].tip}</p>
-                        </div>
+                        <span className="shrink-0 mt-0.5 text-violet-400">
+                          <Icon name={COACH_LINE[confidence].icon} size={18} weight="duotone" />
+                        </span>
+                        <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{COACH_LINE[confidence].tip}</p>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -3306,8 +3574,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               </div>
               )}
 
-              {/* ── Step 1: Key concepts ── */}
-              {focusStep === 1 && confidence && (() => {
+              {/* ── Paso 0 (Recordar): recuerdo libre + conceptos, tras elegir nivel ── */}
+              {focusStep === 0 && confidence && (() => {
                 const checkedCount = Object.values(conceptsChecked).filter(Boolean).length;
                 const total = content.keyConcepts.length;
                 const isReady = checkedCount >= 2;
@@ -3426,7 +3694,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                               }`}
                               style={{ fontWeight: 600 }}
                             >
-                              Verificar mi comprensión <ArrowRight size={11} />
+                              Ponerme a prueba <ArrowRight size={11} />
                             </button>
                           </div>
                         </motion.div>
@@ -3440,8 +3708,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 );
               })()}
 
-              {/* ── Step 2: Questions ── */}
-              {focusStep === 2 && confidence && visibleQuestions.length > 0 && (() => {
+              {/* ── Paso 1 (Comprobar): adaptativo, máximo 2 obligatorias ── */}
+              {focusStep === 1 && confidence && queueQuestions.length > 0 && (() => {
                 const doneCount = Object.values(questionFeedbacks).filter(f => f?.status === "done").length;
                 return (
                 <div ref={questionsRef} className="space-y-3.5">
@@ -3452,18 +3720,18 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 {/* Review mode — when questionsComplete, show the summary instead of the card */}
                 {questionsComplete && (
                   <VerifyDoneReview
-                    questions={visibleQuestions}
+                    questions={queueQuestions}
                     answers={questionAnswers}
                     feedbacks={questionFeedbacks}
-                    onGoApply={() => goToStep(3)}
+                    onGoApply={() => goToStep(2)}
                   />
                 )}
                 <div className={`kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden ${questionsComplete ? "hidden" : ""}`}>
                     <div className="px-4 pt-4 pb-2.5 border-b border-[var(--usb-divider)]">
                       <div className="flex items-center justify-between">
-                        <StepHeader n={3} label="¿Cuánto retuviste?" status={questionsComplete ? "done" : "active"}/>
+                        <StepHeader n={3} label={STEP_META[1].title} subLabel={`paso 2 · ${STEP_META[1].short.toLowerCase()}`} status={questionsComplete ? "done" : "active"}/>
                         <div className="flex items-center gap-1.5 shrink-0 ml-2 pb-4">
-                          {visibleQuestions.map((_, i) => {
+                          {queueQuestions.map((_, i) => {
                               const fb = questionFeedbacks[i];
                               const isDone = fb?.status === "done";
                               const isCurrent = i === currentQIdx && !questionsComplete;
@@ -3494,7 +3762,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         <motion.div
                           className="h-full bg-violet-500 rounded-full"
                           initial={{ width: 0 }}
-                          animate={{ width: questionsComplete ? "100%" : `${(doneCount / Math.max(visibleQuestions.length, 1)) * 100}%` }}
+                          animate={{ width: questionsComplete ? "100%" : `${(doneCount / Math.max(queueQuestions.length, 1)) * 100}%` }}
                           transition={{ duration: 0.5, ease: "easeOut" }}
                         />
                       </div>
@@ -3503,39 +3771,27 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     <div className="p-4">
                       {questionsComplete ? (
                         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-4 space-y-2 relative">
-                          <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>¡Comprensión verificada!</p>
-                          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none animate-[spin_15s_linear_1]" />
-                          <div className="relative z-10 animate-[bounce_1s_ease-out_2] mt-2 text-emerald-300 drop-shadow-md"><Icon name="rocket" size={40} /></div>
-                          <p className="text-white/40 text-[10px] relative z-10 pt-1">La IA confirmó que captaste los conceptos clave. Continúa con la práctica.</p>
+                          <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>
+                            {questionsSkipped
+                              ? "Comprobación saltada"
+                              : `${firstTryCount} de ${queueQuestions.length} a la primera${improvedCount > 0 ? ` · reforzaste ${improvedCount}` : ""}`}
+                          </p>
+                          <p className="text-white/40 text-[10px] relative z-10 pt-1">Continúa con la práctica.</p>
                         </motion.div>
                       ) : (
                         <>
-                          {visibleQuestions.map((q, i) => i !== currentQIdx ? null : (
+                          {queueQuestions.map((q, i) => i !== currentQIdx ? null : (
                             <motion.div
                               key={`q-${i}-${confidence}`}
                               initial={{ opacity: 0, x: 12, scale: 0.99 }}
-                              animate={{
-                                opacity: 1,
-                                x: shakeQuestionIdx === i ? [0, -6, 6, -4, 4, 0] : 0,
-                                scale: glintQuestionIdx === i ? [1, 1.02, 1] : 1,
-                              }}
-                              transition={{
-                                type: "spring", stiffness: 360, damping: 28,
-                                x: shakeQuestionIdx === i ? { type: "tween", duration: 0.4, ease: "easeInOut" } : { type: "spring", stiffness: 360, damping: 28 },
-                                scale: glintQuestionIdx === i ? { type: "tween", duration: 0.5, ease: "easeInOut" } : { type: "spring", stiffness: 360, damping: 28 },
-                              }}
-                              className={`space-y-3 transition-shadow duration-300 ${
-                                glintQuestionIdx === i ? "ring-2 ring-emerald-400/60 rounded-xl bg-emerald-500/5 p-1" : ""
-                              } ${
-                                shakeQuestionIdx === i ? "ring-2 ring-amber-400/50 rounded-xl" : ""
-                              }`}
+                              animate={{ opacity: 1, x: 0, scale: 1 }}
+                              transition={{ type: "spring", stiffness: 360, damping: 28 }}
+                              className="space-y-3"
                             >
-
-
                               {/* Question header: number + bloom */}
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-white/22 text-[10px] font-mono">{i+1} <span className="text-white/12">/</span> {visibleQuestions.length}</span>
+                                  <span className="text-[var(--usb-fg-lo)] text-[10px] font-mono">{i+1} <span className="opacity-60">/</span> {queueQuestions.length}</span>
                                   <span className={`text-[9px] px-1.5 py-0.5 rounded-md border ${BLOOM_STYLE(q.bloom)}`}>{q.bloom}</span>
                                 </div>
                               </div>
@@ -3604,30 +3860,44 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                                     : <><Send size={11}/>Evaluar</>}
                                 </button>
 
-                                {/* Siguiente / Continuar — appears after feedback */}
+                                {/* §1.2: Siguiente trae consolidación al fallar; tras completar, Continuar */}
                                 {questionFeedbacks[i]?.status === "done" && (() => {
-                                  const isLast = i >= visibleQuestions.length - 1;
-                                  const isGood = questionFeedbacks[i]?.rating === "correct" || questionFeedbacks[i]?.rating === "excellent";
+                                  if (questionsComplete) {
+                                    return (
+                                      <motion.button
+                                        initial={{ opacity: 0, scale: 0.9, x: -6 }}
+                                        animate={{ opacity: 1, scale: 1, x: 0 }}
+                                        transition={{ type: "spring", stiffness: 400, damping: 24, delay: 0.15 }}
+                                        onClick={() => goToStep(2)}
+                                        className="flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-lg transition-all ml-auto bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/30"
+                                      >
+                                        Continuar a Aplicar <ArrowRight size={9}/>
+                                      </motion.button>
+                                    );
+                                  }
                                   return (
                                     <motion.button
                                       initial={{ opacity: 0, scale: 0.9, x: -6 }}
                                       animate={{ opacity: 1, scale: 1, x: 0 }}
                                       transition={{ type: "spring", stiffness: 400, damping: 24, delay: 0.15 }}
-                                      onClick={() => isLast ? handleForceComplete() : (setCurrentQIdx(i+1), setShowHint(false), setShowModelAnswer(false))}
-                                      className={`flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-lg transition-all ml-auto ${
-                                        isGood
-                                          ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/30"
-                                          : "border border-violet-500/25 bg-violet-500/8 text-violet-300/80 hover:text-violet-200 hover:border-violet-500/40"
-                                      }`}
+                                      onClick={() => goNextQuestion(i)}
+                                      className="flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-lg transition-all ml-auto border border-violet-500/25 bg-violet-500/8 text-violet-300/80 hover:text-violet-200 hover:border-violet-500/40"
                                     >
-                                      {isLast
-                                        ? <>Ir al desafío <ArrowRight size={9}/></>
-                                        : <>Siguiente <ArrowRight size={9}/></>
-                                      }
+                                      Siguiente <ArrowRight size={9}/>
                                     </motion.button>
                                   );
                                 })()}
                               </div>
+
+                              {/* §1.2: «Un reto más» — opcional, la del nivel siguiente */}
+                              {questionsComplete && questionFeedbacks[i]?.status === "done" && !challengeUsed && content.questions.length > questionQueue.length && (
+                                <button
+                                  onClick={goChallengeQuestion}
+                                  className="w-full text-[10.5px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] border border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                                >
+                                  <Zap size={10} />Un reto más (opcional)
+                                </button>
+                              )}
 
                               {/* AI Feedback */}
                               <AIFeedback
@@ -3663,10 +3933,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                               )}
                             </motion.div>
                           ))}
-                          {/* Escape hatch — always visible, not a trap */}
+                          {/* Escape hatch — visible y con contraste AA (§1.2) */}
                           {!questionsComplete && (
-                            <button onClick={handleForceComplete} className="mt-1 w-full text-[9px] text-white/15 hover:text-white/38 transition-colors py-1 flex items-center justify-center gap-1">
-                              <FastForward size={8}/>Saltar a la práctica
+                            <button onClick={handleSkipQuestions} className="mt-1 w-full text-[10px] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] border border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] transition-colors py-1.5 rounded-lg flex items-center justify-center gap-1.5">
+                              <FastForward size={9}/>Saltar comprobación
                             </button>
                           )}
                         </>
@@ -3677,8 +3947,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 );
               })()}
 
-              {/* ── Step 3: Apply ── */}
-              {focusStep === 3 && (
+              {/* ── Paso 2 (Aplicar): nunca bloquea ── */}
+              {focusStep === 2 && (
                 showApply ? (
                 <div className="space-y-3.5">
                   <div ref={applyRef} className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
@@ -3686,8 +3956,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       <StepHeader
                         n={4}
                         label={content.application.isCode ? "Escribe código real" : "Aplica lo aprendido"}
-                        subLabel={content.application.isCode ? "desafío práctico" : "ejercicio práctico"}
-                        status={appPassed ? "done" : "active"}
+                        subLabel={`paso 3 · ${STEP_META[2].short.toLowerCase()}`}
+                        status={practiceStatus !== null ? "done" : "active"}
                       />
                     </div>
 
@@ -3802,26 +4072,30 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         </motion.div>
                       )}
 
-                      {/* Ir a Anki — appears once evaluation is done */}
+                      {/* §1.3: Hacerlo después — el estudiante decide, nunca bloquea */}
                       <AnimatePresence>
-                        {appFeedback.status === "done" && !appPassed && (
-                          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
-                            Aún no es suficiente. Usa el feedback, ajusta tu respuesta y vuelve a revisar; tras un segundo intento podrás continuar.
-                          </motion.p>
+                        {practiceStatus === null && (
+                          <motion.button
+                            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                            onClick={handlePracticeLater}
+                            className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-[var(--usb-border)] text-[10.5px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)] transition-all"
+                          >
+                            Hacerlo después <ArrowRight size={10}/>
+                          </motion.button>
                         )}
-                        {appPassed && (
+                        {practiceStatus !== null && (
                           <motion.button
                             initial={{ opacity: 0, y: 6 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.4, type: "spring", stiffness: 380, damping: 26 }}
-                            onClick={() => goToStep(4)}
+                            onClick={() => goToStep(3)}
                             className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl border text-[10px] transition-all ${
-                              appFeedback.rating === "correct" || appFeedback.rating === "excellent"
+                              practiceStatus === "correct"
                                 ? "kx-on-solid kx-cta border-transparent"
                                 : "border-white/10 text-white/40 hover:text-white/65 hover:border-white/20"
                             }`}
                           >
-                            {appFeedback.rating === "correct" || appFeedback.rating === "excellent"
+                            {practiceStatus === "correct"
                               ? <>Fíjalo en memoria <ArrowRight size={10}/></>
                               : <>Continuar de todas formas <ArrowRight size={10}/></>
                             }
@@ -3830,6 +4104,67 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       </AnimatePresence>
                     </div>
                   </div>
+
+                  {/* §1.3: práctica oral — plegada, opcional, 1 min, nunca bloquea */}
+                  {content.interviewQ && (
+                    <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+                      <button onClick={() => setShowOralPractice(v => !v)} aria-expanded={showOralPractice}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 text-left">
+                        <div className="w-8 h-8 rounded-xl bg-[#6d4aff]/15 border border-[#6d4aff]/30 flex items-center justify-center shrink-0">
+                          <Star size={14} className="text-[#6d4aff]"/>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-bold leading-tight">¿Prefieres explicarlo con tus palabras?</p>
+                          <p className="text-[var(--usb-fg-lo)] text-[10px] font-medium">(opcional, 1 min) · {oralPracticeMeta.title}</p>
+                        </div>
+                        <ChevronDown size={14} className={`shrink-0 text-[var(--usb-fg-mid)] transition-transform ${showOralPractice ? "rotate-180" : ""}`}/>
+                      </button>
+                      <AnimatePresence initial={false}>
+                        {showOralPractice && (
+                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                            <div className="px-4 pb-4 pt-1 space-y-3.5">
+                              <p className="text-[var(--usb-fg)] text-[12px] leading-relaxed font-medium">{content.interviewQ.q}</p>
+                              <textarea
+                                value={oralAnswer}
+                                onChange={(e) => { setOralAnswer(e.target.value); if (oralFeedback.status === "done" || oralFeedback.status === "error") setOralFeedback(IDLE_FB); }}
+                                placeholder="Escribe aquí lo que dirías en voz alta…"
+                                rows={3}
+                                className={textareaCls}
+                              />
+                              {oralFeedback.status === "idle" && (
+                                <button onClick={handleEvaluateOral} disabled={!oralAnswer.trim()}
+                                  className="kx-on-solid kx-cta w-full h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed">
+                                  <Sparkles size={12}/>Evaluar mi respuesta
+                                </button>
+                              )}
+                              <AIFeedback fb={oralFeedback} onRetry={handleEvaluateOral} />
+                              {oralFeedback.status !== "done" && !oralSkipped && (
+                                <button onClick={() => setOralSkipped(true)} className="w-full text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors">
+                                  Omitir por ahora
+                                </button>
+                              )}
+                              <button onClick={() => setShowInterviewAnswer(v => !v)}
+                                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
+                                  showInterviewAnswer
+                                    ? "bg-[#6d4aff]/10 border-[#6d4aff]/30 text-[var(--usb-fg-hi)]"
+                                    : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
+                                }`}>
+                                <span className="text-[11.5px] font-semibold flex-1">{oralPracticeMeta.answerLabel}</span>
+                                <ChevronDown size={14} className={`shrink-0 transition-transform text-[var(--usb-fg-mid)] ${showInterviewAnswer ? "rotate-180" : ""}`}/>
+                              </button>
+                              <AnimatePresence>
+                                {showInterviewAnswer && (
+                                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
+                                    <div className="bg-[#6d4aff]/6 border border-[#6d4aff]/18 rounded-2xl p-3.5 text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed">{content.interviewQ.idealAnswer}</div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
                 </div>
                 ) : (
                   <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-divider)] rounded-xl p-4 opacity-35">
@@ -3847,132 +4182,53 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 )
               )}
 
-              {/* ── Step 5: calibración + práctica oral + fijar en memoria ── */}
-              {focusStep === 4 && (() => {
-                const correctCount = Object.values(questionFeedbacks).filter(f => f?.rating === "correct" || f?.rating === "excellent").length;
-                const totalQ = visibleQuestions.length;
-                const elapsedMin = Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60000));
-                const oralPracticeMeta = getOralPracticeMeta(content, activeSessionObjective || getActiveObjectiveText());
-                const calibration = (() => {
-                  if (!confidence || totalQ === 0) return null;
-                  const order: ConfidenceLevel[] = ["confused", "partial", "clear", "mastered"];
-                  const ratio = correctCount / totalQ;
-                  const shown = ratio < 0.4 ? 0 : ratio < 0.65 ? 1 : ratio < 0.9 ? 2 : 3;
-                  const said = order.indexOf(confidence);
-                  const label = (i: number) => CONFIDENCE.find(c => c.id === order[i])?.label ?? "";
-                  const diff = shown - said;
-                  return {
-                    said: label(said), shown: label(shown),
-                    msg: diff === 0 ? "Tu autopercepción fue precisa. Eso también es aprender."
-                      : diff < 0 ? "Te sentías más seguro de lo que mostraste. Es normal: repasar con Anki cierra justo esa brecha."
-                      : "Sabes más de lo que creías. La próxima vez sube tu nivel de partida.",
-                  };
-                })();
+              {/* ── Paso 3 (Fijar): resumen de cierre + tarjetas + Terminar (§1.4) ── */}
+              {focusStep === 3 && (() => {
+                const selectedCards = allCardsWithReinforce.filter(c => !c.excluded);
+                const reinforceCount = selectedCards.filter(c => c.reinforce).length;
+                const totalQFinal = queueQuestions.length;
+                const elapsedMin = Math.max(1, Math.round(((finishedAt ?? Date.now()) - sessionStartRef.current) / 60000));
+                const destination = ankiExported ? "en Anki" : obsidianExportedAt ? "en Obsidian" : "sin exportar";
                 return (
               <div className="space-y-3.5">
-                {/* Session achievement summary */}
+                {/* Resumen de cierre — una sola tarjeta con datos reales (§1.4) */}
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ type: "spring", stiffness: 340, damping: 28 }}
-                  className="kx-step-solid kx-on-solid rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden"
+                  className="kx-step-solid kx-on-solid rounded-2xl p-4 relative overflow-hidden"
                 >
-                  <motion.span animate={{ rotate: [0, -8, 8, 0] }} transition={{ duration: 0.6, delay: 0.3 }} className="relative z-10 w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: "rgba(255,255,255,0.18)" }}><Icon name="flag" size={26} weight="duotone" /></motion.span>
-                  <div className="flex-1 relative z-10">
-                    <p className="text-[13px]" style={{ fontWeight: 800 }}>¡Llegaste al último paso!</p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{Object.values(conceptsChecked).filter(Boolean).length} conceptos</span>
-                      {totalQ > 0 && <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{correctCount}/{totalQ} correctas</span>}
-                      <span className="text-[10.5px] font-semibold opacity-80">~{elapsedMin} min</span>
+                  <div className="flex items-center gap-3 relative z-10">
+                    <span className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.18)" }}><Icon name="flag" size={26} weight="duotone" /></span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] leading-tight" style={{ fontWeight: 800 }}>{resultTitle}</p>
+                      <div className="flex items-center gap-3 mt-1 flex-wrap">
+                        <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{conceptsMarkedCount} de {content.keyConcepts.length} ideas (marcadas por ti)</span>
+                        {totalQFinal > 0 && <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{questionsSkipped ? "saltada" : `${firstTryCount}/${totalQFinal} a la primera`}</span>}
+                        <span className="text-[10.5px] font-semibold opacity-80">práctica {practiceLabel}</span>
+                        <span className="text-[10.5px] font-semibold opacity-80">~{elapsedMin} min</span>
+                      </div>
                     </div>
+                  </div>
+                  <div className="relative z-10 mt-2.5 pt-2.5 border-t border-white/15 space-y-1">
+                    <p className="text-[10.5px] font-semibold opacity-90">Tarjetas: {selectedCards.length}{reinforceCount > 0 ? ` (${reinforceCount} de refuerzo)` : ""} · {destination}</p>
+                    {calibration && (
+                      <p className="text-[10px] opacity-75 leading-relaxed">
+                        Dijiste «{calibration.said}», mostraste «{calibration.shown}» · {calibration.message}
+                      </p>
+                    )}
+                    <p className="text-[10px] opacity-75 leading-relaxed">
+                      {ankiExported
+                        ? "Próximo paso: repasa en Anki mañana."
+                        : obsidianExportedAt
+                          ? "Próximo paso: exporta a Anki para el repaso espaciado."
+                          : `Próximo paso: ${content.nextAction}`}
+                    </p>
                   </div>
                 </motion.div>
 
-              {calibration && (
-                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
-                  <div className="flex items-center gap-2.5 px-4 py-3 bg-[#6d4aff]/8 border-b border-[#6d4aff]/15">
-                    <div className="w-8 h-8 rounded-xl bg-[#6d4aff]/15 border border-[#6d4aff]/30 flex items-center justify-center shrink-0">
-                      <Target size={14} className="text-[#6d4aff]"/>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-bold">Tu nivel: creído vs. demostrado</p>
-                      <p className="text-[var(--usb-fg-lo)] text-[10px] font-medium">Saber cuánto sabes de verdad te ayuda a estudiar mejor</p>
-                    </div>
-                  </div>
-                  <div className="px-4 py-3.5 space-y-2.5">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2">
-                        <p className="text-[var(--usb-fg-lo)] text-[9px] font-semibold uppercase tracking-wider">Al empezar dijiste</p>
-                        <p className="text-[var(--usb-fg-hi)] text-[12px] font-bold mt-0.5">{calibration.said}</p>
-                      </div>
-                      <div className="rounded-xl border border-[#6d4aff]/35 bg-[#6d4aff]/10 px-3 py-2">
-                        <p className="text-[var(--usb-fg-lo)] text-[9px] font-semibold uppercase tracking-wider">Tus respuestas muestran</p>
-                        <p className="text-[var(--usb-fg-hi)] text-[12px] font-bold mt-0.5">{calibration.shown} <span className="text-[var(--usb-fg-lo)] font-medium">· {correctCount}/{totalQ}</span></p>
-                      </div>
-                    </div>
-                    <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{calibration.msg}</p>
-                  </div>
-                </div>
-              )}
-
-              {content.interviewQ && (
-                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
-                  {/* Header */}
-                  <div className="flex items-center gap-2.5 px-4 py-3 bg-[#6d4aff]/8 border-b border-[#6d4aff]/15">
-                    <div className="w-8 h-8 rounded-xl bg-[#6d4aff]/15 border border-[#6d4aff]/30 flex items-center justify-center shrink-0">
-                      <Star size={14} className="text-[#6d4aff]"/>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-bold">{oralPracticeMeta.title}</p>
-                      <p className="text-[var(--usb-fg-lo)] text-[10px] font-medium">{oralPracticeMeta.subtitle}</p>
-                    </div>
-                  </div>
-                  <div className="px-4 py-3.5 space-y-3.5">
-                    <p className="text-[var(--usb-fg)] text-[12px] leading-relaxed font-medium">{content.interviewQ.q}</p>
-                    <textarea
-                      value={oralAnswer}
-                      onChange={(e) => { setOralAnswer(e.target.value); if (oralFeedback.status === "done" || oralFeedback.status === "error") setOralFeedback(IDLE_FB); }}
-                      placeholder="Escribe aquí lo que dirías en voz alta…"
-                      rows={3}
-                      className={textareaCls}
-                    />
-                    {oralFeedback.status === "idle" && (
-                      <button onClick={handleEvaluateOral} disabled={!oralAnswer.trim()}
-                        className="kx-on-solid kx-cta w-full h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed">
-                        <Sparkles size={12}/>Evaluar mi respuesta
-                      </button>
-                    )}
-                    <AIFeedback fb={oralFeedback} onRetry={handleEvaluateOral} />
-                    {oralFeedback.status !== "done" && !oralSkipped && (
-                      <button onClick={() => setOralSkipped(true)} className="w-full text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors">
-                        Omitir por ahora
-                      </button>
-                    )}
-                    {oralSkipped && oralFeedback.status !== "done" && (
-                      <p className="text-[11px] font-medium text-[var(--usb-fg-mid)] text-center">Omitida. Puedes responderla cuando quieras.</p>
-                    )}
-                    <button onClick={() => setShowInterviewAnswer(v => !v)}
-                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
-                        showInterviewAnswer
-                          ? "bg-[#6d4aff]/10 border-[#6d4aff]/30 text-[var(--usb-fg-hi)]"
-                          : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
-                      }`}>
-                      <span className="text-[11.5px] font-semibold flex-1">{oralPracticeMeta.answerLabel}</span>
-                      <ChevronDown size={14} className={`shrink-0 transition-transform text-[var(--usb-fg-mid)] ${showInterviewAnswer ? "rotate-180" : ""}`}/>
-                    </button>
-                    <AnimatePresence>
-                      {showInterviewAnswer && (
-                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                          <div className="bg-[#6d4aff]/6 border border-[#6d4aff]/18 rounded-2xl p-3.5 text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed">{content.interviewQ.idealAnswer}</div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Step 5: fíjalo en memoria ── */}
-              {focusStep === 4 && confidence && (
+              {/* ── Fíjalo en memoria ── */}
+              {confidence && (
                   <div ref={ankiRef} className="space-y-3">
                     <div className="px-0.5">
                       <p className="kx-slate">Fíjalo en memoria · exportar</p>
@@ -3984,7 +4240,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     <ExportModule
                       icon={Package}
                       title="Tarjetas de la lección"
-                      subtitle={`${content.ankiCards.length} tarjetas · .apkg se importa con doble clic`}
+                      subtitle={`${selectedCards.length} tarjetas${reinforceCount > 0 ? ` · ${reinforceCount} de refuerzo` : ""} · .apkg se importa con doble clic`}
                       badge={ankiExported ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
                     >
                       <div className="grid grid-cols-[1.4fr_1fr] gap-1.5">
@@ -4005,6 +4261,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
                           <ChevronDown size={14} className={`transition-transform ${showCardPreview ? "rotate-180" : ""}`}/>{showCardPreview ? "Ocultar tarjetas" : "Ver tarjetas"}
                         </button>
+                        <span className="text-[10px] text-[var(--usb-fg-lo)]">Quita las que no quieras: solo se exporta lo que aceptas</span>
                         <button onClick={() => setShowAnkiGuide(v => !v)} aria-expanded={showAnkiGuide}
                           className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
                           <Info size={13}/>{showAnkiGuide ? "Ocultar guía" : "Guía de importación"}
@@ -4013,7 +4270,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       <AnimatePresence initial={false}>
                         {showCardPreview && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <AnkiFlipPreview cards={content.ankiCards}/>
+                            <AnkiFlipPreview cards={allCardsWithReinforce} onToggleExclude={handleToggleExcludeCard}/>
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -4025,11 +4282,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                               <div className="space-y-1">
                                 <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Qué se configura solo en Anki (primera importación)</p>
                                 {[
-                                  `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → English → curso (vocabulario).`,
+                                  `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → ${vocabCfg.targetLangLabel} → curso (vocabulario).`,
                                   "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
-                                  "FSRS queda activado automáticamente en los dos presets al importar (sin pasos). Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
+                                  "Comprueba que FSRS esté activado: Opciones del mazo → FSRS (Anki 23.10+). Si ya lo estaba, no tienes que hacer nada. Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
                                   "Tus demás mazos y tu preset Default NO se tocan nunca.",
-                                  `Audio del vocabulario: usa el archivo si tu sistema externo lo generó (HyperTTS / edge-tts) y la voz del sistema de Anki si no. Imagen y fonética las completa tu sistema de imágenes.`,
+                                  "Audio del vocabulario: usa el archivo si tu sistema externo lo generó (HyperTTS / edge-tts) y la voz del sistema de Anki si no. La imagen puedes añadirla tú o con un add-on.",
                                 ].map((s, i) => (
                                   <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i + 1}. {s}</p>
                                 ))}
@@ -4104,54 +4361,32 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             )}
                           </>
                       </ExportModule>
+
+                      {/* §1.4: Terminar lección — siempre disponible, con o sin exportar */}
+                      <button
+                        onClick={handleFinishLesson}
+                        disabled={finishedAt !== null}
+                        className={`w-full h-11 rounded-2xl text-[12.5px] font-bold flex items-center justify-center gap-2 transition-all ${
+                          finishedAt !== null
+                            ? "bg-emerald-500/12 border border-emerald-500/30 text-emerald-300 cursor-default"
+                            : "kx-gen-cta"
+                        }`}
+                      >
+                        {finishedAt !== null
+                          ? <><CheckCircle2 size={14}/>Lección terminada</>
+                          : <><Icon name="flag" size={14} weight="duotone"/>Terminar lección</>}
+                      </button>
+                      {!ankiExported && !obsidianExportedAt && finishedAt !== null && (
+                        <p className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
+                          Sin exportar: la lección queda en «Tarjetas de contenido por descargar» del historial.
+                        </p>
+                      )}
                   </div>
               )}
               </div>
               );
               })()}
               </motion.div>
-              </AnimatePresence>
-
-              {/* Completion recap — static; the one-time celebration lives in CelebrationOverlay */}
-              <AnimatePresence>
-                {allStepsComplete && focusStep === 4 && (() => {
-                  const correctFinal = Object.values(questionFeedbacks).filter(f => f?.rating === "correct" || f?.rating === "excellent").length;
-                  const totalQFinal = visibleQuestions.length;
-                  const elapsedFinal = Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60000));
-                  const conceptsFinal = Object.values(conceptsChecked).filter(Boolean).length;
-                  return (
-                  <motion.div
-                    initial={{ opacity: 0, y: 14 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ type: "spring", damping: 24, stiffness: 300, delay: 0.1 }}
-                    className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5 mt-1"
-                  >
-                    <div className="relative flex items-center gap-3 mb-3.5">
-                      <div className="kx-hero-chip w-11 h-11 rounded-2xl flex items-center justify-center shrink-0">
-                        <Icon name="trophy" size={24} weight="duotone" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="kx-hero-t1 text-[17px] font-extrabold tracking-tight leading-tight">Lección dominada</p>
-                        <p className="kx-hero-t2 text-[11.5px] leading-snug mt-0.5">Tarjetas listas. Puedes seguir con el video.</p>
-                      </div>
-                    </div>
-                    <div className="relative grid grid-cols-4 gap-1.5">
-                      {[
-                        { icon: "pin" as IconName, value: conceptsFinal, label: "conceptos" },
-                        { icon: "checkCircle2" as IconName, value: `${correctFinal}/${totalQFinal}`, label: "correctas" },
-                        { icon: "zap" as IconName, value: `+${sessionXp || (correctFinal * 10)}`, label: "XP" },
-                        { icon: "timer" as IconName, value: `${elapsedFinal}m`, label: "tiempo" },
-                      ].map(st => (
-                        <div key={st.label} className="kx-hero-chip flex flex-col items-center gap-0.5 rounded-xl px-1.5 py-2">
-                          <Icon name={st.icon} size={14} />
-                          <span className="text-[11.5px] font-mono font-bold">{st.value}</span>
-                          <span className="text-[11px] font-medium opacity-80 truncate max-w-[56px]">{st.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-                  );
-                })()}
               </AnimatePresence>
 
               <div className="h-5"/>

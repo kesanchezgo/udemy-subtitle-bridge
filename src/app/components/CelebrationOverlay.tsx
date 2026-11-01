@@ -30,10 +30,13 @@ export interface CelebrationConfig {
   rewardKey?: string;
   /** Record XP/streak/achievements but show no card (another celebration is about to cover it). */
   silent?: boolean;
-  /** Extra XP on top of the base reward (combo / improvement). */
+  /** Extra XP on top of the base reward. */
   bonusXp?: number;
-  /** Current correct-answer streak, used for combo achievements. */
-  combo?: number;
+  /** Sube nivel y logros dentro de ESTA tarjeta (cierre de lección) en vez de encolar overlays. */
+  mergeFollowUps?: boolean;
+  /** Nivel alcanzado y logros desbloqueados en el momento del cierre (los recoge StudyAgentTab). */
+  levelUp?: number | null;
+  unlockedTitles?: string[];
 }
 
 // ─── Global trigger (call this from anywhere) ─────────────────────────────────
@@ -106,13 +109,13 @@ const TYPE_CFG: Record<CelebrationType, {
     bg: "from-emerald-950/96 to-slate-950/96",
     glow: "from-emerald-600/20 to-transparent",
     bar: "from-emerald-400 to-emerald-400",
-    confetti: true,
+    confetti: false,
     duration: 3600,
   },
   code_correct: {
     size: "big",
     bg: "", glow: "", bar: "",
-    confetti: true,
+    confetti: false,
     duration: 3400,
   },
   anki_export: {
@@ -120,7 +123,7 @@ const TYPE_CFG: Record<CelebrationType, {
     bg: "from-violet-950/96 to-slate-950/96",
     glow: "from-violet-600/20 to-transparent",
     bar: "from-violet-400 to-violet-400",
-    confetti: true,
+    confetti: false,
     duration: 3600,
   },
   achievement: {
@@ -140,7 +143,7 @@ const TYPE_CFG: Record<CelebrationType, {
     bg: "from-amber-950/96 to-slate-950/96",
     glow: "from-amber-600/20 to-transparent",
     bar: "from-amber-400 to-amber-400",
-    confetti: true,
+    confetti: false,
     duration: 3800,
   },
 };
@@ -169,13 +172,14 @@ const DEFAULT_ICON: Record<CelebrationType, React.ReactNode> = {
   achievement: <Award size={18} />,
   level_up: <TrendingUp size={18} />,
 };
-const ACTIVITY: CelebrationType[] = ["question_correct", "session_complete", "export_done", "anki_export"];
+const ACTIVITY: CelebrationType[] = ["session_complete", "export_done", "anki_export"];
 
 export function CelebrationOverlay() {
   const { isSepia } = useDockTheme();
   const [current, setCurrent] = useState<CelebrationConfig | null>(null);
   const [visible, setVisible] = useState(false);
   const [nonce, setNonce] = useState(0);
+  const [followUps, setFollowUps] = useState<{ levelUp: number | null; unlocked: string[] }>({ levelUp: null, unlocked: [] });
   const queueRef = useRef<CelebrationConfig[]>([]);
   const busyRef = useRef(false);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -190,7 +194,7 @@ export function CelebrationOverlay() {
       setNonce((n) => n + 1);
       setVisible(true);
 
-      playSound(config.type === "streak" || config.type === "achievement" ? "streak" : config.type === "level_up" ? "celebrate" : cfg.size === "big" ? "celebrate" : config.type === "question_correct" ? "pop" : "success");
+      playSound(config.type === "streak" || config.type === "achievement" ? "streak" : config.type === "level_up" ? "celebrate" : cfg.size === "big" ? "celebrate" : "success");
 
       if (cfg.confetti) {
         const colors = ["#6d4aff", "#8463ff", "#b9a8ff", "#ffffff", "#059669"];
@@ -207,6 +211,7 @@ export function CelebrationOverlay() {
         setVisible(false);
         later(() => {
           setCurrent(null);
+          setFollowUps({ levelUp: null, unlocked: [] });
           busyRef.current = false;
           const next = queueRef.current.shift();
           if (next) show(next);
@@ -216,25 +221,39 @@ export function CelebrationOverlay() {
 
     const enqueue = (config: CelebrationConfig) => {
       if (!busyRef.current) { show(config); return; }
-      // A praise that waits behind other messages is stale — drop it.
-      if (config.type === "question_correct") return;
       if (queueRef.current.length < 4) queueRef.current.push(config);
     };
 
     const handler = (e: Event) => {
       const config = (e as CustomEvent<CelebrationConfig>).detail;
 
-      // Rewards are recorded once, here; follow-ups (streak, level, achievements) join the same queue.
-      const follow: CelebrationConfig[] = [];
+      // Rewards are recorded once, here; follow-ups go inside the card when the
+      // config merges them (lesson closing), otherwise they queue as overlays.
+      let followLevelUp: number | null = null;
+      const followUnlocked: string[] = [];
       if (ACTIVITY.includes(config.type) && (!config.rewardKey || claimReward(config.rewardKey))) {
         const { count, isNewDay, usedFreeze } = touchStreak();
-        const { gained, levelUp, unlocked } = recordActivity(config.type, { bonus: config.bonusXp, combo: config.combo });
-        if (isNewDay && count >= 2) follow.push({ type: "streak", title: `Racha de ${count} días`, subtitle: usedFreeze ? "Tu día de descanso semanal salvó la racha. Vuelve mañana." : "Constancia que se nota. Vuelve mañana para mantenerla." });
-        if (levelUp) follow.push({ type: "level_up", title: `Nivel ${levelUp}`, subtitle: `+${gained} XP. Sigues subiendo.` });
-        unlocked.forEach((a) => follow.push({ type: "achievement", title: a.title, subtitle: `Logro desbloqueado · ${a.desc}` }));
+        // Los tipos de celebración se traducen a eventos de XP de progress.ts:
+        // el cierre = lesson_finished; exportar (Anki u Obsidian) = export_done.
+        const xpType = config.type === "session_complete"
+          ? "lesson_finished"
+          : config.type === "anki_export"
+            ? "export_done"
+            : config.type;
+        const { gained, levelUp, unlocked } = recordActivity(xpType, { bonus: config.bonusXp });
+        followLevelUp = levelUp;
+        unlocked.forEach((a) => followUnlocked.push(a.title));
+        if (isNewDay && count >= 2) enqueue({ type: "streak", title: `Racha de ${count} días`, subtitle: usedFreeze ? "Tu día de descanso semanal salvó la racha. Vuelve mañana." : "Constancia que se nota. Vuelve mañana para mantenerla." });
+        if (config.mergeFollowUps) {
+          (config.levelUp ? [config.levelUp] : []).forEach((l) => { followLevelUp = followLevelUp ?? l; });
+          (config.unlockedTitles ?? []).forEach((t) => { if (!followUnlocked.includes(t)) followUnlocked.push(t); });
+        } else {
+          if (levelUp) enqueue({ type: "level_up", title: `Nivel ${levelUp}`, subtitle: `+${gained} XP. Sigues subiendo.` });
+          unlocked.forEach((a) => enqueue({ type: "achievement", title: a.title, subtitle: `Logro desbloqueado · ${a.desc}` }));
+        }
       }
+      if (config.mergeFollowUps) setFollowUps({ levelUp: followLevelUp, unlocked: followUnlocked });
       if (!config.silent) enqueue(config);
-      follow.forEach(enqueue);
     };
 
     window.addEventListener("usb:celebrate", handler);
@@ -289,6 +308,20 @@ export function CelebrationOverlay() {
                 <p className="text-[11.5px] font-medium leading-snug mt-0.5 text-[var(--usb-fg-mid)]">
                   {current.subtitle}
                 </p>
+              )}
+              {(followUps.levelUp || followUps.unlocked.length > 0) && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {followUps.levelUp && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `color-mix(in srgb, ${accent} 22%, var(--usb-bg-3))`, color: accent }}>
+                      <TrendingUp size={10} weight="fill" /> Nivel {followUps.levelUp}
+                    </span>
+                  )}
+                  {followUps.unlocked.slice(0, 3).map((t) => (
+                    <span key={t} className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--usb-bg-2)] border border-[var(--usb-border)] text-[var(--usb-fg-mid)]">
+                      <Award size={10} /> {t}
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
             <motion.span

@@ -497,8 +497,10 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		const lesson = String((message as { lesson?: unknown }).lesson || '');
 		const browse = Boolean((message as { browse?: unknown }).browse);
 		const rootDeck = String((message as { rootDeck?: unknown }).rootDeck || '');
+		const scopeRaw = String((message as { scope?: unknown }).scope || 'lesson');
+		const scope = scopeRaw === 'course' || scopeRaw === 'all' ? scopeRaw : 'lesson';
 
-		handleAnkiDue(course, lesson, browse, rootDeck)
+		handleAnkiDue(course, lesson, browse, rootDeck, scope)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 		return false;
@@ -1918,9 +1920,13 @@ async function ankiInvokeBg(action: string, params: Record<string, unknown> = {}
 	return json.result;
 }
 
-async function handleAnkiDue(course: string, lesson: string, browse: boolean, rootDeck: string) {
-	const { conceptDeckPath, DEFAULT_ROOT_DECK } = await import('./app/services/ankiDesign');
-	const deck = conceptDeckPath(rootDeck || DEFAULT_ROOT_DECK, course, lesson);
+async function handleAnkiDue(course: string, lesson: string, browse: boolean, rootDeck: string, scope: 'lesson' | 'course' | 'all' = 'lesson') {
+	const { conceptDeckTree, DEFAULT_ROOT_DECK } = await import('./app/services/ankiDesign');
+	const root = rootDeck || DEFAULT_ROOT_DECK;
+	// lesson → mazo de la lección · course → mazo del curso · all → raíz
+	// (deck:"X" en Anki incluye los descendientes, así que cubre Courses y Vocabulary).
+	const tree = conceptDeckTree(root, course, lesson);
+	const deck = scope === 'course' ? tree[2] : scope === 'all' ? root : tree[3];
 	if (browse) {
 		await ankiInvokeBg('guiBrowse', { query: `deck:"${deck}" is:due` });
 		return { browse: true };

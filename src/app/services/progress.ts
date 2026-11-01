@@ -1,9 +1,9 @@
 import { getStreak } from "./streak";
 
-export interface Achievement { 
-  id: string; 
-  title: string; 
-  desc: string; 
+export interface Achievement {
+  id: string;
+  title: string;
+  desc: string;
   icon: "star" | "target" | "award" | "flame" | "book" | "trend" | "zap" | "trophy";
   category?: "streak" | "mastery" | "practice" | "export";
   progressMax?: number;
@@ -11,32 +11,31 @@ export interface Achievement {
 
 export const ACHIEVEMENTS: Achievement[] = [
   { id: "first", title: "Primer paso", desc: "Responde tu primera pregunta", icon: "star", category: "practice", progressMax: 1 },
-  { id: "c25", title: "Buen pulso", desc: "25 respuestas correctas", icon: "target", category: "practice", progressMax: 25 },
-  { id: "c100", title: "Precisión", desc: "100 respuestas correctas", icon: "award", category: "practice", progressMax: 100 },
-  { id: "combo3", title: "En la zona", desc: "Consigue una racha de combo de 3 respuestas seguidas", icon: "zap", category: "practice", progressMax: 3 },
+  { id: "c25", title: "Buen pulso", desc: "25 respuestas correctas a la primera", icon: "target", category: "practice", progressMax: 25 },
+  { id: "c100", title: "Precisión", desc: "100 respuestas correctas a la primera", icon: "award", category: "practice", progressMax: 100 },
   { id: "code1", title: "Ingeniero Activo", desc: "Resuelve tu primer reto de código", icon: "trophy", category: "mastery", progressMax: 1 },
-  { id: "s1", title: "Lección dominada", desc: "Completa una lección de estudio", icon: "book", category: "mastery", progressMax: 1 },
+  { id: "s1", title: "Primera lección terminada", desc: "Completa una lección de estudio", icon: "book", category: "mastery", progressMax: 1 },
   { id: "s10", title: "Constante", desc: "Completa 10 lecciones", icon: "book", category: "mastery", progressMax: 10 },
   { id: "e1", title: "Coleccionista", desc: "Exporta tus tarjetas a Anki u Obsidian", icon: "award", category: "export", progressMax: 1 },
   { id: "k3", title: "Racha de 3", desc: "3 días seguidos de estudio", icon: "flame", category: "streak", progressMax: 3 },
   { id: "k7", title: "Racha de 7", desc: "Una semana seguida de estudio", icon: "flame", category: "streak", progressMax: 7 },
-  { id: "l5", title: "Estudiante Focado", desc: "Alcanza el rango Estudiante Focado (nivel 5)", icon: "trend", category: "mastery", progressMax: 5 },
+  { id: "l5", title: "Estudiante Enfocado", desc: "Alcanza el rango Estudiante Enfocado (nivel 5)", icon: "trend", category: "mastery", progressMax: 5 },
   { id: "l10", title: "Gran Maestro", desc: "Alcanza el rango Gran Maestro (nivel 10)", icon: "trend", category: "mastery", progressMax: 10 },
 ];
 
 export interface MasteryTier {
   name: string;
   minLevel: number;
-  badge: string;
+  badge: string;   // nombre del icono del set propio (src/app/components/icons.tsx)
   color: string;
 }
 
 export const MASTERY_TIERS: MasteryTier[] = [
-  { name: "Iniciado", minLevel: 1, badge: "🌱", color: "#10b981" },
-  { name: "Aprendiz Diligente", minLevel: 3, badge: "⚡", color: "#06b6d4" },
-  { name: "Estudiante Focado", minLevel: 5, badge: "🔮", color: "#8b5cf6" },
-  { name: "Especialista", minLevel: 8, badge: "💎", color: "#ec4899" },
-  { name: "Gran Maestro", minLevel: 10, badge: "👑", color: "#f59e0b" },
+  { name: "Iniciado", minLevel: 1, badge: "compass", color: "#10b981" },
+  { name: "Aprendiz Diligente", minLevel: 3, badge: "zap", color: "#06b6d4" },
+  { name: "Estudiante Enfocado", minLevel: 5, badge: "brain", color: "#8b5cf6" },
+  { name: "Especialista", minLevel: 8, badge: "diamond", color: "#ec4899" },
+  { name: "Gran Maestro", minLevel: 10, badge: "trophy", color: "#f59e0b" },
 ];
 
 export function getMasteryTier(level: number): MasteryTier {
@@ -50,35 +49,46 @@ export function getMasteryTier(level: number): MasteryTier {
 
 interface State {
   xp: number;
-  correct: number;
+  correct: number;          // aciertos a la primera (first_try_correct)
   sessions: number;
   exports: number;
   codeChallenges: number;
-  bestCombo: number;
+  practiceAttempted: number;
+  practiceCorrect: number;
+  reinforced: number;       // tarjetas de refuerzo creadas
+  finishedDays: Record<string, number>;
+  recentFirstTry: boolean[]; // últimos 20 primeros intentos, para % de aciertos
   unlocked: string[];
   days: Record<string, number>;
   dailyGoalXp: number;
 }
 
 const KEY = "kinema-progress";
-const XP: Record<string, number> = { 
-  concept_ack: 2, 
-  question_correct: 10, 
-  question_combo: 5, 
-  code_challenge: 50, 
-  session_complete: 50, 
-  export_done: 25, 
-  anki_export: 30 
+// El XP premia el esfuerzo de aprendizaje, no la autodeclaración (docs/STUDY_FLOW_PEDAGOGY.md §2, R3/R8).
+const XP: Record<string, number> = {
+  answer_submitted: 5,     // ≥ 20 caracteres, una vez por pregunta
+  first_try_correct: 10,
+  answer_improved: 10,     // de parcial/incorrecta a correcta tras el feedback
+  practice_attempted: 15,
+  practice_correct: 10,    // +20 extra (meta.bonus) si es reto de código correcto
+  lesson_finished: 30,
+  export_done: 10,         // una vez por lección (Anki u Obsidian)
+  reinforce_card: 0,       // no da XP: contabiliza puntos reforzados
+  first_try_miss: 0,       // no da XP: alimenta el % de aciertos a la primera
 };
 
-const empty = (): State => ({ 
-  xp: 0, 
-  correct: 0, 
-  sessions: 0, 
-  exports: 0, 
+const empty = (): State => ({
+  xp: 0,
+  correct: 0,
+  sessions: 0,
+  exports: 0,
   codeChallenges: 0,
-  bestCombo: 0,
-  unlocked: [], 
+  practiceAttempted: 0,
+  practiceCorrect: 0,
+  reinforced: 0,
+  finishedDays: {},
+  recentFirstTry: [],
+  unlocked: [],
   days: {},
   dailyGoalXp: 50,
 });
@@ -116,43 +126,65 @@ export function getProgress() {
     return { xp: s.days[dayKey(d)] || 0, future: d > today && dayKey(d) !== dayKey(today), today: dayKey(d) === dayKey(today), label: d.toLocaleDateString("es", { day: "numeric", month: "short" }) };
   });
 
+  const firstTry = Array.isArray(s.recentFirstTry) ? s.recentFirstTry.slice(-20) : [];
+  const firstTryPct = firstTry.length ? Math.round((firstTry.filter(Boolean).length / firstTry.length) * 100) : null;
+
+  const weekLessons = week.reduce((acc, _d, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    return acc + (s.finishedDays?.[dayKey(d)] || 0);
+  }, 0);
+
   return {
     xp: s.xp, level, tier, into: s.xp - from, span: to - from,
     history, week, weekXp: week.reduce((a, b) => a + b.xp, 0),
     todayXp, dailyGoalXp, dailyGoalPct,
     unlocked: s.unlocked, correct: s.correct, sessions: s.sessions,
-    exports: s.exports, codeChallenges: s.codeChallenges, bestCombo: s.bestCombo,
+    exports: s.exports, codeChallenges: s.codeChallenges,
+    practiceAttempted: s.practiceAttempted || 0, practiceCorrect: s.practiceCorrect || 0,
+    reinforced: s.reinforced || 0,
+    weekLessons, firstTryPct,
   };
 }
 
-export function recordActivity(type: string, meta?: { combo?: number; bonus?: number }): { gained: number; levelUp: number | null; unlocked: Achievement[] } {
+export function recordActivity(type: string, meta?: { bonus?: number }): { gained: number; levelUp: number | null; unlocked: Achievement[] } {
   const base = XP[type];
-  if (!base) return { gained: 0, levelUp: null, unlocked: [] };
+  if (base === undefined) return { gained: 0, levelUp: null, unlocked: [] };
   const gain = base + Math.max(0, Math.round(meta?.bonus ?? 0));
   const s = read();
   const before = levelOf(s.xp);
   s.xp += gain;
   s.days[dayKey()] = (s.days[dayKey()] || 0) + gain;
-  if (type === "question_correct") s.correct++;
-  if (type === "session_complete") s.sessions++;
-  if (type === "code_challenge") s.codeChallenges = (s.codeChallenges || 0) + 1;
-  if (type === "export_done" || type === "anki_export") s.exports++;
-  if (meta?.combo && meta.combo > (s.bestCombo || 0)) {
-    s.bestCombo = meta.combo;
+  if (type === "first_try_correct") {
+    s.correct++;
+    s.recentFirstTry = [...(Array.isArray(s.recentFirstTry) ? s.recentFirstTry : []), true].slice(-20);
   }
+  if (type === "first_try_miss") {
+    s.recentFirstTry = [...(Array.isArray(s.recentFirstTry) ? s.recentFirstTry : []), false].slice(-20);
+  }
+  if (type === "lesson_finished") {
+    s.sessions++;
+    s.finishedDays = { ...(s.finishedDays || {}), [dayKey()]: (s.finishedDays?.[dayKey()] || 0) + 1 };
+  }
+  if (type === "practice_attempted") s.practiceAttempted = (s.practiceAttempted || 0) + 1;
+  if (type === "practice_correct") {
+    s.practiceCorrect = (s.practiceCorrect || 0) + 1;
+    s.codeChallenges = (s.codeChallenges || 0) + (meta?.bonus ? 1 : 0);
+  }
+  if (type === "reinforce_card") s.reinforced = (s.reinforced || 0) + 1;
+  if (type === "export_done" || type === "anki_export") s.exports++;
   const after = levelOf(s.xp);
   const streak = getStreak();
   const checks: Record<string, boolean> = {
-    first: s.correct >= 1, 
-    c25: s.correct >= 25, 
+    first: s.correct >= 1,
+    c25: s.correct >= 25,
     c100: s.correct >= 100,
-    combo3: (s.bestCombo || 0) >= 3 || (meta?.combo ?? 0) >= 3,
     code1: (s.codeChallenges || 0) >= 1,
-    s1: s.sessions >= 1, 
-    s10: s.sessions >= 10, 
+    s1: s.sessions >= 1,
+    s10: s.sessions >= 10,
     e1: s.exports >= 1,
-    k3: streak >= 3, 
-    k7: streak >= 7, 
+    k3: streak >= 3,
+    k7: streak >= 7,
     l5: after >= 5,
     l10: after >= 10,
   };

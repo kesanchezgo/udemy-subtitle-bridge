@@ -49,6 +49,9 @@ export interface ConceptCardInput {
 	type?: string;
 	/** F2-1: minuto de la lección donde se enseña («mm:ss»). */
 	t?: string;
+	/** flowVersion 2: tarjeta de refuerzo de Study (fallo → refresco). Va
+	 *  primero en la cola de nuevas para repasar lo débil antes. */
+	reinforce?: boolean;
 }
 
 /** Valor del campo Tipo: span con data-tp para que el CSS de la tarjeta le
@@ -87,6 +90,9 @@ export function buildConceptSpec(
 	};
 	const safeCourse = sanitizeDeckSegment(course);
 	const safeLesson = sanitizeDeckSegment(lesson);
+	// flowVersion 2 (§3): las de refuerzo encabezan la cola de nuevas — el
+	// orden de `notes` fija el due al importar, así que se ordenan AQUÍ.
+	const orderedCards = [...cards].sort((a, b) => Number(Boolean(b.reinforce)) - Number(Boolean(a.reinforce)));
 	return {
 		decks: [
 			{ name: deckTree[0], conf: COURSES_PRESET.id, desc: ROOT_DECK_DESCRIPTION },
@@ -108,7 +114,7 @@ export function buildConceptSpec(
 		],
 		models: [{ ...CONCEPT_MODEL, fields: [...CONCEPT_MODEL.fields] }],
 		dconfs: [COURSES_PRESET, VOCAB_PRESET],
-		notes: cards.map((card) => ({
+		notes: orderedCards.map((card) => ({
 			modelName: CONCEPT_MODEL.name,
 			deck: lessonPath,
 			guid: card.guid,
@@ -154,6 +160,10 @@ export function kinemaTags(parts: {
 	aiTags?: string[];
 	cefr?: string;
 	pos?: string;
+	/** flowVersion 2: tarjeta de refuerzo de Study (kinema::reforzar). */
+	reinforce?: boolean;
+	/** Origen especial de la tarjeta (p. ej. «study» → kinema::origen::study). */
+	origin?: string;
 }): string[] {
 	const slug = (value: string) =>
 		String(value || '')
@@ -168,6 +178,8 @@ export function kinemaTags(parts: {
 	const lesson = slug(parts.lesson);
 	if (lesson) tags.push(`kinema::leccion::${lesson}`);
 	if (parts.type) tags.push(`kinema::tipo::${slug(parts.type)}`);
+	if (parts.reinforce) tags.push('kinema::reforzar');
+	if (parts.origin) tags.push(`kinema::origen::${slug(parts.origin)}`);
 	for (const ai of parts.aiTags ?? []) {
 		const slugAi = slug(ai);
 		if (slugAi) tags.push(`kinema::tema::${slugAi}`);

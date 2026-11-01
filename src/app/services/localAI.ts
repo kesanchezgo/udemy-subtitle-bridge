@@ -523,25 +523,25 @@ async function streamGeminiAI(
 // that parseRating() expects so the full UI flow works without a real AI.
 
 const MOCK_QUESTION_RESPONSES = [
-  `[PARCIAL] - ~72% de comprensión
-BIEN: ✅ Tu respuesta captura la idea central correctamente y demuestra comprensión básica del concepto.
-FALTÓ: ⚠️ Podrías profundizar en el mecanismo interno. Por ejemplo, ¿qué sucede a nivel de memoria (heap vs stack) cuando ocurre este proceso?
-PROFUNDIZACIÓN: 🎯 ¿Cómo cambiaría tu respuesta si hubiera múltiples threads accediendo al mismo objeto simultáneamente?`,
+  `[PARCIAL]
+BIEN: Tu respuesta captura la idea central correctamente y demuestra comprensión básica del concepto.
+FALTO: Podrías precisar el mecanismo interno: qué ocurre a nivel de memoria cuando este proceso se ejecuta.
+PARA RECORDAR: La idea clave es el flujo completo, no solo el resultado visible.`,
 
-  `[CORRECTO] - ~88% de comprensión
-BIEN: ✅ Excelente. Identificaste correctamente los conceptos clave y la relación entre ellos. La explicación es clara y precisa.
-FALTÓ: 💡 Para nivel senior, menciona las implicaciones de rendimiento: ¿cuándo preferirías una alternativa?
-PROFUNDIZACIÓN: 🎯 Diseña un escenario donde este concepto cause un bug sutil en producción con alta concurrencia.`,
+  `[CORRECTO]
+BIEN: Identificaste correctamente los conceptos clave y la relación entre ellos; la explicación es clara y precisa.
+FALTO: (nada)
+PARA RECORDAR: Conectar estos conceptos con un caso real de producción es lo que los fija.`,
 
-  `[INCORRECTO] - ~35% de comprensión
-BIEN: ✅ Estás en la dirección correcta con la idea general, eso es un buen punto de partida.
-FALTÓ: ❌ La respuesta confunde dos conceptos distintos. Recuerda: uno opera a nivel de compilación y el otro a nivel de ejecución en la JVM.
-PROFUNDIZACIÓN: 🔁 Vuelve al concepto desde cero: ¿qué produce javac exactamente y qué consume la JVM?`,
+  `[INCORRECTO]
+BIEN: Estás en la dirección correcta con la idea general; eso es un buen punto de partida.
+FALTO: La respuesta confunde dos conceptos distintos: uno opera a nivel de compilación y el otro a nivel de ejecución en la JVM.
+PARA RECORDAR: Compilar transforma el código; ejecutarlo lo interpreta o lo compila sobre la marcha.`,
 
-  `[PARCIAL] - ~65% de comprensión
-BIEN: ✅ Mencionaste los elementos correctos aunque sin conectar la cadena de causa-efecto completa.
-FALTÓ: ⚠️ Faltó explicar qué ocurre cuando el caso límite se cumple. Ese es el detalle que diferencia una respuesta junior de una senior.
-PROFUNDIZACIÓN: 🎯 Dame un ejemplo de código real (5 líneas máx.) que demuestre el comportamiento que describiste.`,
+  `[PARCIAL]
+BIEN: Mencionaste los elementos correctos aunque sin conectar la cadena de causa-efecto completa.
+FALTO: Faltó explicar qué ocurre cuando el caso límite se cumple — ese es el detalle central de la pregunta.
+PARA RECORDAR: Los casos límite son donde el modelo mental se pone a prueba.`,
 ];
 
 const MOCK_CODE_RESPONSES = [
@@ -549,19 +549,19 @@ const MOCK_CODE_RESPONSES = [
 DIAGNÓSTICO: La solución identifica el problema principal pero omite el caso borde más crítico en producción.
 BIEN: ✅ La lógica central es correcta y el enfoque es válido. Se nota comprensión del problema.
 MEJORAR: ⚠️ Agrega validación de null antes del unboxing. En producción con datos de BD, ese null puede aparecer en cualquier momento.
-NIVEL SENIOR: 🚀 Usa Optional<T> para modelar la ausencia de valor explícitamente — elimina los null checks ad-hoc y hace el contrato del método más claro.`,
+SIGUIENTE NIVEL: (nada)`,
 
   `[CORRECTO]
 DIAGNÓSTICO: Solución limpia y correcta. Demuestra comprensión sólida de los conceptos.
 BIEN: ✅ Identificaste ambos bugs y aplicaste los fixes correctos. El uso de .equals() y el AtomicInteger son exactamente lo que se espera.
 MEJORAR: 💡 El código funciona, pero considera extraer la lógica de comparación a un método privado — mejora la legibilidad y testabilidad.
-NIVEL SENIOR: 🚀 Añade un test unitario con dos threads concurrentes que verifique el comportamiento thread-safe. Sin ese test, el bug puede reaparecer silenciosamente en un refactor futuro.`,
+SIGUIENTE NIVEL: 🚀 Añade un test unitario con dos threads concurrentes que verifique el comportamiento thread-safe.`,
 
   `[INCORRECTO]
 DIAGNÓSTICO: La solución no resuelve el problema de fondo — cambia la sintaxis pero no el comportamiento.
 BIEN: ✅ Reconociste que había algo incorrecto en la comparación, eso es el primer paso.
-MEJORAR: ❌ El cambio que hiciste sigue usando == bajo el capó en un caso. Traza la ejecución paso a paso: ¿qué objetos se crean en el heap y qué referencias compara == exactamente?
-NIVEL SENIOR: 🚀 Antes de corregir un bug de concurrencia, escribe el test que lo reproduce de forma determinista. Si no puedes escribir el test, aún no entiendes completamente el bug.`,
+MEJORAR: ❌ El cambio que hiciste sigue usando == bajo el capó en un caso. Traza la ejecución paso a paso: ¿qué objetos se crean y qué referencias compara == exactamente?
+SIGUIENTE NIVEL: (nada)`,
 ];
 
 // Index to rotate through mock responses for variety
@@ -943,7 +943,10 @@ export async function evaluateFeynman(
         "Eres un experto en ensenanza y evaluación formativa para cursos online.\n" +
         "Evaluas si el estudiante realmente entendio el concepto usando la Tecnica Feynman.\n" +
         "Adapta el feedback al tema real del curso, la leccion y el objetivo del estudiante.\n" +
-        "Se especifico, pedagogico y motivador. Responde SIEMPRE en espanol.\n" +
+        "RUBRICA: CORRECTO si la explicacion captura la idea central del concepto, aunque falten detalles secundarios. " +
+        "No penalices la redaccion, la ortografia ni la brevedad.\n" +
+        "El feedback debe ser concreto y no introducir demandas nuevas (no hagas preguntas).\n" +
+        "Se especifico, pedagogico y directo. Responde SIEMPRE en espanol.\n" +
         "NO repitas la respuesta modelo al estudiante directamente.",
     },
     {
@@ -954,15 +957,14 @@ export async function evaluateFeynman(
         `RESPUESTA MODELO (referencia interna, no la copies textualmente):\n${modelAnswer}\n\n` +
         `EXPLICACION DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
         "Responde con este formato EXACTO (sin texto extra antes o despues):\n" +
-        "COMPRENSION: [Basica|Solida|Profunda] - [una frase de evaluacion]\n" +
-        "CORRECTO: [lo que explico bien en 1-2 frases]\n" +
-        "FALTO: [que concepto clave no menciono, max 2 puntos]\n" +
-        "PARA COMPLETAR: [una sola oracion que anade lo que falto]\n" +
-        "PREGUNTA: [una pregunta que lleve al estudiante un nivel mas arriba]",
+        "[CORRECTO|PARCIAL|INCORRECTO]\n" +
+        "BIEN: [lo que explico bien en 1 frase concreta]\n" +
+        "FALTO: [solo si PARCIAL o INCORRECTO: el concepto clave que no menciono, en 1-2 frases. Si es CORRECTO escribe: (nada)]\n" +
+        "PARA RECORDAR: [1 frase clave para fijar el concepto]",
     },
   ];
 
-  return callLocalAI(messages, 450, 0.3, "feynman");
+  return callLocalAI(messages, 260, 0.3, "feynman");
 }
 
 // ─── Active question evaluation — message builder ─────────────────────────────
@@ -980,6 +982,9 @@ function buildEvalQuestionMessages(
         `Eres un profesor senior evaluando respuestas de estudiantes en un curso online.\n` +
         `El objetivo cognitivo de esta pregunta es nivel "${bloomLevel}" segun la Taxonomia de Bloom.\n` +
         `Evalua usando el tema real del curso y de la leccion; no asumas Java, Spring ni programacion si el curso no trata de eso.\n` +
+        `RUBRICA: CORRECTO si la respuesta captura la idea central de la respuesta esperada, aunque falten detalles secundarios. ` +
+        `No penalices la redaccion, la ortografia ni la brevedad: compara con la idea de la respuesta esperada, nunca con su longitud.\n` +
+        `El feedback debe ser concreto, apuntar a la tarea y no introducir demandas nuevas (no hagas preguntas).\n` +
         `Se preciso, constructivo y directo. Responde SIEMPRE en espanol.`,
     },
     {
@@ -990,10 +995,10 @@ function buildEvalQuestionMessages(
         `RESPUESTA ESPERADA (referencia interna):\n${expectedAnswer}\n\n` +
         `RESPUESTA DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
         "Evalua con este formato EXACTO:\n" +
-        "[CORRECTO|PARCIAL|INCORRECTO] - [estimacion: ej. 85% de comprension]\n" +
-        "BIEN: [que estuvo correcto en 1 frase especifica]\n" +
-        "FALTO: [que falto o estuvo inexacto, con el concepto correcto]\n" +
-        "PROFUNDIZACION: [una pregunta de seguimiento al siguiente nivel cognitivo de Bloom]",
+        "[CORRECTO|PARCIAL|INCORRECTO]\n" +
+        "BIEN: [que estuvo correcto en 1 frase concreta]\n" +
+        "FALTO: [solo si PARCIAL o INCORRECTO: el concepto correcto en 1-2 frases. Si es CORRECTO escribe: (nada)]\n" +
+        "PARA RECORDAR: [1 frase clave para fijar el concepto]",
     },
   ];
 }
@@ -1010,7 +1015,7 @@ export async function evaluateActiveAnswer(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu respuesta primero." };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  return callLocalAI(messages, 380, 0.3, "eval-question");
+  return callLocalAI(messages, 260, 0.3, "eval-question");
 }
 
 // ─── Active question evaluation — STREAMING ──────────────────────────────────
@@ -1026,7 +1031,7 @@ export async function evaluateActiveAnswerStream(
     return { success: false, content: "", rating: "unknown" };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  const result   = await streamLocalAI(messages, 380, 0.3, onToken, undefined, "eval-question");
+  const result   = await streamLocalAI(messages, 260, 0.3, onToken, undefined, "eval-question");
   return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }
 
@@ -1036,6 +1041,7 @@ function buildCodeReviewMessages(
   expectedSolution: string,
   studentCode: string,
   context?: StudyAIContext,
+  declaredLevel?: string,
 ): AIMessage[] {
   return [
     {
@@ -1043,6 +1049,7 @@ function buildCodeReviewMessages(
       content:
         "Eres un mentor senior haciendo revisión educativa de ejercicios prácticos.\n" +
         "Si el desafío es código, adapta el review al lenguaje, framework y dominio del curso; si no es código, evalúa la solución práctica con el mismo rigor.\n" +
+        "RUBRICA: CORRECTO si la solución cumple lo que pide el desafío, aunque pueda mejorarse en estilo. No penalices la brevedad.\n" +
         "Tu objetivo es que el estudiante entienda sus errores y mejore.\n" +
         "Se especifico, usa ejemplos concretos cuando sea necesario. Responde en espanol.",
     },
@@ -1050,6 +1057,7 @@ function buildCodeReviewMessages(
       role: "user",
       content:
         `${formatStudyContext(context)}\n\n` +
+        `NIVEL DECLARADO POR EL ESTUDIANTE: ${declaredLevel ?? "(desconocido)"}\n\n` +
         `DESAFIO: ${challengeTitle}\n\n` +
         `SOLUCION DE REFERENCIA:\n${expectedSolution}\n\n` +
         `RESPUESTA DEL ESTUDIANTE:\n${studentCode}\n\n` +
@@ -1058,7 +1066,7 @@ function buildCodeReviewMessages(
         "DIAGNOSTICO: [1 frase que resume la calidad de la solucion]\n" +
         "BIEN: [que hizo correctamente, 1-2 puntos concretos]\n" +
         "MEJORAR: [que cambiaria y por que, con snippet si aplica]\n" +
-        "NIVEL SENIOR: [una sola sugerencia para llevar la solucion a nivel senior]",
+        "SIGUIENTE NIVEL: [solo si el veredicto es CORRECTO y el nivel declarado es clear o mastered: una sugerencia para llevar la solucion al siguiente nivel. En otro caso escribe: (nada)]",
     },
   ];
 }
@@ -1069,11 +1077,12 @@ export async function evaluateCodeSolution(
   expectedSolution: string,
   studentCode: string,
   context?: StudyAIContext,
+  declaredLevel?: string,
 ): Promise<AIResponse> {
   if (!studentCode.trim())
     return { success: false, content: "", rating: "unknown", error: "Escribe tu solucion primero." };
 
-  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context);
+  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
   return callLocalAI(messages, 500, 0.2);
 }
 
@@ -1084,11 +1093,12 @@ export async function evaluateCodeSolutionStream(
   studentCode: string,
   onToken: (token: string, accumulated: string) => void,
   context?: StudyAIContext,
+  declaredLevel?: string,
 ): Promise<{ success: boolean; content: string; rating: AIRating; isMock?: boolean }> {
   if (!studentCode.trim())
     return { success: false, content: "", rating: "unknown" };
 
-  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context);
+  const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
   const result   = await streamLocalAI(messages, 500, 0.2, onToken, undefined, "eval-code");
   return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }

@@ -41,6 +41,7 @@ const {
 	buildConceptSpec,
 	sanitizeDeckSegment,
 	stableGuid,
+	kinemaTags,
 } = await import('../src/app/services/ankiDesign.ts');
 const {
 	DEFAULT_VOCAB_CONFIG,
@@ -140,6 +141,25 @@ const conceptApkg = await zipApkg(await buildCollectionBuffer(conceptSpec, await
 fs.mkdirSync('tmp', { recursive: true });
 fs.writeFileSync('tmp/qa-concept.apkg', conceptApkg);
 console.log(`  → tmp/qa-concept.apkg (${conceptApkg.length} bytes)`);
+
+// ── §3 Study → mazo: las tarjetas de refuerzo van PRIMERO en la cola ─────────
+{
+	const mixed = [
+		{ front: 'Tarjeta normal 1', back: 'a', guid: stableGuid('r|0'), tags: ['java'], type: 'concepto' },
+		{ front: 'Tarjeta normal 2', back: 'b', guid: stableGuid('r|1'), tags: ['java'], type: 'concepto' },
+		{ front: 'Refuerzo: ¿qué es X?', back: 'c', guid: stableGuid('r|2'), tags: ['java'], type: 'concepto', reinforce: true },
+	];
+	const spec = buildConceptSpec(mixed, COURSE, LESSON, ROOT, lessonUrl);
+	check('las tarjetas reinforce se ordenan primero en el spec',
+		spec.notes[0].fields[0].includes('Refuerzo') && spec.notes[2].fields[0].includes('normal 2'),
+		spec.notes.map((n) => n.fields[0].slice(0, 22)).join(' | '));
+	const reinforceCard = mixed.find((c) => c.reinforce);
+	const tags = kinemaTags({ course: COURSE, lesson: LESSON, type: 'concepto', aiTags: [], reinforce: true, origin: 'study' });
+	check('tag kinema::reforzar presente', tags.includes('kinema::reforzar'), tags.join(','));
+	check('tag kinema::origen::study presente', tags.includes('kinema::origen::study'), tags.join(','));
+	check('GUID de refuerzo distinto al de IA para el mismo front',
+		stableGuid(`x|study:${reinforceCard.front}`) !== stableGuid(`x|${reinforceCard.front}`));
+}
 
 {
 	const col = await openCollection(conceptApkg);

@@ -117,4 +117,39 @@ assert(rawMd.includes('00:00:00,000 --> 00:00:04,000'), 'SRT intacto dentro del 
 // htmlToMarkdownLite
 assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x · y', `listas a bullets: "${htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>')}"`);
 
+// ── flowVersion 2: recuerdo libre, puntos a reforzar y resultado (§6) ────────
+{
+	const base = {
+		...session,
+		recallNotes: 'El bytecode es intermedio; la JVM lo ejecuta en cualquier SO.',
+		weakPoints: [
+			{ q: '¿Qué compila el JIT y cuándo?', answer: 'Hot spots detectados en runtime, a nativo y cacheados.' },
+		],
+		result: {
+			title: 'Lección completada · con puntos a reforzar',
+			remembered: { count: 1, total: 4 },
+			check: { firstTry: 0, improved: 1, skipped: false },
+			practice: 'later',
+			calibration: { said: 'Entendido', shown: 'Más o menos', message: 'Te sentías más seguro de lo que mostraste.' },
+			cards: { total: 6, reinforce: 1, destination: 'anki' },
+		},
+	};
+	const md2 = buildSessionNoteMarkdown(base, cfg, { today: new Date(2026, 9, 31) });
+	assert(md2.includes('## Lo que recordé sin mirar'), 'sección «Lo que recordé sin mirar» presente');
+	assert(md2.includes('bytecode es intermedio'), 'el recuerdo libre viaja con su texto');
+	assert(md2.includes('## Puntos a reforzar'), 'sección «Puntos a reforzar» presente');
+	assert(md2.includes('> [!question]- ¿Qué compila el JIT y cuándo?'), 'pregunta débil como callout plegado');
+	assert(md2.includes('**Respuesta:** Hot spots'), 'respuesta correcta plegada dentro');
+	assert(md2.includes('## Resultado de la sesión'), 'sección de resultado presente');
+	assert(md2.includes('Recordaste 1 de 4 ideas'), 'resumen de ideas recordadas');
+	assert(md2.includes('Comprobación: 0 a la primera · 1 tras corregir'), 'línea de comprobación');
+	assert(md2.includes('Práctica: pendiente'), 'estado de práctica');
+	assert(md2.includes('Tarjetas: 6 (1 de refuerzo) · en Anki'), 'línea de tarjetas con destino');
+	assert(md2.includes('dijiste «Entendido», mostraste «Más o menos»'), 'línea de calibración');
+	// Sin datos nuevos, las secciones no aparecen (retrocompatible).
+	const md3 = buildSessionNoteMarkdown(session, cfg, { today: new Date(2026, 9, 31) });
+	assert(!md3.includes('Lo que recordé sin mirar') && !md3.includes('Puntos a reforzar') && !md3.includes('Resultado de la sesión'),
+		'las secciones nuevas no aparecen sin datos');
+}
+
 console.log(process.exitCode ? '\nHAY FALLOS' : '\nTODO OK');
