@@ -312,8 +312,8 @@ export function CelebrationOverlay() {
               {(followUps.levelUp || followUps.unlocked.length > 0) && (
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
                   {followUps.levelUp && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `color-mix(in srgb, ${accent} 22%, var(--usb-bg-3))`, color: accent }}>
-                      <TrendingUp size={10} weight="fill" /> Nivel {followUps.levelUp}
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `color-mix(in srgb, ${accent} 22%, var(--usb-bg-3))`, color: "var(--usb-fg-hi)" }}>
+                      <TrendingUp size={10} weight="fill" style={{ color: accent }} /> Nivel {followUps.levelUp}
                     </span>
                   )}
                   {followUps.unlocked.slice(0, 3).map((t) => (

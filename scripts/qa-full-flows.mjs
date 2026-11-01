@@ -190,10 +190,26 @@ const RECORD = {
 
 /** Siembra el historial/vocab/proveedor vía el SW (reutilizable: la sección E
  *  re-siembra porque el Reiniciar del flujo limpia el registro con clearProgress). */
-async function writeSeedViaSw() {
+async function writeSeedViaSw(opts = {}) {
 	const svc = context.serviceWorkers().at(-1)
 		?? await context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
 	if (!svc) throw new Error('SW no disponible para el seed');
+	// D.4: variante v2 con tarjetas de refuerzo — restauración directa a Fijar
+	// con chips «Refuerzo» que ejercitan los tokens AA del §1.
+	const record = opts.reinforceCards
+		? {
+			...RECORD,
+			flowVersion: 2,
+			focusStep: 3,
+			finishedAt: RECORD.updatedAt,
+			questionsDone: true,
+			ankiCards: RECORD.ankiCards.map((c, i) => ({
+				...c,
+				conceptRefs: [i],
+				reinforce: true,
+			})),
+		}
+		: RECORD;
 	await Promise.race([
 		svc.evaluate(({ record, qaPort }) => new Promise((resolve, reject) => {
 			chrome.storage.local.set({
@@ -216,7 +232,7 @@ async function writeSeedViaSw() {
 				if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
 				resolve();
 			});
-		}), { record: RECORD, qaPort: QA_PORT }),
+		}), { record, qaPort: QA_PORT }),
 		new Promise((_, rej) => setTimeout(() => rej(new Error('seed timeout')), 15000)),
 	]);
 	await Promise.race([
@@ -292,7 +308,13 @@ if (REAL) {
 	console.log('  (modo CLON determinista · servidor local bajo udemy.com)');
 }
 const consoleErrors = [];
+// §6 (v1.5.1): la confirmación de reinicio vive en el dock — ningún flujo
+// de la UI debe abrir diálogos nativos (bloquearían la página de Udemy).
+const nativeDialogs = [];
 page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 140)));
+page.on('dialog', (d) => { nativeDialogs.push(d.message()); d.dismiss().catch(() => {}); });
+const d4Traces = [];
+page.on('console', (m) => { if (/d4trace/.test(m.text())) d4Traces.push(m.text().slice(0, 160)); });
 page.on('console', (m) => {
 	if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 140));
 });
@@ -593,8 +615,9 @@ if (await apkgBtn.count().catch(() => 0)) {
 // ── D.1 — flujo mínimo: nivel → 1 respuesta → Hacerlo después → Terminar ───
 // Lección NUEVA: Reiniciar (aceptando la confirmación nativa) lleva a objetivo.
 const MIN_LESSON = 'Flujo minimo QA';
-await page.once('dialog', (d) => d.accept());
 await clickInShadow(/Reiniciar/);
+await page.waitForTimeout(400);
+await clickInShadow(/Sí, reiniciar/);
 let objTxt0 = '';
 for (let i = 0; i < 8; i += 1) {
 	await page.waitForTimeout(600);
@@ -719,10 +742,48 @@ check('el resumen refleja práctica pendiente y sin exportar',
 	/pendiente/.test(recMin?.practiceStatus ?? '') || recMin?.practiceStatus === 'later',
 	String(recMin?.practiceStatus));
 
+// ── D.1b — §1 en sepia: «Refuerzo» e «Incluir» con los tokens AA ────────────
+// La lección mínima quedó terminada: al recargar en sepia restaura a Fijar
+// con sus tarjetas de refuerzo en la vista previa.
+await page.evaluate(() => { try { localStorage.setItem('usb_theme', 'sepia'); } catch {} });
+await page.reload();
+await page.waitForSelector(OUTER, { timeout: 25000 });
+await page.waitForTimeout(2000);
+await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 10000 }).catch(() => {});
+await page.waitForTimeout(1000);
+await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+let d1b = '';
+for (let i = 0; i < 14; i += 1) {
+	await page.waitForTimeout(700);
+	d1b = await shadow();
+	if (/Lección terminada/.test(d1b)) break;
+}
+check('sepia: la lección mínima restaura a Fijar terminada',
+	/Lección terminada/.test(d1b), d1b.slice(0, 160));
+await clickInShadow(/Ver tarjetas/);
+await page.waitForTimeout(700);
+const refuerzoColor = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const chip = [...root.querySelectorAll('span')].find((s) => (s.textContent ?? '').trim() === 'Refuerzo');
+	return chip ? getComputedStyle(chip).color : 'no encontrado';
+});
+check('sepia: el chip «Refuerzo» usa el ámbar AA (rgb(146, 64, 14))',
+	refuerzoColor === 'rgb(146, 64, 14)', refuerzoColor);
+await clickInShadow(/^Quitar$/);
+await page.waitForTimeout(400);
+const incluirColor = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const btn = [...root.querySelectorAll('button')].find((b) => (b.textContent ?? '').trim() === 'Incluir');
+	return btn ? getComputedStyle(btn).color : 'no encontrado';
+});
+check('sepia: «Incluir» tras «Quitar» usa el verde AA (rgb(4, 120, 87))',
+	incluirColor === 'rgb(4, 120, 87)', incluirColor);
+
 // ── D.2 — «Saltar» SÍ emite el aviso y el resumen lo refleja ────────────────
 const SKIP_LESSON = 'Saltar QA';
-await page.once('dialog', (d) => d.accept());
 await clickInShadow(/Reiniciar/);
+await page.waitForTimeout(400);
+await clickInShadow(/Sí, reiniciar/);
 await page.waitForTimeout(1200);
 await clickInShadow(/Editar curso o lección/);
 await page.waitForTimeout(400);
@@ -748,21 +809,21 @@ check('el salto queda registrado (questionsDone + questionsSkipped)',
 	recSkip?.questionsDone === true && recSkip?.questionsSkipped === true,
 	JSON.stringify({ q: recSkip?.questionsDone, sk: recSkip?.questionsSkipped }));
 
-// ── D.3 — Reiniciar pide confirmación; cancelar no borra nada (§2) ─────────
-let dialogSeen = false;
-let dialogDefault = null;
-const dlgHandler = (d) => {
-	dialogSeen = true;
-	dialogDefault = d.message();
-	d.dismiss();
-};
-page.on('dialog', dlgHandler);
+// ── D.3 — confirmación de reinicio DENTRO del dock (§6, v1.5.1) ────────────
 await clickInShadow(/Reiniciar/);
-await page.waitForTimeout(700);
-page.off('dialog', dlgHandler);
-check('Reiniciar abre confirmación nativa', dialogSeen, String(dialogDefault));
+await page.waitForTimeout(500);
+const d3txt = await shadow();
+check('al pulsar «Reiniciar» aparece «¿Borrar respuestas?» sin diálogo nativo',
+	/¿Borrar respuestas\??/.test(d3txt) && /Sí, reiniciar/.test(d3txt), d3txt.slice(0, 180));
+await clickInShadow(/Cancelar/);
+await page.waitForTimeout(500);
 const recAfterCancel = await readHistoryRecord(SKIP_LESSON);
-check('cancelar la confirmación NO borra el progreso', Boolean(recAfterCancel?.questionsDone), String(Boolean(recAfterCancel)));
+check('«Cancelar» no borra el progreso (questionsDone sigue en true)',
+	Boolean(recAfterCancel?.questionsDone), String(Boolean(recAfterCancel)));
+await page.waitForTimeout(5500); // sin acción: la confirmación se revierte sola a los 5 s
+const d3back = await shadow();
+check('tras 5,5 s sin acción vuelve el botón «Reiniciar»',
+	/Reiniciar/.test(d3back) && !/¿Borrar respuestas\??/.test(d3back), d3back.slice(0, 180));
 await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') });
 
 } // fin del bloque D (solo modo CLON)
@@ -773,8 +834,9 @@ if (REAL) {
 	console.log('  · omitido en modo REAL: escribiría notas en el vault real del usuario');
 } else {
 // D terminó en otra lección: volver a la sembrada (rehydrate automático).
-await page.once('dialog', (d) => d.accept());
 await clickInShadow(/Reiniciar/);
+await page.waitForTimeout(400);
+await clickInShadow(/Sí, reiniciar/);
 await page.waitForTimeout(1500);
 await clickInShadow(/Editar curso o lección/);
 await page.waitForTimeout(400);
@@ -992,6 +1054,9 @@ const protocolBlocked = consoleErrors.filter((e) => /Not allowed to launch 'obsi
 if (protocolBlocked) console.log(`  (protocolo externo bloqueado ${protocolBlocked}× — normal sin Obsidian instalado)`);
 
 await context.close();
+check('sin diálogos nativos en toda la suite (§6)', nativeDialogs.length === 0,
+	nativeDialogs.length ? JSON.stringify(nativeDialogs).slice(0, 120) : '');
+
 // El servidor y el perfil temporal solo existen en modo CLON. El perfil real no
 // se toca: tiene la sesión del usuario y se reutiliza entre corridas.
 if (!REAL) {

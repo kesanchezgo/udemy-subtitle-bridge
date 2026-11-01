@@ -136,6 +136,11 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   --usb-placeholder:  rgba(255,255,255,0.42);
   --usb-scrollbar:    rgba(255,255,255,0.10);
   --usb-warn-text:    #fcd34d;
+  --usb-ok-text:      #6ee7b7;
+  --usb-err-text:     #fda4af;
+  --usb-info-text:    #7dd3fc;
+  --usb-retry-text:   #f0abfc;
+  --usb-accent-text:  #b7a6ff;
 
   --usb-accent:       #8463ff;
   --usb-accent-2:     #6d4aff;
@@ -176,6 +181,11 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   --usb-placeholder:  rgba(30,27,46,0.38);
   --usb-scrollbar:    rgba(30,27,46,0.16);
   --usb-warn-text:    #92400e;
+  --usb-ok-text:      #047857;
+  --usb-err-text:     #b91c1c;
+  --usb-info-text:    #0369a1;
+  --usb-retry-text:   #a21caf;
+  --usb-accent-text:  #5b37e8;
 
   /* Elevación (solo light): el dark la da la oscuridad, el light la necesita */
   --usb-elev-1: 0 1px 2px rgba(30,27,46,0.05), 0 2px 6px -1px rgba(30,27,46,0.07);
@@ -403,33 +413,36 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   color: white !important;
 }
 
-/* ── 10. Syntax & Feedback colors (Light Mode Contrast) ── */
-.usb-dock.dock-sepia [class*="text-amber-200"] { color: #d97706 !important; /* amber-600 */ }
-.usb-dock.dock-sepia [class*="text-amber-300"] { color: #d97706 !important; /* amber-600 */ }
-.usb-dock.dock-sepia [class*="text-amber-400"] { color: #d97706 !important; /* amber-600 */ }
+/* ── 10. Syntax & Feedback colors (Light Mode Contrast) ──
+   Textos de estado → tokens semánticos AA en claro (≥4.5:1 sobre las
+   superficies blancas); los mismos nombres existen en el bloque oscuro,
+   así que el tema oscuro no cambia. Fondos y bordes no se tocan. */
+.usb-dock.dock-sepia [class*="text-amber-200"] { color: var(--usb-warn-text) !important; }
+.usb-dock.dock-sepia [class*="text-amber-300"] { color: var(--usb-warn-text) !important; }
+.usb-dock.dock-sepia [class*="text-amber-400"] { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="bg-amber-500"] { background-color: rgba(217, 119, 6, 0.08) !important; }
 .usb-dock.dock-sepia [class*="border-amber-500"] { border-color: rgba(217, 119, 6, 0.2) !important; }
 
 /* Emerald / Green for success states */
-.usb-dock.dock-sepia [class*="text-emerald-200"] { color: #059669 !important; /* emerald-600 */ }
-.usb-dock.dock-sepia [class*="text-emerald-300"] { color: #059669 !important; /* emerald-600 */ }
-.usb-dock.dock-sepia [class*="text-emerald-400"] { color: #059669 !important; /* emerald-600 */ }
+.usb-dock.dock-sepia [class*="text-emerald-200"] { color: var(--usb-ok-text) !important; }
+.usb-dock.dock-sepia [class*="text-emerald-300"] { color: var(--usb-ok-text) !important; }
+.usb-dock.dock-sepia [class*="text-emerald-400"] { color: var(--usb-ok-text) !important; }
 .usb-dock.dock-sepia [class*="bg-emerald-500"] { background-color: rgba(5, 150, 105, 0.08) !important; }
 .usb-dock.dock-sepia [class*="border-emerald-500"] { border-color: rgba(5, 150, 105, 0.2) !important; }
 
 /* Rose / Red for error states */
-.usb-dock.dock-sepia [class*="text-rose-200"] { color: #e11d48 !important; /* rose-600 */ }
-.usb-dock.dock-sepia [class*="text-rose-300"] { color: #e11d48 !important; /* rose-600 */ }
-.usb-dock.dock-sepia [class*="text-rose-400"] { color: #e11d48 !important; /* rose-600 */ }
-.usb-dock.dock-sepia [class*="text-red-200"] { color: #e11d48 !important; /* red-600 */ }
-.usb-dock.dock-sepia [class*="text-red-300"] { color: #e11d48 !important; /* red-600 */ }
+.usb-dock.dock-sepia [class*="text-rose-200"] { color: var(--usb-err-text) !important; }
+.usb-dock.dock-sepia [class*="text-rose-300"] { color: var(--usb-err-text) !important; }
+.usb-dock.dock-sepia [class*="text-rose-400"] { color: var(--usb-err-text) !important; }
+.usb-dock.dock-sepia [class*="text-red-200"] { color: var(--usb-err-text) !important; }
+.usb-dock.dock-sepia [class*="text-red-300"] { color: var(--usb-err-text) !important; }
 .usb-dock.dock-sepia [class*="bg-rose-500"] { background-color: rgba(225, 29, 72, 0.08) !important; }
 .usb-dock.dock-sepia [class*="border-rose-500"] { border-color: rgba(225, 29, 72, 0.2) !important; }
 .usb-dock.dock-sepia [class*="bg-red-500"] { background-color: rgba(225, 29, 72, 0.08) !important; }
 .usb-dock.dock-sepia [class*="border-red-500"] { border-color: rgba(225, 29, 72, 0.2) !important; }
 
 /* Sky / Blue for info states */
-.usb-dock.dock-sepia [class*="text-sky-300"] { color: #0284c7 !important; /* sky-600 */ }
+.usb-dock.dock-sepia [class*="text-sky-300"] { color: var(--usb-info-text) !important; }
 .usb-dock.dock-sepia [class*="bg-sky-500"] { background-color: rgba(2, 132, 199, 0.08) !important; }
 
 /* Violet for excellent/evaluating states */
@@ -437,14 +450,14 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 .usb-dock.dock-sepia [class*="bg-violet-500"] { background-color: rgba(109, 74, 255, 0.08) !important; }
 
 /* Fuchsia for retry states */
-.usb-dock.dock-sepia [class*="text-fuchsia-300"] { color: #c026d3 !important; /* fuchsia-600 */ }
+.usb-dock.dock-sepia [class*="text-fuchsia-300"] { color: var(--usb-retry-text) !important; }
 .usb-dock.dock-sepia [class*="bg-fuchsia-500"] { background-color: rgba(192, 38, 211, 0.08) !important; }
 
 /* Code syntax highlighting colors */
-.usb-dock.dock-sepia [class*="text-green-400"] { color: #059669 !important; }
-.usb-dock.dock-sepia [class*="text-yellow-300"] { color: #d97706 !important; }
-.usb-dock.dock-sepia [class*="text-yellow-400"] { color: #d97706 !important; }
-.usb-dock.dock-sepia [class*="text-blue-400"] { color: #2563eb !important; }
+.usb-dock.dock-sepia [class*="text-green-400"] { color: var(--usb-ok-text) !important; }
+.usb-dock.dock-sepia [class*="text-yellow-300"] { color: var(--usb-warn-text) !important; }
+.usb-dock.dock-sepia [class*="text-yellow-400"] { color: var(--usb-warn-text) !important; }
+.usb-dock.dock-sepia [class*="text-blue-400"] { color: #1d4ed8 !important; }
 .usb-dock.dock-sepia [class*="text-pink-400"] { color: #db2777 !important; }
 .usb-dock.dock-sepia [class*="text-purple-400"] { color: #9333ea !important; }
 
@@ -514,23 +527,23 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 .usb-dock.dock-sepia [class*="text-violet-300"],
 .usb-dock.dock-sepia [class*="text-violet-400"],
 .usb-dock.dock-sepia [class*="text-violet-500"] { color: #5b37e8 !important; }
-.usb-dock.dock-sepia [class*="text-violet-200"] { color: #8463ff !important; }
+.usb-dock.dock-sepia [class*="text-violet-200"] { color: var(--usb-accent-text) !important; }
 .usb-dock.dock-sepia [class*="text-violet-600"] { color: #4a2cc2 !important; }
 .usb-dock.dock-sepia [class*="text-emerald-300"],
-.usb-dock.dock-sepia [class*="text-emerald-400"] { color: #059669 !important; }
-.usb-dock.dock-sepia [class*="text-emerald-200"] { color: #10b981 !important; }
-.usb-dock.dock-sepia [class*="text-emerald-500"] { color: #047857 !important; }
+.usb-dock.dock-sepia [class*="text-emerald-400"] { color: var(--usb-ok-text) !important; }
+.usb-dock.dock-sepia [class*="text-emerald-200"] { color: var(--usb-ok-text) !important; }
+.usb-dock.dock-sepia [class*="text-emerald-500"] { color: var(--usb-ok-text) !important; }
 .usb-dock.dock-sepia [class*="text-amber-300"],
-.usb-dock.dock-sepia [class*="text-amber-400"]  { color: #d97706 !important; }
-.usb-dock.dock-sepia [class*="text-amber-200"]  { color: #f59e0b !important; }
+.usb-dock.dock-sepia [class*="text-amber-400"]  { color: var(--usb-warn-text) !important; }
+.usb-dock.dock-sepia [class*="text-amber-200"]  { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="text-sky-300"],
 .usb-dock.dock-sepia [class*="text-sky-400"],
-.usb-dock.dock-sepia [class*="text-sky-500"]    { color: #0284c7 !important; }
+.usb-dock.dock-sepia [class*="text-sky-500"]    { color: var(--usb-info-text) !important; }
 .usb-dock.dock-sepia [class*="text-rose-300"],
 .usb-dock.dock-sepia [class*="text-rose-400"],
-.usb-dock.dock-sepia [class*="text-red-400"]    { color: #dc2626 !important; }
+.usb-dock.dock-sepia [class*="text-red-400"]    { color: var(--usb-err-text) !important; }
 .usb-dock.dock-sepia [class*="text-fuchsia-300"],
-.usb-dock.dock-sepia [class*="text-fuchsia-400"] { color: #c026d3 !important; }
+.usb-dock.dock-sepia [class*="text-fuchsia-400"] { color: var(--usb-retry-text) !important; }
 
 /* Ring colors */
 .usb-dock.dock-sepia [class*="ring-violet-500"]   { --tw-ring-color: rgba(109, 74, 255, 0.45) !important; }
@@ -778,15 +791,15 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
    §21. Opacity-suffixed text colors (e.g. text-amber-400/50)
    Tailwind's color-mix can wash these out; force solid accent.
 ════════════════════════════════════════════════════════════════ */
-.usb-dock.dock-sepia [class*="text-amber-400/"]   { color: #d97706 !important; }
+.usb-dock.dock-sepia [class*="text-amber-400/"]   { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="text-emerald-400/"],
-.usb-dock.dock-sepia [class*="text-emerald-300/"] { color: #059669 !important; }
+.usb-dock.dock-sepia [class*="text-emerald-300/"] { color: var(--usb-ok-text) !important; }
 .usb-dock.dock-sepia [class*="text-violet-400/"],
 .usb-dock.dock-sepia [class*="text-violet-300/"]  { color: #5b37e8 !important; }
 .usb-dock.dock-sepia [class*="text-sky-400/"],
-.usb-dock.dock-sepia [class*="text-sky-300/"]     { color: #0284c7 !important; }
+.usb-dock.dock-sepia [class*="text-sky-300/"]     { color: var(--usb-info-text) !important; }
 .usb-dock.dock-sepia [class*="text-rose-400/"],
-.usb-dock.dock-sepia [class*="text-rose-300/"]    { color: #dc2626 !important; }
+.usb-dock.dock-sepia [class*="text-rose-300/"]    { color: var(--usb-err-text) !important; }
 
 /* ════════════════════════════════════════════════════════════════
    §22. Sparkle particles & decorative bg-white dots in celebrations
@@ -1072,7 +1085,7 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 
 /* ── 19. Estados ámbar/naranja sin mapear (badge "Mock" del panel de
    proveedores, icono de celebración): 400/500 sobre blanco ≈ 2:1. */
-.usb-dock.dock-sepia [class*="text-amber-500"]  { color: #b45309 !important; }
+.usb-dock.dock-sepia [class*="text-amber-500"]  { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="text-orange-400"] { color: #c2410c !important; }
 
 /* ── Fondos oscuros fijos → neutros con matiz de marca (solo clase exacta, conserva las variantes con alpha) ── */
@@ -1125,7 +1138,7 @@ ${[
    medio sobre rosado. */
 .usb-dock.dock-sepia [class*="text-amber-200"],
 .usb-dock.dock-sepia [class*="text-amber-300"] { color: #92400e !important; }
-.usb-dock.dock-sepia [class*="text-amber-400"] { color: #b45309 !important; }
+.usb-dock.dock-sepia [class*="text-amber-400"] { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="bg-amber-500/"]  { background-color: rgba(217,119,6,0.09) !important; }
 .usb-dock.dock-sepia [class*="border-amber-500/"] { border-color: rgba(180,83,9,0.28) !important; }
 
@@ -1679,7 +1692,7 @@ ${[
   color: var(--usb-fg-hi, #1a1918) !important;
 }
 .usb-dock.dock-sepia .kx-step-solid [class*="text-emerald"] {
-  color: #059669 !important;
+  color: var(--usb-ok-text) !important;
 }
 .usb-dock.dock-sepia .kx-step-solid [class*="text-violet"] {
   color: #6d4aff !important;

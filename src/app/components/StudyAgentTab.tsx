@@ -1234,11 +1234,27 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [finishedAt, setFinishedAt]                 = useState<number | null>(null);
   const [showOralPractice, setShowOralPractice]     = useState(false);
   // §1.5: indicador REAL de transcripción en la pantalla de objetivo.
-  const [transcriptState, setTranscriptState]       = useState<{ status: "checking" | "ready" | "waiting" | "none"; cues: number | null }>({ status: "checking", cues: null });
+  // §1.5: fuera de runtime (vista previa web) no hay bridge que consultar:
+  // el estado nace "preview" y la tira lo dice en vez de «Comprobando…» eterno.
+  const [transcriptState, setTranscriptState]       = useState<{ status: "checking" | "ready" | "waiting" | "none" | "preview"; cues: number | null }>(IS_EXTENSION ? { status: "checking", cues: null } : { status: "preview", cues: null });
   const [courseDueCount, setCourseDueCount]         = useState<number | null>(null);
   // §2: nivel/logros desbloqueados en el flujo se muestran DENTRO del cierre.
   const [pendingLevelUp, setPendingLevelUp]         = useState<number | null>(null);
   const [pendingUnlocked, setPendingUnlocked]       = useState<string[]>([]);
+  // §6 (v1.5.1): confirmación de reinicio DENTRO del dock — el diálogo nativo
+  // no sigue los temas y dentro de Udemy bloquea página y vídeo.
+  const [confirmingReset, setConfirmingReset]       = useState(false);
+  const confirmingResetTimerRef                     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
+  }, []);
+  // Escape cancela la confirmación (además del botón «Cancelar»).
+  useEffect(() => {
+    if (!confirmingReset) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setConfirmingReset(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmingReset]);
   const [showInterviewAnswer, setShowInterviewAnswer] = useState(false);
   const [oralAnswer, setOralAnswer]                 = useState("");
   const [oralFeedback, setOralFeedback]             = useState<FeedbackState>(IDLE_FB);
@@ -1955,8 +1971,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   };
 
   const handleReset = () => {
-    // §2: Reiniciar pide confirmación — antes borraba sin preguntar.
-    if (!window.confirm("¿Reiniciar? Se borran tus respuestas de esta lección.")) return;
+    // §2: confirmación en el propio header (confirmingReset) — sin diálogos nativos.
     setPhase("objective"); setContent(null); setConfidence(null);
     setActiveSessionObjective(null);
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
@@ -3248,8 +3263,14 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             ) : null}
 
             {/* §1.5: indicador de transcripción REAL (nada de texto fijo) */}
-            <div className={`kx-ok-strip flex items-center gap-2.5 rounded-2xl px-3.5 py-3 ${transcriptState.status === "none" ? "opacity-70" : ""}`}>
-              <span className="kx-ok-tile w-8 h-8 rounded-xl flex items-center justify-center shrink-0"><Icon name="fileText" size={17} weight="duotone"/></span>
+            <div className={`flex items-center gap-2.5 rounded-2xl px-3.5 py-3 ${
+              transcriptState.status === "ready"
+                ? "kx-ok-strip"
+                : "border border-[var(--usb-border)] bg-[var(--usb-bg-2)]"
+            }`}>
+              <span className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                transcriptState.status === "ready" ? "kx-ok-tile" : "bg-[var(--usb-bg-4)] text-[var(--usb-fg-mid)]"
+              }`}><Icon name="fileText" size={17} weight="duotone"/></span>
               <div className="min-w-0">
                 <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">
                   {transcriptState.status === "ready"
@@ -3258,7 +3279,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       ? "Esperando subtítulos"
                       : transcriptState.status === "none"
                         ? "Sin subtítulos en esta lección"
-                        : "Comprobando subtítulos…"}
+                        : transcriptState.status === "preview"
+                          ? "Vista previa sin extensión"
+                          : "Comprobando subtítulos…"}
                 </p>
                 <p className="text-[10.5px] text-[var(--usb-fg-lo)] font-medium">
                   {transcriptState.status === "waiting"
@@ -3267,12 +3290,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       ? "Listos para analizar"
                       : transcriptState.status === "none"
                         ? "El estudio usará el curso como contexto"
-                        : "Un momento…"}
+                        : transcriptState.status === "preview"
+                          ? "Se usará una sesión de ejemplo"
+                          : "Un momento…"}
                 </p>
               </div>
-              <span className="kx-ok-pill text-[11px] font-bold tabular-nums ml-auto px-2.5 py-1 rounded-full">
-                {transcriptState.status === "ready" && transcriptState.cues ? `${transcriptState.cues} líneas` : "…"}
-              </span>
+              {transcriptState.status === "ready" && transcriptState.cues ? (
+                <span className="kx-ok-pill text-[11px] font-bold tabular-nums ml-auto px-2.5 py-1 rounded-full">
+                  {transcriptState.cues} líneas
+                </span>
+              ) : null}
             </div>
 
             {/* §1.5: repasos pendientes del curso — la fila discreta que faltaba */}
@@ -3357,12 +3384,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     </div>
                     <p className="kx-hero-t1 relative text-[21px] font-extrabold tracking-tight leading-tight">Preparando tu sesión</p>
                     <p className="kx-hero-t2 relative text-[12px] leading-relaxed mt-1.5">Calibrando conceptos y práctica personalizada</p>
-                    {/* §1.5: barra indeterminada — nada de avance cronometrado falso */}
-                    <div className="relative mt-3.5 h-1.5 rounded-full bg-white/25 overflow-hidden">
-                      <motion.div className="h-full w-1/3 rounded-full bg-white"
-                        initial={{ x: "-110%" }} animate={{ x: "330%" }}
-                        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }} />
-                    </div>
                   </div>
 
                   <div className="kx-card rounded-2xl p-2 space-y-0.5" style={{ "--kx-step": cur.hue } as React.CSSProperties}>
@@ -3416,13 +3437,43 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       +{sessionXp} XP
                     </span>
                   )}
-                  <button
-                    onClick={handleReset}
-                    title="¿Reiniciar? Se borran tus respuestas de esta lección"
-                    className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)] hover:text-violet-400 transition-colors font-medium"
-                  >
-                    <RotateCcw size={10}/>Reiniciar
-                  </button>
+                  {confirmingReset ? (
+                    <span role="group" aria-label="Confirmar reinicio" className="inline-flex items-center gap-1.5">
+                      <span className="text-[10px] font-medium text-[var(--usb-fg-mid)]">¿Borrar respuestas?</span>
+                      <button
+                        onClick={() => {
+                          if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
+                          setConfirmingReset(false);
+                          handleReset();
+                        }}
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md border border-rose-500/30 text-rose-300 hover:border-rose-500/50 transition-colors"
+                      >
+                        Sí, reiniciar
+                      </button>
+                      <button
+                        autoFocus
+                        onClick={() => {
+                          if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
+                          setConfirmingReset(false);
+                        }}
+                        className="text-[10px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setConfirmingReset(true);
+                        if (confirmingResetTimerRef.current) clearTimeout(confirmingResetTimerRef.current);
+                        confirmingResetTimerRef.current = setTimeout(() => setConfirmingReset(false), 5000);
+                      }}
+                      title="¿Reiniciar? Se borran tus respuestas de esta lección"
+                      className="flex items-center gap-1 text-[10px] text-[var(--usb-fg-lo)] hover:text-violet-400 transition-colors font-medium"
+                    >
+                      <RotateCcw size={10}/>Reiniciar
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -3914,16 +3965,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                                   <button onClick={() => setShowModelAnswer(v => !v)}
                                     className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
                                       showModelAnswer
-                                        ? "bg-white/5 border-white/10 text-white/55"
-                                        : "border-[var(--usb-border)] text-white/25 hover:text-white/45 hover:border-white/12"
+                                        ? "bg-[var(--usb-bg-2)] border-[var(--usb-border-mid)] text-[var(--usb-fg-hi)]"
+                                        : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)]"
                                     }`}>
                                     <span className="text-[10px] flex-1">Respuesta modelo</span>
-                                    <ChevronDown size={9} className={`shrink-0 transition-transform text-white/30 ${showModelAnswer ? "rotate-180" : ""}`}/>
+                                    <ChevronDown size={9} className={`shrink-0 transition-transform text-[var(--usb-fg-lo)] ${showModelAnswer ? "rotate-180" : ""}`}/>
                                   </button>
                                   <AnimatePresence>
                                     {showModelAnswer && (
                                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                                        <div className="bg-white/3 border border-[var(--usb-border)] rounded-xl px-3 py-2.5 text-[11px] text-white/50 leading-relaxed whitespace-pre-line">
+                                        <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl px-3 py-2.5 text-[11px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-line">
                                           {q.answer}
                                         </div>
                                       </motion.div>
