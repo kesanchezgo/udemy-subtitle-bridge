@@ -1,3 +1,8 @@
+## [1.5.4] — 2026-11-01
+
+- Aviso único tras el primer export .apkg: activar «Importar cualquier configuración del mazo» (con acceso a la guía).
+- QA/docs: veredicto FSRS medido, etiquetas sin la clave inerte del preset y nombres reales de los presets.
+
 ## [1.5.3] — 2026-11-01
 
 - La guía de importación indica activar «Importar cualquier configuración del mazo» para recibir los presets (antes prometía que se configuraban solos).

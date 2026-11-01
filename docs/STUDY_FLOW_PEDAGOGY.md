@@ -122,10 +122,13 @@ y `fsrs: true`. El `importPackage` de AnkiConnect usa el importador legacy
 `AnkiPackageImporter`, que copia presets — por eso en las suites de QA los
 presets «sí llegaban».
 
-**Veredicto (sin cambios respecto a v1.5.2)**: la frase de la guía del paso
-4 se queda como está — es verdadera en ambos casos: «Comprueba que FSRS esté
-activado: Opciones del mazo → FSRS (Anki 23.10+). Si ya lo estaba, no tienes
-que hacer nada.»
+**Veredicto**: la frase de la guía del paso 4 se queda como está — es
+verdadera en ambos casos: «Comprueba que FSRS esté activado: Opciones del
+mazo → FSRS (Anki 23.10+). Ese interruptor vale para toda tu colección; si
+ya lo estaba, no tienes que hacer nada.»
+
+v1.5.4: aviso único tras el primer export para activar la opción de
+importación.
 
 **Causa de la guía falsa: opción de importación apagada por defecto.**
 Corregido en v1.5.3: la guía indica activar «Importar cualquier

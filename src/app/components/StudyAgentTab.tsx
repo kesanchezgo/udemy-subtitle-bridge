@@ -1217,6 +1217,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [showAnkiGuide, setShowAnkiGuide]           = useState(false);
   const [showCardPreview, setShowCardPreview]       = useState(false);
   const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
+  // v1.5.4: aviso ÚNICO tras el primer export .apkg — sin la opción
+  // «Importar cualquier configuración del mazo» los presets no llegan y los
+  // mazos caen en Default. Anki recuerda la opción: basta una vez.
+  const [importHintSeen, setImportHintSeen]         = usePersistedState<boolean>("kinema_import_hint_seen", false);
   const [apkgProgress, setApkgProgress]             = useState("");
   const [showHint, setShowHint]                     = useState(false);
   const [showModelAnswer, setShowModelAnswer]       = useState(false);
@@ -2430,6 +2434,14 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         }
       } catch {}
       persistAnkiExport(guids);
+      if (!importHintSeen) {
+        setImportHintSeen(true);
+        toast.info("Antes de importar en Anki", {
+          description: "Activa «Importar cualquier configuración del mazo» en la pantalla de importación para recibir los presets de Kinema. Anki lo recordará; solo hace falta la primera vez.",
+          duration: 12000,
+          action: { label: "Ver guía", onClick: () => setShowAnkiGuide(true) },
+        });
+      }
       // §2: export_done una vez por lección (Anki u Obsidian) — silencioso,
       // la celebración grande es la del cierre.
       celebrate({ type: "anki_export", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });

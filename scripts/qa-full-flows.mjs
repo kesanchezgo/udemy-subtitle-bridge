@@ -590,6 +590,46 @@ if (await apkgBtn.count().catch(() => 0)) {
 	} else {
 		check('el .apkg se descarga', false, 'sin evento de descarga en 60 s');
 	}
+
+	// A1 (v1.5.4): el PRIMER export muestra el aviso único de importación.
+	await page.waitForTimeout(600);
+	const hintToasts = await toastsInShadow();
+	check('primer export muestra «Antes de importar en Anki»',
+		hintToasts.some((x) => /Antes de importar en Anki/i.test(x)), JSON.stringify(hintToasts).slice(0, 140));
+	// «Ver guía» despliega la guía de importación.
+	await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const btn = [...(root?.querySelectorAll('[data-sonner-toast] button') ?? [])]
+			.find((b) => /Ver guía/i.test(b.textContent ?? ''));
+		btn?.click();
+	});
+	await page.waitForTimeout(500);
+	const guideTxt = await shadow();
+	check('«Ver guía» despliega la guía de importación',
+		/Al importar en Anki \(primera vez\)/.test(guideTxt), guideTxt.slice(0, 140));
+	await clickInShadow(/Ocultar guía/);
+	await page.waitForTimeout(300);
+	// Segundo export en la misma sesión: el aviso NO se repite. El botón dice
+	// «Exportado» ~4 s tras el primero: esperar a que vuelva a «Exportar .apkg».
+	let apkgBtn2 = null;
+	for (let i = 0; i < 14 && !apkgBtn2; i += 1) {
+		await page.waitForTimeout(500);
+		if (await page.locator(`${OUTER} button`).filter({ hasText: /Exportar \.apkg/ }).count().catch(() => 0)) {
+			apkgBtn2 = page.locator(`${OUTER} button`).filter({ hasText: /Exportar \.apkg/ }).first();
+		}
+	}
+	if (apkgBtn2) {
+		const dl2 = page.waitForEvent('download', { timeout: 60000 }).catch(() => null);
+		await apkgBtn2.evaluate((el) => el.click()).catch(() => {});
+		const dl2res = await dl2;
+		if (dl2res) await dl2res.saveAs(path.join(SHOTS, 'flow2.apkg')).catch(() => {});
+		await page.waitForTimeout(1500);
+		const toasts2 = await toastsInShadow();
+		check('el segundo export NO repite el aviso',
+			!toasts2.some((x) => /Antes de importar en Anki/i.test(x)), JSON.stringify(toasts2).slice(0, 140));
+	} else {
+		check('hay botón para un segundo export', false, 'no encontrado');
+	}
 } else {
 	check('hay botón de exportar .apkg', false, 'no encontrado');
 }
@@ -656,18 +696,23 @@ check('el recuerdo libre admite texto antes de la lista', fillRecall);
 await clickInShadow(/Comparar con los conceptos|Ver los conceptos/);
 await page.waitForTimeout(600);
 await clickInShadow(/Ponerme a prueba/);
-await page.waitForTimeout(800);
+await page.waitForTimeout(1600); // la transición de paso + render de la cola
 // Responde la pregunta (≥20 caracteres para el XP de submit).
 const fillQ = await page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	const ta = [...root.querySelectorAll('textarea')].find((el) => /Escribe tu respuesta con tus propias palabras/.test(el.placeholder));
-	if (!ta) return false;
+	if (!ta) {
+		// Detalle para el informe: pill de paso + botones visibles.
+		return 'no: ' + (root.querySelector('.kx-step-count')?.textContent?.trim() ?? '?')
+			+ ' | ' + [...root.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim().slice(0, 18)).filter(Boolean).slice(0, 10).join(',');
+	}
 	const setter = Object.getOwnPropertyDescriptor(root.ownerDocument.defaultView.HTMLTextAreaElement.prototype, 'value').set;
 	setter.call(ta, 'El bytecode es un formato intermedio que ejecuta la JVM en cualquier sistema operativo.');
 	ta.dispatchEvent(new Event('input', { bubbles: true }));
 	return true;
 });
-check('la pregunta del nivel elegido aparece con su textarea', fillQ);
+check('la pregunta del nivel elegido aparece con su textarea', fillQ === true,
+	fillQ === true ? '' : String(fillQ).slice(0, 200));
 const sawSkippedToast = [];
 await clickInShadow(/^Evaluar/);
 await page.waitForTimeout(4500); // evaluación mock streaming

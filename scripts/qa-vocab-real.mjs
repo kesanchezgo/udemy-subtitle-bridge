@@ -94,7 +94,7 @@ try {
 	const infos = nids.length ? await invoke('notesInfo', { notes: nids }) : [];
 	const f = infos[0] ? Object.fromEntries(Object.entries(infos[0].fields).map(([k, v]) => [k, v.value])) : {};
 	const conf = await invoke('getDeckConfig', { deck: deckPath });
-	console.log('   importadas:', nids.length, '| preset:', conf.name, '| nuevas/día:', conf.new.perDay, '| FSRS:', conf.fsrs ?? '(flag no expuesto)');
+	console.log('   importadas:', nids.length, '| preset:', conf.name, '| nuevas/día:', conf.new.perDay, '| fsrs (clave del preset, inerte):', conf.fsrs ?? '(no expuesta)');
 	console.log('   ejemplo:', JSON.stringify({ word: f.word, phonetic: f.phonetic, bilingual: f.bilingual, sentence: (f.sentence || '').slice(0, 60), picture: f.picture }));
 	// limpiar el mazo de prueba
 	if (nids.length) await invoke('deleteNotes', { notes: nids });

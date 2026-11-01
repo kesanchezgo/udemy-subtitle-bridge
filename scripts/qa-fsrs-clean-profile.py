@@ -8,7 +8,7 @@ headless, sin tocar la colección del usuario) y el importador real:
      A1: import SIN opciones  → esperado: preset NO creado, deck.conf → 1.
      A2: import con ImportAnkiPackageOptions(with_deck_configs=True)
          («Importar cualquier configuración del mazo») → esperado: preset
-         «Udemy Bridge · Cursos» creado y el mazo apuntando a él (20/día).
+         «Kinema · Cursos» creado y el mazo apuntando a él (20/día).
 
   B. ¿FSRS es de la colección? (interruptor real, BoolKey::Fsrs)
      B1: tal cual llega A2, con col.get_config('fsrs', False) → False.
@@ -160,13 +160,21 @@ verdict['user_collection']['ankiconnect_importer'] = importer
 
 # ── Veredicto ────────────────────────────────────────────────────────────────
 verdict['verdict'] = {
-    'import_activates_fsrs': False,
+    # Medido con B1: el preset importado llega con fsrs=true y aun así no hay
+    # memory_state (y la colección está en fsrs=False). Si algún día el import
+    # activara FSRS, la frase de la guía tendría que cambiar.
+    'import_activates_fsrs': (
+        verdict['b1']['fsrs_collection'] is True
+        or verdict['b1']['memory_state'] is not None),
     'presets_require_import_option': (
         not verdict['a1']['preset_created'] and verdict['a2']['preset_created']),
     'fsrs_is_collection_wide': (
         verdict['b2']['memory_state'] is not None
         and verdict['b3']['memory_state'] is None),
 }
+if verdict['verdict']['import_activates_fsrs']:
+    print('FALLO: el import activaría FSRS — la frase de la guía tendría que cambiar.')
+    sys.exit(3)
 print('\nVEREDICTO:')
 for k, v in verdict['verdict'].items():
     print(f'  {k}: {v}')

@@ -155,8 +155,9 @@ mazos demo (`scripts/qa-anki-samples.mjs`) muestran el diseño completo.
 
 ## 3. Convivencia con la colección
 
-Note types y presets con IDs/nombres propios (`Udemy Bridge · …`); árbol de
-mazos bajo una raíz configurable; GUIDs por contenido (reimportar actualiza,
+Note types con nombres propios (`Udemy Bridge …`) y presets «Kinema ·
+Cursos/Vocabulario» con IDs estables derivados de los nombres originales;
+árbol de mazos bajo una raíz configurable; GUIDs por contenido (reimportar actualiza,
 no duplica); csum SHA-1 estándar de Anki. Nada del usuario se toca (verificado
 en importaciones reales).
 

@@ -54,9 +54,10 @@ so nothing mixes with your other decks.
   Entrevista / Comparación / Proceso / Aplicación) next to the lesson pill —
   the AI classifies each card and the design signals it (signaling principle,
   rationale and references in `docs/ANKI_PEDAGOGY.md`).
-- Note types and presets keep their `Udemy Bridge …` names as stable
-  identifiers — renaming them would fork note types inside existing
-  collections.
+- Note types keep their `Udemy Bridge …` names and preset IDs derive from
+  the original `Udemy Bridge · …` names (shown as `Kinema · Cursos` /
+  `Kinema · Vocabulario`) — renaming the identifiers would fork note types
+  and presets inside existing collections.
 
 **Course vocabulary** (`<Root>::Vocabulary::<Language>::<Course>`):
 

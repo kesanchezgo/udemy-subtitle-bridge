@@ -69,12 +69,12 @@ check('solo se añadieron mazos bajo la raíz de la extensión', added.every((d)
 
 	const lessonConf = await call('getDeckConfig', { deck: lessonDeck });
 	console.log(`  preset de lección: "${lessonConf.name}" perDay=${lessonConf.new.perDay} delays=${JSON.stringify(lessonConf.new.delays)} lapseMult=${lessonConf.lapse.mult} leech=${lessonConf.lapse.leechAction} retention=${lessonConf.desiredRetention}`);
-	check('mazos de la extensión usan preset PROPIO (no Default)', lessonConf.name === COURSES_PRESET.name && lessonConf.id !== 1);
+	check('mazos de la extensión usan preset PROPIO (vía AnkiConnect: importador legacy, copia presets; el doble clic requiere la opción de importación)', lessonConf.name === COURSES_PRESET.name && lessonConf.id !== 1);
 	check('config pedagógica aplicada (20/día, [1,10], lapso 30%, leech tag)', lessonConf.new.perDay === 20
 		&& JSON.stringify(lessonConf.new.delays) === '[1,10]'
 		&& lessonConf.lapse.mult === 0.3
 		&& lessonConf.lapse.leechAction === 1);
-	console.log(`  fsrs en preset importado: ${'fsrs' in lessonConf ? lessonConf.fsrs : '(clave no expuesta por getDeckConfig)'}`);
+	console.log(`  fsrs en preset importado (inerte; FSRS es de la colección): ${'fsrs' in lessonConf ? lessonConf.fsrs : '(clave no expuesta por getDeckConfig)'}`);
 
 	const vocabTemplates = await call('modelTemplates', { modelName: 'Udemy Bridge Vocab' });
 	const tplJson = JSON.stringify(vocabTemplates);
