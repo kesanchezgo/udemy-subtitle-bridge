@@ -90,16 +90,39 @@ R6 además ya figura en `docs/ANKI_PEDAGOGY.md` (verificado por DOI el 2026-10-2
   (Hattie & Timperley 2007) y **R2** (Shute 2008: sin calificaciones
   numéricas, con rúbrica y guía específica).
 
-## Pendiente de evidencia (manual)
+## Resultado de la prueba FSRS (2026-11-01, decidida)
 
-- **FSRS en importación (guía del paso 4)**: en la versión actual, el preset
-  lleva `fsrs: true` y `qa-vocab-real` midió `FSRS: true` vía AnkiConnect tras
-  importar en el perfil del usuario; pero ese dato no es concluyente (el
-  interruptor FSRS es por colección desde Anki 23.10 y Anki conserva claves
-  desconocidas del JSON del preset). **Prueba decisiva pendiente**: perfil de
-  Anki nuevo con FSRS apagado → importar el .apkg → mirar el interruptor FSRS
-  en Opciones del mazo (y/o el estado de memoria s/d en cardsInfo tras
-  repasar). Hasta entonces la guía usa una frase verdadera en ambos casos:
-  «Comprueba que FSRS esté activado: Opciones del mazo → FSRS (Anki 23.10+).
-  Si ya lo estaba, no tienes que hacer nada.» Si la prueba sale positiva,
-  volver a «queda activado automáticamente (Anki 23.10+)».
+Prueba ejecutada con `scripts/qa-fsrs-clean-profile.py` sobre una colección
+LIMPIA creada con el backend real de Anki (pylib 25.9.5, headless, sin tocar
+la colección del usuario) y el importador real, con el `.apkg` de QA
+(`tmp/qa-concept.apkg`, cuyo preset lleva `fsrs: true`):
+
+- **El import NO trae el preset**: tras importar, la tabla de configs solo
+  contiene `Default`; el mazo importado remapa `deck.conf → 1` y cae a 20
+  nuevas/día de Default. Nuestro preset («Udemy Bridge · Cursos», 20/día,
+  `fsrs: true`) no llega.
+- **FSRS no se activa**: respondiendo las tarjetas importadas, ninguna
+  almacena estado de memoria (`cards.data` sin `s`/`d`; `memory_state`
+  ausente), mientras que en la colección del usuario (FSRS activo de verdad)
+  las tarjetas de repaso sí lo tienen (p. ej. s=12.44, d=2.64).
+- El `FSRS: true` que midió `qa-vocab-real` en su día era el preset que YA
+  existía en esa colección de importaciones anteriores — exactamente la
+  objeción de la revisión.
+- Controles del experimento: con un preset puesto a mano (`fsrs: true` +
+  `fsrsWeights/Params5/6` vacíos, réplica de lo que escribe la UI) respondido
+  vía el flujo oficial de cola, el estado de memoria tampoco apareció; la
+  receta exacta de activación manual en 25.9 necesita más de lo que serializa
+  nuestro preset, y no afecta a la decisión.
+
+**Veredicto**: la frase de la guía del paso 4 se queda como está — es
+verdadera en ambos casos y es la que corresponde: «Comprueba que FSRS esté
+activado: Opciones del mazo → FSRS (Anki 23.10+). Si ya lo estaba, no tienes
+que hacer nada.» NO se vuelve a «queda activado automáticamente».
+
+**Hallazgo de producto (nuevo, fuera de esta ronda)**: el importador de Anki
+25.9 suelta las configs de mazo de los .apkg legacy — en una colección limpia
+el usuario NO recibe nuestros presets (20/15 nuevas/día, pasos, retención,
+FSRS). Los preset que sí hay en la colección del usuario vienen de rondas
+anteriores. Si el onboarding de primera importación importa, los presets
+deberían instalarse por otra vía (p. ej. `saveDeckConfig` + `saveDeck` vía
+AnkiConnect en la primera exportación) — decisión de producto pendiente.
