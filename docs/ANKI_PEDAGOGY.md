@@ -132,8 +132,9 @@ mazos demo (`scripts/qa-anki-samples.mjs`) muestran el diseño completo.
   utilidad demostrada (Dunlosky et al. 2013; Cepeda et al. 2006 meta-análisis
   10.1037/0033-2909.132.3.354). Anki ya las implementa; el preset solo debe
   **no estorbarlas**.
-- **FSRS activado por defecto** (viaja en el `.apkg`, verificado): el
-  planificador FSRS optimiza intervalos contra retención objetivo 0.9
+- **FSRS** (lo activa el usuario una vez, para toda la colección,
+  Anki 23.10+): el planificador FSRS optimiza intervalos contra retención
+  objetivo 0.9
   (algoritmo: *A Stochastic Shortest Path Algorithm for Optimizing Spaced
   Repetition Scheduling*, KDD, 10.1145/3534678.3539081).
 - **Pasos [1m, 10m]**: recuperaciones tempranas el mismo día de la lección
@@ -242,8 +243,8 @@ Consultada 2026-09-28 vía Scopus API (queries §5), ordenada por citas:
 13. **Ye & Li (2022)** — "A Stochastic Shortest Path Algorithm for Optimizing
     Spaced Repetition Scheduling" — *KDD*. DOI:
     [10.1145/3534678.3539081](https://doi.org/10.1145/3534678.3539081)
-    — **El paper del algoritmo FSRS** que Anki usa (activo por defecto en
-    nuestros presets).
+    — **El paper del algoritmo FSRS** que Anki usa (el usuario lo activa en
+    Opciones del mazo).
 14. **Nakata (2011)** — "Computer-assisted second language vocabulary
     learning in a paired-associate paradigm: A critical investigation of
     flashcard software" — *Computer Assisted Language Learning*. DOI:

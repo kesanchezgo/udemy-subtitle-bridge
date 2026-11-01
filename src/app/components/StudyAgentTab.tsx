@@ -4350,14 +4350,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         {showAnkiGuide && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                             <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 space-y-3">
-                              {/* Qué configura la extensión en Anki (automático, primera importación) */}
+                              {/* Al importar en Anki (primera vez) — honesto: los
+                                  presets SOLO llegan si el usuario activa la opción
+                                  «Importar cualquier configuración del mazo» (v1.5.3) */}
                               <div className="space-y-1">
-                                <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Qué se configura solo en Anki (primera importación)</p>
+                                <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Al importar en Anki (primera vez)</p>
                                 {[
                                   `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → ${vocabCfg.targetLangLabel} → curso (vocabulario).`,
-                                  "Presets propios, solo para estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%.",
-                                  "Comprueba que FSRS esté activado: Opciones del mazo → FSRS (Anki 23.10+). Si ya lo estaba, no tienes que hacer nada. Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
-                                  "Tus demás mazos y tu preset Default NO se tocan nunca.",
+                                  "En la pantalla de importación activa «Importar cualquier configuración del mazo» (en inglés: «Import any deck presets») para recibir los presets propios de estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%. Anki recuerda la opción; si no la activas, estos mazos usan tu preset Default.",
+                                  "Comprueba que FSRS esté activado: Opciones del mazo → FSRS (Anki 23.10+). Ese interruptor vale para toda tu colección; si ya lo estaba, no tienes que hacer nada. Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
+                                  "Kinema no modifica tus demás mazos ni tu preset Default.",
                                   "Audio del vocabulario: usa el archivo si tu sistema externo lo generó (HyperTTS / edge-tts) y la voz del sistema de Anki si no. La imagen puedes añadirla tú o con un add-on.",
                                 ].map((s, i) => (
                                   <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i + 1}. {s}</p>

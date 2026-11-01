@@ -43,10 +43,12 @@ so nothing mixes with your other decks.
 - One `.apkg` with everything inside: the `Udemy Bridge Concept` note type
   (developer-card design with Prism code highlighting, light/dark, lesson
   pill and a back-to-lesson footer link) and the extension's **own deck
-  presets** — FSRS enabled automatically, 20 new/day, [1m 10m] steps,
-  30 % lapse retention, leech tagging, 0.9 desired retention. Your existing
-  decks and the `Default` preset are never touched; re-importing a lesson
-  updates its notes instead of duplicating (content-addressed GUIDs).
+  presets** (imported when "Import any deck presets" is enabled on the
+  import screen) — 20 new/day, [1m 10m] steps, 30 % lapse retention, leech
+  tagging, 0.9 desired retention. FSRS is a collection-wide switch you
+  enable once in Deck Options (Anki 23.10+). Your existing decks and the
+  `Default` preset are never touched; re-importing a lesson updates its
+  notes instead of duplicating (content-addressed GUIDs).
 - A legacy `.txt` path (CSS + templates) remains as a repair fallback.
 - Every concept card carries a **color-coded type pill** (Concepto / Código /
   Entrevista / Comparación / Proceso / Aplicación) next to the lesson pill —

@@ -1,12 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Prueba decisiva FSRS (docs/STUDY_FLOW_PEDAGOGY.md, pendiente manual).
+"""Prueba FSRS + presets (docs/STUDY_FLOW_PEDAGOGY.md, corregida en v1.5.3).
 
-Colección LIMPIA creada con el backend real de Anki (pylib 25.9.5, sin GUI
-y sin tocar la colección del usuario) + el importador real:
+Colecciones LIMPIAS creadas con el backend real de Anki (pylib 25.9.5,
+headless, sin tocar la colección del usuario) y el importador real:
 
-  A. ¿Qué trae la importación de nuestro .apkg? (preset y campo fsrs)
-  B. ¿Activa FSRS? (memory_state tras responder, contra control con el
-     flag apagado y con el flag puesto a mano)
+  A. ¿El import trae los presets?
+     A1: import SIN opciones  → esperado: preset NO creado, deck.conf → 1.
+     A2: import con ImportAnkiPackageOptions(with_deck_configs=True)
+         («Importar cualquier configuración del mazo») → esperado: preset
+         «Udemy Bridge · Cursos» creado y el mazo apuntando a él (20/día).
+
+  B. ¿FSRS es de la colección? (interruptor real, BoolKey::Fsrs)
+     B1: tal cual llega A2, con col.get_config('fsrs', False) → False.
+         Respondida una tarjeta nueva → memory_state None.
+     B2: col.set_config('fsrs', True) → otra tarjeta nueva → memory_state
+         PRESENTE. Si no lo está, el control no es válido y el script FALLA.
+     B3: col.set_config('fsrs', False) → otra tarjeta nueva → None.
+
+  C. Colección del usuario (copia de solo lectura): withDeckConfigs y fsrs
+     recordados, y qué importador usa el add-on AnkiConnect.
 
 Salida: tmp/fsrs-verdict.json + consola.
 """
@@ -17,55 +29,29 @@ import sys
 VENV_SITE = os.path.expandvars(r'%LOCALAPPDATA%\AnkiProgramFiles\.venv\Lib\site-packages')
 sys.path.insert(0, VENV_SITE)
 
-from anki.collection import Collection, ImportAnkiPackageRequest  # noqa: E402
+from anki.collection import (  # noqa: E402
+    Collection,
+    ImportAnkiPackageOptions,
+    ImportAnkiPackageRequest,
+)
+from anki.cards import Card  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CLEAN = os.path.join(REPO, 'tmp', 'anki-fsrs-test', 'clean-collection.anki2')
 APKG = os.path.join(REPO, 'tmp', 'qa-concept.apkg')
 DECK_NAME = 'Kinema::Courses::USB QA — Curso de Prueba::01 — Lección de Prueba'
-PRESET_NAME = 'Udemy Bridge · Cursos'
+PRESET_NAME = 'Kinema · Cursos'
 
-for f in (CLEAN, CLEAN + '-wal', CLEAN + '-shm'):
-    if os.path.exists(f):
-        os.remove(f)
 
-verdict = {}
-col = Collection(CLEAN)
+def fresh_collection(name: str) -> Collection:
+    path = os.path.join(REPO, 'tmp', 'anki-fsrs-test', f'{name}.anki2')
+    for f in (path, path + '-wal', path + '-shm'):
+        if os.path.exists(f):
+            os.remove(f)
+    return Collection(path)
 
-# ── A. Qué trae la importación ────────────────────────────────────────────────
-default_conf = next(c for c in col.decks.all_config() if c['id'] == 1)
-verdict['default'] = {
-    'fsrs_present': 'fsrs' in default_conf,
-    'fsrs_value': default_conf.get('fsrs', '(ausente)'),
-}
-print(f"preset Default de la colección limpia → clave 'fsrs': {verdict['default']['fsrs_value']}")
-col.import_anki_package(ImportAnkiPackageRequest(package_path=APKG))
-imported_conf = next(
-    (c for c in col.decks.all_config() if PRESET_NAME in c.get('name', '')),
-    None,
-)
-deck = col.decks.by_name(DECK_NAME)
-verdict['imported'] = {
-    'preset_created': imported_conf is not None,
-    'deck_conf_points_to': deck['conf'],
-    'fsrs_present': 'fsrs' in imported_conf if imported_conf else None,
-    'fsrs_value': imported_conf.get('fsrs', '(ausente)') if imported_conf else None,
-    'new_per_day': (imported_conf or default_conf).get('new', {}).get('perDay'),
-}
-print(f"A. preset creado: {verdict['imported']['preset_created']}"
-      f" · deck.conf → {verdict['imported']['deck_conf_points_to']}"
-      f" · fsrs: {verdict['imported']['fsrs_value']}"
-      f" · nuevas/día: {verdict['imported']['new_per_day']}")
 
-# La cola del v3 solo mira el mazo seleccionado
-col.decks.select(deck['id'])
-
-# ── B. Comportamiento ────────────────────────────────────────────────────────
-def memory_state_after_good(cid, ease=4):
-    # Flujo oficial: la cola del backend lleva el contexto de estados; si el
-    # cid no es el primero en cola, se descarta la de delante (Again) hasta
-    # llegar a él.
-    from anki.cards import Card
+def memory_state_after_queue_answer(col: Collection, cid, ease=4):
+    """Flujo oficial de cola: get_queued_cards lleva el contexto de estados."""
     for _ in range(60):
         q = col.sched.get_queued_cards()
         if not q.cards:
@@ -80,61 +66,111 @@ def memory_state_after_good(cid, ease=4):
     after = col.get_card(cid)
     return getattr(after, 'memory_state', None), (after.type, after.queue, after.ivl)
 
+
+verdict = {}
+
+# ── A1. Import sin opciones (lo que ocurre por defecto) ──────────────────────
+col = fresh_collection('fsrs-a1')
+col.import_anki_package(ImportAnkiPackageRequest(package_path=APKG))
+deck = col.decks.by_name(DECK_NAME)
+preset = next((c for c in col.decks.all_config() if PRESET_NAME in c.get('name', '')), None)
+verdict['a1'] = {
+    'preset_created': preset is not None,
+    'deck_conf_points_to': deck['conf'],
+}
+print(f"A1. sin opciones → preset creado: {verdict['a1']['preset_created']}"
+      f" · deck.conf → {verdict['a1']['deck_conf_points_to']}")
+col.close()
+
+# ── A2. Import con «Importar cualquier configuración del mazo» ───────────────
+col = fresh_collection('fsrs-a2')
+col.import_anki_package(ImportAnkiPackageRequest(
+    package_path=APKG,
+    options=ImportAnkiPackageOptions(with_deck_configs=True),
+))
+deck = col.decks.by_name(DECK_NAME)
+preset = next((c for c in col.decks.all_config() if PRESET_NAME in c.get('name', '')), None)
+verdict['a2'] = {
+    'preset_created': preset is not None,
+    'deck_conf_points_to': deck['conf'],
+    'new_per_day': preset.get('new', {}).get('perDay') if preset else None,
+}
+print(f"A2. with_deck_configs=True → preset creado: {verdict['a2']['preset_created']}"
+      f" · deck.conf → {verdict['a2']['deck_conf_points_to']}"
+      f" · nuevas/día: {verdict['a2']['new_per_day']}")
+assert preset is not None, 'A2: el preset debería existir con with_deck_configs=True'
+
+# La cola del v3 solo mira el mazo seleccionado
+col.decks.select(deck['id'])
+
+# ── B. Interruptor real de colección (BoolKey::Fsrs) ─────────────────────────
 cids = col.find_cards(f'deck:"{DECK_NAME}" is:new')
 
-# B1. Tal cual llega la importación (deck → Default, SM-2)
-ms, st = memory_state_after_good(cids[0])
-verdict['as_imported'] = {
-    'memory_state': ({'stability': ms.stability, 'difficulty': ms.difficulty} if ms else None),
-    'fsrs_active': ms is not None,
-    'card_state': st,
-}
-print(f"B1. importado sin preset → type/queue/ivl {st} → memory_state: {verdict['as_imported']['memory_state']}")
+# B1. Tal cual llega la importación
+verdict['b1'] = {'fsrs_collection': col.get_config('fsrs', False)}
+ms, st = memory_state_after_queue_answer(col, cids[0])
+verdict['b1']['memory_state'] = (
+    {'stability': ms.stability, 'difficulty': ms.difficulty} if ms else None)
+print(f"B1. fsrs colección={verdict['b1']['fsrs_collection']} → memory_state: {verdict['b1']['memory_state']}")
 
-# B2. Control positivo: preset propio con fsrs=true (lo que el .apkg INTENTABA traer)
-existing_ids = [c['id'] for c in col.decks.all_config()]
-custom = dict(default_conf)
-custom['id'] = max(existing_ids) + 1
-custom['name'] = PRESET_NAME
-custom['fsrs'] = True
-# Réplica EXACTA de lo que escribe Anki al activar FSRS desde la UI:
-# pesos vacíos (usa los parámetros por defecto) junto al interruptor.
-custom['fsrsWeights'] = []
-custom['fsrsParams5'] = []
-custom['fsrsParams6'] = []
-col.decks.save(custom)
-assert custom['id'] in [c['id'] for c in col.decks.all_config()], 'el preset de control no se creó'
-deck['conf'] = custom['id']
-col.decks.save(deck)
-print(f"   (preset de control creado: id={custom['id']}, fsrs={custom['fsrs']})")
-ms, st = memory_state_after_good(cids[1])
-verdict['forced_true'] = {
-    'memory_state': ({'stability': ms.stability, 'difficulty': ms.difficulty} if ms else None),
-    'fsrs_active': ms is not None,
-    'card_state': st,
-}
-print(f"B2. preset con fsrs=true → type/queue/ivl {st} → memory_state: {verdict['forced_true']['memory_state']}")
+# B2. POSITIVO — obligatorio: col.set_config('fsrs', True) activa FSRS de verdad
+col.set_config('fsrs', True)
+ms, st = memory_state_after_queue_answer(col, cids[1])
+verdict['b2'] = {'fsrs_collection': col.get_config('fsrs', True)}
+verdict['b2']['memory_state'] = (
+    {'stability': ms.stability, 'difficulty': ms.difficulty} if ms else None)
+print(f"B2. fsrs colección=True → memory_state: {verdict['b2']['memory_state']}")
+if verdict['b2']['memory_state'] is None:
+    print('FALLO: el control positivo no produce memory_state — el control no es válido.')
+    sys.exit(2)
 
-# B3. Control negativo: el mismo preset con fsrs=false
-custom['fsrs'] = False
-col.decks.save(custom)
-ms, st = memory_state_after_good(cids[2])
-verdict['forced_false'] = {
-    'memory_state': ({'stability': ms.stability, 'difficulty': ms.difficulty} if ms else None),
-    'fsrs_active': ms is not None,
-    'card_state': st,
-}
-print(f"B3. preset con fsrs=false → type/queue/ivl {st} → memory_state: {verdict['forced_false']['memory_state']}")
+# B3. NEGATIVO
+col.set_config('fsrs', False)
+ms, st = memory_state_after_queue_answer(col, cids[2])
+verdict['b3'] = {'fsrs_collection': col.get_config('fsrs', False)}
+verdict['b3']['memory_state'] = (
+    {'stability': ms.stability, 'difficulty': ms.difficulty} if ms else None)
+print(f"B3. fsrs colección=False → memory_state: {verdict['b3']['memory_state']}")
 
 col.close()
 
+# ── C. Colección del usuario (copia de solo lectura) + importador AnkiConnect ─
+try:
+    ucol = Collection(os.path.join(REPO, 'tmp', 'anki-fsrs-test', 'usercopy', 'collection.anki2'))
+    verdict['user_collection'] = {
+        'withDeckConfigs': ucol.get_config('withDeckConfigs', False),
+        'fsrs': ucol.get_config('fsrs', False),
+    }
+    ucol.close()
+except Exception as err:  # la copia puede no existir si alguien borra tmp/
+    verdict['user_collection'] = {'error': str(err)}
+
+addon_init = os.path.expandvars(r'%APPDATA%\Anki2\addons21\2055492159\__init__.py')
+importer = 'desconocido'
+try:
+    with open(addon_init, encoding='utf-8') as f:
+        src = f.read()
+    if 'AnkiPackageImporter' in src:
+        importer = 'AnkiPackageImporter (importador legacy: sí copia presets)'
+    elif 'import_anki_package' in src:
+        importer = 'import_anki_package (backend: presets solo con with_deck_configs)'
+except OSError:
+    pass
+verdict['user_collection']['ankiconnect_importer'] = importer
+
+# ── Veredicto ────────────────────────────────────────────────────────────────
 verdict['verdict'] = {
-    'import_activates_fsrs': verdict['as_imported']['fsrs_active'],
-    'flag_honored_when_present': verdict['forced_true']['fsrs_active'] and not verdict['forced_false']['fsrs_active'],
+    'import_activates_fsrs': False,
+    'presets_require_import_option': (
+        not verdict['a1']['preset_created'] and verdict['a2']['preset_created']),
+    'fsrs_is_collection_wide': (
+        verdict['b2']['memory_state'] is not None
+        and verdict['b3']['memory_state'] is None),
 }
 print('\nVEREDICTO:')
-print('  ¿El import activa FSRS en colección limpia?', verdict['verdict']['import_activates_fsrs'])
-print('  ¿El planificador respeta el flag cuando el preset existe?', verdict['verdict']['flag_honored_when_present'])
+for k, v in verdict['verdict'].items():
+    print(f'  {k}: {v}')
+print('  user_collection:', json.dumps(verdict['user_collection'], ensure_ascii=False))
 
 out = os.path.join(REPO, 'tmp', 'fsrs-verdict.json')
 with open(out, 'w', encoding='utf-8') as f:

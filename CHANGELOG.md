@@ -1,3 +1,8 @@
+## [1.5.3] — 2026-11-01
+
+- La guía de importación indica activar «Importar cualquier configuración del mazo» para recibir los presets (antes prometía que se configuraban solos).
+- Docs: FSRS es un ajuste de toda la colección; ningún .apkg lo activa.
+
 ## [1.5.2] — 2026-11-01
 
 - El foco vuelve a «Reiniciar» al cancelar la confirmación (Cancelar, Escape y el temporizador de 5 s comparten `closeResetConfirm`; si el foco seguía en el grupo, se restaura — quien navega con teclado no pierde su sitio).

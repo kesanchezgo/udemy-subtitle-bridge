@@ -90,39 +90,44 @@ R6 además ya figura en `docs/ANKI_PEDAGOGY.md` (verificado por DOI el 2026-10-2
   (Hattie & Timperley 2007) y **R2** (Shute 2008: sin calificaciones
   numéricas, con rúbrica y guía específica).
 
-## Resultado de la prueba FSRS (2026-11-01, decidida)
+## Resultado de la prueba FSRS (2026-11-01, corregida en v1.5.3)
 
-Prueba ejecutada con `scripts/qa-fsrs-clean-profile.py` sobre una colección
-LIMPIA creada con el backend real de Anki (pylib 25.9.5, headless, sin tocar
-la colección del usuario) y el importador real, con el `.apkg` de QA
-(`tmp/qa-concept.apkg`, cuyo preset lleva `fsrs: true`):
+Prueba ejecutada con `scripts/qa-fsrs-clean-profile.py` sobre colecciones
+LIMPIAS creadas con el backend real de Anki (pylib 25.9.5, headless, sin
+tocar la colección del usuario) y el importador real. Verificada contra el
+código fuente de Anki 25.09 (ankitects/anki, tag 25.09.2). Tres
+conclusiones:
 
-- **El import NO trae el preset**: tras importar, la tabla de configs solo
-  contiene `Default`; el mazo importado remapa `deck.conf → 1` y cae a 20
-  nuevas/día de Default. Nuestro preset («Udemy Bridge · Cursos», 20/día,
-  `fsrs: true`) no llega.
-- **FSRS no se activa**: respondiendo las tarjetas importadas, ninguna
-  almacena estado de memoria (`cards.data` sin `s`/`d`; `memory_state`
-  ausente), mientras que en la colección del usuario (FSRS activo de verdad)
-  las tarjetas de repaso sí lo tienen (p. ej. s=12.44, d=2.64).
-- El `FSRS: true` que midió `qa-vocab-real` en su día era el preset que YA
-  existía en esa colección de importaciones anteriores — exactamente la
-  objeción de la revisión.
-- Controles del experimento: con un preset puesto a mano (`fsrs: true` +
-  `fsrsWeights/Params5/6` vacíos, réplica de lo que escribe la UI) respondido
-  vía el flujo oficial de cola, el estado de memoria tampoco apareció; la
-  receta exacta de activación manual en 25.9 necesita más de lo que serializa
-  nuestro preset, y no afecta a la decisión.
+1. **FSRS es un ajuste de toda la colección, no del preset.**
+   `rslib/src/config/bool.rs → BoolKey::Fsrs` (clave `"fsrs"` en la tabla
+   `config`); solo se cambia con UpdateDeckConfigs
+   (`rslib/src/deckconfig/update.rs` L211–213, `req.fsrs`). El `fsrs: true`
+   de nuestro preset es una clave que Anki ignora: ningún .apkg activa FSRS.
+2. **El importador SÍ trae los presets — si el usuario activa la opción.**
+   `ImportAnkiPackageOptions.with_deck_configs` («Importar cualquier
+   configuración del mazo»), apagada por defecto y recordada en la clave
+   `withDeckConfigs` de la colección (`apkg/import/mod.rs` L64, L87–88;
+   `gather.rs` L62–65; si está apagada, `reset_decks` asigna Default).
+   Medido: A1 sin opciones → preset NO creado y `deck.conf → 1`; A2 con
+   `with_deck_configs=True` → preset «Kinema · Cursos» creado (20 nuevas/día)
+   y el mazo apuntando a él.
+3. **El interruptor real de colección funciona como se esperaba** (control
+   válido): `col.get_config('fsrs')` False → respondida una tarjeta nueva,
+   `memory_state` ausente; `col.set_config('fsrs', True)` → `memory_state`
+   presente (stability 8.30, difficulty 1.0); False de nuevo → ausente.
 
-**Veredicto**: la frase de la guía del paso 4 se queda como está — es
-verdadera en ambos casos y es la que corresponde: «Comprueba que FSRS esté
+Contexto de la colección del usuario (copia de solo lectura):
+`withDeckConfigs: true` (la opción se activó alguna vez y Anki la recuerda)
+y `fsrs: true`. El `importPackage` de AnkiConnect usa el importador legacy
+`AnkiPackageImporter`, que copia presets — por eso en las suites de QA los
+presets «sí llegaban».
+
+**Veredicto (sin cambios respecto a v1.5.2)**: la frase de la guía del paso
+4 se queda como está — es verdadera en ambos casos: «Comprueba que FSRS esté
 activado: Opciones del mazo → FSRS (Anki 23.10+). Si ya lo estaba, no tienes
-que hacer nada.» NO se vuelve a «queda activado automáticamente».
+que hacer nada.»
 
-**Hallazgo de producto (nuevo, fuera de esta ronda)**: el importador de Anki
-25.9 suelta las configs de mazo de los .apkg legacy — en una colección limpia
-el usuario NO recibe nuestros presets (20/15 nuevas/día, pasos, retención,
-FSRS). Los preset que sí hay en la colección del usuario vienen de rondas
-anteriores. Si el onboarding de primera importación importa, los presets
-deberían instalarse por otra vía (p. ej. `saveDeckConfig` + `saveDeck` vía
-AnkiConnect en la primera exportación) — decisión de producto pendiente.
+**Causa de la guía falsa: opción de importación apagada por defecto.**
+Corregido en v1.5.3: la guía indica activar «Importar cualquier
+configuración del mazo» para recibir los presets (y aclara que, si no, estos
+mazos usan el preset Default del usuario).

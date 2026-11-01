@@ -1750,9 +1750,10 @@ export interface DeckPresetConfig {
 }
 
 /** Config en formato legacy (schema 11) con las claves modernas que el
- *  importador de Anki actual reconoce. `fsrs: true` se envía como intento de
- *  activación directa (si el importador lo ignora, el preset queda en SM-2
- *  con estos valores y el usuario lo activa en un clic). */
+ *  importador de Anki actual reconoce. `fsrs` es inerte: desde Anki 23.10
+ *  FSRS es un ajuste de toda la colección (BoolKey::Fsrs) y ningún .apkg lo
+ *  activa. El preset solo se importa si el usuario activa «Importar
+ *  cualquier configuración del mazo». */
 export function buildDeckPreset({ id, name, newPerDay, desiredRetention }: DeckPresetConfig): Record<string, unknown> {
 	return {
 		id,
