@@ -514,6 +514,17 @@ const clickInShadow = (match) => page.evaluate((m) => {
 	btn.click();
 	return true;
 }, match);
+// Click con reintento: los pasos del dock montan con animación (framer-motion
+// + AnimatePresence) y un click one-shot puede correr antes de que el botón
+// exista — bajo carga el fallo es intermitente.
+const waitClickInShadow = async (match, ms = 12000) => {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		if (await clickInShadow(match)) return true;
+		await page.waitForTimeout(350);
+	}
+	return false;
+};
 const toastsInShadow = () => page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	return [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((t) => (t.textContent ?? '').trim());
@@ -750,14 +761,17 @@ check('el paso Comprobar se completa (a la primera o con consolidación)', flowO
 sawSkippedToast.push(...await toastsInShadow());
 check('responder NO emite «Evaluación saltada»',
 	!sawSkippedToast.some((x) => /Evaluación saltada/i.test(x)), JSON.stringify(sawSkippedToast).slice(0, 120));
-await clickInShadow(/Continuar a Aplicar|Continuar a practicar/);
-await page.waitForTimeout(700);
-await clickInShadow(/Hacerlo después/);
-await page.waitForTimeout(700);
-const finTxt = await shadow();
+await waitClickInShadow(/Continuar a Aplicar|Continuar a practicar/);
+await waitClickInShadow(/Hacerlo después/);
+let finTxt = '';
+for (let i = 0; i < 16; i += 1) {
+	await page.waitForTimeout(500);
+	finTxt = await shadow();
+	if (/Terminar lección/.test(finTxt)) break;
+}
 check('«Hacerlo después» lleva a Fijar con práctica pendiente',
 	/Terminar lección/.test(finTxt) && /práctica pendiente/.test(finTxt), finTxt.slice(0, 160));
-await clickInShadow(/Terminar lección/);
+await waitClickInShadow(/Terminar lección/);
 await page.waitForTimeout(1500);
 const doneTxt = await shadow();
 check('«Terminar lección» cierra sin exportar', /Lección terminada/.test(doneTxt), doneTxt.slice(0, 140));

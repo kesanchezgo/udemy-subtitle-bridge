@@ -73,8 +73,8 @@ const mockHandler = (req, res) => {
 		res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: c } }] }));
 	});
 };
-// QA_REAL_PROXY=1: sin mock — usa el proxy real del usuario en 8010 con
-// deepseek-v4.1-flash:free (timing de punta a punta de verdad).
+// QA_REAL_PROXY=1: sin mock — usa el proxy real del usuario (kivaroute en
+// 127.0.0.1:6660) con deepseek-v4.1-flash:free (timing de punta a punta).
 const REAL_PROXY = process.env.QA_REAL_PROXY === '1';
 if (!REAL_PROXY) {
 	const s8123 = http.createServer(mockHandler);
@@ -129,11 +129,11 @@ for (let i = 0; i < 10; i++) {
 		await sw.evaluate((real) => new Promise((res) => {
 			chrome.storage.local.set({
 				usg_ai_provider_config: real
-					? { kind: 'local', baseUrl: 'http://127.0.0.1:8010/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
+					? { kind: 'local', baseUrl: 'http://127.0.0.1:6660/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
 					: { kind: 'openai', baseUrl: 'http://127.0.0.1:8123/v1', apiKey: 'qa-key', model: 'qa-model' },
 			}, res);
 		}), REAL_PROXY).catch(() => {});
-		console.log(REAL_PROXY ? '  proveedor → proxy real 8010 (deepseek-v4.1-flash:free)' : '  proveedor → mock IA (8123)');
+		console.log(REAL_PROXY ? '  proveedor → proxy real 6660 (deepseek-v4.1-flash:free)' : '  proveedor → mock IA (8123)');
 		break;
 	}
 	await new Promise((r) => setTimeout(r, 2000));
@@ -171,6 +171,16 @@ const waitFor = async (regex, ms) => {
 	let t = '';
 	while (Date.now() < d) { t = await shadow(); if (regex.test(t)) return t; await page.waitForTimeout(500); }
 	return t;
+};
+const clickUntil = async (regex, ms) => {
+	const d = Date.now() + ms;
+	while (Date.now() < d) { if (await click(regex)) return true; await page.waitForTimeout(400); }
+	return false;
+};
+const fillUntil = async (ph, val, ms) => {
+	const d = Date.now() + ms;
+	while (Date.now() < d) { if (await fill(ph, val)) return true; await page.waitForTimeout(400); }
+	return false;
 };
 
 // ── Usar la lección corta (la misma página ya está abierta) ──
@@ -273,6 +283,9 @@ const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 300000);
 if (!/¿Qué tan claro/.test(txt)) {
 	await page.screenshot({ path: path.join(SHOTS, 'gen-fail.png') });
 	console.log('✗ generación sin resultado');
+	console.log('  dock:', (await shadow()).slice(-400));
+	console.log('  consola reciente:');
+	for (const l of pageConsoleBuf.slice(-30)) console.log('   ', l);
 	process.exit(1);
 }
 const tGen = Date.now() - t0;
@@ -290,25 +303,46 @@ await page.waitForTimeout(600);
 await click(/Ponerme a prueba/);
 await page.waitForTimeout(1600);
 
-// Responder
+// Responder (la tarjeta de pregunta monta con animación: esperar el textarea)
+if (!await fillUntil('Escribe tu respuesta con tus propias palabras', 'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.', 20000)) {
+	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
+	console.log('✗ textarea de pregunta no apareció');
+	process.exit(1);
+}
 pageConsoleBuf.push('=== click Evaluar Q1 ===');
-await fill('Escribe tu respuesta con tus propias palabras', 'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.');
-await click(/^Evaluar/);
+await clickUntil(/^Evaluar$/, 10000);
 
-// Esperar veredicto + Continuar
+// Esperar veredictos reales (marcadores [CORRECTO]/[PARCIAL]/[INCORRECTO] del
+// feedback) y avanzar pregunta a pregunta. El paginador del dock dice
+// "Siguiente" siempre, así que el texto del dock no sirve de señal: se cuenta.
+const clickLast = (m) => page.evaluate((mm) => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const b = [...root.querySelectorAll('button')].filter((x) => mm.test((x.textContent ?? '').trim()) && !x.disabled).pop();
+	if (!b) return false;
+	b.click();
+	return true;
+}, m);
+const countVerdicts = (s) => (s.match(/\[CORRECTO\]|\[PARCIAL\]|\[INCORRECTO\]/g) || []).length;
 let ok = false;
+let seen = countVerdicts(await shadow());
 for (let i = 0; i < 10 && !ok; i++) {
-	const d = await waitFor(/Continuar a Aplicar|\bSiguiente\b/, 120000);
-	if (/Continuar a Aplicar/.test(d)) { ok = true; break; }
-	if (/\bSiguiente\b/.test(d)) {
-		await click(/\bSiguiente\b/);
-		await page.waitForTimeout(1000);
-		pageConsoleBuf.push('=== click Evaluar Q' + (i + 2) + ' ===');
-		await fill('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.');
-		await click(/^Evaluar/);
-		continue;
+	const target = seen + 1;
+	const dWait = Date.now() + 180000;
+	let cur = '';
+	while (Date.now() < dWait) {
+		cur = await shadow();
+		if (countVerdicts(cur) >= target) break;
+		await page.waitForTimeout(800);
 	}
-	break;
+	seen = Math.max(seen, countVerdicts(cur));
+	if (countVerdicts(cur) < target) break; // sin veredicto
+	pageConsoleBuf.push(`=== veredicto Q${i + 1} ok ===`);
+	if (/Continuar a Aplicar/.test(cur) && await click(/Continuar a Aplicar/)) { ok = true; break; }
+	if (!await clickLast(/^Siguiente$/)) break;
+	await page.waitForTimeout(1200);
+	pageConsoleBuf.push(`=== click Evaluar Q${i + 2} ===`);
+	if (!await fillUntil('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.', 20000)) break;
+	await clickUntil(/^Evaluar$/, 10000);
 }
 if (!ok) {
 	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
@@ -319,13 +353,12 @@ if (!ok) {
 	process.exit(1);
 }
 
-// Continuar → Hacerlo después → Terminar
-await click(/Continuar a Aplicar/);
-await page.waitForTimeout(700);
-await click(/Hacerlo después/);
-await page.waitForTimeout(700);
-await click(/Terminar lección/);
-const done = await waitFor(/Lección terminada/, 15000);
+// Continuar → Hacerlo después → Terminar (con reintento: los pasos montan
+// con animación y el botón puede tardar un instante en existir)
+await clickUntil(/Continuar a Aplicar/, 15000);
+await clickUntil(/Hacerlo después/, 15000);
+await clickUntil(/Terminar lección/, 15000);
+const done = await waitFor(/Lección terminada/, 20000);
 const ms = Date.now() - t0;
 await page.screenshot({ path: path.join(SHOTS, 'minimo.png') });
 

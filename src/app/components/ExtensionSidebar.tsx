@@ -1505,7 +1505,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         </AnimatePresence>
 
         <div className="flex items-center gap-2">
-          <span className={`text-[10px] font-mono ${t("text-white/40","text-[#6e6b68]/70")}`}>127.0.0.1:8010</span>
+          <span className={`text-[10px] font-mono ${t("text-white/40","text-[#6e6b68]/70")}`}>{(providerConfig.baseUrl || "127.0.0.1:8010").replace(/^https?:\/\//, "").replace(/\/+$/, "")}</span>
           <button
             onClick={() => setShowHotkeys(v => !v)}
             title="Atajos de teclado"

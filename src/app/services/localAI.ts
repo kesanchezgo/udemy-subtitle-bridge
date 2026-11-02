@@ -1018,7 +1018,9 @@ export async function evaluateFeynman(
     },
   ];
 
-  return callLocalAI(messages, 260, 0.3, "feynman");
+  // 2000: los modelos reasoning (deepseek-v4.1...) gastan el presupuesto en
+// reasoning_content antes del veredicto; 260 se quedaba vacio a menudo.
+return callLocalAI(messages, 2000, 0.3, "feynman");
 }
 
 // ─── Active question evaluation — message builder ─────────────────────────────
@@ -1069,7 +1071,7 @@ export async function evaluateActiveAnswer(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu respuesta primero." };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  return callLocalAI(messages, 260, 0.3, "eval-question");
+  return callLocalAI(messages, 2000, 0.3, "eval-question");
 }
 
 // ─── Active question evaluation — STREAMING ──────────────────────────────────
@@ -1085,7 +1087,7 @@ export async function evaluateActiveAnswerStream(
     return { success: false, content: "", rating: "unknown" };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  const result   = await streamLocalAI(messages, 260, 0.3, onToken, undefined, "eval-question");
+  const result   = await streamLocalAI(messages, 2000, 0.3, onToken, undefined, "eval-question");
   return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }
 
@@ -1137,7 +1139,7 @@ export async function evaluateCodeSolution(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu solucion primero." };
 
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  return callLocalAI(messages, 500, 0.2);
+  return callLocalAI(messages, 2000, 0.2);
 }
 
 // ─── Code review — STREAMING ─────────────────────────────────────────────────
@@ -1153,7 +1155,7 @@ export async function evaluateCodeSolutionStream(
     return { success: false, content: "", rating: "unknown" };
 
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  const result   = await streamLocalAI(messages, 500, 0.2, onToken, undefined, "eval-code");
+  const result   = await streamLocalAI(messages, 2000, 0.2, onToken, undefined, "eval-code");
   return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }
 
@@ -1163,7 +1165,7 @@ export async function translateLine(en: string): Promise<AIResponse> {
     return { success: false, content: "", rating: "unknown", error: "Linea vacia." };
 
   const messages = buildTranslateMessages(en);
-  return callLocalAI(messages, 120, 0.1, "translate");
+  return callLocalAI(messages, 800, 0.1, "translate");
 }
 
 // ─── Subtitle translation — STREAMING ────────────────────────────────────────
@@ -1178,7 +1180,7 @@ export async function translateLineStream(
 
   const messages = buildTranslateMessages(en);
   const startedAt = performance.now();
-  const result   = await streamLocalAI(messages, 120, 0.1, onToken, signal, "translate");
+  const result   = await streamLocalAI(messages, 800, 0.1, onToken, signal, "translate");
   if (!signal?.aborted && result.success && result.content.trim()) {
     debugStore.addCacheEntry({
       en: en.trim(),
@@ -1366,7 +1368,7 @@ export async function generateCourseObjectives(
   const userMsg = `Curso: ${courseName}\nDescripción: ${description || "(sin descripción)"}\nGenera los 4 objetivos.`;
   const res = await callLocalAI(
     [{ role: "system", content: sys }, { role: "user", content: userMsg }],
-    400,
+    1500,
     0.5,
     "gen-objectives",
   );
@@ -1432,7 +1434,7 @@ export async function refineCustomObjective(
 
   const res = await callLocalAI(
     [{ role: "system", content: sys }, { role: "user", content: userMsg }],
-    120,
+    800,
     0.4,
     "refine-objective",
   );

@@ -146,6 +146,35 @@ function purgeFallback(): void {
   }
 }
 
+/**
+ * Keep the in-memory config in sync with chrome.storage changes from other
+ * contexts (the background SW, another tab's settings sheet). Without this,
+ * a context that booted before a config write keeps serving its stale snapshot
+ * — and a later save from that context resurrects the stale values over the
+ * persisted ones. Idempotent.
+ */
+export function observeAiProviderConfig(): void {
+  const chromeApi = globalThis as typeof globalThis & {
+    chrome?: {
+      storage?: {
+        onChanged?: {
+          addListener: (cb: (changes: Record<string, { newValue?: unknown }>, area: string) => void) => void;
+        };
+      };
+    };
+  };
+  const onChanged = chromeApi.chrome?.storage?.onChanged;
+  if (!onChanged?.addListener) return;
+  const flagged = onChanged as typeof onChanged & { __usbProviderObserved?: boolean };
+  if (flagged.__usbProviderObserved) return;
+  flagged.__usbProviderObserved = true;
+  onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !(AI_PROVIDER_STORAGE_KEY in changes)) return;
+    const stored = changes[AI_PROVIDER_STORAGE_KEY]?.newValue as Partial<AiProviderConfig> | undefined;
+    if (stored) setAiProviderConfigSync(stored);
+  });
+}
+
 /** Load the persisted provider config into globalThis. Safe to call repeatedly. */
 export async function initAiProviderConfig(): Promise<AiProviderConfig> {
   const storage = getChromeStorage();
@@ -157,6 +186,8 @@ export async function initAiProviderConfig(): Promise<AiProviderConfig> {
     (globalThis as AiProviderGlobal).USB_AI_PROVIDER = merged;
     return merged;
   }
+
+  observeAiProviderConfig();
 
   return new Promise<AiProviderConfig>((resolve) => {
     try {

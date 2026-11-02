@@ -26,11 +26,15 @@ export function SettingsSheet({ open, onClose, localConnected, onVocabularyMount
   const [providerConfig, setProviderConfig] = useState<AiProviderConfig>(() => getAiProviderConfig());
   const [cacheTtlDays, setCacheTtlDays] = usePersistedState<number>("cache_ttl_days", 7);
 
+  // El sheet es keepMounted: leer el config cada vez que se ABRE, no solo al
+  // montar. Si el init de arranque resolvió antes de una escritura externa
+  // (otro contexto o el seed de pruebas), el panel guardaría valores viejos.
   useEffect(() => {
+    if (!open) return;
     let alive = true;
     void initAiProviderConfig().then(config => { if (alive) setProviderConfig(config); }).catch(() => undefined);
     return () => { alive = false; };
-  }, []);
+  }, [open]);
 
   const handleSaveProvider = (config: AiProviderConfig) => {
     const saved = setAiProviderConfigSync(config);

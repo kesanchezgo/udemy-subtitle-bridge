@@ -138,17 +138,23 @@ function useStoredDockWidth(): [number | null, (width: number) => void] {
 
 function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageDockProps) {
   const [providerKind, setProviderKind] = useState<AiProviderConfig["kind"]>(() => getAiProviderConfig().kind);
+  const [providerEndpoint, setProviderEndpoint] = useState<string>(() => getAiProviderConfig().baseUrl);
   useEffect(() => {
-    const onChange = (e: Event) => { const kind = (e as CustomEvent<AiProviderConfig>).detail?.kind; if (kind) setProviderKind(kind); };
+    const onChange = (e: Event) => {
+      const cfg = (e as CustomEvent<AiProviderConfig>).detail;
+      if (cfg?.kind) setProviderKind(cfg.kind);
+      if (typeof cfg?.baseUrl === "string") setProviderEndpoint(cfg.baseUrl);
+    };
     window.addEventListener("usb:provider-changed", onChange);
     return () => window.removeEventListener("usb:provider-changed", onChange);
   }, []);
   const cloudName = ({ openai: "OpenAI", anthropic: "Claude", gemini: "Gemini" } as Record<string, string>)[providerKind];
+  const localEndpoint = (providerEndpoint || "127.0.0.1:8010").replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const aiStatus = cloudName
     ? { name: cloudName, state: "nube", tone: "cloud" as const, title: `Proveedor activo: ${cloudName}` }
     : localAiConnected
-    ? { name: "IA local", state: "conectada", tone: "ok" as const, title: "Servidor de IA local conectado (127.0.0.1:8010)" }
-    : { name: "IA local", state: "sin conexión", tone: "off" as const, title: "Servidor de IA local sin conexión" };
+    ? { name: "IA local", state: "conectada", tone: "ok" as const, title: `Servidor de IA local conectado (${localEndpoint})` }
+    : { name: "IA local", state: "sin conexión", tone: "off" as const, title: `Servidor de IA local sin conexión (${localEndpoint})` };
 
   const textScale = useTextScale();
   // Scale the default and the bounds so a larger text size still fits.

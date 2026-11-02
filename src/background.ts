@@ -219,8 +219,18 @@ async function checkLocalAiHealth(): Promise<boolean> {
 		return localAiHealthCache.ok;
 	}
 
+	// El proveedor configurado de tipo local puede vivir en cualquier puerto
+	// (kivaroute, Ollama, LM Studio...): sondear SU endpoint /models primero.
+	// Los endpoints del servidor bundled (8010) quedan como fallback.
+	const endpoints = [...LOCAL_AI_HEALTH_ENDPOINTS];
+	const cfg = getAiProviderConfig();
+	if (cfg.kind === 'local' && cfg.baseUrl) {
+		const base = cfg.baseUrl.replace(/\/+$/, '');
+		endpoints.unshift(`${base}/models`);
+	}
+
 	let ok = false;
-	for (const endpoint of LOCAL_AI_HEALTH_ENDPOINTS) {
+	for (const endpoint of endpoints) {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 1200);
 		try {
@@ -264,6 +274,7 @@ chromeApi?.storage?.onChanged?.addListener((changes: Record<string, unknown>, ar
 	}
 	if (areaName === 'local' && AI_PROVIDER_STORAGE_KEY in changes) {
 		void initAiProviderConfig();
+		localAiHealthCache = null; // el endpoint local puede haber cambiado
 	}
 });
 
