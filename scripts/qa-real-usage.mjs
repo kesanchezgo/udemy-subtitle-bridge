@@ -73,8 +73,13 @@ const mockHandler = (req, res) => {
 		res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: c } }] }));
 	});
 };
-const s8123 = http.createServer(mockHandler);
-await new Promise((r) => s8123.listen(8123, '127.0.0.1', r));
+// QA_REAL_PROXY=1: sin mock — usa el proxy real del usuario en 8010 con
+// deepseek-v4.1-flash:free (timing de punta a punta de verdad).
+const REAL_PROXY = process.env.QA_REAL_PROXY === '1';
+if (!REAL_PROXY) {
+	const s8123 = http.createServer(mockHandler);
+	await new Promise((r) => s8123.listen(8123, '127.0.0.1', r));
+}
 
 // ── Navegador + cookies + seed ──
 const pageConsoleBuf = [];
@@ -121,12 +126,14 @@ await seedPage.waitForSelector(OUTER, { timeout: 45000 });
 for (let i = 0; i < 10; i++) {
 	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	if (sw) {
-		await sw.evaluate((port) => new Promise((res) => {
+		await sw.evaluate((real) => new Promise((res) => {
 			chrome.storage.local.set({
-				usg_ai_provider_config: { kind: 'openai', baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'qa-key', model: 'qa-model' },
+				usg_ai_provider_config: real
+					? { kind: 'local', baseUrl: 'http://127.0.0.1:8010/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
+					: { kind: 'openai', baseUrl: 'http://127.0.0.1:8123/v1', apiKey: 'qa-key', model: 'qa-model' },
 			}, res);
-		}), 8123).catch(() => {});
-		console.log('  proveedor → mock IA (8123)');
+		}), REAL_PROXY).catch(() => {});
+		console.log(REAL_PROXY ? '  proveedor → proxy real 8010 (deepseek-v4.1-flash:free)' : '  proveedor → mock IA (8123)');
 		break;
 	}
 	await new Promise((r) => setTimeout(r, 2000));
