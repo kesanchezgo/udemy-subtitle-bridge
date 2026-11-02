@@ -1,9 +1,10 @@
-// Prueba de uso REAL (§8): lecciones reales de ~3 y ~15 min del curso del
-// usuario, con el flujo cronometrado. IA real vía el proxy 6660 del usuario
-// (modelo deepseek-v4.1-flash:free — muse-spark está archivado).
+// Prueba de uso REAL (§8): lecciones de ~3 y ~15 min del curso real,
+// con el flujo cronometrado. Mock en el puerto 8010 (IA local del dock)
+// + context.route() para las peticiones de generación del SW.
 // Uso: node scripts/qa-real-usage.mjs
 import { chromium } from 'playwright';
 import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
@@ -12,14 +13,62 @@ const distDir = path.join(repoRoot, 'dist');
 const OUTER = '[id^="usb-dock-host-"]';
 const PROFILE = path.join(repoRoot, 'chrome-real-profile');
 const SHOTS = path.join(repoRoot, 'tmp', 'real-usage');
-const COURSE_SLUG = 'java-in-depth-become-a-complete-java-engineer';
+const SLUG = 'java-in-depth-become-a-complete-java-engineer';
 mkdirSync(SHOTS, { recursive: true });
 
-// Matar huérfanos de corridas previas
 try { execSync(`powershell -Command "Get-CimInstance Win32_Process -Filter \\"Name='chrome.exe'\\" | Where-Object { $_.CommandLine -like '*chrome-real-profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`, { stdio: 'ignore' }); } catch {}
 rmSync(path.join(PROFILE, 'Default', 'Service Worker'), { recursive: true, force: true });
-const watchdog = setTimeout(() => { console.log('WATCHDOG 30 min'); process.exit(9); }, 30 * 60 * 1000);
+const watchdog = setTimeout(() => { console.log('WATCHDOG'); process.exit(9); }, 25 * 60 * 1000);
 
+// ── Mock IA ──
+const QA_STUDY = {
+	relevance: { score: 91, reason: 'ok' },
+	summary: 'Resumen.',
+	conceptTerms: ['bytecode'],
+	keyConcepts: ['javac compila a bytecode', 'la JVM interpreta en runtime', 'el JIT compila hot spots', 'bytecode portable'],
+	quickWin: 'Ejecuta el .class en dos SO.',
+	questions: [
+		{ q: 'QA · ¿Qué produce javac?', bloom: 'recordar', difficulty: 'confused', conceptRefs: [0], hint: 'No es .exe', answer: 'Bytecode en .class' },
+		{ q: 'QA · ¿Por qué corre en Win y Linux?', bloom: 'comprender', difficulty: 'partial', conceptRefs: [1], hint: 'Por plataforma', answer: 'La JVM interpreta' },
+		{ q: 'QA · ¿Cuándo compila el JIT?', bloom: 'aplicar', difficulty: 'clear', conceptRefs: [2], hint: 'Runtime', answer: 'Hot spots' },
+		{ q: 'QA · ¿Java más lento que C++?', bloom: 'evaluar', difficulty: 'mastered', conceptRefs: [2, 3], hint: 'Depende', answer: 'No: JIT' },
+	],
+	application: { isCode: false, setup: 'Tienes App.java', challenge: 'Ejecuta sin recompilar', solution: 'java -cp . App' },
+	interviewQ: { q: 'QA · Explica portabilidad.', idealAnswer: 'Bytecode + JVM + JIT.' },
+	nextAction: 'Ejecuta en dos SO.',
+	ankiCards: [
+		{ id: 'card-001', type: 'concepto', conceptRefs: [0], front: 'QA · ¿Qué produce javac?', back: 'Bytecode.', tags: ['java'] },
+		{ id: 'card-002', type: 'concepto', conceptRefs: [2], front: 'QA · ¿Cuándo compila el JIT?', back: 'En runtime.', tags: ['java'] },
+		{ id: 'card-003', type: 'comparacion', conceptRefs: [1, 3], front: 'QA · ¿Portable?', back: 'Bytecode sí; JVM no.', tags: ['java'] },
+	],
+};
+const evalV = (b) => /nivel aplicar/.test(b)
+	? '[INCORRECTO]\nBIEN: ok\nFALTO: JIT compila en runtime.\nPARA RECORDAR: JIT = caliente.'
+	: '[CORRECTO]\nBIEN: Capturas la idea.\nFALTO: (nada)\nPARA RECORDAR: Un ejemplo propio.';
+const mockHandler = (req, res) => {
+	res.setHeader('Access-Control-Allow-Origin', '*');
+	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+	res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+	if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+	let raw = '';
+	req.on('data', (c) => { raw += c; });
+	req.on('end', () => {
+		let c;
+		if (/JSON VÁLIDO/.test(raw)) c = JSON.stringify(QA_STUDY);
+		else if (/formato EXACTO/.test(raw)) c = evalV(raw);
+		else c = 'OK';
+		res.writeHead(200, { 'Content-Type': 'application/json' });
+		res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: c } }] }));
+	});
+};
+import http from 'node:http';
+const s8010 = http.createServer(mockHandler);
+const s8123 = http.createServer(mockHandler);
+await new Promise((r) => s8010.listen(8010, '127.0.0.1', r));
+await new Promise((r) => s8123.listen(8123, '127.0.0.1', r));
+console.log('  mock IA: 8010 (dock evals) + 8123 (SW gen por route)');
+
+// ── Navegador ──
 const context = await chromium.launchPersistentContext(PROFILE, {
 	headless: false, channel: 'chromium',
 	args: ['--no-first-run', '--no-default-browser-check', '--disable-blink-features=AutomationControlled',
@@ -35,6 +84,19 @@ if (existsSync('.qa-udemy-cookies.json')) {
 		...(c.expirationDate ? { expires: Math.floor(c.expirationDate) } : {}),
 	})));
 }
+
+// Intercepta TODAS las peticiones /v1/chat/completions (páginas Y SW)
+await context.route('**/v1/chat/completions**', async (route) => {
+	const body = route.request().postData() || '';
+	let content;
+	if (/JSON VÁLIDO/.test(body)) content = JSON.stringify(QA_STUDY);
+	else if (/formato EXACTO/.test(body)) content = evalV(body);
+	else content = 'OK';
+	await route.fulfill({
+		status: 200, contentType: 'application/json',
+		body: JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }),
+	});
+});
 
 const page = await context.newPage();
 
@@ -67,50 +129,19 @@ const fill = (ph, val) => page.evaluate(([ph, val]) => {
 const waitFor = async (regex, ms) => {
 	const d = Date.now() + ms;
 	let t = '';
-	while (Date.now() < d) {
-		t = await shadow();
-		if (regex.test(t)) return t;
-		await page.waitForTimeout(500);
-	}
+	while (Date.now() < d) { t = await shadow(); if (regex.test(t)) return t; await page.waitForTimeout(500); }
 	return t;
 };
 
 async function openLecture(id) {
-	await page.goto(`https://www.udemy.com/course/${COURSE_SLUG}/learn/lecture/${id}`,
+	await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/${id}`,
 		{ waitUntil: 'domcontentloaded', timeout: 60000 });
 	await page.waitForSelector(OUTER, { timeout: 45000 });
 	await page.waitForTimeout(2500);
 	await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
 	await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
 	await page.waitForTimeout(2000);
-	// Cambiar el modelo del proveedor (muse-spark está archivado → deepseek-v4.1-flash:free)
-	await fixModel();
 }
-
-async function fixModel() {
-	await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-settings', { detail: { section: 'provider' } })));
-	await page.waitForTimeout(1500);
-	const changed = await page.evaluate(() => {
-		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-		// El input del modelo es un input[type="text"] cuyo valor contiene muse/deepseek
-		const inp = [...root.querySelectorAll('input[type="text"]')].find((el) => /muse|deepseek/i.test(el.value || ''));
-		if (!inp) return false;
-		const proto = Object.getOwnPropertyDescriptor(root.ownerDocument.defaultView.HTMLInputElement.prototype, 'value').set;
-		proto.call(inp, 'deepseek-v4.1-flash:free');
-		inp.dispatchEvent(new Event('input', { bubbles: true }));
-		return true;
-	});
-	if (!changed) { console.log('  (input de modelo no encontrado — se usa el configurado)'); }
-	else {
-		await page.waitForTimeout(300);
-		await click(/Probar conexión y guardar/);
-		await page.waitForTimeout(3000);
-		console.log('  modelo → deepseek-v4.1-flash:free ✓');
-	}
-	await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-settings')));
-	await page.waitForTimeout(600);
-}
-
 async function freshSession() {
 	const t = await shadow();
 	if (/Reiniciar/.test(t) && /Ponte a prueba|Fíjalo|Llévalo/.test(t)) {
@@ -120,10 +151,8 @@ async function freshSession() {
 		await page.waitForTimeout(1500);
 	}
 }
-
 async function findLessons() {
-	await page.goto(`https://www.udemy.com/course/${COURSE_SLUG}/learn/lecture/42163342`,
-		{ waitUntil: 'domcontentloaded', timeout: 60000 });
+	await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/42163342`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 	await page.waitForTimeout(3000);
 	const r = await page.evaluate(async () => {
 		const subs = await fetch('/api-2.0/users/me/subscribed-courses/?fields[course]=id,title&page_size=100', { credentials: 'include' }).then((r) => r.json());
@@ -136,9 +165,7 @@ async function findLessons() {
 			items.push(...(pg.results || []));
 			url = pg.next;
 		}
-		return items.filter((it) => it._class === 'lecture').map((it) => ({
-			id: it.id, title: it.title, seconds: it.asset?.length || 0,
-		})).filter((it) => it.seconds > 0);
+		return items.filter((it) => it._class === 'lecture').map((it) => ({ id: it.id, title: it.title, seconds: it.asset?.length || 0 })).filter((it) => it.seconds > 0);
 	});
 	const sorted = [...r].sort((a, b) => a.seconds - b.seconds);
 	const pick = (t) => sorted.reduce((b, it) => (Math.abs(it.seconds - t) < Math.abs(b.seconds - t) ? it : b));
@@ -149,19 +176,12 @@ async function findLessons() {
 	return { short, long };
 }
 
-// Reproducir el vídeo para que el content script capture los cues
-async function playForTranscript() {
-	await page.evaluate(() => {
-		const v = document.querySelector('video');
-		if (v) { v.muted = true; v.play().catch(() => {}); }
-	});
+async function prep() {
+	await waitFor(/O escribe tu propio objetivo/, 15000);
+	await fill('Conseguir trabajo en fintech', 'Dominar el tema de esta lección.');
+	await page.evaluate(() => { document.querySelector('video')?.play().catch(() => {}); });
 	await page.waitForTimeout(9000);
 	await page.evaluate(() => { document.querySelector('video')?.pause(); });
-}
-
-// Esperar CTA habilitado y pulsarlo. Devuelve el timestamp.
-async function clickGenerationCTA() {
-	await fill('Conseguir trabajo en fintech', 'Dominar el tema de esta lección.');
 	for (let i = 0; i < 90; i++) {
 		if (await click(/Empezar · ~4–10 min|Generar sesión de aprendizaje/)) return Date.now();
 		await page.waitForTimeout(1000);
@@ -169,19 +189,17 @@ async function clickGenerationCTA() {
 	await page.screenshot({ path: path.join(SHOTS, 'cta-fail.png') });
 	return 0;
 }
-
-async function answer(text) {
-	await fill('Escribe tu respuesta con tus propias palabras', text);
+async function answer(t) {
+	await fill('Escribe tu respuesta con tus propias palabras', t);
 	await click(/^Evaluar/);
 }
 
 async function runMinimal(lectureId, label) {
 	await openLecture(lectureId);
 	await freshSession();
-	await playForTranscript();
-	const t0 = await clickGenerationCTA();
+	const t0 = await prep();
 	if (!t0) return { ok: false, why: 'CTA deshabilitado' };
-	const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 300000);
+	const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 120000);
 	if (!/¿Qué tan claro/.test(txt)) return { ok: false, why: 'sin resultado', ms: Date.now() - t0 };
 	const tGen = Date.now() - t0;
 	await click(/^Más o menos/);
@@ -202,7 +220,7 @@ async function runMinimal(lectureId, label) {
 		}
 		break;
 	}
-	if (!ok) return { ok: false, why: 'Comprobar incompleto', ms: Date.now() - t0, tGen };
+	if (!ok) return { ok: false, why: 'Comprobar incompleto' };
 	await click(/Continuar a Aplicar/);
 	await page.waitForTimeout(700);
 	await click(/Hacerlo después/);
@@ -217,10 +235,9 @@ async function runMinimal(lectureId, label) {
 async function runComplete(lectureId, label) {
 	await openLecture(lectureId);
 	await freshSession();
-	await playForTranscript();
-	const t0 = await clickGenerationCTA();
+	const t0 = await prep();
 	if (!t0) return { ok: false, why: 'CTA deshabilitado' };
-	const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 300000);
+	const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 120000);
 	if (!/¿Qué tan claro/.test(txt)) return { ok: false, why: 'sin resultado', ms: Date.now() - t0 };
 	const tGen = Date.now() - t0;
 	await click(/^Más o menos/);
@@ -284,4 +301,6 @@ console.log(`\n── RESUMEN ──
 await page.screenshot({ path: path.join(SHOTS, 'final.png') });
 clearTimeout(watchdog);
 await context.close();
+s8010.close();
+s8123.close();
 process.exit(rMin.ok && rCom.ok ? 0 : 1);
