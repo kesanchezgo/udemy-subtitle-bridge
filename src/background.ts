@@ -439,6 +439,24 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		return true;
 	}
 
+	if (type === 'USG_PROXY_CHAT') {
+		// MV3 pattern: el content script no puede hacer fetch cross-origin sin
+		// CORS (host_permissions no aplican al contexto de la página). El SW sí
+		// tiene host_permissions y no sufre CORS. El dock le envía la petición
+		// y el SW hace el fetch.
+		const url = String((message as { url?: unknown }).url || '');
+		const headers = ((message as { headers?: Record<string, string> }).headers ?? {}) as Record<string, string>;
+		const body = String((message as { body?: unknown }).body || '');
+
+		fetch(url, { method: 'POST', headers, body })
+			.then(async (res) => {
+				const text = await res.text();
+				sendResponse({ ok: res.ok, status: res.status, body: text });
+			})
+			.catch((err) => sendResponse({ ok: false, status: 0, body: '', error: toErrorMessage(err) }));
+		return true;
+	}
+
 	if (type === 'USG_GENERATE_LEARNING_PANEL') {
 		let keySync: Promise<void> = Promise.resolve();
 		let incomingApiKeys: string[] = [];

@@ -219,6 +219,31 @@ function canServeWithConfiguredProvider(): boolean {
   return Boolean(cfg.baseUrl && cfg.apiKey);
 }
 
+/**
+ * MV3 pattern: fetch through the background service worker to bypass CORS
+ * (the content script is subject to the page's origin; the SW has
+ * host_permissions and is not restricted).
+ */
+async function proxyChat(
+	url: string,
+	headers: Record<string, string>,
+	body: string,
+): Promise<{ ok: boolean; status: number; body: string }> {
+	const chromeApi = (globalThis as typeof globalThis & {
+		chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void; lastError?: { message?: string } } };
+	}).chrome;
+	if (!chromeApi?.runtime?.sendMessage) throw new Error('sin runtime de extensión');
+	return new Promise((resolve, reject) => {
+		chromeApi.runtime!.sendMessage({ type: 'USG_PROXY_CHAT', url, headers, body }, (response) => {
+			if (chromeApi.runtime?.lastError) {
+				reject(new Error(chromeApi.runtime.lastError.message));
+				return;
+			}
+			resolve((response ?? { ok: false, status: 0, body: '' }) as { ok: boolean; status: number; body: string });
+		});
+	});
+}
+
 async function callConfiguredProvider(
   messages: AIMessage[],
   maxTokens: number,
@@ -235,19 +260,19 @@ async function callConfiguredProvider(
       : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, false);
 
   try {
-    const res = await fetch(buildProviderChatUrl(cfg, false), {
-      method: 'POST',
-      headers: buildProviderHeaders(cfg),
-      body: JSON.stringify(body),
-    });
+    const raw = await proxyChat(
+      buildProviderChatUrl(cfg, false),
+      buildProviderHeaders(cfg),
+      JSON.stringify(body),
+    );
 
-    const responseText = await res.text();
-    if (!res.ok) {
+    const responseText = raw.body;
+    if (!raw.ok) {
       return {
         success: false,
         content: '',
         rating: 'unknown',
-        error: `${PROVIDER_ERROR_PREFIX}${cfg.kind} HTTP ${res.status}: ${responseText.slice(0, 220)}`,
+        error: `${PROVIDER_ERROR_PREFIX}${cfg.kind} HTTP ${raw.status}: ${responseText.slice(0, 220)}`,
       } as AIResponse;
     }
 

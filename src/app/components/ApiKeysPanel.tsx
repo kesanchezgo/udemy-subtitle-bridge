@@ -124,6 +124,13 @@ export function ApiKeysPanel({
     // usuario llega a la API.
     setValidating(true);
     setValidation(null);
+    // v1.5.4: guardar SIEMPRE antes de validar — la validación hace un fetch
+    // desde el content script que CORS puede bloquear (el proxy del usuario
+    // no siempre envía CORS headers). El config guardado es lo que usa el
+    // background para la generación, y el SW no tiene restricciones CORS.
+    onSaveProvider(provider);
+    setProviderSaved(true);
+    setTimeout(() => setProviderSaved(false), 2600);
     const covered = await isHostCovered(provider.baseUrl);
     // Si el host no tiene permiso, la validación fallaría con un error de red
     // que no explica nada. Se avisa antes, con la acción que lo resuelve, y no
