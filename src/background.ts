@@ -267,6 +267,56 @@ chromeApi?.storage?.onChanged?.addListener((changes: Record<string, unknown>, ar
 	}
 });
 
+// MV3 streaming relay: el content script no puede hacer fetch cross-origin
+// (CORS y Private Network Access bloquean la página hacia localhost/red privada).
+// USG_PROXY_CHAT cubre peticiones puntuales; para streaming el dock abre un
+// Port, el SW hace el fetch y reenvía los trozos del cuerpo por el puerto.
+chromeApi?.runtime?.onConnect?.addListener((port: {
+		name: string;
+		onMessage: { addListener(cb: (msg: unknown) => void): void };
+		onDisconnect: { addListener(cb: () => void): void };
+		postMessage: (msg: unknown) => void;
+	}) => {
+	if (port.name !== 'USG_PROXY_STREAM') return;
+	let abort: AbortController | null = null;
+	port.onMessage.addListener((raw) => {
+		const msg = (raw ?? {}) as { url?: unknown; headers?: unknown; body?: unknown };
+		const url = String(msg.url || '');
+		const headers = (msg.headers ?? {}) as Record<string, string>;
+		const body = String(msg.body || '');
+		if (!url) {
+			port.postMessage({ error: 'falta url' });
+			return;
+		}
+		abort = new AbortController();
+		void (async () => {
+			try {
+				const res = await fetch(url, { method: 'POST', headers, body, signal: abort!.signal });
+				if (!res.ok || !res.body) {
+					const text = await res.text().catch(() => '');
+					port.postMessage({ error: `HTTP ${res.status}: ${text.slice(0, 200)}` });
+					return;
+				}
+				const reader = res.body.getReader();
+				const decoder = new TextDecoder();
+				for (;;) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					port.postMessage({ chunk: decoder.decode(value, { stream: true }) });
+				}
+				port.postMessage({ done: true });
+			} catch (err) {
+				if (!abort?.signal.aborted) {
+					port.postMessage({ error: err instanceof Error ? err.message : String(err) });
+				}
+			}
+		})();
+	});
+	port.onDisconnect.addListener(() => {
+		abort?.abort();
+	});
+});
+
 chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: unknown, sendResponse: (response: unknown) => void) => {
 	const type = message && message.type;
 

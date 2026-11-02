@@ -244,6 +244,53 @@ async function proxyChat(
 	});
 }
 
+type ProviderStreamPort = {
+  onMessage: { addListener(cb: (msg: unknown) => void): void };
+  onDisconnect: { addListener(cb: () => void): void };
+  postMessage: (msg: unknown) => void;
+  disconnect: () => void;
+};
+
+// Streaming por el SW: el content script no puede hacer fetch cross-origin
+// (CORS/Private Network Access bloquean página -> localhost). Mismo patrón que
+// proxyChat pero sobre un Port del runtime, que transporta los trozos del
+// cuerpo mientras el fetch del SW avanza.
+async function streamProviderViaPort(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  onChunk: (text: string) => void,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const chromeApi = (globalThis as typeof globalThis & {
+    chrome?: { runtime?: { connect?: (opts: { name: string }) => ProviderStreamPort } };
+  }).chrome;
+  const connect = chromeApi?.runtime?.connect;
+  if (!connect) throw new Error('sin runtime de extensión');
+
+  return new Promise<void>((resolve, reject) => {
+    const port = connect.call(chromeApi.runtime, { name: 'USG_PROXY_STREAM' });
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      try { port.disconnect(); } catch { /* ya desconectado */ }
+      if (err) reject(err); else resolve();
+    };
+    port.onMessage.addListener((raw) => {
+      const msg = (raw ?? {}) as { chunk?: unknown; done?: unknown; error?: unknown };
+      if (typeof msg.chunk === 'string') onChunk(msg.chunk);
+      if (typeof msg.error === 'string') finish(new Error(msg.error));
+      else if (msg.done === true) finish();
+    });
+    port.onDisconnect.addListener(() => {
+      finish(new Error('el servicio de fondo cerró el puerto del proxy'));
+    });
+    signal?.addEventListener('abort', () => finish(new DOMException('Aborted', 'AbortError')), { once: true });
+    port.postMessage({ url, headers, body });
+  });
+}
+
 async function callConfiguredProvider(
   messages: AIMessage[],
   maxTokens: number,
@@ -314,50 +361,32 @@ async function streamConfiguredProvider(
   debugStore.startRequest(reqId, `${debugContext}:${cfg.kind}`);
 
   try {
-    const res = await fetch(buildProviderChatUrl(cfg, true), {
-      method: 'POST',
-      headers: buildProviderHeaders(cfg),
-      signal,
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const responseText = await res.text().catch(() => '');
-      debugStore.endRequest(reqId, false);
-      return {
-        success: false,
-        content: '',
-        error: `${PROVIDER_ERROR_PREFIX}${cfg.kind} HTTP ${res.status}: ${responseText.slice(0, 200)}`,
-      };
-    }
-    if (!res.body) throw new Error('El proveedor no devolvió cuerpo de respuesta.');
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
     let buffer = '';
 
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+    await streamProviderViaPort(
+      buildProviderChatUrl(cfg, true),
+      buildProviderHeaders(cfg),
+      JSON.stringify(body),
+      (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        const payload = trimmed.slice(5).trim();
-        if (!payload || payload === '[DONE]') continue;
-
-        const token = extractProviderStreamToken(payload, cfg.kind);
-        if (!token) continue;
-        accumulated += token;
-        onToken(token, accumulated);
-        debugStore.addToken(reqId, token, accumulated);
-      }
-    }
+          const token = extractProviderStreamToken(payload, cfg.kind);
+          if (!token) continue;
+          accumulated += token;
+          onToken(token, accumulated);
+          debugStore.addToken(reqId, token, accumulated);
+        }
+      },
+      signal,
+    );
 
     debugStore.endRequest(reqId, true);
     return { success: true, content: accumulated };
