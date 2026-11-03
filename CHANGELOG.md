@@ -1,3 +1,10 @@
+## [1.5.8] — 2026-11-03
+
+- **Estado de pre-generación por lección** (fallo de 1.5.7): `preGenRef` sobrevivía al cambio de lección porque Study está siempre montado. Si una lección se ojeaba sin estudiarla, quedaba en `done` y no se volvía a pre-generar en toda la sesión; si quedaba en `running`, al pulsar Empezar en la lección siguiente se esperaba esa generación ajena. Ahora se reinicia al cambiar de lección y en Empezar solo se espera la generación de la lección y el objetivo actuales.
+- **La clave de caché lleva curso + ID real de la lección** (era solo el nombre + objetivo): dos lecciones con el mismo nombre («Chapter Introduction», «Demo») podían servirse el mazo de la otra. Además se re-verifica curso y lección al consumir. Verificado con un par real de lecciones homónimas: el mazo de A quedó en caché con el ID de A (`..._4121106_...`) y B (mismo nombre, ID 4299336) generó y consumió el suyo.
+- La comparación de objetivo al terminar la pre-generación lee el objetivo **actual** (ref), no la foto del arranque.
+- **Modo de cronometraje humano en el arnés** (`QA_HUMAN_TIMING=1`): tiempo por paso (Recordar, Comprobar, Aplicar, Fijar) desde Empezar, esperas de IA medidas aparte (generación y evaluaciones), si se consumió el mazo pre-generado y el estado de la escalera. Y modo de cambio de lección (`QA_MULTI_LESSON=1`, con `QA_MULTI_WAIT_A=1` para la prueba fuerte).
+
 ## [1.5.7] — 2026-11-03
 
 - **Pre-generación del mazo durante el vídeo (opción A)**, con las cuatro condiciones acordadas:

@@ -1215,6 +1215,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     lastAttemptAt: number;
   }>({ status: "idle", lectureKey: "", objectiveText: "", objectiveId: null, promise: null, lastAttemptAt: 0 });
   const videoClockRef = useRef<{ ts: number; duration: number | null }>({ ts: 0, duration: null });
+  // Objetivo activo LEÍDO EN VIVO (el callback de pre-generación captura el
+  // estado de su render; comparar contra esa foto no protegía de un cambio).
+  const currentObjectiveRef = useRef<string>("");
+  // Identidad de la lección actual: si cambia, la pre-generación en curso o
+  // terminada se descarta (Study está siempre montado y el estado sobrevive).
+  const lessonIdentityRef = useRef<string>("");
   const [objectivesExpanded, setObjectivesExpanded] = useState(false);
   const [objectivesRegenCount, setObjectivesRegenCount] = useState(0);
   const [activeSessionObjective, setActiveSessionObjective] = useState<string | null>(null);
@@ -1557,8 +1563,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     return null;
   }, [dynamicObjectives, getActiveObjectiveId]);
 
-  const preGenCacheKey = useCallback((lectureKey: string, objectiveText: string) => (
-    `study_pre_${slugify(lectureKey)}_${slugify(objectiveText).slice(0, 60)}`
+  // Clave de caché de la pre-generación: SIEMPRE curso + ID real de la lección
+  // (el id numérico de Udemy) + objetivo. Sin curso ni id, dos lecciones con el
+  // mismo nombre («Introduction», «Demo») compartirían mazo.
+  const preGenCacheKey = useCallback((courseSlug: string, lectureKey: string, objectiveText: string) => (
+    `study_pre_${slugify(courseSlug)}_${slugify(lectureKey)}_${slugify(objectiveText).slice(0, 60)}`
   ), []);
 
   const effectiveCourseDescription = useMemo(() => {
@@ -1595,42 +1604,58 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const startPreGeneration = useCallback((objective: { text: string; id: string | null }) => {
     const pre = preGenRef.current;
     if (pre.status === "running") return;
-    const lectureKey = slugify(lessonName);
-    const cacheKey = preGenCacheKey(lectureKey, objective.text);
+    // Identidad de la lección EN EL MOMENTO DE ARRANCAR. Si el estudiante cambia
+    // de lección mientras genera, el resultado se descarta (no se escribe
+    // siquiera): la clave lleva el ID real de la lección.
+    const startedFor = { courseName, lessonName };
     pre.status = "running";
-    pre.lectureKey = lectureKey;
     pre.objectiveText = objective.text;
     pre.objectiveId = objective.id;
     pre.lastAttemptAt = Date.now();
+    pre.lectureKey = slugify(lessonName);
     pre.promise = (async () => {
       try {
-        const existing = await cacheService.get<{ payload: unknown }>(cacheKey).catch(() => null);
-        if (existing?.payload) { pre.status = "done"; return; }
         const resolvedGeminiKeys = await resolveGeminiKeysForStudy(apiKeys);
         const transcript = await requestStudyTranscript(22000);
         if (!transcript.ok || !transcript.transcriptText?.trim()) { pre.status = "idle"; return; }
+        const courseSlug = transcript.courseSlug || slugify(courseName);
+        const lectureId = transcript.lectureKey || slugify(lessonName);
+        const cacheKey = preGenCacheKey(courseSlug, lectureId, objective.text);
+        pre.lectureKey = lectureId;
+        const existing = await cacheService.get<{ payload: unknown }>(cacheKey).catch(() => null);
+        if (existing?.payload) { pre.status = "done"; return; }
         const aiResult = await sendRuntimeMessage<LearningPanelResponse>({
           type: "USG_GENERATE_LEARNING_PANEL",
           apiKeys: resolvedGeminiKeys,
           transcriptText: transcript.transcriptText,
           cueCount: transcript.cueCount,
           transcriptTruncated: Boolean(transcript.transcriptTruncated ?? transcript.truncated),
-          lectureKey: transcript.lectureKey || lectureKey,
-          courseSlug: transcript.courseSlug || slugify(courseName),
-          lectureId: transcript.lectureKey || lectureKey,
+          lectureKey: lectureId,
+          courseSlug,
+          lectureId,
           courseName,
           courseDescription: effectiveCourseDescription,
           lessonName,
           objective: objective.text,
         });
         // Condición 2: si el objetivo cambió mientras generaba, se descarta —
-        // mismo criterio que el vocabulario al cambiar de lección.
-        if (getActiveObjectiveText() !== objective.text) { pre.status = "idle"; return; }
+        // mismo criterio que el vocabulario al cambiar de lección. Se lee el
+        // objetivo ACTUAL (ref), no el capturado al arrancar.
+        const stillSameObjective = currentObjectiveRef.current === objective.text;
+        const stillSameLesson = preGenRef.current === pre
+          && lessonIdentityRef.current === `${startedFor.courseName}::${startedFor.lessonName}`;
+        if (!stillSameObjective || !stillSameLesson) {
+          pre.status = "idle";
+          console.info("[USG][study][client] pre-generación descartada (objetivo o lección cambiaron)");
+          return;
+        }
         if (aiResult?.ok && aiResult.payload && validateStudyPayload(aiResult.payload).length === 0) {
           await cacheService.set(cacheKey, {
             payload: aiResult.payload,
             objectiveText: objective.text,
             objectiveId: objective.id,
+            courseSlug,
+            lectureId,
             at: Date.now(),
           }, 2, { type: "other" });
           pre.status = "done";
@@ -1644,7 +1669,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
     })();
     return pre.promise;
-  }, [apiKeys, courseName, effectiveCourseDescription, getActiveObjectiveText, lessonName, preGenCacheKey, requestStudyTranscript, resolveGeminiKeysForStudy, sendRuntimeMessage]);
+  }, [apiKeys, courseName, effectiveCourseDescription, lessonName, preGenCacheKey, requestStudyTranscript, resolveGeminiKeysForStudy, sendRuntimeMessage]);
 
   // Condición 4: arrancar en los últimos ~3 min (o al momento si la lección dura
   // menos). Solo antes de estudiar, y sin gastar llamadas en lecciones ojeadas.
@@ -1672,6 +1697,20 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     window.addEventListener("usb:video-progress", onProgress);
     return () => window.removeEventListener("usb:video-progress", onProgress);
   }, [maybeTriggerPreGen]);
+
+  // Objetivo vivo (para descartar una pre-generación cuyo objetivo cambió).
+  useEffect(() => { currentObjectiveRef.current = getActiveObjectiveText(); }, [getActiveObjectiveText]);
+
+  // Cambio de lección: la pre-generación es por lección. Sin este reset, un
+  // estado 'done' de la lección anterior impedía pre-generar la siguiente, y un
+  // 'running' ajeno hacía esperar de más al pulsar Empezar.
+  useEffect(() => {
+    lessonIdentityRef.current = `${courseName}::${lessonName}`;
+    preGenRef.current = {
+      status: "idle", lectureKey: "", objectiveText: "", objectiveId: null, promise: null, lastAttemptAt: 0,
+    };
+    videoClockRef.current = { ts: 0, duration: null };
+  }, [courseName, lessonName]);
 
   const handleGenerate = async () => {
     // Warn if the user has already studied this lecture (non-blocking).
@@ -1709,17 +1748,25 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           console.info("[USG][study][client] background key sync response:", syncResponse);
         }
         // Mazo pre-generado durante el vídeo: si el objetivo coincide, se usa
-        // sin espera (y si aún está generándose, se espera ESA llamada en vez
-        // de lanzar otra). El objetivo distinto descarta la pre-generación.
+        // sin espera. Solo se espera la generación en curso si es de ESTA
+        // lección y ESTE objetivo; una ajena se ignora (no se paga su espera).
+        const preCourseSlug = transcript.courseSlug || slugify(courseName);
+        const preLectureId = transcript.lectureKey || slugify(lessonName);
+        const preKey = preGenCacheKey(preCourseSlug, preLectureId, sessionObjective);
         const preState = preGenRef.current;
-        const preKey = preGenCacheKey(slugify(lessonName), sessionObjective);
-        if (preState.status === "running" && preState.objectiveText === sessionObjective && preState.promise) {
+        const preMatchesThisLesson = preState.lectureKey === preLectureId
+          && (preState.objectiveText === sessionObjective || preState.status !== "running");
+        if (preState.status === "running" && preState.objectiveText === sessionObjective && preMatchesThisLesson && preState.promise) {
           await preState.promise.catch(() => undefined);
         }
         let prePayload: unknown = null;
-        if (preState.objectiveText === sessionObjective) {
-          const cached = await cacheService.get<{ payload: unknown }>(preKey).catch(() => null);
-          prePayload = cached?.payload ?? null;
+        if (preState.status !== "running" && preState.objectiveText === sessionObjective) {
+          const cached = await cacheService.get<{ payload: unknown; courseSlug?: string; lectureId?: string }>(preKey).catch(() => null);
+          // Doble comprobación al consumir: el mazo debe ser de este curso y de
+          // esta lección, no solo coincidir el nombre de la lección.
+          if (cached?.payload && (cached.courseSlug ?? preCourseSlug) === preCourseSlug && (cached.lectureId ?? preLectureId) === preLectureId) {
+            prePayload = cached.payload;
+          }
         }
         if (prePayload && validateStudyPayload(prePayload).length === 0) {
           newContent = normalizeStudyContent(prePayload, fallbackContent);

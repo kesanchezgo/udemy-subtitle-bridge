@@ -1542,7 +1542,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.5.7"}</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.5.8"}</span>
         </div>
       </div>
 

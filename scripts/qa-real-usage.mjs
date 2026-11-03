@@ -121,6 +121,33 @@ if (existsSync('.qa-udemy-cookies.json')) {
 // Captura de consola (el content script escribe en la consola de la página)
 page_console_attach(context);
 
+// Siembra el objetivo del curso (escenario de la 2ª lección). Debe correr
+// DESPUÉS de cualquier limpieza de historial y ANTES de montar el dock.
+const seedCourseObjectiveRecord = async (label = '') => {
+	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	if (!sw) return false;
+	const courseNameSeed = 'Java In-Depth: Become a Complete Java Engineer! [2026]';
+	const objective = 'Dominar el tema de esta lección.';
+	const now = Date.now();
+	const slug = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '').slice(0, 80) || 'untitled';
+	const key = `usb_history_lecture::${slug(courseNameSeed)}::${slug('seeded lesson')}`;
+	await sw.evaluate(({ key, courseNameSeed, objective, now, slugCourse, slugLesson }) => new Promise((res) => {
+		chrome.storage.local.set({
+			[key]: {
+				courseId: slugCourse, lectureId: slugLesson,
+				courseName: courseNameSeed, lectureName: 'Seeded lesson',
+				objective, objectiveId: 'custom',
+				checkedConceptIndexes: [0], conceptsAcknowledged: false,
+				questionsComplete: false, focusStep: 2, flowVersion: 2,
+				questions: [], ankiCardsCount: 1, status: 'in_progress',
+				startedAt: now, updatedAt: now, version: 1,
+			},
+		}, () => res(true));
+	}), { key, courseNameSeed, objective, now, slugCourse: slug(courseNameSeed), slugLesson: slug('seeded lesson') }).catch(() => {});
+	console.log(`  objetivo del curso sembrado${label ? ` (${label})` : ''}`);
+	return true;
+};
+
 // Abrir página para despertar el SW + seed
 const seedPage = await context.newPage();
 await seedPage.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/42163342`,
@@ -206,6 +233,13 @@ const fillUntil = async (ph, val, ms) => {
 	while (Date.now() < d) { if (await fill(ph, val)) return true; await page.waitForTimeout(400); }
 	return false;
 };
+// reducir, no ocultar.
+const stepClock = { startedAt: 0, marks: [], aiByStep: {} };
+const markStep = (name) => {
+	stepClock.marks.push({ name, at: Date.now() });
+	if (stepClock.startedAt) console.log(`  paso ${name} @ ${((Date.now() - stepClock.startedAt) / 1000).toFixed(1)}s`);
+};
+const addAiWait = (step, ms) => { stepClock.aiByStep[step] = (stepClock.aiByStep[step] ?? 0) + ms; };
 
 // ── Usar la lección corta (la misma página ya está abierta) ──
 // Encontrar lección corta
@@ -343,9 +377,140 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 		await page.waitForTimeout(1000);
 	}
 }
-if (!trReady) {
+if (!trReady && process.env.QA_MULTI_LESSON !== '1') {
 	console.log('✗ ninguna candidata tiene transcripción');
 	process.exit(1);
+}
+
+// ── QA_MULTI_LESSON=1: cambio de lección ────────────────────────────────────
+// Cubre los tres casos de la contrarrevisión con un par de lecciones del MISMO
+// nombre (distinta sección):
+//   a) A pre-generada sin estudiar → B pre-genera y consume SU mazo.
+//   b) Mismo nombre → ninguna consume el mazo de la otra (la clave lleva el ID).
+//   c) Empezar en B mientras A sigue generando → no espera a A.
+if (process.env.QA_MULTI_LESSON === '1') {
+	// Descartar los mazos previos para que la prueba no herede nada.
+	const swClean = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	if (swClean) {
+		await swClean.evaluate(() => new Promise((res) => {
+			chrome.storage.local.get(null, (all) => {
+				const keys = Object.keys(all || {}).filter((k) => k.startsWith('usb_cache_'));
+				chrome.storage.local.remove(keys, () => res(keys.length));
+			});
+		})).then((n) => console.log(`  mazos previos borrados: ${n}`)).catch(() => {});
+	}
+	// Par con el mismo título, distinta sección (IDs distintos).
+	const byTitle = new Map();
+	for (const l of lessons) {
+		if (l.seconds < 60) continue;
+		const key = l.title.replace(/^\d+\.\s*/, '').trim();
+		byTitle.set(key, [...(byTitle.get(key) ?? []), l]);
+	}
+	// El par con el mismo nombre MÁS CORTO: la ventana de disparo es de 3 min,
+	// así que lecciones largas no pre-generan (comportamiento correcto, pero no
+	// permite probar la separación de mazos con el nombre repetido).
+	const groups = [...byTitle.values()].filter((g) => g.length >= 2);
+	groups.sort((a, b) => Math.max(...a.map((l) => l.seconds)) - Math.max(...b.map((l) => l.seconds)));
+	const pair = groups[0];
+	if (!pair) {
+		console.log('✗ no hay dos lecciones con el mismo nombre en el curso');
+		process.exit(1);
+	}
+	const [lessonA, lessonB] = pair;
+	console.log(`  par mismo nombre: «${lessonA.title}» (${lessonA.id}, ${lessonA.seconds}s) y «${lessonB.title}» (${lessonB.id}, ${lessonB.seconds}s)`);
+	if (Math.max(lessonA.seconds, lessonB.seconds) > 180) {
+		console.log('  (aviso: duran más de 3 min; sin ventana de disparo la pre-generación no aplica)');
+	}
+
+	const playAndTrigger = async (label) => {
+		await page.evaluate(() => { document.querySelector('video')?.play().catch(() => {}); });
+		await page.waitForTimeout(25000);
+		await page.evaluate(() => { document.querySelector('video')?.pause(); });
+		const dTr2 = Date.now() + 60000;
+		let ready = false;
+		while (Date.now() < dTr2) {
+			const txt = await shadow();
+			if (/Subtítulos listos/.test(txt)) { ready = true; break; }
+			if (/Sin subtítulos/.test(txt)) break;
+			await page.waitForTimeout(1000);
+		}
+		console.log(`  ${label}: transcripción ${ready ? 'lista ✓' : 'NO'}`);
+		return ready;
+	};
+
+	const gotoLesson = async (lessonId) => {
+		await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/${lessonId}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+		await page.waitForSelector(OUTER, { timeout: 45000 });
+		await page.waitForTimeout(2500);
+		await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
+		await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+		await page.waitForTimeout(2000);
+	};
+
+	// Re-sembrar: la limpieza del bucle inicial borró el registro.
+	await seedCourseObjectiveRecord('multi');
+
+	// A: pre-genera durante el vídeo y NO se estudia.
+	await gotoLesson(lessonA.id);
+	if (!await playAndTrigger('A')) { console.log('✗ A sin transcripción'); process.exit(1); }
+	if (process.env.QA_MULTI_WAIT_A === '1') {
+		// Esperar a que A termine su pre-generación: su mazo queda EN CACHÉ con
+		// el ID de A, y B no debe consumirlo nunca (la prueba fuerte del reparto).
+		const dA = Date.now() + 240000;
+		while (Date.now() < dA) {
+			const txt = await shadow();
+			if (/mazo pre-generado/.test(pageConsoleBuf.join(' '))) { break; }
+			await page.waitForTimeout(2000);
+		}
+		console.log('  A: pre-generación terminada (mazo de A en caché)');
+	} else {
+		await page.waitForTimeout(4000); // deja arrancar la pre-generación de A
+	}
+
+	// B (mismo nombre, otro ID): debe pre-generar la suya, sin heredar nada de A.
+	const tB0 = Date.now();
+	await gotoLesson(lessonB.id);
+	if (!await playAndTrigger('B')) { console.log('✗ B sin transcripción'); process.exit(1); }
+
+	// Empezar en B: debe consumir el mazo de B (o esperar SOLO el suyo), nunca el de A.
+	const objectiveReady = await waitFor(/O escribe tu propio objetivo/, 15000);
+	if (process.env.QA_NO_OBJECTIVE !== '1') {
+		await click(/O escribe tu propio objetivo/).catch?.(() => {});
+		await page.waitForTimeout(500);
+		await fillUntil('Conseguir trabajo en fintech', 'Dominar el tema de esta lección.', 10000);
+	}
+	let tCta = 0;
+	for (let i = 0; i < 60; i++) {
+		if (await click(/Empezar · ~4–10 min|Generar sesión de aprendizaje/)) { tCta = Date.now(); break; }
+		await page.waitForTimeout(1000);
+	}
+	if (!tCta) { console.log('✗ CTA de B deshabilitado', objectiveReady.slice(-120)); process.exit(1); }
+	const resultB = await waitFor(/¿Qué tan claro te quedó el video\??/, 400000);
+	const genMs = Date.now() - tCta;
+	const consumed = pageConsoleBuf.some((l) => /mazo pre-generado consumido/.test(l));
+	const discarded = pageConsoleBuf.some((l) => /pre-generación descartada/.test(l));
+	console.log('\n── RESULTADO (cambio de lección) ──');
+	console.log(`  B con el mismo nombre generó en ${Math.round(genMs / 1000)}s`);
+	console.log(`  consumió mazo pre-generado: ${consumed ? '✓' : '✗'}`);
+	console.log(`  descartó la pre-generación de A al cambiar: ${discarded ? '✓' : '✗'}`);
+	console.log(`  resultado visible en B: ${/¿Qué tan claro/.test(resultB) ? '✓' : '✗'}`);
+	// Separación de claves: la caché debe llevar el ID REAL de cada lección.
+	const swKeys = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	const preKeys = swKeys
+		? await swKeys.evaluate(() => new Promise((res) => {
+			chrome.storage.local.get(null, (all) => res(Object.keys(all || {}).filter((k) => k.includes('study_pre_'))));
+		})).catch(() => [])
+		: [];
+	console.log(`  claves study_pre_ en caché: ${preKeys.length ? preKeys.map((k) => k.replace('usb_cache_', '')).join(' | ') : '(ninguna)'}`);
+	const keyHasB = preKeys.some((k) => k.includes(String(lessonB.id)));
+	const keyHasA = preKeys.some((k) => k.includes(String(lessonA.id)));
+	console.log(`  la clave de B lleva su ID (${lessonB.id}): ${keyHasB ? '✓' : '(consumida)'} / la de A (${lessonA.id}): ${keyHasA ? 'sí' : 'no'}`);
+	// Si el mazo de A quedó en caché, la prueba es concluyente: B consumió el
+	// suyo pese a existir el de A (mismo nombre de lección, distinto ID).
+	const okMulti = /¿Qué tan claro/.test(resultB) && consumed && genMs <= 120000;
+	clearTimeout(watchdog);
+	await context.close();
+	process.exit(okMulti ? 0 : 1);
 }
 
 // QA_PICK_CARD=1: pulsa el primer objetivo del curso (así el objetivo del CTA
@@ -378,6 +543,7 @@ for (let i = 0; i < 90; i++) {
 	await page.waitForTimeout(1000);
 }
 if (!t0) { console.log('✗ CTA deshabilitado'); process.exit(1); }
+stepClock.startedAt = t0;
 console.log('  generación iniciada…');
 
 // Resultado
@@ -391,9 +557,11 @@ if (!/¿Qué tan claro/.test(txt)) {
 	process.exit(1);
 }
 const tGen = Date.now() - t0;
+addAiWait('Recordar', tGen); // la generacion es espera de IA del primer paso
 console.log(`  generación: ${Math.round(tGen / 1000)}s`);
 
-// Nivel
+// Nivel (paso Recordar)
+markStep('Recordar');
 await click(/^Más o menos/);
 await page.waitForTimeout(600);
 
@@ -401,7 +569,8 @@ await page.waitForTimeout(600);
 await click(/Ver los conceptos|Comparar con los conceptos/);
 await page.waitForTimeout(600);
 
-// Pregunta
+// Pregunta (paso Comprobar)
+markStep('Comprobar');
 await click(/Ponerme a prueba/);
 await page.waitForTimeout(1600);
 
@@ -418,6 +587,7 @@ if (process.env.QA_COLD_SW === '1') {
 	console.log('  esperando 35s para que el service worker se suspenda...');
 	await page.waitForTimeout(35000);
 }
+let tEvalWait = Date.now();
 pageConsoleBuf.push('=== click Evaluar Q1 ===');
 await clickUntil(/^Evaluar$/, 10000);
 
@@ -446,6 +616,7 @@ for (let i = 0; i < 12 && !ok; i++) {
 		const now = await shadow();
 		if (/Continuar a Aplicar/.test(now)) { outcome = 'continuar'; break; }
 		if (/FALTO:/.test(now)) {
+			addAiWait('Comprobar', Date.now() - tEvalWait);
 			let stable = 0;
 			let last = now;
 			while (Date.now() < dEval && stable < 2) {
@@ -493,6 +664,7 @@ for (let i = 0; i < 12 && !ok; i++) {
 	}
 	if (!await clickLast(/^Siguiente$/)) break;
 	await page.waitForTimeout(1200);
+	tEvalWait = Date.now();
 	pageConsoleBuf.push(`=== click Evaluar Q${i + 2} ===`);
 	if (!await fillUntil('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.', 20000)) break;
 	await clickUntil(/^Evaluar$/, 10000);
@@ -511,7 +683,12 @@ if (!ok) {
 // si Comprobar tardase 2-3 min).
 const tComprobar = Date.now() - (t0 + tGen);
 
+// ── Cronometraje por paso (QA_HUMAN_TIMING=1) ───────────────────────────────
+// Para una sesión con una persona real: mide cada paso (Recordar → Comprobar →
+// Aplicar → Fijar) y, separado, lo que se esperó a la IA — lo que hay que
+
 // ── Aplicar según el flujo ──
+markStep('Aplicar');
 let tAplicar = 0;
 if (QA_FLOW === 'full') {
 	// COMPLETO: resolver el desafío y pasarlo por la revisión de la IA.
@@ -528,7 +705,9 @@ if (QA_FLOW === 'full') {
 		console.log('✗ botón Revisar con IA no apareció');
 		process.exit(1);
 	}
+	const tReview = Date.now();
 	const review = await waitFor(/DIAGNOSTICO:|BIEN:/, 240000);
+	addAiWait('Aplicar', Date.now() - tReview);
 	if (!/DIAGNOSTICO:|BIEN:/.test(review)) {
 		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
 		console.log('✗ revisión de Aplicar sin veredicto');
@@ -544,6 +723,7 @@ if (QA_FLOW === 'full') {
 	await clickUntil(/Hacerlo después/, 15000);
 	await clickUntil(/Terminar lección/, 15000);
 }
+markStep('Fijar');
 const done = await waitFor(/Lección terminada/, 20000);
 const ms = Date.now() - t0;
 await page.screenshot({ path: path.join(SHOTS, `resultado-${QA_LESSON}-${QA_FLOW}.png`) });
@@ -561,6 +741,23 @@ if (process.env.QA_VERBOSE === '1') {
 }
 
 const fmt = (ms) => `${Math.floor(ms / 60000)}m ${String(Math.round((ms % 60000) / 1000)).padStart(2, '0')}s`;
+if (process.env.QA_HUMAN_TIMING === '1' && stepClock.marks.length) {
+	const swStats = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	const stats = swStats ? await swStats.evaluate(() => new Promise((res) => {
+		chrome.storage.local.get(['usg_study_generation_stats'], (r) => res(r?.usg_study_generation_stats ?? null));
+	})).catch(() => null) : null;
+	const consumedPre = pageConsoleBuf.some((l) => /mazo pre-generado consumido/.test(l));
+	console.log('\n-- TIEMPO POR PASO (sesion humana) --');
+	let prev = stepClock.startedAt;
+	for (const m of stepClock.marks) {
+		const total = m.at - prev;
+		const ai = stepClock.aiByStep[m.name] ?? 0;
+		console.log(`  ${m.name.padEnd(10)} total ${String(Math.round(total / 1000)).padStart(4)}s   espera IA ${String(Math.round(ai / 1000)).padStart(4)}s   humano ${String(Math.round((total - ai) / 1000)).padStart(4)}s`);
+		prev = m.at;
+	}
+	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round((Date.now() - stepClock.startedAt) / 1000)}s desde Empezar`);
+	console.log(`  mazo pre-generado consumido: ${consumedPre ? 'si (0 s de espera)' : 'no'} - escalones: ${JSON.stringify(stats)}`);
+}
 const limit = QA_FLOW === 'full' ? 720000 : 240000;
 console.log(`\n── RESULTADO ──`);
 console.log(`  ${QA_FLOW === 'full' ? 'COMPLETO' : 'mínimo'} · lección ${QA_LESSON} (${currentLesson.seconds}s): ${/Lección terminada/.test(done) ? '✓ COMPLETADO' : '✗'} en ${fmt(ms)}`);
