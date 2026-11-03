@@ -442,17 +442,30 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 // QA_PACE=human: como una persona que ve el tramo final, el vídeo se adelanta
 // a los ultimos ~3 min — solo asi entra en la ventana de pre-generacion en una
 // leccion de 15 min (en una corta el tramo de 20 s ya basta).
-if (HUMAN_PACE) {
-	await page.evaluate(() => {
+// QA_SEEK_PLAY_SECS: segundos de video continuo cerca del final. Con 200 s la
+// pre-generacion arranca ~180 s antes de Empezar: la ventaja de verdad.
+const seekPlaySecs = Number(process.env.QA_SEEK_PLAY_SECS ?? 0);
+if (HUMAN_PACE || seekPlaySecs > 0) {
+	const playSecs = seekPlaySecs > 0 ? seekPlaySecs : 35;
+	await page.evaluate((secs) => {
 		const v = document.querySelector('video');
 		if (v && Number.isFinite(v.duration) && v.duration > 260) {
-			v.currentTime = Math.max(0, v.duration - 200);
+			v.currentTime = Math.max(0, v.duration - (secs + 20));
 			v.play().catch(() => {});
-		}
-	});
-	await page.waitForTimeout(35000);
+		} else if (v) { v.play().catch(() => {}); }
+	}, playSecs);
+	await page.waitForTimeout(playSecs * 1000);
 	await page.evaluate(() => { document.querySelector('video')?.pause(); });
-	console.log('  (ritmo humano: tramo final del video, ventana de pre-generacion abierta)');
+	const clock = await page.evaluate(() => {
+		const v = document.querySelector('video');
+		return v && Number.isFinite(v.duration) ? { ts: v.currentTime, duration: v.duration } : null;
+	});
+	if (clock) {
+		const windowOpen = Math.max(0, clock.duration - 180);
+		const advantage = Math.max(0, clock.ts - windowOpen);
+		process.env.__PREGEN_ADVANTAGE_S = String(Math.round(advantage));
+		console.log(`  video: ventana de pre-generacion abierta hace ~${Math.round(advantage)}s (ts ${Math.round(clock.ts)}s de ${Math.round(clock.duration)}s)`);
+	}
 }
 
 	// Esperar transcripción lista (con reintentos ante 0 cues)
@@ -940,7 +953,8 @@ if (process.env.QA_HUMAN_TIMING === '1' && stepClock.marks.length) {
 		console.log(`  ${m.name.padEnd(10)} total ${String(Math.round(total / 1000)).padStart(4)}s   espera IA ${String(Math.round(ai / 1000)).padStart(4)}s   humano ${String(Math.round((total - ai) / 1000)).padStart(4)}s`);
 	}
 	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round((Date.now() - stepClock.startedAt) / 1000)}s desde Empezar`);
-	console.log(`  mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'} · espera tras pulsar Empezar: ${Math.round(tGen / 1000)}s · escalones: ${JSON.stringify(stats)}`);
+	const advantage = process.env.__PREGEN_ADVANTAGE_S;
+	console.log(`  mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'}${advantage !== undefined ? ` · ventaja de la pre-generación: ${advantage}s` : ''} · espera tras pulsar Empezar: ${Math.round(tGen / 1000)}s · escalones: ${JSON.stringify(stats)}`);
 }
 const limit = QA_FLOW === 'full' ? 720000 : 240000;
 console.log(`\n── RESULTADO ──`);
