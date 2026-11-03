@@ -230,6 +230,14 @@ async function proxyChat(
 	headers: Record<string, string>,
 	body: string,
 ): Promise<{ ok: boolean; status: number; body: string }> {
+	// Preview / dev sin extensión: no hay SW al que delegar, así que se hace el
+	// fetch directo (el comportamiento clásico). Dentro de la extensión el fetch
+	// vive siempre en el SW (CORS + Private Network Access).
+	if (!isExtensionRuntime()) {
+		const res = await fetch(url, { method: 'POST', headers, body });
+		const text = await res.text();
+		return { ok: res.ok, status: res.status, body: text };
+	}
 	const chromeApi = (globalThis as typeof globalThis & {
 		chrome?: { runtime?: { sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void; lastError?: { message?: string } } };
 	}).chrome;
@@ -263,6 +271,24 @@ async function streamProviderViaPort(
   onChunk: (text: string) => void,
   signal: AbortSignal | undefined,
 ): Promise<void> {
+  // Preview / dev sin extensión: fetch directo en streaming (comportamiento
+  // clásico). Dentro de la extensión el fetch vive siempre en el SW.
+  if (!isExtensionRuntime()) {
+    const res = await fetch(url, { method: 'POST', headers, signal, body });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+    if (!res.body) throw new Error('El proveedor no devolvió cuerpo de respuesta.');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      onChunk(decoder.decode(value, { stream: true }));
+    }
+    return;
+  }
   const chromeApi = (globalThis as typeof globalThis & {
     chrome?: { runtime?: { connect?: (opts: { name: string }) => ProviderStreamPort } };
   }).chrome;

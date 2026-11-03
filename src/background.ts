@@ -55,7 +55,11 @@ const chrome = chromeApi;
 let localAiHealthCache: { checkedAt: number; ok: boolean } | null = null;
 
 void initGeminiKeys();
-void initAiProviderConfig();
+// Se guarda la promesa: al despertar el SW tras 30 s de inactividad, un
+// USG_PROXY_CHAT/USG_PROXY_STREAM puede llegar antes de que la config esté
+// cargada, y el allowlist del relay rechazaría el proveedor real (solo
+// permitiría 8010). Los handlers la esperan antes de comprobar la URL.
+const providerConfigReady: Promise<unknown> = initAiProviderConfig().catch(() => undefined);
 
 // Cuando el usuario concede un permiso de host desde permission.html, el dock
 // (en la pestaña de Udemy) no se entera: la página vive en otra pestaña y el
@@ -320,12 +324,15 @@ chromeApi?.runtime?.onConnect?.addListener((port: {
 		const url = String(msg.url || '');
 		const headers = (msg.headers ?? {}) as Record<string, string>;
 		const body = String(msg.body || '');
-		if (!url || !isAllowedProxyUrl(url)) {
-			port.postMessage({ error: 'USG_PROXY_STREAM: url fuera de la lista permitida' });
-			return;
-		}
-		abort = new AbortController();
 		void (async () => {
+			// Esperar la config: en un SW recién despertado aún no está cargada
+			// y el allowlist solo permitiría 8010.
+			await providerConfigReady;
+			if (!url || !isAllowedProxyUrl(url)) {
+				port.postMessage({ error: 'USG_PROXY_STREAM: url fuera de la lista permitida' });
+				return;
+			}
+			abort = new AbortController();
 			try {
 				const res = await fetch(url, { method: 'POST', headers, body, signal: abort!.signal });
 				if (!res.ok || !res.body) {
@@ -534,17 +541,22 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		const headers = ((message as { headers?: Record<string, string> }).headers ?? {}) as Record<string, string>;
 		const body = String((message as { body?: unknown }).body || '');
 
-		if (!isAllowedProxyUrl(url)) {
-			sendResponse({ ok: false, status: 0, body: '', error: 'USG_PROXY_CHAT: url fuera de la lista permitida' });
-			return true;
-		}
-
-		fetch(url, { method: 'POST', headers, body })
-			.then(async (res) => {
+		void (async () => {
+			// Esperar la config: en un SW recién despertado aún no está cargada
+			// y el allowlist solo permitiría 8010.
+			await providerConfigReady;
+			if (!isAllowedProxyUrl(url)) {
+				sendResponse({ ok: false, status: 0, body: '', error: 'USG_PROXY_CHAT: url fuera de la lista permitida' });
+				return;
+			}
+			try {
+				const res = await fetch(url, { method: 'POST', headers, body });
 				const text = await res.text();
 				sendResponse({ ok: res.ok, status: res.status, body: text });
-			})
-			.catch((err) => sendResponse({ ok: false, status: 0, body: '', error: toErrorMessage(err) }));
+			} catch (err) {
+				sendResponse({ ok: false, status: 0, body: '', error: toErrorMessage(err) });
+			}
+		})();
 		return true;
 	}
 
@@ -1404,11 +1416,11 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 		if (import.meta.env.DEV) console.log('[USG][study] trying configured provider…');
 		// Escalona el presupuesto como la ruta Gemini: con modelos reasoning el
 		// razonamiento comparte max_tokens y puede dejar el JSON truncado o el
-		// contenido vacío. El último intento desactiva el razonamiento (es lo
-		// que consume el presupuesto) para garantizar que el JSON salga.
+		// contenido vacío. Si el primer intento no da JSON, el segundo va con
+		// 16384 y razonamiento desactivado: un peldaño intermedio de 16384 CON
+		// razonamiento es el más lento y el que menos desatasca el caso.
 		const ladder = [
 			{ maxTokens: 8192, reasoningOff: false },
-			{ maxTokens: 16384, reasoningOff: false },
 			{ maxTokens: 16384, reasoningOff: true },
 		];
 		for (const step of ladder) {

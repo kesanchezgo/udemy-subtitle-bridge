@@ -97,7 +97,45 @@ for (const m of css.matchAll(ruleRe)) {
 	}
 }
 
+// ── 3. Superficie de video (monitor oscuro en tema claro) ────────────────────
+// El chip de vocabulario vive encima del monitor: su palabra (text-white
+// exacto) y su estado pendiente (ámbar) deben seguir legibles sobre el fondo
+// oscuro. Si estas reglas desaparecen el chip pierde contraste y no se nota:
+// una auditoría de clases contra el CSS no ve esta superficie, porque es la
+// única que permanece oscura dentro del dock claro.
+const VIDEO_SURFACE_BG = '#15131f';
+const SURFACE_RULES = [
+	{ matcher: '[class~="text-white"]', label: 'palabra del chip (text-white)' },
+	{ matcher: '[class*="text-amber-"]', label: 'chip pendiente (ámbar)' },
+];
+const surfaceChecked = [];
+for (const { matcher, label } of SURFACE_RULES) {
+	const re = /([^{}]+)\{([^{}]*)\}/g;
+	let found = null;
+	for (const m of css.matchAll(re)) {
+		const selector = m[1];
+		if (!selector.includes('.usb-dock.dock-sepia .usb-video-surface')) continue;
+		if (!selector.includes(matcher)) continue;
+		const colorM = m[2].match(/(?:^|;)\s*color:\s*([^;!]+)/);
+		if (colorM) found = colorM[1].trim();
+	}
+	if (!found) {
+		failures.push(`falta la regla .usb-video-surface ${matcher} (${label})`);
+		continue;
+	}
+	const ratio = contrast(found, VIDEO_SURFACE_BG);
+	if (ratio === null) {
+		failures.push(`.usb-video-surface ${matcher} → ${found}: color no parseable`);
+		continue;
+	}
+	if (ratio < 4.5) {
+		failures.push(`.usb-video-surface ${matcher} → ${found} sobre ${VIDEO_SURFACE_BG}: ${ratio.toFixed(2)}:1 (mínimo 4.5)`);
+	}
+	surfaceChecked.push(`${matcher} → ${found} (${ratio.toFixed(1)}:1)`);
+}
+
 console.log(`\nReglas verificadas: ${checked.length}`);
+for (const line of surfaceChecked) console.log(`  · video: ${line}`);
 for (const line of checked) console.log(`  · ${line}`);
 if (failures.length) {
 	console.error(`\n✗ ${failures.length} combinaciones por debajo de 4.5:1:`);

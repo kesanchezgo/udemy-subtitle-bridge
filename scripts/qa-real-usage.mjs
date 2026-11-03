@@ -267,20 +267,23 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 		await page.waitForTimeout(1500);
 	}
 
-	// Medición en frío: limpiar la caché del panel (usb_cache_*) en el SW y en
-	// el localStorage de la página; si no, la generación reaparece cacheada.
+	// Medición en frío: limpiar caché e historial (usb_cache_* y usb_history_*)
+	// en el SW y en el localStorage de la página. Sin esto la generación
+	// reaparece restaurada del historial de la lección (2 s en vez de minutos).
 	const swNow = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	if (swNow) {
 		await swNow.evaluate(() => new Promise((res) => {
 			chrome.storage.local.get(null, (all) => {
-				const keys = Object.keys(all || {}).filter((k) => k.startsWith('usb_cache_'));
+				const keys = Object.keys(all || {}).filter((k) => k.startsWith('usb_cache_') || k.startsWith('usb_history_'));
 				if (!keys.length) { res(0); return; }
 				chrome.storage.local.remove(keys, () => res(keys.length));
 			});
-		})).then((n) => console.log(`  caché del panel limpiada (${n} claves)`)).catch(() => {});
+		})).then((n) => console.log(`  caché+historial limpiados (${n} claves)`)).catch(() => {});
 	}
 	await page.evaluate(() => {
-		Object.keys(localStorage).filter((k) => k.startsWith('usb_cache_')).forEach((k) => localStorage.removeItem(k));
+		Object.keys(localStorage)
+			.filter((k) => k.startsWith('usb_cache_') || k.startsWith('usb_history_'))
+			.forEach((k) => localStorage.removeItem(k));
 	});
 
 	// Reproducir el vídeo (cues)
@@ -319,7 +322,7 @@ if (!t0) { console.log('✗ CTA deshabilitado'); process.exit(1); }
 console.log('  generación iniciada…');
 
 // Resultado
-const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 300000);
+const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 600000);
 if (!/¿Qué tan claro/.test(txt)) {
 	await page.screenshot({ path: path.join(SHOTS, 'gen-fail.png') });
 	console.log('✗ generación sin resultado');
@@ -348,6 +351,13 @@ if (!await fillUntil('Escribe tu respuesta con tus propias palabras', 'javac pro
 	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
 	console.log('✗ textarea de pregunta no apareció');
 	process.exit(1);
+}
+if (process.env.QA_COLD_SW === '1') {
+	// El SW se suspende tras ~30 s de inactividad: esperar antes de evaluar
+	// reproduce el despertar real (persona pensando la respuesta) y valida que
+	// el allowlist espere a que la config esté cargada.
+	console.log('  esperando 35s para que el service worker se suspenda...');
+	await page.waitForTimeout(35000);
 }
 pageConsoleBuf.push('=== click Evaluar Q1 ===');
 await clickUntil(/^Evaluar$/, 10000);
@@ -396,10 +406,29 @@ for (let i = 0; i < 12 && !ok; i++) {
 		if (await click(/Continuar a Aplicar/)) { ok = true; break; }
 		break;
 	}
-	// Última verificación antes del click: la cola pudo completarse con el
-	// veredicto que acabó de asentarse.
-	const justBefore = await shadow();
-	if (/Continuar a Aplicar/.test(justBefore)) {
+	// Esperar el botón correcto tras el veredicto. "Continuar a Aplicar" es
+	// texto único; para "Siguiente" hay que distinguir el del card del paginador
+	// de pasos (que al completarse el paso también queda habilitado): si hay
+	// DOS habilitados, el último en el DOM es el del card. Con uno solo se
+	// espera 3 s más y se re-verifica Continuar antes de arriesgar el click.
+	const dPost = Date.now() + 20000;
+	let action = '';
+	while (Date.now() < dPost && !action) {
+		const now = await shadow();
+		if (/Continuar a Aplicar/.test(now)) { action = 'continuar'; break; }
+		const nNext = await page.evaluate(() => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			return [...root.querySelectorAll('button')].filter((b) => (b.textContent ?? '').trim() === 'Siguiente' && !b.disabled).length;
+		});
+		if (nNext >= 2 || (nNext === 1 && Date.now() > dPost - 17000)) { action = 'next'; break; }
+		await page.waitForTimeout(600);
+	}
+	if (!action) {
+		// último intento antes de rendirse
+		if (/Continuar a Aplicar/.test(await shadow())) action = 'continuar';
+		else break;
+	}
+	if (action === 'continuar') {
 		if (await click(/Continuar a Aplicar/)) { ok = true; break; }
 		break;
 	}
@@ -418,7 +447,10 @@ if (!ok) {
 	process.exit(1);
 }
 
-const tComprobar = Date.now() - t0;
+// Duración real del paso Comprobar: descontar la generación (tGen es una
+// duración; antes se imprimía la marca acumulada desde el CTA y se leía como
+// si Comprobar tardase 2-3 min).
+const tComprobar = Date.now() - (t0 + tGen);
 
 // ── Aplicar según el flujo ──
 let tAplicar = 0;

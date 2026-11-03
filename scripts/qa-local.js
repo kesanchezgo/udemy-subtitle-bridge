@@ -1,7 +1,9 @@
-const { spawn, spawnSync } = require('child_process');
-const path = require('path');
-const { chromium } = require('playwright');
+import { spawn, spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const previewPort = 4173;
 const previewUrl = `http://127.0.0.1:${previewPort}`;
@@ -106,29 +108,25 @@ async function clickIfVisible(locator) {
 }
 
 async function activateGuestMode(page) {
-  await ensureVisible(page.getByText('Subtitle Bridge', { exact: true }).first(), 'Auth title not found');
-  await ensureVisible(page.getByRole('button', { name: 'Iniciar sesión' }).first(), 'Login tab/button not found');
-  await page.getByRole('button', { name: 'Crear cuenta' }).first().click();
-  await ensureVisible(page.getByRole('button', { name: 'Crear cuenta gratis' }), 'Signup submit button not found');
-  await page.getByRole('button', { name: 'Iniciar sesión' }).first().click();
-  await ensureVisible(page.getByRole('button', { name: 'Continuar sin cuenta' }), 'Guest entry button not found');
-  await page.getByRole('button', { name: 'Continuar sin cuenta' }).click();
+  await ensureVisible(page.getByText('Kinema', { exact: true }).first(), 'Auth title not found');
+  // La entrada invitado es una tarjeta-botón; las pestañas son role="tab", así
+  // que se pulsa directamente el CTA (es lo que hace un usuario real).
+  const guest = page.getByRole('button', { name: /Continuar sin cuenta/ }).first();
+  await ensureVisible(guest, 'Guest entry button not found');
+  await guest.click();
 }
 
 async function activateDevMode(page) {
-  const gearButton = page.getByTitle('Triple-click para activar Dev mode');
-  await ensureVisible(gearButton, 'Dev mode gear button not found');
-  await gearButton.evaluate((element) => {
-    for (let index = 0; index < 3; index += 1) {
-      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-    }
-  });
-  await page.getByRole('button', { name: 'Dev', exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+  // El engranaje activa Dev con triple clic despachando `usb:toggle-dev`; el
+  // botón no lleva title/aria-label, así que se usa el mismo evento que él
+  // emite (contrato interno que el harness ya usa con settings).
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:toggle-dev')));
+  await page.getByRole('tab', { name: 'Dev', exact: true }).waitFor({ state: 'visible', timeout: 5000 });
 }
 
 async function testDockChrome(page) {
-  await ensureVisible(page.getByText('Subtitle Bridge', { exact: true }).first(), 'Dock header title not found');
-  await ensureVisible(page.getByText('EN → ES Subtitles', { exact: true }), 'Dock header subtitle not found');
+  await ensureVisible(page.getByText('Kinema', { exact: true }).first(), 'Dock header title not found');
+  await ensureVisible(page.getByText('by Kivara', { exact: true }), 'Dock header subtitle not found');
 
   const resizeHandle = page.getByTitle('Arrastrar para redimensionar');
   await ensureVisible(resizeHandle, 'Resize handle not found');
@@ -143,15 +141,15 @@ async function testDockChrome(page) {
   const collapseButton = page.getByTitle('Colapsar dock');
   await ensureVisible(collapseButton, 'Collapse button not found');
   await collapseButton.click();
-  await ensureVisible(page.getByTitle('Expandir Subtitle Bridge'), 'Collapsed dock expand control not found');
-  await page.getByTitle('Expandir Subtitle Bridge').click();
-  await ensureVisible(page.getByRole('button', { name: 'Study', exact: true }), 'Dock did not expand back to tabs');
+  await ensureVisible(page.getByTitle('Expandir Kinema'), 'Collapsed dock expand control not found');
+  await page.getByTitle('Expandir Kinema').click();
+  await ensureVisible(page.getByRole('tab', { name: 'Study', exact: true }), 'Dock did not expand back to tabs');
 }
 
 async function testStudy(page) {
-  await page.getByRole('button', { name: 'Study', exact: true }).click();
-  await ensureVisible(page.getByText('Tutor IA · Study Agent', { exact: true }), 'Study hero not found');
-  await ensureVisible(page.getByText('¿PARA QUÉ ESTUDIAS ESTO?'), 'Study objective label not found');
+  await page.getByRole('tab', { name: 'Study', exact: true }).click();
+  await ensureVisible(page.getByText('Aprende y domina cada clase', { exact: true }), 'Study hero not found');
+  await ensureVisible(page.getByText('¿Para qué estudias esto?'), 'Study objective label not found');
   // Default course is "Java In-Depth - Udemy", which maps to the generic
   // objective set (no spring/react/aws keyword match).
   await ensureVisible(page.getByText('Entender a fondo', { exact: true }), 'Study objective card not found');
@@ -160,7 +158,7 @@ async function testStudy(page) {
 }
 
 async function testCaptions(page) {
-  await page.getByRole('button', { name: 'Captions', exact: true }).click();
+  await page.getByRole('tab', { name: 'Captions', exact: true }).click();
   await ensureVisible(page.getByText('Estado en vivo', { exact: true }), 'Captions live status not found');
   await ensureVisible(page.getByText('Auto EN → ES', { exact: true }), 'Captions auto translate card not found');
   await ensureVisible(page.getByText('Pipeline SRT · EN → ES', { exact: true }), 'Captions pipeline header not found');
@@ -168,32 +166,74 @@ async function testCaptions(page) {
 }
 
 async function testOverlay(page) {
-  await page.getByRole('button', { name: 'Overlay', exact: true }).click();
-  await ensureVisible(page.getByText('Preview', { exact: true }).first(), 'Overlay preview not found');
+  await page.getByRole('tab', { name: 'Overlay', exact: true }).click();
+  await ensureVisible(page.getByText(/Vista previa|En pausa/).first(), 'Overlay preview not found');
   await ensureVisible(page.getByText('Overlay activo', { exact: true }), 'Overlay master switch label not found');
   await page.getByRole('button', { name: 'Centro', exact: true }).click();
   await ensureVisible(page.getByText('Posición libre', { exact: true }), 'Overlay free position card not found');
   await clickIfVisible(page.getByRole('button', { name: 'Resetear', exact: true }));
 }
 
+// La IA sin extensión (vista previa / vite dev) debe caer en la cadena de
+// respaldo y devolver mock; si un fetch delegado lanza "sin runtime", la
+// cadena no reconoce el error de conexión y Comprobar y los subtítulos
+// traducidos se rompen (regresión de v1.5.5, corregida en v1.5.6).
+async function testLocalAIPreview(page) {
+  const result = await page.evaluate(async () => {
+    const ai = await import('/src/app/services/localAI.ts');
+    const plain = await ai.evaluateActiveAnswer(
+      '¿Qué produce javac?',
+      'Bytecode en .class',
+      'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.',
+      'recordar',
+    );
+    let streamedChars = 0;
+    const stream = await ai.evaluateActiveAnswerStream(
+      '¿Qué produce javac?',
+      'Bytecode en .class',
+      'produce bytecode portable',
+      'recordar',
+      (_token, accumulated) => { streamedChars = accumulated.length; },
+    );
+    const translation = await ai.translateLine('So in this lecture we create a new class from scratch.');
+    return {
+      plain: { success: plain.success, isMock: Boolean(plain.isMock), error: String(plain.error || '') },
+      stream: { success: stream.success, isMock: Boolean(stream.isMock), chars: String(stream.content || '').length, streamedChars },
+      translation: { success: translation.success, isMock: Boolean(translation.isMock), content: String(translation.content || '').slice(0, 80), error: String(translation.error || '') },
+    };
+  });
+
+  if (!result.plain.success || !result.plain.isMock) {
+    throw new Error(`evaluateActiveAnswer sin extensión no llegó al mock: ${JSON.stringify(result.plain)}`);
+  }
+  if (!result.stream.success || (!result.stream.isMock && result.stream.chars === 0)) {
+    throw new Error(`evaluateActiveAnswerStream sin extensión no llegó al mock: ${JSON.stringify(result.stream)}`);
+  }
+  if (!result.translation.success || (!result.translation.isMock && !result.translation.content)) {
+    throw new Error(`translateLine sin extensión no llegó al mock: ${JSON.stringify(result.translation)}`);
+  }
+
+  console.log('  ✓ IA sin extensión: evaluación, streaming y traducción usan el mock');
+}
+
 async function testDev(page) {
   await activateDevMode(page);
-  await page.getByRole('button', { name: 'Dev', exact: true }).click();
+  await page.getByRole('tab', { name: 'Dev', exact: true }).click();
   await ensureVisible(page.getByText('Dev · Debug Panel', { exact: true }), 'Dev debug panel not found');
-  await ensureVisible(page.getByRole('button', { name: /SSE Log/ }), 'Dev SSE tab not found');
-  await ensureVisible(page.getByRole('button', { name: /Cache/ }), 'Dev cache tab not found');
+  await ensureVisible(page.getByRole('tab', { name: /SSE Log/ }), 'Dev SSE tab not found');
+  await ensureVisible(page.getByRole('tab', { name: /Cache/ }), 'Dev cache tab not found');
 }
 
 async function restoreFinalView(page) {
   if (finalView === 'captions') {
-    await page.getByRole('button', { name: 'Captions', exact: true }).click();
+    await page.getByRole('tab', { name: 'Captions', exact: true }).click();
   } else if (finalView === 'overlay') {
-    await page.getByRole('button', { name: 'Overlay', exact: true }).click();
+    await page.getByRole('tab', { name: 'Overlay', exact: true }).click();
   } else if (finalView === 'dev') {
     await activateDevMode(page);
-    await page.getByRole('button', { name: 'Dev', exact: true }).click();
+    await page.getByRole('tab', { name: 'Dev', exact: true }).click();
   } else {
-    await page.getByRole('button', { name: 'Study', exact: true }).click();
+    await page.getByRole('tab', { name: 'Study', exact: true }).click();
   }
 }
 
@@ -219,6 +259,7 @@ async function main() {
     await activateGuestMode(page);
     await testDockChrome(page);
     await testStudy(page);
+    await testLocalAIPreview(page);
     await testCaptions(page);
     await testOverlay(page);
     await testDev(page);

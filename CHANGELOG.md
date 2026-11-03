@@ -1,3 +1,11 @@
+## [1.5.6] — 2026-11-03
+
+- **Vista previa sin extensión reparada** (regresión de 1.5.5): `proxyChat` y `streamProviderViaPort` delegaban siempre en el service worker y sin extensión lanzaban «sin runtime», un error que la cadena de respaldo no reconoce como fallo de conexión — Comprobar y los subtítulos traducidos caían. Ahora, sin runtime de extensión, ambos vuelven al fetch directo (la evaluación, su versión en streaming y `translateLine` llegan al mock). `qa:local` cubre las tres rutas.
+- **Carrera del allowlist al despertar el SW**: al reanudarse tras ~30 s de inactividad la config aún no estaba cargada y el relay rechazaba el proveedor real (solo permitía 8010). La promesa de `initAiProviderConfig()` se guarda al arrancar y ambos handlers la esperan antes de validar la URL. Verificado con `QA_COLD_SW=1` (35 s de suspensión antes de evaluar).
+- **Contraste del monitor de video en claro**: `text-white` exacto y los ámbar del chip de vocabulario sobre `.usb-video-surface` (la única superficie oscura dentro del dock claro) con tonos legibles (18.3:1 y 12.7:1); `qa-contrast-sepia` los mide y falla si desaparecen.
+- **Reintentos de generación**: la escalera pasa de 8192 → 16384 sin razonamiento (se elimina el peldaño intermedio con razonamiento, el más lento y el que menos desatasca); la espera de la prueba admite generaciones largas (600 s).
+- **QA**: `qa-local` portado a ESM y actualizado a la marca actual (Kinema) con 6 bloques; los tiempos por paso del informe ya no mezclan la generación con Comprobar.
+
 ## [1.5.5] — 2026-11-03
 
 - **Streaming IA por el SW**: `streamConfiguredProvider` usaba `fetch` directo desde el content script, que Chromium bloquea por Private Network Access en páginas https; la evaluación quedaba colgada sin error. Ahora va por un Port del runtime (`USG_PROXY_STREAM`). La generación y la evaluación no-streaming ya usaban `USG_PROXY_CHAT`; la IA local integrada (8010) también pasa por el relay en vez de fetchear desde la página.

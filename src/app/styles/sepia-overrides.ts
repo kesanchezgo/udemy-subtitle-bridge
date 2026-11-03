@@ -1329,6 +1329,8 @@ ${[
 .usb-dock.dock-sepia .usb-video-surface [class*="text-emerald-"] { color: #6ee7b7 !important; }
 .usb-dock.dock-sepia .usb-video-surface [class*="text-violet-"]  { color: #c4b5fd !important; }
 .usb-dock.dock-sepia .usb-video-surface [class*="text-white/"]   { color: rgba(255,255,255,0.78) !important; }
+.usb-dock.dock-sepia .usb-video-surface [class~="text-white"]    { color: #ffffff !important; }
+.usb-dock.dock-sepia .usb-video-surface [class*="text-amber-"]   { color: #fcd34d !important; }
 .usb-dock.dock-sepia .usb-video-surface { color: rgba(255,255,255,0.92); }
 
 /* Oscuro: estados con luminosidad suficiente */
