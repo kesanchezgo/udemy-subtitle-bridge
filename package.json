@@ -7,6 +7,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "qa:local": "npm run build && node scripts/qa-local.js",
     "qa:extension": "npm run build && node scripts/qa-extension-local.mjs",
+    "qa:observer": "node scripts/qa-observer-timeline.mjs",
     "qa:anki:structure": "node scripts/qa-anki-decks.mjs",
     "qa:anki:import": "node scripts/qa-anki-import-verify.mjs",
     "qa:anki:all": "node scripts/qa-anki-all.mjs",

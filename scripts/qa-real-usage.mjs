@@ -2,6 +2,7 @@
 // Mismo mecanismo que qa-full-flows clone: mock IA en 8123, provider seed
 // por SW, transcripción del vídeo real.
 import { chromium } from 'playwright';
+import { createObserverTimeline } from './observer-timeline.mjs';
 import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -555,59 +556,57 @@ if (process.env.QA_HUMAN_OBSERVE === '1') {
 	console.log(`  vídeo adelantado a ${Math.round(seeked.from)}s de ${Math.round(seeked.duration)}s; el resto lo hace una persona`);
 	console.log('  observando (sin intervenir)…');
 
-	const marks = [];
-	const aiWaits = {};
+	// Medición en un módulo aparte (scripts/observer-timeline.mjs), validado con
+	// reloj virtual en scripts/qa-observer-timeline.mjs: cada fila mide desde su
+	// marca hasta la siguiente y las esperas de IA se acumulan por muestreo.
+	const timeline = createObserverTimeline();
 	const t0obs = Date.now();
-	let step = 'Recordar';
-	let stepAt = t0obs;
-	let genStart = 0;
-	let evalStart = 0;
-	let firstResult = 0;
+	let started = false;
+	let genAt = 0;
+	let genCounted = false;
 	let done = false;
 	const maxMs = Number(process.env.QA_OBSERVE_MAX ?? 1800) * 1000;
 	const seen = new Set();
-	const pushMark = (name, at) => {
-		marks.push({ name, at });
-		console.log(`  ${name} @ ${Math.round((at - t0obs) / 1000)}s`);
-	};
+	// Indicador de carga de EVALUACIÓN. Ojo: la pantalla de generación pinta
+	// «Analizando la transcripción...», que NO es una evaluación — si se cuela,
+	// el cronómetro de IA arranca durante la generación y lo suma todo.
+	const EVAL_LOADING = /Analizando\.\.\.|Generando feedback personalizado/;
 	while (Date.now() - t0obs < maxMs) {
 		const txt = await shadow();
+		const now = Date.now();
 		const has = (re) => re.test(txt);
-		if (!genStart && has(/Preparando tu sesión/)) { genStart = Date.now(); console.log(`  generación visible @ ${Math.round((genStart - t0obs) / 1000)}s`); }
-		if (genStart && !firstResult && has(/¿Qué tan claro te quedó el video\??/)) {
-			firstResult = Date.now();
-			const waitMs = firstResult - genStart;
-			aiWaits[step] = (aiWaits[step] ?? 0) + waitMs;
-			console.log(`  resultado listo: la persona esperó ${Math.round(waitMs / 1000)}s tras pulsar Empezar`);
+		if (!started && has(/Preparando tu sesión/)) {
+			started = true;
+			genAt = now;
+			timeline.enter('Recordar', now); // el origen es Empezar
+			console.log(`  Empezar detectado @ ${Math.round((now - t0obs) / 1000)}s`);
 		}
-		// Pasos
-		if (has(/Ponte a prueba/) && !seen.has('Comprobar')) { seen.add('Comprobar'); pushMark('Comprobar', Date.now()); aiWaits[step] = aiWaits[step] ?? 0; step = 'Comprobar'; stepAt = Date.now(); }
-		if (has(/Llévalo a la práctica/) && !seen.has('Aplicar')) { seen.add('Aplicar'); pushMark('Aplicar', Date.now()); step = 'Aplicar'; stepAt = Date.now(); }
-		if (has(/Terminar lección|Fíjalo en memoria/) && !seen.has('Fijar')) { seen.add('Fijar'); pushMark('Fijar', Date.now()); step = 'Fijar'; stepAt = Date.now(); }
-		// Esperas de IA: de «Analizando» al veredicto
-		if (!evalStart && has(/Analizando/)) evalStart = Date.now();
-		if (evalStart && has(/\[CORRECTO\]|\[PARCIAL\]|\[INCORRECTO\]|DIAGNOSTICO:|BIEN:/)) {
-			aiWaits[step] = (aiWaits[step] ?? 0) + (Date.now() - evalStart);
-			evalStart = 0;
+		if (started) {
+			if (!genCounted && has(/¿Qué tan claro te quedó el video\??/)) {
+				genCounted = true;
+				timeline.addAi(now - genAt, now); // la generación es espera de IA de Recordar
+				console.log(`  resultado listo: la persona esperó ${Math.round((now - genAt) / 1000)}s tras Empezar`);
+			}
+			if (has(/Ponte a prueba/) && !seen.has('Comprobar')) { seen.add('Comprobar'); timeline.enter('Comprobar', now); console.log(`  paso Comprobar @ ${Math.round((now - t0obs) / 1000)}s`); }
+			if (has(/Llévalo a la práctica/) && !seen.has('Aplicar')) { seen.add('Aplicar'); timeline.enter('Aplicar', now); console.log(`  paso Aplicar @ ${Math.round((now - t0obs) / 1000)}s`); }
+			if (has(/Terminar lección|Fíjalo en memoria/) && !seen.has('Fijar')) { seen.add('Fijar'); timeline.enter('Fijar', now); console.log(`  paso Fijar @ ${Math.round((now - t0obs) / 1000)}s`); }
+			timeline.evalLoading(EVAL_LOADING.test(txt), now);
 		}
-		if (has(/Lección terminada/)) { done = true; break; }
-		await page.waitForTimeout(1500);
+		if (started && has(/Lección terminada/)) { timeline.finish(now); done = true; break; }
+		await page.waitForTimeout(1200);
 	}
+	if (started && !done) timeline.finish(Date.now());
 	const consumedPre = pageConsoleBuf.some((l) => /mazo pre-generado consumido/.test(l));
 	const swObs = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	const stats = swObs ? await swObs.evaluate(() => new Promise((res) => {
 		chrome.storage.local.get(['usg_study_generation_stats'], (r) => res(r?.usg_study_generation_stats ?? null));
 	})).catch(() => null) : null;
+	const { rows, total } = timeline.summary();
 	console.log('\n── TIEMPO POR PASO (persona real, observado) ──');
-	if (firstResult && genStart) console.log(`  espera tras Empezar (generación): ${Math.round((firstResult - genStart) / 1000)}s`);
-	let prev = genStart || t0obs;
-	for (const mk of marks) {
-		const total = mk.at - prev;
-		const ai = aiWaits[mk.name] ?? 0;
-		console.log(`  ${mk.name.padEnd(10)} total ${String(Math.round(total / 1000)).padStart(4)}s   espera IA ${String(Math.round(ai / 1000)).padStart(4)}s   humano ${String(Math.round((total - ai) / 1000)).padStart(4)}s`);
-		prev = mk.at;
+	for (const r of rows) {
+		console.log(`  ${r.name.padEnd(10)} total ${String(Math.round(r.total / 1000)).padStart(4)}s   espera IA ${String(Math.round(r.ai / 1000)).padStart(4)}s   humano ${String(Math.round(r.human / 1000)).padStart(4)}s`);
 	}
-	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round((Date.now() - t0obs) / 1000)}s observados`);
+	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round(total / 1000)}s desde Empezar (el vídeo previo no cuenta)`);
 	console.log(`  terminó la lección: ${done ? 'sí' : 'no (margen agotado)'} · mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'} · escalones: ${JSON.stringify(stats)}`);
 	clearTimeout(watchdog);
 	await context.close();
