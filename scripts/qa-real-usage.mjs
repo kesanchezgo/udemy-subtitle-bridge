@@ -265,19 +265,29 @@ const fillUntil = async (ph, val, ms) => {
 // escritura; sirve para saber si los 4/12 minutos son plausibles antes de que
 // alguien invierta la sesion real.
 const HUMAN_PACE = process.env.QA_PACE === 'human';
-const dwellRange = async (min, max) => {
+// Parametros EXPLICITOS de la simulacion (no son una medicion de persona):
+// lectura 220 ppm, tecleo 40 ppm (~3.3 car/s). Se imprimen en el informe para
+// que nadie lea la columna 'humano' como un dato real.
+const READ_WPM = 220;
+const TYPE_WPM = 40;
+const readMs = (words) => Math.round((words / READ_WPM) * 60000 * (0.75 + Math.random() * 0.5));
+const typeMs = (chars) => Math.round((chars / 5 / TYPE_WPM) * 60000);
+const dwellRead = async (words) => {
 	if (!HUMAN_PACE) return;
-	await page.waitForTimeout(Math.round(min + Math.random() * (max - min)));
+	await page.waitForTimeout(readMs(words));
 };
 const typePaced = async (ph, text) => {
 	if (!HUMAN_PACE) return fill(ph, text);
-	const words = String(text).split(' ');
-	let acc = '';
-	for (const w of words) {
-		acc = acc ? acc + ' ' + w : w;
-		await fill(ph, acc);
-		await page.waitForTimeout(70 + Math.round(Math.random() * 90));
+	// Tecleo a TYPE_WPM: se escribe por tramos de 3 caracteres.
+	const s = String(text);
+	const total = typeMs(s.length);
+	const chunks = Math.max(1, Math.ceil(s.length / 3));
+	const perChunk = Math.max(40, Math.round(total / chunks));
+	for (let i = 3; i <= s.length; i += 3) {
+		await fill(ph, s.slice(0, i));
+		await page.waitForTimeout(perChunk);
 	}
+	await fill(ph, s);
 	return true;
 };
 
@@ -706,7 +716,7 @@ addAiWait('Recordar', tGen); // la generacion es espera de IA del primer paso
 console.log(`  generación: ${Math.round(tGen / 1000)}s`);
 
 // Nivel
-await dwellRange(6000, 12000); // lee la pregunta de nivel
+await dwellRead(20); // lee la pregunta de nivel
 await click(/^Más o menos/);
 await page.waitForTimeout(600);
 
@@ -715,13 +725,13 @@ await click(/Ver los conceptos|Comparar con los conceptos/);
 await page.waitForTimeout(600);
 
 // Pregunta (paso Comprobar)
-await dwellRange(2500, 5000); // lee los conceptos
+await dwellRead(45); // revisa los conceptos
 markStep('Comprobar');
 await click(/Ponerme a prueba/);
 await page.waitForTimeout(1600);
 
 // Responder (la tarjeta de pregunta monta con animación: esperar el textarea)
-await dwellRange(12000, 22000); // lee la pregunta y piensa
+await dwellRead(35); // lee la pregunta y piensa
 if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.')) {
 	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
 	console.log('✗ textarea de pregunta no apareció');
@@ -813,7 +823,7 @@ for (let i = 0; i < 12 && !ok; i++) {
 	await page.waitForTimeout(1200);
 	tEvalWait = Date.now();
 	pageConsoleBuf.push(`=== click Evaluar Q${i + 2} ===`);
-	await dwellRange(6000, 12000);
+	await dwellRead(90); // lee el feedback de la IA
 if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.')) break;
 	await clickUntil(/^Evaluar$/, 10000);
 }
@@ -841,7 +851,7 @@ let tAplicar = 0;
 if (QA_FLOW === 'full') {
 	// COMPLETO: resolver el desafío y pasarlo por la revisión de la IA.
 	const tA = Date.now();
-	await dwellRange(15000, 30000); // lee el desafio
+	await dwellRead(45); // lee el desafio
 	const filled = await fillUntil('// Tu solución aquí…', 'javac App.java && java App', 8000)
 		|| await fillUntil('Tu respuesta aquí…', 'Compila con javac y ejecuta el .class en otro SO con la JVM.', 8000);
 	if (!filled) {
@@ -854,10 +864,24 @@ if (QA_FLOW === 'full') {
 		console.log('✗ botón Revisar con IA no apareció');
 		process.exit(1);
 	}
+	// Muestreo del indicador de carga de evaluacion (igual que el observador):
+	// un veredicto anterior en pantalla no debe cerrar la medicion.
 	const tReview = Date.now();
-	const review = await waitFor(/DIAGNOSTICO:|BIEN:/, 240000);
+	let reviewSeen = false;
+	const dReview = Date.now() + 240000;
+	while (Date.now() < dReview && !reviewSeen) {
+		const txt = await shadow();
+		if (EVAL_LOADING.test(txt)) {
+			const tOn = Date.now();
+			while (Date.now() - tOn < 240000 && EVAL_LOADING.test(await shadow())) { await page.waitForTimeout(600); }
+			await page.waitForTimeout(400);
+			continue;
+		}
+		if (/\[CORRECTO\]|\[PARCIAL\]|\[INCORRECTO\]|MEJORAR:|SIGUIENTE NIVEL/.test(txt)) reviewSeen = true;
+		await page.waitForTimeout(700);
+	}
 	addAiWait('Aplicar', Date.now() - tReview);
-	if (!/DIAGNOSTICO:|BIEN:/.test(review)) {
+	if (!reviewSeen) {
 		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
 		console.log('✗ revisión de Aplicar sin veredicto');
 		console.log('  consola reciente:');
@@ -865,6 +889,17 @@ if (QA_FLOW === 'full') {
 		process.exit(1);
 	}
 	await clickUntil(/Fíjalo en memoria|Continuar de todas formas/, 15000);
+	// Fijar: revisar las tarjetas y EXPORTAR el .apkg. El mazo es la prioridad
+	// del producto, asi que el flujo completo lo incluye (antes se pulsaba
+	// 'Terminar leccion' sin exportar nada).
+	await dwellRead(40); // revisa las tarjetas
+	const [apkg] = await Promise.all([
+		page.waitForEvent('download', { timeout: 90000 }).catch(() => null),
+		clickUntil(/Exportar \.apkg/, 25000),
+	]);
+	if (apkg) console.log(`  .apkg exportado: ${apkg.suggestedFilename()}`);
+	else console.log('  (aviso: no se detecto la descarga del .apkg)');
+	await dwellRead(15); // lee el aviso de importacion si aparece
 	await clickUntil(/Terminar lección/, 20000);
 	tAplicar = Date.now() - tA;
 } else {
