@@ -9,7 +9,8 @@
 //   Fijar      30 s (IA 0)
 //   TOTAL     410 s desde Empezar (el vídeo previo no cuenta)
 
-import { createObserverTimeline } from './observer-timeline.mjs';
+import { readFileSync } from 'node:fs';
+import { createObserverTimeline, EVAL_LOADING } from './observer-timeline.mjs';
 
 let fails = 0;
 const check = (name, ok, detail) => {
@@ -87,6 +88,33 @@ C.enter('Recordar', 0);
 C.evalLoading(true, 10_000);
 C.finish(40_000);                 // cierra con el indicador visible
 check('fin con indicador visible cierra la medición', C.summary().rows[0]?.ai === 30_000, `medido ${C.summary().rows[0]?.ai}`);
+
+// ── Detección de los textos REALES de la app ──────────────────────────────────
+// No basta con probar la aritmética con true/false decididos: si un texto de la
+// interfaz cambia, las esperas se irían a cero sin avisar. Se leen los literales
+// de StudyAgentTab.tsx y se comprueba cuáles coinciden con el patrón.
+const UI_SOURCE = 'src/app/components/StudyAgentTab.tsx';
+const source = readFileSync(UI_SOURCE, 'utf8');
+const ELLIPSIS = '\u2026';
+
+const EVAL_TEXTS = [
+  `Analizando${ELLIPSIS}`,                        // botón, evaluación cargando
+  `Leyendo tu respuesta${ELLIPSIS}`,              // cargador 0 - 1.6 s
+  `Comparando con los conceptos${ELLIPSIS}`,      // cargador 1.6 - 3.2 s
+  `Generando feedback personalizado${ELLIPSIS}`,  // cargador desde 3.2 s
+  'Analizando tu respuesta',                       // streaming antes del primer texto
+];
+const GENERATION_TEXT = `Analizando la transcripci${'\u00f3'}n${ELLIPSIS}`;
+
+console.log('\nDetección contra los textos reales de la app:');
+for (const text of EVAL_TEXTS) {
+  const inSource = source.includes(text);
+  check(`«${text}» existe en la app`, inSource, 'el texto cambió: actualiza el patrón');
+  check(`«${text}» cuenta como espera de IA`, EVAL_LOADING.test(text), 'no lo detecta');
+}
+const genInSource = source.includes(GENERATION_TEXT);
+check(`«${GENERATION_TEXT}» existe en la app (pantalla de generación)`, genInSource, 'el texto cambió');
+check(`«${GENERATION_TEXT}» NO cuenta como espera de evaluación`, !EVAL_LOADING.test(GENERATION_TEXT), 'lo detecta por error');
 
 console.log(fails === 0 ? '\n✅ OBSERVADOR OK (medición validada con reloj virtual)' : `\n❌ ${fails} fallos`);
 process.exit(fails === 0 ? 0 : 1);

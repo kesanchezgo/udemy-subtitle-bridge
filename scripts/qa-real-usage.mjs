@@ -2,7 +2,7 @@
 // Mismo mecanismo que qa-full-flows clone: mock IA en 8123, provider seed
 // por SW, transcripción del vídeo real.
 import { chromium } from 'playwright';
-import { createObserverTimeline } from './observer-timeline.mjs';
+import { createObserverTimeline, EVAL_LOADING } from './observer-timeline.mjs';
 import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -570,7 +570,6 @@ if (process.env.QA_HUMAN_OBSERVE === '1') {
 	// Indicador de carga de EVALUACIÓN. Ojo: la pantalla de generación pinta
 	// «Analizando la transcripción...», que NO es una evaluación — si se cuela,
 	// el cronómetro de IA arranca durante la generación y lo suma todo.
-	const EVAL_LOADING = /Analizando\.\.\.|Generando feedback personalizado/;
 	while (Date.now() - t0obs < maxMs) {
 		const txt = await shadow();
 		const now = Date.now();

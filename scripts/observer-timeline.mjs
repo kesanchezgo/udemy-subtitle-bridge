@@ -10,6 +10,14 @@
 // varios estados a la vez no arranca el cronómetro, y un veredicto viejo que
 // siga en pantalla no lo cierra.
 
+// Indicadores de carga de EVALUACIÓN (no de generación). La app escribe
+// «Analizando…» con puntos suspensivos tipográficos (U+2026), y el panel de
+// carga pasa por «Leyendo tu respuesta…» → «Comparando con los conceptos…» →
+// «Generando feedback personalizado…». «Analizando la transcripción…» es la
+// pantalla de generación y NO debe contar como espera de evaluación.
+// (QA la valida contra los textos reales de StudyAgentTab.tsx.)
+export const EVAL_LOADING = /Analizando(\u2026|\.\.\.| tu respuesta)|Leyendo tu respuesta|Comparando con los conceptos|Generando feedback personalizado/;
+
 export function createObserverTimeline() {
   let startedAt = null;
   let current = null;
