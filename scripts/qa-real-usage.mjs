@@ -84,6 +84,7 @@ if (!REAL_PROXY) {
 
 // ── Navegador + cookies + seed ──
 const pageConsoleBuf = [];
+const preGenEvents = [];
 function page_console_attach(ctx) {
 	for (const pg of ctx.pages()) attach(pg);
 	ctx.on('page', attach);
@@ -97,6 +98,11 @@ function page_console_attach(ctx) {
 	function push(s) {
 		pageConsoleBuf.push(s);
 		if (pageConsoleBuf.length > 300) pageConsoleBuf.shift();
+		// Hitos de la pre-generacion con hora: permiten decir si el mazo estaba
+		// listo ANTES de pulsar Empezar (el modo de observacion no lo sabia).
+		if (/pre-generaci[oó]n lista|mazo pre-generado consumido/.test(s)) {
+			preGenEvents.push({ text: s.slice(0, 90), at: Date.now() });
+		}
 	}
 }
 
@@ -631,6 +637,7 @@ if (process.env.QA_HUMAN_OBSERVE === '1') {
 	const t0obs = Date.now();
 	let started = false;
 	let genAt = 0;
+	let firstResultAt = 0;
 	let genCounted = false;
 	let done = false;
 	const maxMs = Number(process.env.QA_OBSERVE_MAX ?? 1800) * 1000;
@@ -651,6 +658,7 @@ if (process.env.QA_HUMAN_OBSERVE === '1') {
 		if (started) {
 			if (!genCounted && has(/¿Qué tan claro te quedó el video\??/)) {
 				genCounted = true;
+				firstResultAt = now;
 				timeline.addAi(now - genAt, now); // la generación es espera de IA de Recordar
 				console.log(`  resultado listo: la persona esperó ${Math.round((now - genAt) / 1000)}s tras Empezar`);
 			}
@@ -674,6 +682,17 @@ if (process.env.QA_HUMAN_OBSERVE === '1') {
 		console.log(`  ${r.name.padEnd(10)} total ${String(Math.round(r.total / 1000)).padStart(4)}s   espera IA ${String(Math.round(r.ai / 1000)).padStart(4)}s   humano ${String(Math.round(r.human / 1000)).padStart(4)}s`);
 	}
 	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round(total / 1000)}s desde Empezar (el vídeo previo no cuenta)`);
+	console.log(firstResultAt
+		? `  espera tras pulsar Empezar: ${Math.round((firstResultAt - genAt) / 1000)}s`
+		: '  espera tras pulsar Empezar: n/d (no se pulsó Empezar)');
+	// Momento en que la consola registró «pre-generación lista», relativo a Empezar.
+	const readyEvent = preGenEvents.find((e) => /pre-generaci[oó]n lista/.test(e.text));
+	if (started && readyEvent) {
+		const rel = Math.round((readyEvent.at - genAt) / 1000);
+		console.log(`  pre-generación lista: ${rel >= 0 ? rel + 's después de Empezar' : Math.abs(rel) + 's ANTES de Empezar'}`);
+	} else if (started) {
+		console.log('  pre-generación lista: no se registró (el mazo salió de la ruta normal)');
+	}
 	console.log(`  terminó la lección: ${done ? 'sí' : 'no (margen agotado)'} · mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'} · escalones: ${JSON.stringify(stats)}`);
 	clearTimeout(watchdog);
 	await context.close();
