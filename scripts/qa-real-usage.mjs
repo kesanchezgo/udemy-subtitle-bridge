@@ -260,6 +260,27 @@ const fillUntil = async (ph, val, ms) => {
 	return false;
 };
 // reducir, no ocultar.
+// QA_PACE=human: ritmo de persona (leer y teclear), no de script. Las esperas
+// de IA se siguen midiendo aparte, asi que la columna 'humano' es lectura +
+// escritura; sirve para saber si los 4/12 minutos son plausibles antes de que
+// alguien invierta la sesion real.
+const HUMAN_PACE = process.env.QA_PACE === 'human';
+const dwellRange = async (min, max) => {
+	if (!HUMAN_PACE) return;
+	await page.waitForTimeout(Math.round(min + Math.random() * (max - min)));
+};
+const typePaced = async (ph, text) => {
+	if (!HUMAN_PACE) return fill(ph, text);
+	const words = String(text).split(' ');
+	let acc = '';
+	for (const w of words) {
+		acc = acc ? acc + ' ' + w : w;
+		await fill(ph, acc);
+		await page.waitForTimeout(70 + Math.round(Math.random() * 90));
+	}
+	return true;
+};
+
 const stepClock = { startedAt: 0, marks: [], aiByStep: {} };
 const markStep = (name) => {
 	stepClock.marks.push({ name, at: Date.now() });
@@ -301,14 +322,19 @@ const lessonById = process.env.QA_LESSON_ID
 // QA_LESSON_SLOT=a|b: 1ª o 2ª candidata de 15 min. Los dos flujos de la sesión
 // humana tienen que ir en lecciones distintas (repetir la misma acelera la
 // segunda pasada porque ya se conocen las respuestas).
-const slotLesson = longCands[process.env.QA_LESSON_SLOT === 'b' ? 1 : 0] ?? longCands[0] ?? short;
+const slotIndex = process.env.QA_LESSON_SLOT === 'c' ? 2 : process.env.QA_LESSON_SLOT === 'b' ? 1 : 0;
+const slotLesson = longCands[slotIndex] ?? longCands[0] ?? short;
 const lesson = lessonById ?? (QA_LESSON === 'long' ? slotLesson : short);
 if (lessonById) console.log(`  lección fijada por QA_LESSON_ID: ${lessonById.seconds}s «${lessonById.title}»`);
 console.log(`  lección (${QA_LESSON}, ${lesson.seconds}s): «${lesson.title}» (id ${lesson.id})`);
 
 // Navegar a la lección + configurar el modelo una vez; para long se prueban
 // hasta 3 candidatas hasta que una suelte transcripción.
-const candidates = QA_LESSON === 'long' ? longCands : [lesson];
+// Empezar por la leccion del slot: si no, el bucle volveria a la primera
+// candidata e ignoraria QA_LESSON_SLOT.
+const candidates = QA_LESSON === 'long'
+	? [...longCands.slice(slotIndex), ...longCands.slice(0, slotIndex)]
+	: [lesson];
 let currentLesson = lesson;
 let trReady = false;
 for (let ci = 0; ci < candidates.length && !trReady; ci++) {
@@ -403,6 +429,21 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 	await page.waitForTimeout(20000);
 	await page.evaluate(() => { document.querySelector('video')?.pause(); });
 	console.log('  vídeo reproducido 20s');
+// QA_PACE=human: como una persona que ve el tramo final, el vídeo se adelanta
+// a los ultimos ~3 min — solo asi entra en la ventana de pre-generacion en una
+// leccion de 15 min (en una corta el tramo de 20 s ya basta).
+if (HUMAN_PACE) {
+	await page.evaluate(() => {
+		const v = document.querySelector('video');
+		if (v && Number.isFinite(v.duration) && v.duration > 260) {
+			v.currentTime = Math.max(0, v.duration - 200);
+			v.play().catch(() => {});
+		}
+	});
+	await page.waitForTimeout(35000);
+	await page.evaluate(() => { document.querySelector('video')?.pause(); });
+	console.log('  (ritmo humano: tramo final del video, ventana de pre-generacion abierta)');
+}
 
 	// Esperar transcripción lista (con reintentos ante 0 cues)
 	trReady = await waitForTranscript(3);
@@ -647,6 +688,7 @@ for (let i = 0; i < 90; i++) {
 }
 if (!t0) { console.log('✗ CTA deshabilitado'); process.exit(1); }
 stepClock.startedAt = t0;
+markStep('Recordar'); // Empezar: la generacion es espera de IA de Recordar
 console.log('  generación iniciada…');
 
 // Resultado
@@ -663,8 +705,8 @@ const tGen = Date.now() - t0;
 addAiWait('Recordar', tGen); // la generacion es espera de IA del primer paso
 console.log(`  generación: ${Math.round(tGen / 1000)}s`);
 
-// Nivel (paso Recordar)
-markStep('Recordar');
+// Nivel
+await dwellRange(6000, 12000); // lee la pregunta de nivel
 await click(/^Más o menos/);
 await page.waitForTimeout(600);
 
@@ -673,12 +715,14 @@ await click(/Ver los conceptos|Comparar con los conceptos/);
 await page.waitForTimeout(600);
 
 // Pregunta (paso Comprobar)
+await dwellRange(2500, 5000); // lee los conceptos
 markStep('Comprobar');
 await click(/Ponerme a prueba/);
 await page.waitForTimeout(1600);
 
 // Responder (la tarjeta de pregunta monta con animación: esperar el textarea)
-if (!await fillUntil('Escribe tu respuesta con tus propias palabras', 'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.', 20000)) {
+await dwellRange(12000, 22000); // lee la pregunta y piensa
+if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.')) {
 	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
 	console.log('✗ textarea de pregunta no apareció');
 	process.exit(1);
@@ -769,7 +813,8 @@ for (let i = 0; i < 12 && !ok; i++) {
 	await page.waitForTimeout(1200);
 	tEvalWait = Date.now();
 	pageConsoleBuf.push(`=== click Evaluar Q${i + 2} ===`);
-	if (!await fillUntil('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.', 20000)) break;
+	await dwellRange(6000, 12000);
+if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.')) break;
 	await clickUntil(/^Evaluar$/, 10000);
 }
 if (!ok) {
@@ -796,6 +841,7 @@ let tAplicar = 0;
 if (QA_FLOW === 'full') {
 	// COMPLETO: resolver el desafío y pasarlo por la revisión de la IA.
 	const tA = Date.now();
+	await dwellRange(15000, 30000); // lee el desafio
 	const filled = await fillUntil('// Tu solución aquí…', 'javac App.java && java App', 8000)
 		|| await fillUntil('Tu respuesta aquí…', 'Compila con javac y ejecuta el .class en otro SO con la JVM.', 8000);
 	if (!filled) {
@@ -851,12 +897,12 @@ if (process.env.QA_HUMAN_TIMING === '1' && stepClock.marks.length) {
 	})).catch(() => null) : null;
 	const consumedPre = pageConsoleBuf.some((l) => /mazo pre-generado consumido/.test(l));
 	console.log('\n-- TIEMPO POR PASO (sesion humana) --');
-	let prev = stepClock.startedAt;
-	for (const m of stepClock.marks) {
-		const total = m.at - prev;
+	for (let i = 0; i < stepClock.marks.length; i++) {
+		const m = stepClock.marks[i];
+		const nextAt = stepClock.marks[i + 1]?.at ?? Date.now();
+		const total = Math.max(0, nextAt - m.at);
 		const ai = stepClock.aiByStep[m.name] ?? 0;
 		console.log(`  ${m.name.padEnd(10)} total ${String(Math.round(total / 1000)).padStart(4)}s   espera IA ${String(Math.round(ai / 1000)).padStart(4)}s   humano ${String(Math.round((total - ai) / 1000)).padStart(4)}s`);
-		prev = m.at;
 	}
 	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round((Date.now() - stepClock.startedAt) / 1000)}s desde Empezar`);
 	console.log(`  mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'} · espera tras pulsar Empezar: ${Math.round(tGen / 1000)}s · escalones: ${JSON.stringify(stats)}`);
