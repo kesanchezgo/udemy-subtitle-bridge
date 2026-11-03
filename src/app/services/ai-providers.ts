@@ -538,6 +538,7 @@ export function buildOpenAiCompatibleBody(
   temperature: number,
   model: string,
   stream: boolean,
+  extra?: Record<string, unknown>,
 ): Record<string, unknown> {
   // max_tokens undefined se omite del body: los modelos de razonamiento
   // (p. ej. rutas gemini vía cline-free) pueden colgarse con topes bajísimos.
@@ -547,8 +548,23 @@ export function buildOpenAiCompatibleBody(
     temperature,
     ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     stream,
+    ...extra,
   };
 }
+
+/**
+ * Campos que piden desactivar el razonamiento a un modelo reasoning
+ * (deepseek-v4.1...). No hay un estándar único: `enable_thinking` es la
+ * convención Qwen, `thinking.type:'disabled'` la de GLM y `reasoning_effort`
+ * la de OpenAI. Los agregadores suelen honrar alguno y descartar el resto;
+ * los servidores estrictos que rechacen el body devuelven 400 y el llamador
+ * reintenta sin estos campos.
+ */
+export const REASONING_OFF_FIELDS: Record<string, unknown> = {
+  enable_thinking: false,
+  thinking: { type: 'disabled' },
+  reasoning_effort: 'none',
+};
 
 /**
  * Anthropic Messages API body. System messages are hoisted into the top-level

@@ -533,9 +533,11 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 .usb-dock.dock-sepia [class*="text-emerald-400"] { color: var(--usb-ok-text) !important; }
 .usb-dock.dock-sepia [class*="text-emerald-200"] { color: var(--usb-ok-text) !important; }
 .usb-dock.dock-sepia [class*="text-emerald-500"] { color: var(--usb-ok-text) !important; }
+.usb-dock.dock-sepia [class*="text-emerald-700"] { color: var(--usb-ok-text) !important; }
 .usb-dock.dock-sepia [class*="text-amber-300"],
 .usb-dock.dock-sepia [class*="text-amber-400"]  { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="text-amber-200"]  { color: var(--usb-warn-text) !important; }
+.usb-dock.dock-sepia [class*="text-amber-700"]  { color: var(--usb-warn-text) !important; }
 .usb-dock.dock-sepia [class*="text-sky-300"],
 .usb-dock.dock-sepia [class*="text-sky-400"],
 .usb-dock.dock-sepia [class*="text-sky-500"]    { color: var(--usb-info-text) !important; }

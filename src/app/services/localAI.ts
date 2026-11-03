@@ -11,6 +11,7 @@ import {
   extractProviderText,
   getAiProviderConfig,
   initAiProviderConfig,
+  REASONING_OFF_FIELDS,
   type OpenAiChatMessage,
 } from "./ai-providers";
 import {
@@ -295,23 +296,37 @@ async function callConfiguredProvider(
   messages: AIMessage[],
   maxTokens: number,
   temperature: number,
+  opts?: { reasoningOff?: boolean },
 ): Promise<AIResponse | null> {
   await initAiProviderConfig().catch(() => undefined);
   if (!canServeWithConfiguredProvider()) return null;
 
   const cfg = getAiProviderConfig();
   const chatMessages = providerToChatMessages(messages);
-  const body =
+  // reasoningOff: para traducción de subtítulos el razonamiento retrasa cada
+  // línea (medido: 6.4s con reasoning vs 1.8s sin) y desincroniza del vídeo.
+  const extra = opts?.reasoningOff && cfg.kind !== 'anthropic' ? REASONING_OFF_FIELDS : undefined;
+  const buildBody = () =>
     cfg.kind === 'anthropic'
       ? buildAnthropicBody(chatMessages, maxTokens, temperature, cfg.model, false)
-      : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, false);
+      : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, false, extra);
 
   try {
-    const raw = await proxyChat(
+    let raw = await proxyChat(
       buildProviderChatUrl(cfg, false),
       buildProviderHeaders(cfg),
-      JSON.stringify(body),
+      JSON.stringify(buildBody()),
     );
+
+    // Un servidor estricto puede rechazar los campos anti-reasoning: reintenta
+    // una vez sin ellos antes de reportar el fallo.
+    if (!raw.ok && raw.status === 400 && extra) {
+      raw = await proxyChat(
+        buildProviderChatUrl(cfg, false),
+        buildProviderHeaders(cfg),
+        JSON.stringify(buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, false)),
+      );
+    }
 
     const responseText = raw.body;
     if (!raw.ok) {
@@ -345,16 +360,18 @@ async function streamConfiguredProvider(
   onToken: (token: string, accumulated: string) => void,
   signal: AbortSignal | undefined,
   debugContext: string,
+  opts?: { reasoningOff?: boolean },
 ): Promise<{ success: boolean; content: string; error?: string } | null> {
   await initAiProviderConfig().catch(() => undefined);
   if (!canServeWithConfiguredProvider()) return null;
 
   const cfg = getAiProviderConfig();
   const chatMessages = providerToChatMessages(messages);
+  const extra = opts?.reasoningOff && cfg.kind !== 'anthropic' ? REASONING_OFF_FIELDS : undefined;
   const body =
     cfg.kind === 'anthropic'
       ? buildAnthropicBody(chatMessages, maxTokens, temperature, cfg.model, true)
-      : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, true);
+      : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, true, extra);
 
   const reqId = `provider-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
   let accumulated = '';
@@ -363,10 +380,12 @@ async function streamConfiguredProvider(
   try {
     let buffer = '';
 
-    await streamProviderViaPort(
+    const pump = (extraBody: Record<string, unknown> | undefined) => streamProviderViaPort(
       buildProviderChatUrl(cfg, true),
       buildProviderHeaders(cfg),
-      JSON.stringify(body),
+      JSON.stringify(cfg.kind === 'anthropic'
+        ? body
+        : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, true, extraBody)),
       (chunk) => {
         buffer += chunk;
         const lines = buffer.split('\n');
@@ -387,6 +406,20 @@ async function streamConfiguredProvider(
       },
       signal,
     );
+
+    try {
+      await pump(extra);
+    } catch (streamErr) {
+      // Un servidor estricto puede rechazar los campos anti-reasoning (HTTP
+      // 400): reintenta una vez sin ellos antes de propagar el fallo.
+      const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+      if (extra && /\bHTTP 400\b/.test(msg)) {
+        buffer = '';
+        await pump(undefined);
+      } else {
+        throw streamErr;
+      }
+    }
 
     debugStore.endRequest(reqId, true);
     return { success: true, content: accumulated };
@@ -677,7 +710,9 @@ async function fallbackNonStreamingAI(
   debugContext: string,
 ): Promise<AIResponse> {
   // 1) Configured provider (OpenAI-compatible / Anthropic / local-with-custom-base).
-  const configured = await callConfiguredProvider(messages, maxTokens, temperature);
+  const configured = await callConfiguredProvider(messages, maxTokens, temperature, {
+    reasoningOff: debugContext === "translate",
+  });
   if (configured?.success) return configured;
 
   // 2) Legacy Gemini multi-key path.
@@ -727,23 +762,33 @@ async function callLocalAI(
   }
 
   try {
-    const res = await fetch(`${LOCAL_AI_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    // Misma ruta que el proveedor configurado: el fetch vive en el SW. Uno
+    // directo desde el content script a localhost sufre CORS y el bloqueo de
+    // Private Network Access de la página (https -> red privada).
+    const raw = await proxyChat(
+      `${LOCAL_AI_URL}/v1/chat/completions`,
+      { "Content-Type": "application/json" },
+      JSON.stringify({
         model: "local-model",
         messages,
         temperature,
         max_tokens: maxTokens,
         stream: false,
+        ...(debugContext === "translate" ? REASONING_OFF_FIELDS : {}),
       }),
-    });
+    );
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    if (!raw.ok) {
+      // status 0 = fallo de transporte en el SW (servidor no levantado): se
+      // mapea a ECONNREFUSED para que cooldown y fallback actúen como antes.
+      throw new Error(
+        raw.status === 0
+          ? "ECONNREFUSED: IA local no accesible"
+          : `HTTP ${raw.status}: ${raw.body.slice(0, 160)}`,
+      );
     }
 
-    const data = await res.json();
+    const data = JSON.parse(raw.body);
     const content: string = data.choices?.[0]?.message?.content?.trim() ?? "";
     return { success: true, content, rating: parseRating(content) };
   } catch (err) {
@@ -824,56 +869,50 @@ export async function streamLocalAI(
       throw new Error("ECONNREFUSED: local AI temporarily disabled after previous connection failure");
     }
 
-    const res = await fetch(`${LOCAL_AI_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal,
-      body: JSON.stringify({
+    let buffer = "";
+
+    // Streaming por el relay del SW (mismo canal que el proveedor configurado):
+    // el fetch directo desde el content script a localhost sufre CORS y
+    // Private Network Access.
+    await streamProviderViaPort(
+      `${LOCAL_AI_URL}/v1/chat/completions`,
+      { "Content-Type": "application/json" },
+      JSON.stringify({
         model: "local-model",
         messages,
         temperature,
         max_tokens: maxTokens,
         stream: true,
+        ...(debugContext === "translate" ? REASONING_OFF_FIELDS : {}),
       }),
-    });
+      (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    if (!res.body) throw new Error("No response body");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const payload = trimmed.slice(6);
+          if (payload === "[DONE]") break;
 
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer    = "";
-
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data: ")) continue;
-        const payload = trimmed.slice(6);
-        if (payload === "[DONE]") break;
-
-        try {
-          const json  = JSON.parse(payload);
-          const token: string = json.choices?.[0]?.delta?.content ?? "";
-          if (token) {
-            accumulated += token;
-            onToken(token, accumulated);
-            if (reqId) {
-              debugStore.addToken(reqId, token, accumulated);
+          try {
+            const json  = JSON.parse(payload);
+            const token: string = json.choices?.[0]?.delta?.content ?? "";
+            if (token) {
+              accumulated += token;
+              onToken(token, accumulated);
+              if (reqId) {
+                debugStore.addToken(reqId, token, accumulated);
+              }
             }
+          } catch (_e) {
+            // Skip malformed SSE chunk
           }
-        } catch (_e) {
-          // Skip malformed SSE chunk
         }
-      }
-    }
+      },
+      signal,
+    );
 
     if (reqId) {
       debugStore.endRequest(reqId, true);
@@ -910,6 +949,7 @@ export async function streamLocalAI(
         onToken,
         signal,
         debugContext,
+        { reasoningOff: debugContext === "translate" },
       );
       if (configured?.success) return configured;
 

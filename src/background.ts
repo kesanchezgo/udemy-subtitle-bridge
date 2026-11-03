@@ -1,5 +1,5 @@
 import { buildGeminiGenerateContentUrl, initGeminiKeys, markGeminiKeyCooldown, normalizeGeminiKeys, saveGeminiKeys, selectGeminiKeysForPurpose, setGeminiKeysSync, type GeminiPurpose } from './gemini-config';
-import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, normalizeAiProviderConfig, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
+import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, normalizeAiProviderConfig, REASONING_OFF_FIELDS, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
 import {
 	buildObjectivesPrompt,
 	buildRefinePrompt,
@@ -213,6 +213,31 @@ async function toggleDockForTab(tab: { id?: number }) {
 	}
 }
 
+/**
+ * Allowlist del relay (USG_PROXY_CHAT / USG_PROXY_STREAM): el SW solo hace
+ * fetch a endpoints de IA, nunca a una URL arbitraria pedida por la página.
+ * Se permite el proveedor configurado y el servidor local bundled (8010).
+ */
+function isAllowedProxyUrl(rawUrl: string): boolean {
+	try {
+		const url = new URL(rawUrl);
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+		const authority = (u: URL) => `${u.hostname}:${u.port || (u.protocol === 'https:' ? '443' : '80')}`;
+		const allowed = new Set<string>();
+		const cfg = getAiProviderConfig();
+		if (cfg.baseUrl) {
+			try {
+				allowed.add(authority(new URL(cfg.baseUrl)));
+			} catch { /* baseUrl inválida: sin host extra */ }
+		}
+		allowed.add('127.0.0.1:8010');
+		allowed.add('localhost:8010');
+		return allowed.has(authority(url));
+	} catch {
+		return false;
+	}
+}
+
 async function checkLocalAiHealth(): Promise<boolean> {
 	const now = Date.now();
 	if (localAiHealthCache && now - localAiHealthCache.checkedAt < LOCAL_AI_HEALTH_CACHE_MS) {
@@ -295,8 +320,8 @@ chromeApi?.runtime?.onConnect?.addListener((port: {
 		const url = String(msg.url || '');
 		const headers = (msg.headers ?? {}) as Record<string, string>;
 		const body = String(msg.body || '');
-		if (!url) {
-			port.postMessage({ error: 'falta url' });
+		if (!url || !isAllowedProxyUrl(url)) {
+			port.postMessage({ error: 'USG_PROXY_STREAM: url fuera de la lista permitida' });
 			return;
 		}
 		abort = new AbortController();
@@ -508,6 +533,11 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		const url = String((message as { url?: unknown }).url || '');
 		const headers = ((message as { headers?: Record<string, string> }).headers ?? {}) as Record<string, string>;
 		const body = String((message as { body?: unknown }).body || '');
+
+		if (!isAllowedProxyUrl(url)) {
+			sendResponse({ ok: false, status: 0, body: '', error: 'USG_PROXY_CHAT: url fuera de la lista permitida' });
+			return true;
+		}
 
 		fetch(url, { method: 'POST', headers, body })
 			.then(async (res) => {
@@ -1369,18 +1399,49 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 	// ── Try the user-configured provider first (local proxy / OpenAI / etc.) ──
 	// This is the same fallback chain the objectives and refine paths use, and it
 	// is what makes the feature work without Gemini keys.
+	let providerAttemptError = '';
 	try {
 		if (import.meta.env.DEV) console.log('[USG][study] trying configured provider…');
-		const text = await requestConfiguredProviderText(buildStudyPrompt(cleaned, metadata), 0.35, 8192);
-		if (import.meta.env.DEV) console.log('[USG][study] raw provider response:', text);
-		const parsed = safeJsonParse(text);
-		if (parsed && typeof parsed === 'object') {
-			console.info('[USG][study] JSON parse ok. Keys:', Object.keys(parsed as Record<string, unknown>));
-			console.groupEnd();
-			return { payload: parsed, raw: cleaned };
+		// Escalona el presupuesto como la ruta Gemini: con modelos reasoning el
+		// razonamiento comparte max_tokens y puede dejar el JSON truncado o el
+		// contenido vacío. El último intento desactiva el razonamiento (es lo
+		// que consume el presupuesto) para garantizar que el JSON salga.
+		const ladder = [
+			{ maxTokens: 8192, reasoningOff: false },
+			{ maxTokens: 16384, reasoningOff: false },
+			{ maxTokens: 16384, reasoningOff: true },
+		];
+		for (const step of ladder) {
+			let text = '';
+			try {
+				text = await requestConfiguredProviderText(
+					buildStudyPrompt(cleaned, metadata),
+					0.35,
+					step.maxTokens,
+					{ reasoningOff: step.reasoningOff },
+				);
+			} catch (stepError) {
+				providerAttemptError = toErrorMessage(stepError).slice(0, 220);
+				if (!/contenido vac[íi]o/i.test(providerAttemptError)) throw stepError;
+				console.warn(`[USG][study] provider empty content at ${step.maxTokens} tokens (reasoning).`);
+				continue; // escala al siguiente peldaño
+			}
+			if (import.meta.env.DEV) console.log('[USG][study] raw provider response:', text);
+			const parsed = safeJsonParse(text);
+			if (parsed && typeof parsed === 'object') {
+				console.info('[USG][study] JSON parse ok. Keys:', Object.keys(parsed as Record<string, unknown>));
+				console.groupEnd();
+				return { payload: parsed, raw: cleaned };
+			}
+			console.warn(`[USG][study] Provider response could not be parsed as JSON (${step.maxTokens} tokens, reasoningOff=${step.reasoningOff}).`);
+			if (text && !looksTruncatedJsonResponse(text)) break; // reintentar no ayuda
+			providerAttemptError = text
+				? 'el JSON llegó truncado (el razonamiento agotó max_tokens)'
+				: 'el contenido llegó vacío (el razonamiento agotó max_tokens)';
 		}
-		console.warn('[USG][study] Provider response could not be parsed as JSON object.');
+		if (!providerAttemptError) providerAttemptError = 'la respuesta no fue un JSON válido';
 	} catch (providerError) {
+		providerAttemptError = toErrorMessage(providerError).slice(0, 220);
 		console.warn('[USG][study] provider error:', providerError);
 	}
 
@@ -1444,7 +1505,12 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 
 	console.warn('[USG][study] no Gemini keys available after initGeminiKeys().');
 	console.groupEnd();
-	throw new Error('No hay Gemini API keys configuradas para generar la sesión de estudio.');
+	// Si el intento por el proveedor configurado falló, ese motivo es el
+	// diagnóstico útil (429/5xx del proxy, JSON truncado, endpoint caído...);
+	// "no hay keys de Gemini" solo describe el último fallback.
+	throw new Error(providerAttemptError
+		? `El proveedor configurado falló (${providerAttemptError}) y no hay API keys de Gemini de respaldo.`
+		: 'No hay Gemini API keys configuradas para generar la sesión de estudio.');
 }
 
 // ─── Extracción de vocabulario (idiomas) desde la transcripción ──────────────
@@ -1753,6 +1819,7 @@ async function requestConfiguredProviderText(
 	prompt: string,
 	temperature: number,
 	maxTokens: number,
+	opts?: { reasoningOff?: boolean },
 ): Promise<string> {
 	await initAiProviderConfig().catch(() => undefined);
 	const cfg = getAiProviderConfig();
@@ -1761,10 +1828,11 @@ async function requestConfiguredProviderText(
 	}
 
 	const messages = [{ role: 'user' as const, content: prompt }];
-	const body =
+	const extra = opts?.reasoningOff && cfg.kind !== 'anthropic' ? REASONING_OFF_FIELDS : undefined;
+	const buildBody = (withExtra: boolean) =>
 		cfg.kind === 'anthropic'
 			? buildAnthropicBody(messages, maxTokens, temperature, cfg.model, false)
-			: buildOpenAiCompatibleBody(messages, maxTokens, temperature, cfg.model, false);
+			: buildOpenAiCompatibleBody(messages, maxTokens, temperature, cfg.model, false, withExtra ? extra : undefined);
 
 	const requestUrl = buildProviderChatUrl(cfg, false);
 	console.info(`[USG][provider] kind=${cfg.kind} url=${requestUrl} model=${cfg.model}`);
@@ -1774,8 +1842,16 @@ async function requestConfiguredProviderText(
 		response = await fetch(requestUrl, {
 			method: 'POST',
 			headers: buildProviderHeaders(cfg),
-			body: JSON.stringify(body),
+			body: JSON.stringify(buildBody(Boolean(extra))),
 		});
+		if (!response.ok && response.status === 400 && extra) {
+			// Servidor estricto con los campos anti-reasoning: reintenta sin ellos.
+			response = await fetch(requestUrl, {
+				method: 'POST',
+				headers: buildProviderHeaders(cfg),
+				body: JSON.stringify(buildBody(false)),
+			});
+		}
 	} catch (networkError) {
 		const host = (() => {
 			try { return new URL(cfg.baseUrl).host; } catch { return cfg.baseUrl; }

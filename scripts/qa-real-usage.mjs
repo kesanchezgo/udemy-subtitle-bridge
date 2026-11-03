@@ -199,68 +199,108 @@ const lessons = await page.evaluate(async () => {
 	return items.filter((it) => it._class === 'lecture').map((it) => ({ id: it.id, title: it.title, seconds: it.asset?.length || 0 })).filter((it) => it.seconds > 0);
 });
 const sorted = [...lessons].sort((a, b) => a.seconds - b.seconds);
-const short = { id: 42163342, title: "8. Platform Dependency + Demo", seconds: 0 };
-console.log(`  lección: ${short.seconds}s «${short.title}» (id ${short.id})`);
+// Matriz de timing: la más corta real (~3 min, sin ejercicios de segundos) y
+// la más cercana a 15 min.
+const QA_LESSON = process.env.QA_LESSON === 'long' ? 'long' : 'short';
+const QA_FLOW = process.env.QA_FLOW === 'full' ? 'full' : 'min';
+const short = sorted.find((l) => l.seconds >= 120) ?? sorted[0] ?? { id: 42163342, title: '(fallback)', seconds: 0 };
+// Candidatas largas ordenadas por cercanía a 15 min: no todas tienen CC, así
+// que se prueban hasta 3 hasta que una suelte transcripción.
+const longCands = sorted.filter((l) => l.seconds >= 600 && l.seconds <= 1200)
+	.sort((a, b) => Math.abs(a.seconds - 900) - Math.abs(b.seconds - 900))
+	.slice(0, 3);
+const lesson = QA_LESSON === 'long' ? longCands[0] ?? short : short;
+console.log(`  lección (${QA_LESSON}, ${lesson.seconds}s): «${lesson.title}» (id ${lesson.id})`);
 
-// Navegar a la lección corta
-await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/${short.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-await page.waitForSelector(OUTER, { timeout: 45000 });
-await page.waitForTimeout(2500);
-await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
-await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
-await page.waitForTimeout(2000);
+// Navegar a la lección + configurar el modelo una vez; para long se prueban
+// hasta 3 candidatas hasta que una suelte transcripción.
+const candidates = QA_LESSON === 'long' ? longCands : [lesson];
+let currentLesson = lesson;
+let trReady = false;
+for (let ci = 0; ci < candidates.length && !trReady; ci++) {
+	const cand = candidates[ci];
+	currentLesson = cand;
+	console.log(`  navegando a (${cand.seconds}s) «${cand.title}» (id ${cand.id})`);
+	await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/${cand.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+	await page.waitForSelector(OUTER, { timeout: 45000 });
+	await page.waitForTimeout(2500);
+	await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
+	await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+	await page.waitForTimeout(2000);
 
-// Ajustes → Proveedor → cambiar modelo → guardar → cerrar
-await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-settings', { detail: { section: 'provider' } })));
-await page.waitForTimeout(2000);
-const modelChanged = await page.evaluate(() => {
-	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-	const inp = [...root.querySelectorAll('input[type="text"]')].find((el) => /muse|deepseek/i.test(el.value || ''));
-	if (!inp) return false;
-	const proto = Object.getOwnPropertyDescriptor(root.ownerDocument.defaultView.HTMLInputElement.prototype, 'value').set;
-	proto.call(inp, 'deepseek-v4.1-flash:free');
-	inp.dispatchEvent(new Event('input', { bubbles: true }));
-	return true;
-});
-if (modelChanged) {
-	await page.waitForTimeout(300);
-	await click(/Probar conexión y guardar/);
-	const dSave = Date.now() + 30000;
-	while (Date.now() < dSave) {
+	if (ci === 0) {
+		// Ajustes → Proveedor → cambiar modelo → guardar → cerrar
+		await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-settings', { detail: { section: 'provider' } })));
+		await page.waitForTimeout(2000);
+		const modelChanged = await page.evaluate(() => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			const inp = [...root.querySelectorAll('input[type="text"]')].find((el) => /muse|deepseek/i.test(el.value || ''));
+			if (!inp) return false;
+			const proto = Object.getOwnPropertyDescriptor(root.ownerDocument.defaultView.HTMLInputElement.prototype, 'value').set;
+			proto.call(inp, 'deepseek-v4.1-flash:free');
+			inp.dispatchEvent(new Event('input', { bubbles: true }));
+			return true;
+		});
+		if (modelChanged) {
+			await page.waitForTimeout(300);
+			await click(/Probar conexión y guardar/);
+			const dSave = Date.now() + 30000;
+			while (Date.now() < dSave) {
+				const t = await shadow();
+				if (!/Verificando conexión/.test(t)) break;
+				await page.waitForTimeout(1000);
+			}
+			console.log('  modelo → deepseek-v4.1-flash:free ✓');
+		} else {
+			console.log('  (modelo no encontrado en el panel)');
+		}
+		await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-settings')));
+		await page.waitForTimeout(800);
+	}
+
+	// Fresh session
+	const st = await shadow();
+	if (/Reiniciar/.test(st) && /Ponte a prueba|Fíjalo|Llévalo/.test(st)) {
+		await click(/Reiniciar/);
+		await page.waitForTimeout(400);
+		await click(/Sí, reiniciar/);
+		await page.waitForTimeout(1500);
+	}
+
+	// Medición en frío: limpiar la caché del panel (usb_cache_*) en el SW y en
+	// el localStorage de la página; si no, la generación reaparece cacheada.
+	const swNow = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	if (swNow) {
+		await swNow.evaluate(() => new Promise((res) => {
+			chrome.storage.local.get(null, (all) => {
+				const keys = Object.keys(all || {}).filter((k) => k.startsWith('usb_cache_'));
+				if (!keys.length) { res(0); return; }
+				chrome.storage.local.remove(keys, () => res(keys.length));
+			});
+		})).then((n) => console.log(`  caché del panel limpiada (${n} claves)`)).catch(() => {});
+	}
+	await page.evaluate(() => {
+		Object.keys(localStorage).filter((k) => k.startsWith('usb_cache_')).forEach((k) => localStorage.removeItem(k));
+	});
+
+	// Reproducir el vídeo (cues)
+	await page.evaluate(() => { document.querySelector('video')?.play().catch(() => {}); });
+	await page.waitForTimeout(20000);
+	await page.evaluate(() => { document.querySelector('video')?.pause(); });
+	console.log('  vídeo reproducido 20s');
+
+	// Esperar transcripción lista
+	const dTr = Date.now() + 90000;
+	while (Date.now() < dTr) {
 		const t = await shadow();
-		if (!/Verificando conexión/.test(t)) break;
+		if (/Subtítulos listos/.test(t)) { console.log('  transcripción: lista ✓'); trReady = true; break; }
+		if (/Sin subtítulos/.test(t)) { console.log('  transcripción: NO hay'); break; }
 		await page.waitForTimeout(1000);
 	}
-	console.log('  modelo → deepseek-v4.1-flash:free ✓');
-} else {
-	console.log('  (modelo no encontrado en el panel)');
 }
-await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:close-settings')));
-await page.waitForTimeout(800);
-
-// Fresh session
-const st = await shadow();
-if (/Reiniciar/.test(st) && /Ponte a prueba|Fíjalo|Llévalo/.test(st)) {
-	await click(/Reiniciar/);
-	await page.waitForTimeout(400);
-	await click(/Sí, reiniciar/);
-	await page.waitForTimeout(1500);
-}
-
-// Reproducir el vídeo (cues)
-await page.evaluate(() => { document.querySelector('video')?.play().catch(() => {}); });
-await page.waitForTimeout(20000);
-await page.evaluate(() => { document.querySelector('video')?.pause(); });
-console.log('  vídeo reproducido 20s');
-
-// Esperar transcripción lista
-const dTr = Date.now() + 90000;
-let trReady = false;
-while (Date.now() < dTr) {
-	const t = await shadow();
-	if (/Subtítulos listos/.test(t)) { console.log('  transcripción: lista ✓'); trReady = true; break; }
-	if (/Sin subtítulos/.test(t)) { console.log('  transcripción: NO hay'); break; }
-	await page.waitForTimeout(1000);
+if (!trReady) {
+	console.log('✗ ninguna candidata tiene transcripción');
+	process.exit(1);
 }
 
 // Objetivo propio
@@ -322,22 +362,47 @@ const clickLast = (m) => page.evaluate((mm) => {
 	b.click();
 	return true;
 }, m);
-const countVerdicts = (s) => (s.match(/\[CORRECTO\]|\[PARCIAL\]|\[INCORRECTO\]/g) || []).length;
 let ok = false;
-let seen = countVerdicts(await shadow());
-for (let i = 0; i < 10 && !ok; i++) {
-	const target = seen + 1;
-	const dWait = Date.now() + 180000;
-	let cur = '';
-	while (Date.now() < dWait) {
-		cur = await shadow();
-		if (countVerdicts(cur) >= target) break;
-		await page.waitForTimeout(800);
+for (let i = 0; i < 12 && !ok; i++) {
+	pageConsoleBuf.push(`=== esperando fin de evaluación ${i + 1} ===`);
+	// Señal de evaluación terminada: "Continuar a Aplicar" (cola completa) o el
+	// veredicto en el feedback. FALTO: aparece ya en streaming, así que se
+	// espera a que el texto deje de crecer (2 lecturas estables) antes de
+	// pulsar nada: con el streaming vivo ni Siguiente ni Continuar existen y
+	// clickLast caería en el paginador de pasos. Los modelos reasoning pueden
+	// tardar minutos por eval.
+	const dEval = Date.now() + 240000;
+	let outcome = '';
+	while (Date.now() < dEval && !outcome) {
+		const now = await shadow();
+		if (/Continuar a Aplicar/.test(now)) { outcome = 'continuar'; break; }
+		if (/FALTO:/.test(now)) {
+			let stable = 0;
+			let last = now;
+			while (Date.now() < dEval && stable < 2) {
+				await page.waitForTimeout(1200);
+				const now2 = await shadow();
+				if (/Continuar a Aplicar/.test(now2)) { outcome = 'continuar'; break; }
+				if (now2 === last) stable += 1; else { stable = 0; last = now2; }
+			}
+			if (!outcome) outcome = 'next';
+			break;
+		}
+		await page.waitForTimeout(900);
 	}
-	seen = Math.max(seen, countVerdicts(cur));
-	if (countVerdicts(cur) < target) break; // sin veredicto
-	pageConsoleBuf.push(`=== veredicto Q${i + 1} ok ===`);
-	if (/Continuar a Aplicar/.test(cur) && await click(/Continuar a Aplicar/)) { ok = true; break; }
+	if (!outcome) break; // sin señal
+	pageConsoleBuf.push(`=== eval ${i + 1} fin (${outcome}) ===`);
+	if (outcome === 'continuar') {
+		if (await click(/Continuar a Aplicar/)) { ok = true; break; }
+		break;
+	}
+	// Última verificación antes del click: la cola pudo completarse con el
+	// veredicto que acabó de asentarse.
+	const justBefore = await shadow();
+	if (/Continuar a Aplicar/.test(justBefore)) {
+		if (await click(/Continuar a Aplicar/)) { ok = true; break; }
+		break;
+	}
 	if (!await clickLast(/^Siguiente$/)) break;
 	await page.waitForTimeout(1200);
 	pageConsoleBuf.push(`=== click Evaluar Q${i + 2} ===`);
@@ -353,19 +418,51 @@ if (!ok) {
 	process.exit(1);
 }
 
-// Continuar → Hacerlo después → Terminar (con reintento: los pasos montan
-// con animación y el botón puede tardar un instante en existir)
-await clickUntil(/Continuar a Aplicar/, 15000);
-await clickUntil(/Hacerlo después/, 15000);
-await clickUntil(/Terminar lección/, 15000);
+const tComprobar = Date.now() - t0;
+
+// ── Aplicar según el flujo ──
+let tAplicar = 0;
+if (QA_FLOW === 'full') {
+	// COMPLETO: resolver el desafío y pasarlo por la revisión de la IA.
+	const tA = Date.now();
+	const filled = await fillUntil('// Tu solución aquí…', 'javac App.java && java App', 8000)
+		|| await fillUntil('Tu respuesta aquí…', 'Compila con javac y ejecuta el .class en otro SO con la JVM.', 8000);
+	if (!filled) {
+		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
+		console.log('✗ textarea del desafío no apareció');
+		process.exit(1);
+	}
+	if (!await clickUntil(/Revisar con IA/, 15000)) {
+		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
+		console.log('✗ botón Revisar con IA no apareció');
+		process.exit(1);
+	}
+	const review = await waitFor(/DIAGNOSTICO:|BIEN:/, 240000);
+	if (!/DIAGNOSTICO:|BIEN:/.test(review)) {
+		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
+		console.log('✗ revisión de Aplicar sin veredicto');
+		console.log('  consola reciente:');
+		for (const l of pageConsoleBuf.slice(-20)) console.log('   ', l);
+		process.exit(1);
+	}
+	await clickUntil(/Fíjalo en memoria|Continuar de todas formas/, 15000);
+	await clickUntil(/Terminar lección/, 20000);
+	tAplicar = Date.now() - tA;
+} else {
+	// MÍNIMO: práctica pendiente («Hacerlo después»).
+	await clickUntil(/Hacerlo después/, 15000);
+	await clickUntil(/Terminar lección/, 15000);
+}
 const done = await waitFor(/Lección terminada/, 20000);
 const ms = Date.now() - t0;
-await page.screenshot({ path: path.join(SHOTS, 'minimo.png') });
+await page.screenshot({ path: path.join(SHOTS, `resultado-${QA_LESSON}-${QA_FLOW}.png`) });
 
 const fmt = (ms) => `${Math.floor(ms / 60000)}m ${String(Math.round((ms % 60000) / 1000)).padStart(2, '0')}s`;
+const limit = QA_FLOW === 'full' ? 720000 : 240000;
 console.log(`\n── RESULTADO ──`);
-console.log(`  flujo mínimo: ${/Lección terminada/.test(done) ? '✓ COMPLETADO' : '✗'} en ${fmt(ms)} (generación: ${fmt(tGen)})`);
-console.log(`  objetivo ≤ 4 min: ${ms <= 240000 ? '✓ CUMPLE' : '✗ NO CUMPLE'}`);
+console.log(`  ${QA_FLOW === 'full' ? 'COMPLETO' : 'mínimo'} · lección ${QA_LESSON} (${currentLesson.seconds}s): ${/Lección terminada/.test(done) ? '✓ COMPLETADO' : '✗'} en ${fmt(ms)}`);
+console.log(`  generación: ${fmt(tGen)} · comprobar: ${fmt(tComprobar)}${QA_FLOW === 'full' ? ` · aplicar: ${fmt(tAplicar)}` : ''}`);
+console.log(`  objetivo ${QA_FLOW === 'full' ? '≤ 12' : '≤ 4'} min: ${ms <= limit ? '✓ CUMPLE' : '✗ NO CUMPLE'}`);
 
 clearTimeout(watchdog);
 await context.close();

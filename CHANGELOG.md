@@ -1,3 +1,14 @@
+## [1.5.5] — 2026-11-03
+
+- **Streaming IA por el SW**: `streamConfiguredProvider` usaba `fetch` directo desde el content script, que Chromium bloquea por Private Network Access en páginas https; la evaluación quedaba colgada sin error. Ahora va por un Port del runtime (`USG_PROXY_STREAM`). La generación y la evaluación no-streaming ya usaban `USG_PROXY_CHAT`; la IA local integrada (8010) también pasa por el relay en vez de fetchear desde la página.
+- **Allowlist del relay**: `USG_PROXY_CHAT`/`USG_PROXY_STREAM` solo fetchean el proveedor configurado o el servidor local bundled, nunca una URL arbitraria.
+- **Modelos reasoning**: el veredicto llegaba vacío porque el razonamiento consumía los 260 tokens de las evaluaciones (medido: 203 de reasoning, 0 de content). Presupuestos: evaluaciones 2000, traducción 800, objetivos 1500/800; la generación escala 8192 → 16384 → 16384 con razonamiento desactivado. Errores del proveedor ya no se disfrazan de «no hay keys de Gemini».
+- **Traducción con reasoning desactivado** (`enable_thinking`/`thinking`/`reasoning_effort`, con reintento sin esos campos ante 400): medido 6.4 s/línea con razonamiento frente a 1.8 s sin él — los subtítulos se desincronizaban.
+- **Carrera de configuración**: el panel de Ajustes (`keepMounted`) guardaba el snapshot previo al primer `initAiProviderConfig` (default 8010) pisando el config persistido; ahora el global se sincroniza con `chrome.storage.onChanged` y el panel relee al abrirse. Se retiró el guardado previo a la validación de `ApiKeysPanel` (la validación ya corre en el SW; guardar antes marcaba «activo» un endpoint caído).
+- **Endpoint real en la UI**: el pie y el tooltip del dock muestran el `baseUrl` configurado (antes 8010 fijo); el health check sondea primero el proveedor local configurado.
+- **Contraste claro**: `text-amber-700`/`text-emerald-700` (DevTab) mapeados a los tokens AA.
+- **QA**: matriz de timing real (lecciones de 2 y 15 min × flujo mínimo y completo) con caché limpiada y proxy real; el loop de Comprobar espera el veredicto asentado antes de pulsar; clicks con reintento en las suites.
+
 ## [1.5.4] — 2026-11-01
 
 - Aviso único tras el primer export .apkg: activar «Importar cualquier configuración del mazo» (con acceso a la guía).
