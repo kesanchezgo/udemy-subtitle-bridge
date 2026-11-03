@@ -1,3 +1,4 @@
+import { udemySecret } from './udemy-cookie.mjs';
 // Prove that a width the user drags to is remembered across page loads, and
 // that the dock does not snap back to the default on reload.
 //
@@ -69,10 +70,10 @@ await extClean.evaluate((k) => new Promise((r) => chrome.storage.local.remove([k
 const page = browser.pages().find((p) => !p.url().startsWith('chrome-extension://')) || (await browser.newPage());
 
 await browser.addCookies([
-  { name: 'access_token', value: 'TOKEN_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
-  { name: 'client_id', value: 'CLIENT_ID_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
-  { name: 'ud_user_jwt', value: 'JWT_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
-  { name: 'dj_session_id', value: 'SESION_UDEMY_PURGADA', domain: '.udemy.com', path: '/' },
+  { name: 'access_token', value: udemySecret('access_token'), domain: '.udemy.com', path: '/' },
+  { name: 'client_id', value: udemySecret('client_id'), domain: '.udemy.com', path: '/' },
+  { name: 'ud_user_jwt', value: udemySecret('ud_user_jwt'), domain: '.udemy.com', path: '/' },
+  { name: 'dj_session_id', value: udemySecret('dj_session_id'), domain: '.udemy.com', path: '/' },
   { name: 'ud_cache_logged_in', value: '1', domain: '.udemy.com', path: '/' },
 ]);
 

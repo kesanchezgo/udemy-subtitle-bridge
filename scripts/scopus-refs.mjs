@@ -1,5 +1,11 @@
 // Consultas Scopus para sustentar el diseño pedagógico de cada familia de mazos.
-const KEY = 'KEY_SCOPUS_PURGADA';
+// La API key vive en .env (ignorado por git): SCOPUS_API_KEY=...
+// Nunca hardcodear: este repo es publico y el historial de git no se borra.
+const KEY = process.env.SCOPUS_API_KEY;
+if (!KEY) {
+  console.error('Falta SCOPUS_API_KEY. Anade SCOPUS_API_KEY=... a .env (ignorado por git).');
+  process.exit(1);
+}
 const queries = {
   testing_effect: 'TITLE-ABS-KEY("retrieval practice" AND "testing effect")',
   spacing: 'TITLE-ABS-KEY("distributed practice" AND spacing)',

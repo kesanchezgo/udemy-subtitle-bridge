@@ -1,3 +1,4 @@
+import { udemySecret } from './udemy-cookie.mjs';
 // Ground truth: did the click actually validate + save the deepseek provider?
 // Reads the persisted config right after clicking, and samples the panel fast
 // enough to catch the transient validation message.
@@ -54,10 +55,10 @@ page.on('requestfailed', (r) => { if (/6660/.test(r.url())) proxyReqs.push('FAIL
 page.on('response', (r) => { if (/6660/.test(r.url())) proxyReqs.push('RES ' + r.status()); });
 
 await browser.addCookies([
-  { name: 'access_token', value: 'TOKEN_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
-  { name: 'client_id', value: 'CLIENT_ID_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
-  { name: 'ud_user_jwt', value: 'JWT_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
-  { name: 'dj_session_id', value: 'SESION_UDEMY_PURGADA', domain: '.udemy.com', path: '/' },
+  { name: 'access_token', value: udemySecret('access_token'), domain: '.udemy.com', path: '/' },
+  { name: 'client_id', value: udemySecret('client_id'), domain: '.udemy.com', path: '/' },
+  { name: 'ud_user_jwt', value: udemySecret('ud_user_jwt'), domain: '.udemy.com', path: '/' },
+  { name: 'dj_session_id', value: udemySecret('dj_session_id'), domain: '.udemy.com', path: '/' },
   { name: 'ud_cache_logged_in', value: '1', domain: '.udemy.com', path: '/' },
 ]);
 
