@@ -626,6 +626,18 @@ function getCurrentVideoTime(): number | undefined {
 	return undefined;
 }
 
+function getCurrentVideoDuration(): number | undefined {
+	const video = document.querySelector('video');
+	// Duck-type por el mismo motivo que getCurrentVideoTime (mundos aislados).
+	if (video && typeof (video as HTMLVideoElement).duration === 'number') {
+		const duration = (video as HTMLVideoElement).duration;
+		if (Number.isFinite(duration) && duration > 0) {
+			return duration;
+		}
+	}
+	return undefined;
+}
+
 function getActiveCueTextFromList(cues: CapturedCue[], offsetMs = 0) {
 	const currentTime = getCurrentVideoTime();
 	if (cues.length === 0) {
@@ -2820,6 +2832,7 @@ async function emitSubtitleLine(text: string) {
 		payload: {
 			en: trimmed,
 			ts: getCurrentVideoTime() ?? Date.now(),
+			duration: getCurrentVideoDuration() ?? null,
 			lectureKey: getLectureKey(),
 			cueCount: Math.max(validCueCount, validCollectedLineCount),
 			courseTitle: getCourseTitle(),

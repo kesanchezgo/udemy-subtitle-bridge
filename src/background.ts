@@ -242,6 +242,18 @@ function isAllowedProxyUrl(rawUrl: string): boolean {
 	}
 }
 
+/** Contador de escalones de generación (usg_study_generation_stats). */
+async function recordStudyGenerationStep(stepKey: string): Promise<void> {
+	try {
+		const stored = await chrome.storage.local.get('usg_study_generation_stats');
+		const stats = (stored?.usg_study_generation_stats ?? {}) as Record<string, number>;
+		stats[stepKey] = (stats[stepKey] ?? 0) + 1;
+		await chrome.storage.local.set({ usg_study_generation_stats: stats });
+	} catch {
+		/* telemetría best-effort */
+	}
+}
+
 async function checkLocalAiHealth(): Promise<boolean> {
 	const now = Date.now();
 	if (localAiHealthCache && now - localAiHealthCache.checkedAt < LOCAL_AI_HEALTH_CACHE_MS) {
@@ -1443,6 +1455,11 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 			if (parsed && typeof parsed === 'object') {
 				console.info('[USG][study] JSON parse ok. Keys:', Object.keys(parsed as Record<string, unknown>));
 				console.groupEnd();
+				// Telemetría: qué peldaño produjo el mazo (dato gratis para saber
+				// cuántos ya se generan sin razonamiento).
+				const stepKey = `${step.maxTokens}_${step.reasoningOff ? 'sin_reasoning' : 'con_reasoning'}`;
+				console.info(`[USG][study] panel generado con escalón: ${stepKey}`);
+				void recordStudyGenerationStep(stepKey);
 				return { payload: parsed, raw: cleaned };
 			}
 			console.warn(`[USG][study] Provider response could not be parsed as JSON (${step.maxTokens} tokens, reasoningOff=${step.reasoningOff}).`);

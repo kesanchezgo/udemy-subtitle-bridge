@@ -1,3 +1,16 @@
+## [1.5.7] — 2026-11-03
+
+- **Pre-generación del mazo durante el vídeo (opción A)**, con las cuatro condiciones acordadas:
+  1. Solo con un objetivo del curso: el último usado en el curso (historial) o uno de los objetivos derivados del curso. Nunca un texto libre global que pueda venir de otro curso (es el bug que señaló la revisión: `agent_custom_obj` sobrevive al cambio de curso).
+  2. Si el objetivo cambia, la pre-generación se descarta (se compara el objetivo al terminar) y al pulsar Empezar se genera como siempre.
+  3. El mazo pre-generado vive solo en caché (`usb_cache_...` con TTL de 2 días): sin entrada de historial ni XP hasta que el estudiante abre Study.
+  4. Arranca en los últimos ~3 min de lección, o al momento si dura menos; las lecciones que solo se ojean no gastan llamadas.
+  Al pulsar Empezar, si hay una pre-generación en curso para el mismo objetivo se espera ESA llamada (sin duplicar) y se consume del caché. Medido: generación en el CTA **2 s** frente a 107-151 s de la ruta normal.
+- **Reloj del vídeo en el dock**: la duración viaja en el payload de cada cue y el dock emite `usb:video-progress`, que decide la ventana de pre-generación.
+- **Telemetría del escalón de generación** (`usg_study_generation_stats`): qué peldaño produjo cada mazo (8192 con razonamiento / 16384 sin él). Primeros datos: 4 mazos por el primer peldaño y 3 escalados — el razonamiento se mantiene en el primer intento, como se acordó.
+- **Traducción bajo carga medida**: con una generación de mazo en curso, una línea tarda 1.8-2.3 s (media 2.0 s), igual que en reposo — el proveedor gratuito no serializa.
+- **QA real**: `QA_REAL_PROXY`, `QA_COLD_SW`, `QA_KEEP_CACHE`, `QA_KEEP_HISTORY`, `QA_PICK_CARD`, `QA_SEED_COURSE_OBJECTIVE`, `QA_VERBOSE`; el perfil limpia cookies antes de inyectar la sesión (tokens rotados duplicados rompían la API).
+
 ## [1.5.6] — 2026-11-03
 
 - **Vista previa sin extensión reparada** (regresión de 1.5.5): `proxyChat` y `streamProviderViaPort` delegaban siempre en el service worker y sin extensión lanzaban «sin runtime», un error que la cadena de respaldo no reconoce como fallo de conexión — Comprobar y los subtítulos traducidos caían. Ahora, sin runtime de extensión, ambos vuelven al fetch directo (la evaluación, su versión en streaming y `translateLine` llegan al mock). `qa:local` cubre las tres rutas.

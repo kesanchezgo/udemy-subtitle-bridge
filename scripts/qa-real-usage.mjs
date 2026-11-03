@@ -106,6 +106,9 @@ const context = await chromium.launchPersistentContext(PROFILE, {
 	viewport: { width: 1680, height: 1000 }, ignoreDefaultArgs: ['--enable-automation'],
 });
 if (existsSync('.qa-udemy-cookies.json')) {
+	// Limpiar las cookies del perfil: si sobrevive un access_token rotado de una
+	// sesión anterior, el navegador manda las dos y la API responde HTML (403).
+	await context.clearCookies();
 	const raw = JSON.parse(readFileSync('.qa-udemy-cookies.json', 'utf8'));
 	await context.addCookies(raw.map((c) => ({
 		name: c.name, value: String(c.value).replace(/^"|"$/g, ''),
@@ -126,13 +129,34 @@ await seedPage.waitForSelector(OUTER, { timeout: 45000 });
 for (let i = 0; i < 10; i++) {
 	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	if (sw) {
-		await sw.evaluate((real) => new Promise((res) => {
+		await sw.evaluate(({ real, seedCourseObjective, courseNameSeed }) => new Promise((res) => {
+			if (process.env.QA_PICK_CARD === '1') {
+				chrome.storage.local.remove(['agent_custom_obj', 'agent_selected_obj']);
+			}
+			if (seedCourseObjective) {
+				// Escenario de la 2ª lección: el curso ya tiene un objetivo elegido.
+				// Se siembra ANTES de montar el dock (el recall corre una vez).
+				const slug = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '').slice(0, 80) || 'untitled';
+				const now = Date.now();
+				const key = `usb_history_lecture::${slug(courseNameSeed)}::${slug('seeded lesson')}`;
+				chrome.storage.local.set({
+					[key]: {
+						courseId: slug(courseNameSeed), lectureId: slug('seeded lesson'),
+						courseName: courseNameSeed, lectureName: 'Seeded lesson',
+						objective: 'Dominar el tema de esta lección.', objectiveId: 'custom',
+						checkedConceptIndexes: [0], conceptsAcknowledged: false,
+						questionsComplete: false, focusStep: 2, flowVersion: 2,
+						questions: [], ankiCardsCount: 1, status: 'in_progress',
+						startedAt: now, updatedAt: now, version: 1,
+					},
+				}, () => {});
+			}
 			chrome.storage.local.set({
 				usg_ai_provider_config: real
 					? { kind: 'local', baseUrl: 'http://127.0.0.1:6660/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
 					: { kind: 'openai', baseUrl: 'http://127.0.0.1:8123/v1', apiKey: 'qa-key', model: 'qa-model' },
 			}, res);
-		}), REAL_PROXY).catch(() => {});
+		}), { real: REAL_PROXY, seedCourseObjective: process.env.QA_SEED_COURSE_OBJECTIVE === '1', courseNameSeed: 'Java In-Depth: Become a Complete Java Engineer! [2026]' }).catch(() => {});
 		console.log(REAL_PROXY ? '  proveedor → proxy real 6660 (deepseek-v4.1-flash:free)' : '  proveedor → mock IA (8123)');
 		break;
 	}
@@ -267,24 +291,42 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 		await page.waitForTimeout(1500);
 	}
 
-	// Medición en frío: limpiar caché e historial (usb_cache_* y usb_history_*)
-	// en el SW y en el localStorage de la página. Sin esto la generación
-	// reaparece restaurada del historial de la lección (2 s en vez de minutos).
-	const swNow = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
-	if (swNow) {
-		await swNow.evaluate(() => new Promise((res) => {
-			chrome.storage.local.get(null, (all) => {
-				const keys = Object.keys(all || {}).filter((k) => k.startsWith('usb_cache_') || k.startsWith('usb_history_'));
-				if (!keys.length) { res(0); return; }
-				chrome.storage.local.remove(keys, () => res(keys.length));
-			});
-		})).then((n) => console.log(`  caché+historial limpiados (${n} claves)`)).catch(() => {});
+	// QA_KEEP_HISTORY=1 conserva el historial del curso (para probar la
+	// pre-generación con el objetivo recordado).
+	// Medición en frío: limpiar historial (y caché salvo QA_KEEP_CACHE=1, que
+	// conserva la caché de objetivos del curso) para que la generación no
+	// reaparezca restaurada. QA_KEEP_HISTORY=1 conserva también el historial.
+	{
+		const dropCache = process.env.QA_KEEP_CACHE !== '1';
+		const dropHistory = process.env.QA_KEEP_HISTORY !== '1';
+		const swNow = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+		if (swNow) {
+			await swNow.evaluate(({ dropCacheFlag, dropHistoryFlag }) => new Promise((res) => {
+				chrome.storage.local.get(null, (all) => {
+					const keys = Object.keys(all || {}).filter((k) =>
+						(dropCacheFlag && k.startsWith('usb_cache_')) || (dropHistoryFlag && k.startsWith('usb_history_')));
+					if (!keys.length) { res(0); return; }
+					chrome.storage.local.remove(keys, () => res(keys.length));
+				});
+			}), { dropCacheFlag: dropCache, dropHistoryFlag: dropHistory }).then((n) => console.log(`  limpieza: ${n} claves (cache=${dropCache ? 'no' : 'sí'} historia=${dropHistory ? 'no' : 'sí'})`)).catch(() => {});
+		}
+		await page.evaluate(({ dropCacheFlag, dropHistoryFlag }) => {
+			Object.keys(localStorage)
+				.filter((k) => (dropCacheFlag && k.startsWith('usb_cache_')) || (dropHistoryFlag && k.startsWith('usb_history_')))
+				.forEach((k) => localStorage.removeItem(k));
+		}, { dropCacheFlag: dropCache, dropHistoryFlag: dropHistory });
 	}
-	await page.evaluate(() => {
-		Object.keys(localStorage)
-			.filter((k) => k.startsWith('usb_cache_') || k.startsWith('usb_history_'))
-			.forEach((k) => localStorage.removeItem(k));
-	});
+
+	// QA_PICK_CARD: recargar para que el dock monte SIN objetivo persistido (con
+	// una selección previa el hero queda colapsado y los cards no existen).
+	if (process.env.QA_PICK_CARD === '1') {
+		await page.reload();
+		await page.waitForSelector(OUTER, { timeout: 45000 });
+		await page.waitForTimeout(2500);
+		await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
+		await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+		await page.waitForTimeout(1500);
+	}
 
 	// Reproducir el vídeo (cues)
 	await page.evaluate(() => { document.querySelector('video')?.play().catch(() => {}); });
@@ -306,11 +348,28 @@ if (!trReady) {
 	process.exit(1);
 }
 
-// Objetivo propio
-await waitFor(/O escribe tu propio objetivo/, 15000);
-await click(/O escribe tu propio objetivo/).catch?.(() => {});
-await page.waitForTimeout(500);
-await fill('Conseguir trabajo en fintech', 'Dominar el tema de esta lección.');
+// QA_PICK_CARD=1: pulsa el primer objetivo del curso (así el objetivo del CTA
+// coincide con el que usa la pre-generación, como en la 2ª lección de un curso).
+if (process.env.QA_PICK_CARD === '1') {
+	const picked = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const card = root?.querySelector('button.kx-obj');
+		if (!card) return false;
+		card.click();
+		return true;
+	});
+	console.log(picked ? '  objetivo: primer card del curso pulsado' : '  (no se encontró un card de objetivo)');
+	await page.waitForTimeout(800);
+}
+
+// Objetivo propio (QA_NO_OBJECTIVE=1 usa el objetivo activo por defecto, que es
+// el que emplea la pre-generación)
+if (process.env.QA_NO_OBJECTIVE !== '1' && process.env.QA_PICK_CARD !== '1') {
+	await waitFor(/O escribe tu propio objetivo/, 15000);
+	await click(/O escribe tu propio objetivo/).catch?.(() => {});
+	await page.waitForTimeout(500);
+	await fill('Conseguir trabajo en fintech', 'Dominar el tema de esta lección.');
+}
 
 // CTA
 let t0 = 0;
@@ -488,6 +547,18 @@ if (QA_FLOW === 'full') {
 const done = await waitFor(/Lección terminada/, 20000);
 const ms = Date.now() - t0;
 await page.screenshot({ path: path.join(SHOTS, `resultado-${QA_LESSON}-${QA_FLOW}.png`) });
+
+if (process.env.QA_VERBOSE === '1') {
+	console.log('\n── consola relevante ──');
+	for (const l of pageConsoleBuf.filter((x) => /pre-gener|consumido|escalón|panel request|transcript/i.test(x))) console.log('   ', l);
+	const swEnd = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	if (swEnd) {
+		const stats = await swEnd.evaluate(() => new Promise((res) => {
+			chrome.storage.local.get(['usg_study_generation_stats'], (r) => res(r?.usg_study_generation_stats ?? null));
+		})).catch(() => null);
+		console.log('   escalones de generación:', JSON.stringify(stats));
+	}
+}
 
 const fmt = (ms) => `${Math.floor(ms / 60000)}m ${String(Math.round((ms % 60000) / 1000)).padStart(2, '0')}s`;
 const limit = QA_FLOW === 'full' ? 720000 : 240000;

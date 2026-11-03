@@ -535,8 +535,15 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         applyLectureContext(msg.payload);
       }
       if (msg.type === "SUBTITLE_LINE_RECEIVED") {
-        const payload = msg.payload as { en?: string; ts?: number } | undefined;
+        const payload = msg.payload as { en?: string; ts?: number; duration?: number | null } | undefined;
         applyLectureContext(msg.payload);
+        // El reloj del vídeo viaja al Study Agent por el bus de eventos: con la
+        // duración y el tiempo actual decide cuándo pre-generar el mazo.
+        if (typeof payload?.ts === "number") {
+          window.dispatchEvent(new CustomEvent("usb:video-progress", {
+            detail: { ts: payload.ts, duration: payload.duration ?? null },
+          }));
+        }
         if (payload?.en) processIncomingSubtitle(payload.en, payload.ts);
       }
       if (msg.type === "IMPORTED_ES_LINE_RECEIVED") {
@@ -1535,7 +1542,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.5.6"}</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.5.7"}</span>
         </div>
       </div>
 
