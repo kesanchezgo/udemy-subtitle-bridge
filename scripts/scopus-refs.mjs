@@ -1,3 +1,12 @@
+// Carga .env (raiz del repo) antes de leer la key: asi funciona con
+// 'node scripts/scopus-refs.mjs' sin depender de --env-file.
+import { readFileSync as readEnvFile, existsSync as envExists } from 'node:fs';
+if (envExists('.env')) {
+  for (const line of readEnvFile('.env', 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^"|"$/g, '');
+  }
+}
 // Consultas Scopus para sustentar el diseño pedagógico de cada familia de mazos.
 // La API key vive en .env (ignorado por git): SCOPUS_API_KEY=...
 // Nunca hardcodear: este repo es publico y el historial de git no se borra.
