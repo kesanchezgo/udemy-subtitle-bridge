@@ -297,8 +297,13 @@ const consoleErrors = [];
 const nativeDialogs = [];
 page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 140)));
 page.on('dialog', (d) => { nativeDialogs.push(d.message()); d.dismiss().catch(() => {}); });
+// Buffer de consola: si Comprobar se bloquea hay que poder ver qué pasó (el
+// stall de «Analizando…» vivía ahí y sin estas líneas solo se adivina).
+const consoleTail = [];
 page.on('console', (m) => {
 	if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 140));
+	consoleTail.push(`[${m.type()}] ${m.text().slice(0, 160)}`);
+	if (consoleTail.length > 200) consoleTail.shift();
 });
 
 // ── informe ────────────────────────────────────────────────────────────────────
@@ -758,6 +763,16 @@ for (let i = 0; i < 4 && !flowOk; i += 1) {
 }
 await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') });
 check('el paso Comprobar se completa (a la primera o con consolidación)', flowOk, flowOk ? '' : (await shadow()).slice(0, 120));
+if (!flowOk) {
+	// Diagnóstico del bloqueo: estado del feedback, la petición en vuelo (lo que
+	// publica el dock) y las últimas líneas de consola.
+	console.log('  ── diagnóstico del bloqueo en Comprobar ──');
+	const dump = await shadow();
+	const fb = dump.match(/(Analizando…|Reintentar|DIAGNOSTICO:|BIEN:)/g);
+	console.log(`     feedback: ${fb ? fb.join(', ') : '(sin marcador)'}`);
+	console.log('     últimas líneas de consola:');
+	for (const l of consoleTail.slice(-25)) console.log('       ' + l);
+}
 sawSkippedToast.push(...await toastsInShadow());
 check('responder NO emite «Evaluación saltada»',
 	!sawSkippedToast.some((x) => /Evaluación saltada/i.test(x)), JSON.stringify(sawSkippedToast).slice(0, 120));

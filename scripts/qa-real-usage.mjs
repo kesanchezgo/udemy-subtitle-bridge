@@ -217,6 +217,31 @@ const fill = (ph, val) => page.evaluate(([ph, val]) => {
 	el.dispatchEvent(new Event('input', { bubbles: true }));
 	return true;
 }, [ph, val]);
+// Captura de cues robusta: un 0 de subtitulos no debe abortar (en una sesion
+// humana seria perder la leccion entera). Reanuda la reproduccion y reintenta.
+const waitForTranscript = async (attempts) => {
+	for (let intento = 1; intento <= attempts; intento++) {
+		const dTr = Date.now() + 60000;
+		while (Date.now() < dTr) {
+			const txt = await shadow();
+			if (/Subtítulos listos/.test(txt)) { console.log(`  transcripción: lista ✓ (intento ${intento})`); return true; }
+			if (/Sin subtítulos/.test(txt)) break;
+			await page.waitForTimeout(1000);
+		}
+		if (intento < attempts) {
+			console.log(`  transcripción: sin cues (intento ${intento}); reintentando…`);
+			await page.evaluate(() => {
+				const v = document.querySelector('video');
+				if (v) { try { v.currentTime = Math.max(0, (v.duration || 60) - 12); } catch { /* ignore */ } v.play().catch(() => {}); }
+			});
+			await page.waitForTimeout(9000);
+			await page.evaluate(() => { document.querySelector('video')?.pause(); });
+		}
+	}
+	console.log('  transcripción: NO hay (agotados los reintentos)');
+	return false;
+};
+
 const waitFor = async (regex, ms) => {
 	const d = Date.now() + ms;
 	let t = '';
@@ -267,7 +292,13 @@ const short = sorted.find((l) => l.seconds >= 120) ?? sorted[0] ?? { id: 4216334
 const longCands = sorted.filter((l) => l.seconds >= 600 && l.seconds <= 1200)
 	.sort((a, b) => Math.abs(a.seconds - 900) - Math.abs(b.seconds - 900))
 	.slice(0, 3);
-const lesson = QA_LESSON === 'long' ? longCands[0] ?? short : short;
+// QA_LESSON_ID fija una lección concreta por su ID de Udemy (las dos de 15 min
+// de la sesión humana deben ser distintas).
+const lessonById = process.env.QA_LESSON_ID
+	? (lessons.find((l) => String(l.id) === String(process.env.QA_LESSON_ID)) ?? null)
+	: null;
+const lesson = lessonById ?? (QA_LESSON === 'long' ? longCands[0] ?? short : short);
+if (lessonById) console.log(`  lección fijada por QA_LESSON_ID: ${lessonById.seconds}s «${lessonById.title}»`);
 console.log(`  lección (${QA_LESSON}, ${lesson.seconds}s): «${lesson.title}» (id ${lesson.id})`);
 
 // Navegar a la lección + configurar el modelo una vez; para long se prueban
@@ -368,14 +399,8 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 	await page.evaluate(() => { document.querySelector('video')?.pause(); });
 	console.log('  vídeo reproducido 20s');
 
-	// Esperar transcripción lista
-	const dTr = Date.now() + 90000;
-	while (Date.now() < dTr) {
-		const t = await shadow();
-		if (/Subtítulos listos/.test(t)) { console.log('  transcripción: lista ✓'); trReady = true; break; }
-		if (/Sin subtítulos/.test(t)) { console.log('  transcripción: NO hay'); break; }
-		await page.waitForTimeout(1000);
-	}
+	// Esperar transcripción lista (con reintentos ante 0 cues)
+	trReady = await waitForTranscript(3);
 }
 if (!trReady && process.env.QA_MULTI_LESSON !== '1') {
 	console.log('✗ ninguna candidata tiene transcripción');
@@ -511,6 +536,82 @@ if (process.env.QA_MULTI_LESSON === '1') {
 	clearTimeout(watchdog);
 	await context.close();
 	process.exit(okMulti ? 0 : 1);
+}
+
+// ── QA_HUMAN_OBSERVE=1: sesión humana, el script NO responde nada ───────────
+// Prepara todo (sesión, lección, caché limpia, proveedor), adelanta el vídeo a
+// ~3:30 del final y lo deja reproduciéndose para que la pre-generación se
+// dispare sola. A partir de ahí solo OBSERVA: no hace clic ni escribe. Marca
+// pasos y esperas de IA hasta «Lección terminada» (margen amplio).
+if (process.env.QA_HUMAN_OBSERVE === '1') {
+	const seeked = await page.evaluate(() => {
+		const v = document.querySelector('video');
+		if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return null;
+		v.currentTime = Math.max(0, v.duration - 210);
+		v.play().catch(() => {});
+		return { duration: v.duration, from: v.currentTime };
+	});
+	if (!seeked) { console.log('✗ no se pudo adelantar el vídeo'); process.exit(1); }
+	console.log(`  vídeo adelantado a ${Math.round(seeked.from)}s de ${Math.round(seeked.duration)}s; el resto lo hace una persona`);
+	console.log('  observando (sin intervenir)…');
+
+	const marks = [];
+	const aiWaits = {};
+	const t0obs = Date.now();
+	let step = 'Recordar';
+	let stepAt = t0obs;
+	let genStart = 0;
+	let evalStart = 0;
+	let firstResult = 0;
+	let done = false;
+	const maxMs = Number(process.env.QA_OBSERVE_MAX ?? 1800) * 1000;
+	const seen = new Set();
+	const pushMark = (name, at) => {
+		marks.push({ name, at });
+		console.log(`  ${name} @ ${Math.round((at - t0obs) / 1000)}s`);
+	};
+	while (Date.now() - t0obs < maxMs) {
+		const txt = await shadow();
+		const has = (re) => re.test(txt);
+		if (!genStart && has(/Preparando tu sesión/)) { genStart = Date.now(); console.log(`  generación visible @ ${Math.round((genStart - t0obs) / 1000)}s`); }
+		if (genStart && !firstResult && has(/¿Qué tan claro te quedó el video\??/)) {
+			firstResult = Date.now();
+			const waitMs = firstResult - genStart;
+			aiWaits[step] = (aiWaits[step] ?? 0) + waitMs;
+			console.log(`  resultado listo: la persona esperó ${Math.round(waitMs / 1000)}s tras pulsar Empezar`);
+		}
+		// Pasos
+		if (has(/Ponte a prueba/) && !seen.has('Comprobar')) { seen.add('Comprobar'); pushMark('Comprobar', Date.now()); aiWaits[step] = aiWaits[step] ?? 0; step = 'Comprobar'; stepAt = Date.now(); }
+		if (has(/Llévalo a la práctica/) && !seen.has('Aplicar')) { seen.add('Aplicar'); pushMark('Aplicar', Date.now()); step = 'Aplicar'; stepAt = Date.now(); }
+		if (has(/Terminar lección|Fíjalo en memoria/) && !seen.has('Fijar')) { seen.add('Fijar'); pushMark('Fijar', Date.now()); step = 'Fijar'; stepAt = Date.now(); }
+		// Esperas de IA: de «Analizando» al veredicto
+		if (!evalStart && has(/Analizando/)) evalStart = Date.now();
+		if (evalStart && has(/\[CORRECTO\]|\[PARCIAL\]|\[INCORRECTO\]|DIAGNOSTICO:|BIEN:/)) {
+			aiWaits[step] = (aiWaits[step] ?? 0) + (Date.now() - evalStart);
+			evalStart = 0;
+		}
+		if (has(/Lección terminada/)) { done = true; break; }
+		await page.waitForTimeout(1500);
+	}
+	const consumedPre = pageConsoleBuf.some((l) => /mazo pre-generado consumido/.test(l));
+	const swObs = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	const stats = swObs ? await swObs.evaluate(() => new Promise((res) => {
+		chrome.storage.local.get(['usg_study_generation_stats'], (r) => res(r?.usg_study_generation_stats ?? null));
+	})).catch(() => null) : null;
+	console.log('\n── TIEMPO POR PASO (persona real, observado) ──');
+	if (firstResult && genStart) console.log(`  espera tras Empezar (generación): ${Math.round((firstResult - genStart) / 1000)}s`);
+	let prev = genStart || t0obs;
+	for (const mk of marks) {
+		const total = mk.at - prev;
+		const ai = aiWaits[mk.name] ?? 0;
+		console.log(`  ${mk.name.padEnd(10)} total ${String(Math.round(total / 1000)).padStart(4)}s   espera IA ${String(Math.round(ai / 1000)).padStart(4)}s   humano ${String(Math.round((total - ai) / 1000)).padStart(4)}s`);
+		prev = mk.at;
+	}
+	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round((Date.now() - t0obs) / 1000)}s observados`);
+	console.log(`  terminó la lección: ${done ? 'sí' : 'no (margen agotado)'} · mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'} · escalones: ${JSON.stringify(stats)}`);
+	clearTimeout(watchdog);
+	await context.close();
+	process.exit(done ? 0 : 1);
 }
 
 // QA_PICK_CARD=1: pulsa el primer objetivo del curso (así el objetivo del CTA
@@ -756,7 +857,7 @@ if (process.env.QA_HUMAN_TIMING === '1' && stepClock.marks.length) {
 		prev = m.at;
 	}
 	console.log(`  ${'TOTAL'.padEnd(10)} ${Math.round((Date.now() - stepClock.startedAt) / 1000)}s desde Empezar`);
-	console.log(`  mazo pre-generado consumido: ${consumedPre ? 'si (0 s de espera)' : 'no'} - escalones: ${JSON.stringify(stats)}`);
+	console.log(`  mazo pre-generado consumido: ${consumedPre ? 'sí' : 'no'} · espera tras pulsar Empezar: ${Math.round(tGen / 1000)}s · escalones: ${JSON.stringify(stats)}`);
 }
 const limit = QA_FLOW === 'full' ? 720000 : 240000;
 console.log(`\n── RESULTADO ──`);
