@@ -298,7 +298,11 @@ const longCands = sorted.filter((l) => l.seconds >= 600 && l.seconds <= 1200)
 const lessonById = process.env.QA_LESSON_ID
 	? (lessons.find((l) => String(l.id) === String(process.env.QA_LESSON_ID)) ?? null)
 	: null;
-const lesson = lessonById ?? (QA_LESSON === 'long' ? longCands[0] ?? short : short);
+// QA_LESSON_SLOT=a|b: 1ª o 2ª candidata de 15 min. Los dos flujos de la sesión
+// humana tienen que ir en lecciones distintas (repetir la misma acelera la
+// segunda pasada porque ya se conocen las respuestas).
+const slotLesson = longCands[process.env.QA_LESSON_SLOT === 'b' ? 1 : 0] ?? longCands[0] ?? short;
+const lesson = lessonById ?? (QA_LESSON === 'long' ? slotLesson : short);
 if (lessonById) console.log(`  lección fijada por QA_LESSON_ID: ${lessonById.seconds}s «${lessonById.title}»`);
 console.log(`  lección (${QA_LESSON}, ${lesson.seconds}s): «${lesson.title}» (id ${lesson.id})`);
 
