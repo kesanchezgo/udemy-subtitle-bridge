@@ -734,7 +734,20 @@ for (let i = 0; i < 90; i++) {
 	if (await click(/Empezar · ~4–10 min|Generar sesión de aprendizaje/)) { t0 = Date.now(); break; }
 	await page.waitForTimeout(1000);
 }
-if (!t0) { console.log('✗ CTA deshabilitado'); process.exit(1); }
+if (!t0) {
+	// Diagnostico: el CTA depende de objetivo + contexto + transcripcion + IA
+	// disponible. Decir solo 'deshabilitado' obliga a adivinar.
+	const dock = await shadow();
+	const aviso = dock.match(/(Elige o escribe un objetivo|Sin proveedor de IA|Comprobando la IA|El proveedor no responde|Sin transcripci|Escribe el nombre del curso)[^]{0,90}/);
+	const swNow = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	const health = swNow ? await swNow.evaluate(() => new Promise((res) => {
+		chrome.runtime.sendMessage({ type: 'USG_PROVIDER_HEALTH' }, (r) => res(r ?? null));
+	})).catch(() => null) : null;
+	console.log('✗ CTA deshabilitado');
+	console.log('  motivo visible:', aviso ? aviso[1] : '(sin aviso: el bloqueo no se explica en la UI)');
+	console.log('  salud de IA:', JSON.stringify(health));
+	process.exit(1);
+}
 stepClock.startedAt = t0;
 markStep('Recordar'); // Empezar: la generacion es espera de IA de Recordar
 console.log('  generación iniciada…');

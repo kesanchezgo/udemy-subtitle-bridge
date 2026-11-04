@@ -57,3 +57,10 @@ udemy_curse_page.html
 # Cookies de sesión para la prueba contra Udemy real. NUNCA versionar:
 # contienen token de acceso y sesión completa.
 .qa-udemy-cookies.json
+
+# Perfiles de Chrome de las suites (NUNCA versionar: contienen la sesion)
+chrome-real-profile/
+chrome-real-profile.bak/
+chrome-*/
+temp_profile*/
+qa-sidebar-local.png
