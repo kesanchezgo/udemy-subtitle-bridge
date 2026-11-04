@@ -1,3 +1,9 @@
+## [1.5.12] — 2026-11-04
+
+- **El mismo estado de IA gobierna todas las acciones de IA**, no solo el CTA: `Regenerar` objetivos, `Refinar con IA` y `Proponer palabras` (vocabulario) se deshabilitan sin proveedor y explican el motivo al pasar el cursor («Sin proveedor de IA: configúralo en Ajustes → Proveedor» / «Comprobando la IA...» / «El proveedor no responde (endpoint). Reintentando...»). Un único helper (`aiBlockedMessage`) alimenta los cuatro avisos, así que no pueden divergir.
+- Se mantiene el reintento por estado: en cuanto la IA aparece (≤5 s), los botones se rehabilitan solos, sin recargar.
+- La generación automática de objetivos sigue funcionando sin IA (cae a plantillas heurísticas, con su aviso): hace falta tener objetivos que elegir aunque el proveedor no esté.
+
 ## [1.5.11] — 2026-11-04
 
 - **Un solo vocabulario para los fallos de IA** (`describeProviderFailure` en `ai-providers`), que habla del proveedor REAL y de su endpoint: sin proveedor configurado, no responde, credencial rechazada (401/403), limitando (429), cuota agotada, saturado (5xx), contenido vacío (modelos de razonamiento) o respuesta cortada. Antes cada camino inventaba su texto y varios culpaban a **Gemini** aunque el camino sea el proveedor configurado.

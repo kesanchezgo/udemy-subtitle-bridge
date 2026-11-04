@@ -561,6 +561,15 @@ function getOralPracticeMeta(content: StudyContent, objective: string) {
   };
 }
 
+export type AiState = "comprobando" | "no-config" | "lista" | "sin-respuesta";
+
+/** Motivo, en una frase, de por que una accion de IA esta bloqueada. */
+function aiBlockedMessage(state: AiState, endpoint: string): string {
+  if (state === "no-config") return "Sin proveedor de IA: configúralo en Ajustes → Proveedor.";
+  if (state === "comprobando") return "Comprobando la IA…";
+  return `El proveedor no responde${endpoint ? ` (${endpoint})` : ""}. Reintentando…`;
+}
+
 function humanizeObjectivesError(error: string | null | undefined): string {
   // El vocabulario vive en un solo sitio (ai-providers) y habla del proveedor
   // REAL: estos mensajes nombraban a Gemini aunque el camino sea el configurado.
@@ -1227,7 +1236,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   //   comprobando -> primer sondeo en vuelo
   //   lista       -> el proveedor respondió
   //   sin-respuesta -> configurado pero no contesta (se reintenta solo)
-  const [aiState, setAiState] = useState<"comprobando" | "no-config" | "lista" | "sin-respuesta">("comprobando");
+  const [aiState, setAiState] = useState<AiState>("comprobando");
   const [aiEndpoint, setAiEndpoint] = useState<string>("");
   // Objetivo activo LEÍDO EN VIVO (el callback de pre-generación captura el
   // estado de su render; comparar contra esa foto no protegía de un cambio).
@@ -3234,7 +3243,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         )}
       </AnimatePresence>
 
-      <VocabularyPanel compact mount={vocabularyMount} course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} />
+      <VocabularyPanel compact mount={vocabularyMount} course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)} />
 
       <AnimatePresence mode="wait">
 
@@ -3282,7 +3291,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               <div className="flex items-center justify-between mb-3">
                 <SectionTitle icon="target" hue={0}>¿Para qué estudias esto?</SectionTitle>
                 {(dynamicObjectives || objectivesMock || objectivesError) && (
-                  <button onClick={handleRegenerateObjectives} disabled={objectivesLoading}
+                  <button onClick={handleRegenerateObjectives} disabled={objectivesLoading || !aiReady}
+                    title={!aiReady ? aiBlockedMessage(aiState, aiEndpoint) : undefined}
                     className="kx-chip h-7 px-2.5 rounded-full disabled:cursor-wait text-[10.5px] font-semibold flex items-center gap-1.5 transition-colors">
                     {objectivesLoading
                       ? <><Loader2 size={11} className="animate-spin"/>Regenerando…</>
@@ -3486,7 +3496,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     {/* No refined version yet → primary CTA */}
                     {customObj.trim() && !refinedObj && (
                       <motion.button key="refine-cta" initial={{ opacity: 0, y: -2 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                        onClick={handleRefine} disabled={isRefining}
+                        onClick={handleRefine} disabled={isRefining || !aiReady}
+                        title={!aiReady ? aiBlockedMessage(aiState, aiEndpoint) : undefined}
                         className="kx-chip w-full h-10 rounded-2xl disabled:cursor-wait text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all">
                         {isRefining ? <><Loader2 size={11} className="animate-spin"/>Refinando con IA…</> : <><Sparkles size={12}/>Refinar con IA</>}
                       </motion.button>
@@ -3651,11 +3662,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                   : !hasUsableObjective
                     ? "Elige o escribe un objetivo para empezar."
                     : !aiReady
-                      ? (aiState === "no-config"
-                        ? "Sin proveedor de IA: configúralo en Ajustes → Proveedor."
-                        : aiState === "comprobando"
-                          ? "Comprobando la IA…"
-                          : `El proveedor no responde${aiEndpoint ? ` (${aiEndpoint})` : ""}. Reintentando…`)
+                      ? aiBlockedMessage(aiState, aiEndpoint)
                       : "Sin transcripción todavía — activa los subtítulos en inglés o reintenta."}
               </p>
             )}
@@ -4654,7 +4661,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       </AnimatePresence>
                     </ExportModule>
 
-                      <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} />
+                      <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)} />
 
                       {/* ── Obsidian export ── */}
                       <ExportModule

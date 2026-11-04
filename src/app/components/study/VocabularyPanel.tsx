@@ -19,6 +19,10 @@ interface Props {
   generate: () => Promise<unknown>;
   compact?: boolean;
   mount?: HTMLElement | null;
+  /** Estado real de la IA: sin proveedor disponible se deshabilita proponer. */
+  aiReady?: boolean;
+  /** Motivo, en una frase, cuando aiReady es false. */
+  aiNotice?: string;
 }
 
 /**
@@ -34,7 +38,11 @@ function stableConfigString(config: VocabConfig): string {
 }
 
 
-export function VocabularyPanel({ course, lesson, config, onConfig, generate, compact = false, mount }: Props) {
+export function VocabularyPanel({
+  course, lesson, config, onConfig, generate, compact = false, mount,
+  aiReady,
+  aiNotice,
+}: Props) {
   const key = vocabularySessionKey(course, lesson, config.targetLang);
   const [session, setSession] = useState<VocabularySession | null>(null);
   const [exported, setExported] = useState<Set<string>>(new Set());
@@ -179,7 +187,7 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
   // subtítulos de la lección y propone palabras; nada se exporta todavía.
   const generateLabel = busy ? "Procesando…" : !session ? "Proponer palabras" : stale ? "Aplicar cambios a la lista" : "Volver a proponer palabras";
   const generateBlock = <div className="space-y-1.5">
-    <button type="button" disabled={busy} onClick={() => prepare()} className={`${stale || !session ? primaryBtnCls : secondaryBtnCls} w-full`}><Icon name="sparkles" size={14} />{generateLabel}</button>
+    <button type="button" disabled={busy || aiReady === false} title={aiReady === false ? aiNotice : undefined} onClick={() => prepare()} className={`${stale || !session ? primaryBtnCls : secondaryBtnCls} w-full`}><Icon name="sparkles" size={14} />{generateLabel}</button>
     <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">{session ? "Rehace la lista con estos ajustes; conserva lo que marcaste." : "No exporta nada: solo propone la lista."}</p>
   </div>;
 
