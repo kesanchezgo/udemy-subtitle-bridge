@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { toast } from "sonner";
+import { useAiHealth } from "../hooks/useAiHealth";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -206,6 +207,9 @@ export function TranslationPipeline({
   const [showPrompt, setShowPrompt]     = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  // Sin IA disponible la pipeline no arranca y lo dice; el sondeo la
+  // rehabilita solo en cuanto el proveedor aparezca.
+  const { ready: aiReady, notice: aiNotice } = useAiHealth();
 
   const abortRef     = useRef<AbortController | null>(null);
   const hasAutoRun   = useRef(false);
@@ -458,6 +462,10 @@ export function TranslationPipeline({
       return;
     }
     if (capturedLineCount <= 0) return;
+    // Sin IA no se lanza: la traducción tarda minutos y fallaría a mitad. El
+    // efecto depende de aiReady, así que arranca sola cuando el proveedor
+    // vuelve (mismo criterio que el CTA de Study).
+    if (!aiReady) { setErrorMessage(aiNotice); return; }
     // Once we've successfully started a pipeline run, don't re-trigger on count changes
     if (hasAutoRun.current) return;
 
@@ -483,7 +491,7 @@ export function TranslationPipeline({
       hasAutoRun.current = false;
       lastRequestedCountRef.current = 0;
     }
-  }, [autoTranslate]);
+  }, [autoTranslate, aiReady, aiNotice]);
 
   // Manual re-run trigger
   useEffect(() => {
@@ -563,7 +571,8 @@ export function TranslationPipeline({
           {(isDone || phase === "idle") && (
             <button
               onClick={() => setRunCount(n => n + 1)}
-              disabled={!autoTranslate}
+              disabled={!autoTranslate || !aiReady}
+              title={!aiReady ? aiNotice : undefined}
               className="kx-chip flex items-center gap-1 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed px-2.5 py-1 rounded-full"
               style={{ fontWeight: 600 }}
             >

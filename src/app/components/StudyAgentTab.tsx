@@ -17,6 +17,7 @@ import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream,
 import { buildAnkiApkg, downloadApkg, PRISM_MEDIA_FILES } from "../services/ankiApkg";
 import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
 import { cacheService } from "../services/cacheService";
+import { aiBlockedMessage, type AiState } from "../hooks/useAiHealth";
 import { describeProviderFailure, getAiProviderConfig } from "../services/ai-providers";
 import {
   DEFAULT_VOCAB_CONFIG, loadVocabConfig, parseVocabularyPayload, saveVocabConfig,
@@ -559,15 +560,6 @@ function getOralPracticeMeta(content: StudyContent, objective: string) {
     subtitle: "Consolida la idea con tus palabras",
     answerLabel: "Estructura sugerida",
   };
-}
-
-export type AiState = "comprobando" | "no-config" | "lista" | "sin-respuesta";
-
-/** Motivo, en una frase, de por que una accion de IA esta bloqueada. */
-function aiBlockedMessage(state: AiState, endpoint: string): string {
-  if (state === "no-config") return "Sin proveedor de IA: configúralo en Ajustes → Proveedor.";
-  if (state === "comprobando") return "Comprobando la IA…";
-  return `El proveedor no responde${endpoint ? ` (${endpoint})` : ""}. Reintentando…`;
 }
 
 function humanizeObjectivesError(error: string | null | undefined): string {

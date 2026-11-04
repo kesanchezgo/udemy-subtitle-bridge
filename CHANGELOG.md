@@ -1,3 +1,10 @@
+## [1.5.13] — 2026-11-04
+
+- **La traducción también consulta el estado de IA** (`useAiHealth`, hook nuevo): sin proveedor la pipeline no arranca — tarda minutos y fallaría a mitad — y lo dice («Sin proveedor de IA…» / «El proveedor no responde (endpoint). Reintentando…»). El auto-arranque depende del estado, así que se dispara sola en cuanto la IA aparece; el botón «Retraducir» se deshabilita con el motivo al pasar el cursor.
+- El hook re-sondea al cambiar la configuración por storage (`chrome.storage.onChanged`), no solo por el evento de la UI: cubre cambios desde otra pestaña o ventana.
+- `aiBlockedMessage` pasa a vivir con el hook y Study lo importa, así que el vocabulario de bloqueo sigue siendo uno solo.
+- Nota de arquitectura: StudyAgentTab conserva su propio sondeo. Al unificarlo en el hook, la suite (`qa-full-flows`) pasó de 49/49 a fallar en cascada desde el paso Recordar; revertido, vuelve a 49/49. Queda un sondeo por superficie montada (Study y Captions), con el mismo evento `usb:ai-health` y el mismo veredicto cacheado en el SW (15 s) — así que el coste en red es el mismo.
+
 ## [1.5.12] — 2026-11-04
 
 - **El mismo estado de IA gobierna todas las acciones de IA**, no solo el CTA: `Regenerar` objetivos, `Refinar con IA` y `Proponer palabras` (vocabulario) se deshabilitan sin proveedor y explican el motivo al pasar el cursor («Sin proveedor de IA: configúralo en Ajustes → Proveedor» / «Comprobando la IA...» / «El proveedor no responde (endpoint). Reintentando...»). Un único helper (`aiBlockedMessage`) alimenta los cuatro avisos, así que no pueden divergir.
