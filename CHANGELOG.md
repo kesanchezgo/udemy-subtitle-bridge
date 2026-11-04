@@ -1,3 +1,8 @@
+## [1.5.9] — 2026-11-04
+
+- **El CTA dejaba de estar muerto sin explicación cuando el curso tiene objetivos heurísticos**: la condición exigía `!objectivesMock`, así que elegir una de esas tarjetas no habilitaba «Generar sesión de aprendizaje» (solo escribir un objetivo propio lo hacía). Un objetivo ELEGIDO cuenta ahora aunque la plantilla sea heurística — la sesión se genera con el proveedor configurado, no con Gemini. El aviso de «plantillas heurísticas» se mantiene.
+- **El indicador de transcripción se rendía a los ~60 s**: si los subtítulos se capturaban más tarde (p. ej. tras reintentar desde Captions), Study seguía diciendo «Sin subtítulos en esta lección» y el CTA quedaba bloqueado para siempre. Ahora sondea sin rendirse mientras el paso es el de objetivo y re-evalúa en cuanto llegan cues (con freno de 2 s).
+
 ## [1.5.8] — 2026-11-03
 
 - **Estado de pre-generación por lección** (fallo de 1.5.7): `preGenRef` sobrevivía al cambio de lección porque Study está siempre montado. Si una lección se ojeaba sin estudiarla, quedaba en `done` y no se volvía a pre-generar en toda la sesión; si quedaba en `running`, al pulsar Empezar en la lección siguiente se esperaba esa generación ajena. Ahora se reinicia al cambiar de lección y en Empezar solo se espera la generación de la lección y el objetivo actuales.

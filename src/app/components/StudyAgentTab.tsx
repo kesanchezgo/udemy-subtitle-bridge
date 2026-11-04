@@ -1465,7 +1465,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     if (phase !== "objective" || !isExtensionRuntime()) return;
     let tries = 0;
     let alive = true;
+    let lastCheckAt = 0;
     const check = async () => {
+      if (Date.now() - lastCheckAt < 2000) return;
+      lastCheckAt = Date.now();
       tries += 1;
       // Mismo canal que la generación: runtime si responde, bridge del
       // content script si no (el background no maneja GET_STUDY_TRANSCRIPT).
@@ -1480,11 +1483,15 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
     };
     void check();
-    const iv = setInterval(() => {
-      if (tries >= 12) { clearInterval(iv); return; }
-      void check();
-    }, 5000);
-    return () => { alive = false; clearInterval(iv); };
+    // NO rendirse: la captura puede arrancar tarde (p. ej. tras reintentar
+    // desde Captions) y antes se dejaba de sondear a los ~60 s, así que el
+    // panel se quedaba en «Sin subtítulos» y el CTA bloqueado para siempre.
+    const iv = setInterval(() => void check(), 5000);
+    // Y si los cues ya están llegando, re-evaluar de inmediato (con freno
+    // de 2 s: llegan muchas veces por segundo).
+    const onCue = () => { void check(); };
+    window.addEventListener("usb:video-progress", onCue);
+    return () => { alive = false; clearInterval(iv); window.removeEventListener("usb:video-progress", onCue); };
   }, [phase, courseName, lessonName]);
 
   // ── §1.5: repasos pendientes del CURSO en la pantalla de objetivo ─────────
@@ -2923,9 +2930,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     { label: STEP_META[3].short, done: finishedAt !== null, active: showApply },
   ];
 
+  // Un objetivo ELEGIDO por el estudiante cuenta aunque las plantillas del
+  // curso sean heuristicas (sin Gemini): la sesion se genera con el proveedor
+  // configurado, no con Gemini, asi que exigir !objectivesMock solo dejaba el
+  // boton muerto sin decir por que. El aviso de «plantillas heuristicas» sigue.
   const hasUsableObjective = Boolean(
     customObj.trim() ||
-    (dynamicObjectives?.some(o => o.id === selectedObj) && !objectivesMock)
+    dynamicObjectives?.some(o => o.id === selectedObj)
   );
   const hasCourseContext = Boolean(courseName.trim() && lessonName.trim());
 
