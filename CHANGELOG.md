@@ -1,3 +1,8 @@
+## [1.5.11] — 2026-11-04
+
+- **Un solo vocabulario para los fallos de IA** (`describeProviderFailure` en `ai-providers`), que habla del proveedor REAL y de su endpoint: sin proveedor configurado, no responde, credencial rechazada (401/403), limitando (429), cuota agotada, saturado (5xx), contenido vacío (modelos de razonamiento) o respuesta cortada. Antes cada camino inventaba su texto y varios culpaban a **Gemini** aunque el camino sea el proveedor configurado.
+- Aplicado en los cuatro sitios donde el mensaje mentía o era genérico: **objetivos** (generar/regenerar), **refinar objetivo**, **generar sesión** y **vocabulario** (proponer palabras).
+
 ## [1.5.10] — 2026-11-04
 
 - **El dock conoce el estado REAL de la IA** (antes el badge «IA local · conectada» venía hardcodeado y el CTA se podía pulsar sin proveedor):

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Languages, ChevronDown, Download, Icon } from "../icons";
+import { describeProviderFailure, getAiProviderConfig } from "../../services/ai-providers";
 import { chromeLocalStorage } from "../../services/chromeStorage";
 import { contentBridge } from "../../services/contentBridge";
 import { buildVocabularySpec, markVocabularyExported, parseVocabularyPayload, type VocabConfig } from "../../services/vocabularyService";
@@ -113,7 +114,13 @@ export function VocabularyPanel({ course, lesson, config, onConfig, generate, co
   const run = async (action: () => Promise<void>) => {
     if (lock.current) return;
     lock.current = true; setBusy(true);
-    try { await action(); } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo completar la acción."); }
+    try { await action(); } catch (error) {
+      // Mismo vocabulario que el resto: habla del proveedor real y su endpoint.
+      const cfg = getAiProviderConfig();
+      toast.error(describeProviderFailure(error instanceof Error ? error.message : "", {
+        kind: cfg.kind, endpoint: cfg.baseUrl, model: cfg.model,
+      }));
+    }
     finally { lock.current = false; setBusy(false); }
   };
   const prepare = () => run(async () => {

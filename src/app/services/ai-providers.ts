@@ -507,6 +507,50 @@ export interface OpenAiChatMessage {
 }
 
 /** Request headers per provider. OpenAI-compatible uses bearer auth. */
+/**
+ * Traduce un fallo del proveedor de IA a una frase util para el estudiante.
+ * Unica fuente de este vocabulario: los mensajes de objetivos, generacion,
+ * refinado, traduccion y vocabulario hablaban de Gemini aunque el camino real
+ * sea el proveedor configurado (local, OpenAI, Anthropic, Gemini...).
+ */
+export function describeProviderFailure(
+  raw: string,
+  opts: { kind?: string; endpoint?: string; model?: string } = {},
+): string {
+  const msg = String(raw || '').toLowerCase();
+  const where = opts.endpoint ? ` (${opts.endpoint})` : '';
+  const who = opts.kind ? `proveedor «${opts.kind}»` : 'proveedor de IA';
+  if (!msg.trim() || msg.includes('sin configurar') || msg.includes('sin runtime')) {
+    return 'No hay proveedor de IA configurado. Ábrelo en Ajustes → Proveedor y pulsa «Probar conexión y guardar».';
+  }
+  if (msg.includes('failed to fetch') || msg.includes('econnrefused') || msg.includes('err_connection')
+    || msg.includes('networkerror') || msg.includes('network request failed') || msg.includes('timeout')
+    || msg.includes('abort') || msg.includes('no se pudo contactar')) {
+    return `El ${who} no responde${where}. Comprueba que esté encendido; se reintenta solo.`;
+  }
+  if (msg.includes('401') || msg.includes('403') || msg.includes('invalid') && msg.includes('key')
+    || msg.includes('api key') || msg.includes('unauthorized')) {
+    return `El ${who} rechazó la credencial (401/403)${where}. Revísala en Ajustes → Proveedor.`;
+  }
+  if (msg.includes('429') || msg.includes('rate') && msg.includes('limit') || msg.includes('too many')) {
+    return `El ${who} está limitando peticiones (429). Espera unos segundos y reintenta.`;
+  }
+  if (msg.includes('quota') || msg.includes('resource_exhausted') || msg.includes('insufficient')) {
+    return `Se agotó la cuota del ${who}${opts.model ? ` para «${opts.model}»` : ''}. Revisa tu plan o cambia de modelo.`;
+  }
+  if (/http 5\d\d/.test(msg) || msg.includes('overloaded') || msg.includes('high demand') || msg.includes('saturado')) {
+    return `El ${who} está saturado o caído (5xx)${where}. Reintenta en 1-2 minutos.`;
+  }
+  if (msg.includes('vacío') || msg.includes('vacio') || msg.includes('empty content')) {
+    return `El modelo devolvió una respuesta vacía${opts.model ? ` («${opts.model}»)` : ''} — con modelos de razonamiento pasa cuando consume el presupuesto. Reintenta.`;
+  }
+  if (msg.includes('cortad') || msg.includes('truncad') || msg.includes('max_tokens') || msg.includes('max tokens')
+    || msg.includes('json') || msg.includes('formato')) {
+    return 'La respuesta llegó cortada o con formato inválido. Reintenta: el siguiente intento pedirá más tokens.';
+  }
+  return raw.length > 160 ? `${raw.slice(0, 160)}...` : raw;
+}
+
 export function buildProviderHeaders(config: AiProviderConfig): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   switch (config.kind) {

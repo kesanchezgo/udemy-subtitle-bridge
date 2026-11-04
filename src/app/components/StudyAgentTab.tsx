@@ -17,6 +17,7 @@ import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream,
 import { buildAnkiApkg, downloadApkg, PRISM_MEDIA_FILES } from "../services/ankiApkg";
 import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
 import { cacheService } from "../services/cacheService";
+import { describeProviderFailure, getAiProviderConfig } from "../services/ai-providers";
 import {
   DEFAULT_VOCAB_CONFIG, loadVocabConfig, parseVocabularyPayload, saveVocabConfig,
   type VocabConfig,
@@ -561,7 +562,11 @@ function getOralPracticeMeta(content: StudyContent, objective: string) {
 }
 
 function humanizeObjectivesError(error: string | null | undefined): string {
-  if (!error) return "El servidor de IA local y Gemini no respondieron. Configura tu API key o reintenta.";
+  // El vocabulario vive en un solo sitio (ai-providers) y habla del proveedor
+  // REAL: estos mensajes nombraban a Gemini aunque el camino sea el configurado.
+  if (!error) return "La IA no respondió. Revisa el proveedor en Ajustes o pulsa Regenerar.";
+  const cfg = getAiProviderConfig();
+  const ctx = { kind: cfg.kind, endpoint: cfg.baseUrl, model: cfg.model };
   const msg = error.toLowerCase();
   if (msg.includes("cortada a mitad") || msg.includes("max_tokens") || msg.includes("max tokens") || msg.includes("límite de tokens")) {
     return "La IA fue cortada a mitad de respuesta por el límite de tokens. Pulsa Regenerar — el siguiente intento usará más tokens.";
@@ -571,12 +576,13 @@ function humanizeObjectivesError(error: string | null | undefined): string {
   }
   if (msg.includes("rate") && msg.includes("limit")) return "Gemini está limitando peticiones. Espera unos segundos y vuelve a intentarlo.";
   if (msg.includes("quota") || msg.includes("resource_exhausted")) return "Tu cuota de Gemini se agotó por hoy. Añade otra clave o espera al reset.";
-  if (msg.includes("no gemini api keys")) return "No has configurado tu API key de Gemini. Ábrela en Ajustes → API keys e inténtalo de nuevo.";
-  if (msg.includes("api key") || msg.includes("api_key") || (msg.includes("invalid") && msg.includes("key"))) return "La API key de Gemini parece inválida. Verifícala en Ajustes → API keys.";
+  if (msg.includes("api key") || msg.includes("api_key") || (msg.includes("invalid") && msg.includes("key"))) {
+    return describeProviderFailure(error, ctx);
+  }
   if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red al hablar con la IA. Revisa tu conexión y reintenta.";
   if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página de Udemy.";
   if (msg.includes("parse") || msg.includes("json") || msg.includes("formato no era válido")) return "La IA respondió pero el formato no era válido. Pulsa Regenerar para reintentar.";
-  return error.length > 140 ? `${error.slice(0, 140)}…` : error;
+  return describeProviderFailure(error, ctx);
 }
 
 function BLOOM_STYLE(l: string) {
@@ -1877,7 +1883,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           clearInterval(iv);
           setPhase("objective");
           toast.error("No se pudo generar la sesión", {
-            description: generationError.length > 140 ? `${generationError.slice(0, 140)}…` : generationError,
+            description: describeProviderFailure(generationError, {
+              kind: getAiProviderConfig().kind,
+              endpoint: getAiProviderConfig().baseUrl,
+              model: getAiProviderConfig().model,
+            }),
             icon: <WifiOff className="text-amber-400" size={18} />,
             duration: 7000,
           });
@@ -2225,7 +2235,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const { refined, isMock } = await refineCustomObjective(courseName, effectiveCourseDescription, sourceText);
       if (!refined.trim() || isMock) {
         toast.warning("No se pudo refinar con IA", {
-          description: "Revisa tus API keys o intenta otra vez en unos segundos.",
+          description: describeProviderFailure("", {
+            kind: getAiProviderConfig().kind,
+            endpoint: getAiProviderConfig().baseUrl,
+            model: getAiProviderConfig().model,
+          }),
           icon: <Sparkles className="text-amber-400" size={18} />,
         });
         return;
