@@ -1215,6 +1215,14 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     lastAttemptAt: number;
   }>({ status: "idle", lectureKey: "", objectiveText: "", objectiveId: null, promise: null, lastAttemptAt: 0 });
   const videoClockRef = useRef<{ ts: number; duration: number | null }>({ ts: 0, duration: null });
+  // Disponibilidad REAL de la IA. Antes el CTA se podía pulsar sin proveedor y
+  // el fallo aparecía tras la espera; y el badge decía «conectada» siempre.
+  //   no-config   -> falta base URL o key
+  //   comprobando -> primer sondeo en vuelo
+  //   lista       -> el proveedor respondió
+  //   sin-respuesta -> configurado pero no contesta (se reintenta solo)
+  const [aiState, setAiState] = useState<"comprobando" | "no-config" | "lista" | "sin-respuesta">("comprobando");
+  const [aiEndpoint, setAiEndpoint] = useState<string>("");
   // Objetivo activo LEÍDO EN VIVO (el callback de pre-generación captura el
   // estado de su render; comparar contra esa foto no protegía de un cambio).
   const currentObjectiveRef = useRef<string>("");
@@ -1678,10 +1686,44 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     return pre.promise;
   }, [apiKeys, courseName, effectiveCourseDescription, lessonName, preGenCacheKey, requestStudyTranscript, resolveGeminiKeysForStudy, sendRuntimeMessage]);
 
+  // Sondeo de disponibilidad: al montar, al cambiar la configuración y con
+  // reintento (5 s si no está lista, 30 s si lo está). Así el botón se habilita
+  // solo en cuanto la IA aparece, sin recargar.
+  useEffect(() => {
+    if (!IS_EXTENSION) { setAiState("lista"); return; }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const probe = async () => {
+      try {
+        const res = await sendRuntimeMessage<{ ok?: boolean; configured?: boolean; ok2?: boolean; endpoint?: string; okHealth?: boolean } & { ok?: boolean; configured?: boolean; endpoint?: string; status?: number }>({ type: "USG_PROVIDER_HEALTH" });
+        if (!alive) return;
+        const healthy = Boolean(res?.ok);
+        const configured = res?.configured !== false;
+        setAiEndpoint(res?.endpoint ?? "");
+        const next = !configured ? "no-config" : healthy ? "lista" : "sin-respuesta";
+        setAiState(next);
+        window.dispatchEvent(new CustomEvent("usb:ai-health", { detail: { ok: healthy, configured } }));
+        timer = setTimeout(probe, healthy ? 30000 : 5000);
+      } catch {
+        if (!alive) return;
+        setAiState("sin-respuesta");
+        window.dispatchEvent(new CustomEvent("usb:ai-health", { detail: { ok: false, configured: true } }));
+        timer = setTimeout(probe, 5000);
+      }
+    };
+    void probe();
+    const onConfig = () => { setAiState("comprobando"); void probe(); };
+    window.addEventListener("usb:provider-changed", onConfig);
+    return () => { alive = false; if (timer) clearTimeout(timer); window.removeEventListener("usb:provider-changed", onConfig); };
+  }, []);
+
+  const aiReady = aiState === "lista";
+
   // Condición 4: arrancar en los últimos ~3 min (o al momento si la lección dura
   // menos). Solo antes de estudiar, y sin gastar llamadas en lecciones ojeadas.
   const maybeTriggerPreGen = useCallback(() => {
     if (!IS_EXTENSION) return;
+    if (aiState !== "lista") return; // sin IA no se gasta la llamada
     const pre = preGenRef.current;
     if (pre.status !== "idle") return;
     if (phase !== "objective") return;
@@ -1692,7 +1734,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const objective = resolvePreGenObjective();
     if (!objective) return;
     void startPreGeneration(objective);
-  }, [phase, resolvePreGenObjective, startPreGeneration]);
+  }, [aiState, phase, resolvePreGenObjective, startPreGeneration]);
 
   useEffect(() => {
     const onProgress = (event: Event) => {
@@ -3583,18 +3625,24 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
             {/* Generate CTA */}
             <button onClick={handleGenerate}
-              disabled={!hasUsableObjective || !hasCourseContext || transcriptBlocksCta}
+              disabled={!hasUsableObjective || !hasCourseContext || transcriptBlocksCta || !aiReady}
               className="kx-gen-cta w-full h-12 rounded-2xl disabled:cursor-not-allowed text-[12.5px] font-bold flex items-center justify-center gap-2 transition-all">
               <Icon name="sparkles" size={17} weight="duotone"/>{returningMode ? "Empezar" : "Generar sesión de aprendizaje"} · ~4–10 min
               <ArrowRight size={14}/>
             </button>
-            {(!hasCourseContext || !hasUsableObjective || transcriptBlocksCta) && (
+            {(!hasCourseContext || !hasUsableObjective || transcriptBlocksCta || !aiReady) && (
               <p className="text-[11px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
                 {!hasCourseContext
                   ? "Escribe el nombre del curso y de la lección para empezar."
                   : !hasUsableObjective
                     ? "Elige o escribe un objetivo para empezar."
-                    : "Sin transcripción todavía — activa los subtítulos en inglés o reintenta."}
+                    : !aiReady
+                      ? (aiState === "no-config"
+                        ? "Sin proveedor de IA: configúralo en Ajustes → Proveedor."
+                        : aiState === "comprobando"
+                          ? "Comprobando la IA…"
+                          : `El proveedor no responde${aiEndpoint ? ` (${aiEndpoint})` : ""}. Reintentando…`)
+                      : "Sin transcripción todavía — activa los subtítulos en inglés o reintenta."}
               </p>
             )}
           </motion.div>

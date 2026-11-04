@@ -1,3 +1,13 @@
+## [1.5.10] — 2026-11-04
+
+- **El dock conoce el estado REAL de la IA** (antes el badge «IA local · conectada» venía hardcodeado y el CTA se podía pulsar sin proveedor):
+  - El service worker sondea el `/models` del proveedor CONFIGURADO — valga el tipo (OpenAI-compatible, Anthropic, Gemini, servidores locales tipo kivaroute/Ollama/LM Studio) — con sus cabeceras de autenticación y 1,8 s de timeout, cacheado 15 s e invalidado al cambiar la configuración.
+  - El CTA distingue tres estados y lo dice: «Sin proveedor de IA: configúralo en Ajustes → Proveedor» / «Comprobando la IA…» / «El proveedor no responde (endpoint). Reintentando…». Solo se habilita con la IA lista.
+  - Reintento automático: cada 5 s mientras no responde, cada 30 s cuando está lista. El botón se enciende solo en cuanto la IA aparece, sin recargar.
+  - La pre-generación también espera: sin IA disponible no se gasta la llamada.
+  - El badge del header refleja el mismo estado (se acabó el verde mentiroso).
+- QA: los mocks responden `GET /v1/models` para que el sondeo no invente un «sin respuesta».
+
 ## [1.5.9] — 2026-11-04
 
 - **El CTA dejaba de estar muerto sin explicación cuando el curso tiene objetivos heurísticos**: la condición exigía `!objectivesMock`, así que elegir una de esas tarjetas no habilitaba «Generar sesión de aprendizaje» (solo escribir un objetivo propio lo hacía). Un objetivo ELEGIDO cuenta ahora aunque la plantilla sea heurística — la sesión se genera con el proveedor configurado, no con Gemini. El aviso de «plantillas heurísticas» se mantiene.

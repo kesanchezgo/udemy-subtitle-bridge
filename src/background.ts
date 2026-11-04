@@ -254,45 +254,78 @@ async function recordStudyGenerationStep(stepKey: string): Promise<void> {
 	}
 }
 
-async function checkLocalAiHealth(): Promise<boolean> {
+interface ProviderHealth {
+	configured: boolean;
+	ok: boolean;
+	endpoint: string;
+	status: number;
+	checkedAt: number;
+}
+
+let providerHealthCache: { at: number; value: ProviderHealth } | null = null;
+
+/**
+ * Salud del proveedor de IA configurado, valga el tipo que valga. Se sondea su
+ * endpoint /models (lo tienen los cuatro tipos: OpenAI-compatible, Anthropic,
+ * Gemini y los servidores locales tipo Ollama/LM Studio/kivaroute) con sus
+ * cabeceras de autenticación; el servidor bundled (8010) queda de reserva.
+ *
+ * Es la señal que usa el dock para no dejar el botón muerto ni gastar una
+ * generación cuando no hay IA: se cachea 15 s y se invalida al cambiar la
+ * configuración.
+ */
+async function checkProviderHealth(): Promise<ProviderHealth> {
 	const now = Date.now();
-	if (localAiHealthCache && now - localAiHealthCache.checkedAt < LOCAL_AI_HEALTH_CACHE_MS) {
-		return localAiHealthCache.ok;
+	if (providerHealthCache && now - providerHealthCache.at < LOCAL_AI_HEALTH_CACHE_MS) {
+		return providerHealthCache.value;
 	}
-
-	// El proveedor configurado de tipo local puede vivir en cualquier puerto
-	// (kivaroute, Ollama, LM Studio...): sondear SU endpoint /models primero.
-	// Los endpoints del servidor bundled (8010) quedan como fallback.
-	const endpoints = [...LOCAL_AI_HEALTH_ENDPOINTS];
 	const cfg = getAiProviderConfig();
-	if (cfg.kind === 'local' && cfg.baseUrl) {
-		const base = cfg.baseUrl.replace(/\/+$/, '');
-		endpoints.unshift(`${base}/models`);
+	const configured = Boolean(cfg.baseUrl) && (cfg.kind === 'local' || Boolean(cfg.apiKey));
+
+	const candidates: Array<{ url: string; headers: Record<string, string> }> = [];
+	if (configured) {
+		const base = String(cfg.baseUrl).replace(/\/+$/, '');
+		const headers = buildProviderHeaders(cfg);
+		const url = cfg.kind === 'gemini' && cfg.apiKey
+			? `${base}/models?key=${encodeURIComponent(cfg.apiKey)}`
+			: `${base}/models`;
+		candidates.push({ url, headers });
+	}
+	for (const endpoint of LOCAL_AI_HEALTH_ENDPOINTS) {
+		candidates.push({ url: endpoint, headers: {} });
 	}
 
-	let ok = false;
-	for (const endpoint of endpoints) {
+	let result: ProviderHealth = { configured, ok: false, endpoint: '', status: 0, checkedAt: now };
+	for (const candidate of candidates) {
 		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), 1200);
+		const timeout = setTimeout(() => controller.abort(), 1800);
 		try {
-			const response = await fetch(endpoint, {
+			const response = await fetch(candidate.url, {
 				method: 'GET',
+				headers: candidate.headers,
 				cache: 'no-store',
-				signal: controller.signal
+				signal: controller.signal,
 			});
 			if (response.ok) {
-				ok = true;
+				result = { configured, ok: true, endpoint: candidate.url, status: response.status, checkedAt: now };
 				break;
 			}
-		} catch (_error) {
-			// Keep probing the next local endpoint.
+			if (!result.endpoint) result = { configured, ok: false, endpoint: candidate.url, status: response.status, checkedAt: now };
+		} catch {
+			// Siguiente candidato.
 		} finally {
 			clearTimeout(timeout);
 		}
 	}
+	providerHealthCache = { at: now, value: result };
+	return result;
+}
 
-	localAiHealthCache = { checkedAt: now, ok };
-	return ok;
+/** Compatibilidad: los llamadores internos solo necesitan el booleano. */
+// Compatibilidad: los llamadores internos solo necesitan 'hay IA utilizable'.
+async function checkLocalAiHealth(): Promise<boolean> {
+	const health = await checkProviderHealth();
+	return health.ok;
 }
 
 chromeApi?.runtime?.onInstalled?.addListener(() => {
@@ -316,6 +349,7 @@ chromeApi?.storage?.onChanged?.addListener((changes: Record<string, unknown>, ar
 	if (areaName === 'local' && AI_PROVIDER_STORAGE_KEY in changes) {
 		void initAiProviderConfig();
 		localAiHealthCache = null; // el endpoint local puede haber cambiado
+		providerHealthCache = null;
 	}
 });
 
@@ -541,6 +575,15 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 
+		return true;
+	}
+
+	if (type === 'USG_PROVIDER_HEALTH') {
+		// El dock pregunta si hay IA disponible: configurada + alcanzable. Sin
+		// esto el CTA se podía pulsar sin IA y el fallo aparecía después.
+		void checkProviderHealth()
+			.then((health) => sendResponse({ ok: true, ...health }))
+			.catch((error) => sendResponse({ ok: false, configured: false, error: toErrorMessage(error) }));
 		return true;
 	}
 

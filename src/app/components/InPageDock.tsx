@@ -139,20 +139,33 @@ function useStoredDockWidth(): [number | null, (width: number) => void] {
 function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageDockProps) {
   const [providerKind, setProviderKind] = useState<AiProviderConfig["kind"]>(() => getAiProviderConfig().kind);
   const [providerEndpoint, setProviderEndpoint] = useState<string>(() => getAiProviderConfig().baseUrl);
+  // El badge de IA refleja el sondeo REAL del proveedor (antes el estado
+  // 'conectada' venía hardcodeado y mentía).
+  const [aiOk, setAiOk] = useState<boolean | null>(null);
   useEffect(() => {
     const onChange = (e: Event) => {
       const cfg = (e as CustomEvent<AiProviderConfig>).detail;
       if (cfg?.kind) setProviderKind(cfg.kind);
       if (typeof cfg?.baseUrl === "string") setProviderEndpoint(cfg.baseUrl);
+      setAiOk(null);
+    };
+    const onHealth = (e: Event) => {
+      const detail = (e as CustomEvent<{ ok?: boolean }>).detail;
+      if (typeof detail?.ok === "boolean") setAiOk(detail.ok);
     };
     window.addEventListener("usb:provider-changed", onChange);
-    return () => window.removeEventListener("usb:provider-changed", onChange);
+    window.addEventListener("usb:ai-health", onHealth);
+    return () => {
+      window.removeEventListener("usb:provider-changed", onChange);
+      window.removeEventListener("usb:ai-health", onHealth);
+    };
   }, []);
+  const aiConnected = aiOk === null ? localAiConnected : aiOk;
   const cloudName = ({ openai: "OpenAI", anthropic: "Claude", gemini: "Gemini" } as Record<string, string>)[providerKind];
   const localEndpoint = (providerEndpoint || "127.0.0.1:8010").replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const aiStatus = cloudName
     ? { name: cloudName, state: "nube", tone: "cloud" as const, title: `Proveedor activo: ${cloudName}` }
-    : localAiConnected
+    : aiConnected
     ? { name: "IA local", state: "conectada", tone: "ok" as const, title: `Servidor de IA local conectado (${localEndpoint})` }
     : { name: "IA local", state: "sin conexión", tone: "off" as const, title: `Servidor de IA local sin conexión (${localEndpoint})` };
 
@@ -464,9 +477,9 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
               </div>
 
               <div className="pb-4 flex items-center justify-center">
-                <span className={`relative flex h-2 w-2 ${localAiConnected ? "" : "opacity-50"}`}>
+                <span className={`relative flex h-2 w-2 ${aiConnected ? "" : "opacity-50"}`}>
                   <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                    localAiConnected ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" : t("bg-white/20", "bg-black/8")
+                    aiConnected ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" : t("bg-white/20", "bg-black/8")
                   }`} />
                 </span>
               </div>

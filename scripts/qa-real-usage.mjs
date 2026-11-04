@@ -52,6 +52,12 @@ const mockHandler = (req, res) => {
 	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 	res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
 	if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+	// Sondeo de disponibilidad del dock: GET /v1/models
+	if (req.method === 'GET' && req.url.includes('/models')) {
+		res.writeHead(200, { 'Content-Type': 'application/json' });
+		res.end(JSON.stringify({ object: 'list', data: [{ id: 'qa-model', object: 'model' }] }));
+		return;
+	}
 	let raw = '';
 	req.on('data', (c) => { raw += c; });
 	req.on('end', () => {
