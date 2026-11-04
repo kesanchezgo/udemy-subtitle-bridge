@@ -1,3 +1,8 @@
+## [1.5.14] — 2026-11-04
+
+- **Arreglado el sondeo de IA contra el endpoint equivocado**: `checkProviderHealth` leía la configuración de forma síncrona, así que en un service worker recién despertado (o antes de que terminara su carga) veía el valor por defecto `http://127.0.0.1:8010/v1` y devolvía «El proveedor no responde» aunque el proveedor real (p. ej. `http://127.0.0.1:6660/v1`) contestara perfectamente. Ahora espera a `providerConfigReady`, la misma carrera que ya se corrigió en el relay. Verificado: el sondeo construye `…/v1/models` y responde 200 en 33 ms; el default 8010 da ECONNREFUSED, que era exactamente lo que veía el dock.
+- El fallo del CTA ahora imprime el aviso completo (con endpoint) en las suites.
+
 ## [1.5.13] — 2026-11-04
 
 - **La traducción también consulta el estado de IA** (`useAiHealth`, hook nuevo): sin proveedor la pipeline no arranca — tarda minutos y fallaría a mitad — y lo dice («Sin proveedor de IA…» / «El proveedor no responde (endpoint). Reintentando…»). El auto-arranque depende del estado, así que se dispara sola en cuanto la IA aparece; el botón «Retraducir» se deshabilita con el motivo al pasar el cursor.

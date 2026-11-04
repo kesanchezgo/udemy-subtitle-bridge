@@ -275,6 +275,11 @@ let providerHealthCache: { at: number; value: ProviderHealth } | null = null;
  * configuración.
  */
 async function checkProviderHealth(): Promise<ProviderHealth> {
+	// Un SW recien despertado aun no tiene la config cargada: leerla antes de
+	// tiempo devolvia el DEFAULT (127.0.0.1:8010) y el sondeo fallaba contra un
+	// endpoint que no es el del usuario, con 'El proveedor no responde'.
+	// Misma carrera que ya se corrigio en el relay (allowlist).
+	await providerConfigReady;
 	const now = Date.now();
 	if (providerHealthCache && now - providerHealthCache.at < LOCAL_AI_HEALTH_CACHE_MS) {
 		return providerHealthCache.value;
