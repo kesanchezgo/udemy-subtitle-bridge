@@ -1,3 +1,11 @@
+## [1.5.15] — 2026-11-04
+
+- **Diagnóstico del sondeo**: el veredicto de `USG_PROVIDER_HEALTH` se guarda en `chrome.storage.local` (`usg_provider_health_debug`) con la URL probada y, si fallan todas, el motivo por candidata. La consola del service worker no es visible desde fuera y sin este rastro el bloqueo del CTA solo se podía adivinar.
+- **QA (solo arnés)**: la semilla del proveedor se **verifica** y se reintenta (antes anunciaba «proveedor → 6660» aunque la escritura hubiera fallado: dentro del código del navegador quedaba un `process.env` que lanzaba excepción y el `catch` vacío la ocultaba — por eso la app sondeaba el 8010 por defecto y bloqueaba el CTA, con razón). Navegación a la lección con reintento (`net::ERR_ABORTED` intermitente) y el fallo del CTA imprime el aviso completo con endpoint.
+
+Con esto, la corrida real completa pasa con el proxy del usuario:
+`proveedor guardado: local http://127.0.0.1:6660/v1 deepseek-v4.1-flash:free` → generación 86 s → flujo mínimo completado, ≤ 4 min.
+
 ## [1.5.14] — 2026-11-04
 
 - **Arreglado el sondeo de IA contra el endpoint equivocado**: `checkProviderHealth` leía la configuración de forma síncrona, así que en un service worker recién despertado (o antes de que terminara su carga) veía el valor por defecto `http://127.0.0.1:8010/v1` y devolvía «El proveedor no responde» aunque el proveedor real (p. ej. `http://127.0.0.1:6660/v1`) contestara perfectamente. Ahora espera a `providerConfigReady`, la misma carrera que ya se corrigió en el relay. Verificado: el sondeo construye `…/v1/models` y responde 200 en 33 ms; el default 8010 da ECONNREFUSED, que era exactamente lo que veía el dock.

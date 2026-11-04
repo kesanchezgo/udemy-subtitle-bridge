@@ -166,42 +166,49 @@ const seedPage = await context.newPage();
 await seedPage.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/42163342`,
 	{ waitUntil: 'domcontentloaded', timeout: 60000 });
 await seedPage.waitForSelector(OUTER, { timeout: 45000 });
-for (let i = 0; i < 10; i++) {
+// Sembrar el proveedor REINTENTANDO y verificando la escritura: el SW puede
+// apagarse a mitad del set y la escritura se pierde (antes se anunciaba el
+// seed aunque hubiera fallado, y la app sondeaba el 8010 por defecto).
+let seeded = false;
+for (let attempt = 1; attempt <= 5 && !seeded; attempt++) {
 	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
-	if (sw) {
-		await sw.evaluate(({ real, seedCourseObjective, courseNameSeed }) => new Promise((res) => {
-			if (process.env.QA_PICK_CARD === '1') {
-				chrome.storage.local.remove(['agent_custom_obj', 'agent_selected_obj']);
-			}
-			if (seedCourseObjective) {
-				// Escenario de la 2ª lección: el curso ya tiene un objetivo elegido.
-				// Se siembra ANTES de montar el dock (el recall corre una vez).
-				const slug = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '').slice(0, 80) || 'untitled';
-				const now = Date.now();
-				const key = `usb_history_lecture::${slug(courseNameSeed)}::${slug('seeded lesson')}`;
-				chrome.storage.local.set({
-					[key]: {
-						courseId: slug(courseNameSeed), lectureId: slug('seeded lesson'),
-						courseName: courseNameSeed, lectureName: 'Seeded lesson',
-						objective: 'Dominar el tema de esta lección.', objectiveId: 'custom',
-						checkedConceptIndexes: [0], conceptsAcknowledged: false,
-						questionsComplete: false, focusStep: 2, flowVersion: 2,
-						questions: [], ankiCardsCount: 1, status: 'in_progress',
-						startedAt: now, updatedAt: now, version: 1,
-					},
-				}, () => {});
-			}
-			chrome.storage.local.set({
-				usg_ai_provider_config: real
-					? { kind: 'local', baseUrl: 'http://127.0.0.1:6660/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
-					: { kind: 'openai', baseUrl: 'http://127.0.0.1:8123/v1', apiKey: 'qa-key', model: 'qa-model' },
-			}, res);
-		}), { real: REAL_PROXY, seedCourseObjective: process.env.QA_SEED_COURSE_OBJECTIVE === '1', courseNameSeed: 'Java In-Depth: Become a Complete Java Engineer! [2026]' }).catch(() => {});
-		console.log(REAL_PROXY ? '  proveedor → proxy real 6660 (deepseek-v4.1-flash:free)' : '  proveedor → mock IA (8123)');
-		break;
+	if (!sw) { await new Promise((r) => setTimeout(r, 1500)); continue; }
+	await sw.evaluate(({ real, seedCourseObjective, courseNameSeed }) => new Promise((res) => {
+		// (nada de process.env aqui dentro: no existe en el navegador y abortaba el set)
+		if (seedCourseObjective) {
+			const slug = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '').slice(0, 80) || 'untitled';
+			const now = Date.now();
+			const key = `usb_history_lecture::${slug(courseNameSeed)}::${slug('seeded lesson')}`;
+			chrome.storage.local.set({ [key]: {
+				courseId: slug(courseNameSeed), lectureId: slug('seeded lesson'),
+				courseName: courseNameSeed, lectureName: 'Seeded lesson',
+				objective: 'Dominar el tema de esta lección.', objectiveId: 'custom',
+				checkedConceptIndexes: [0], conceptsAcknowledged: false,
+				questionsComplete: false, focusStep: 2, flowVersion: 2,
+				questions: [], ankiCardsCount: 1, status: 'in_progress',
+				startedAt: now, updatedAt: now, version: 1,
+			} }, () => {});
+		}
+		chrome.storage.local.set({
+			usg_ai_provider_config: real
+				? { kind: 'local', baseUrl: 'http://127.0.0.1:6660/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
+				: { kind: 'openai', baseUrl: 'http://127.0.0.1:8123/v1', apiKey: 'qa-key', model: 'qa-model' },
+		}, res);
+	}), { real: REAL_PROXY, seedCourseObjective: process.env.QA_SEED_COURSE_OBJECTIVE === '1', courseNameSeed: 'Java In-Depth: Become a Complete Java Engineer! [2026]' }).catch(() => {});
+	await new Promise((r) => setTimeout(r, 500));
+	const back = await sw.evaluate(() => new Promise((res) => {
+		chrome.storage.local.get(['usg_ai_provider_config'], (r) => res(r?.usg_ai_provider_config ?? null));
+	})).catch(() => null);
+	if (back?.baseUrl) {
+		seeded = true;
+		console.log(`  proveedor guardado: ${back.kind} ${back.baseUrl} ${back.model}`);
+	} else {
+		console.log(`  semilla del proveedor fallo (intento ${attempt}); reintentando`);
+		await new Promise((r) => setTimeout(r, 1500));
 	}
-	await new Promise((r) => setTimeout(r, 2000));
 }
+if (!seeded) { console.log('✗ no se pudo sembrar el proveedor de IA'); process.exit(1); }
+
 const page = seedPage;
 
 const shadow = () => page.evaluate(() => {
@@ -252,6 +259,21 @@ const waitForTranscript = async (attempts) => {
 		}
 	}
 	console.log('  transcripción: NO hay (agotados los reintentos)');
+	return false;
+};
+
+// Navegacion con reintento: Udemy aborta alguna navegacion (net::ERR_ABORTED)
+// y una corrida entera no debe caerse por eso.
+const gotoWithRetry = async (url, attempts = 4) => {
+	for (let i = 1; i <= attempts; i++) {
+		try {
+			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+			return true;
+		} catch (err) {
+			console.log('  navegacion fallo (intento ' + i + '): ' + String(err).slice(0, 70));
+			await page.waitForTimeout(2500);
+		}
+	}
 	return false;
 };
 
@@ -363,7 +385,7 @@ for (let ci = 0; ci < candidates.length && !trReady; ci++) {
 	const cand = candidates[ci];
 	currentLesson = cand;
 	console.log(`  navegando a (${cand.seconds}s) «${cand.title}» (id ${cand.id})`);
-	await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/${cand.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+	await gotoWithRetry(`https://www.udemy.com/course/${SLUG}/learn/lecture/${cand.id}`);
 	await page.waitForSelector(OUTER, { timeout: 45000 });
 	await page.waitForTimeout(2500);
 	await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
@@ -545,7 +567,7 @@ if (process.env.QA_MULTI_LESSON === '1') {
 	};
 
 	const gotoLesson = async (lessonId) => {
-		await page.goto(`https://www.udemy.com/course/${SLUG}/learn/lecture/${lessonId}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+		await gotoWithRetry(`https://www.udemy.com/course/${SLUG}/learn/lecture/${lessonId}`);
 		await page.waitForSelector(OUTER, { timeout: 45000 });
 		await page.waitForTimeout(2500);
 		await page.locator('text=/Continuar sin cuenta/i').first().click({ timeout: 8000 }).catch(() => {});
@@ -741,7 +763,7 @@ if (!t0) {
 	const aviso = dock.match(/(Elige o escribe un objetivo|Sin proveedor de IA|Comprobando la IA|El proveedor no responde|Sin transcripci|Escribe el nombre del curso)[^]{0,90}/);
 	const swNow = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	const health = swNow ? await swNow.evaluate(() => new Promise((res) => {
-		chrome.runtime.sendMessage({ type: 'USG_PROVIDER_HEALTH' }, (r) => res(r ?? null));
+		chrome.storage.local.get(['usg_provider_health_debug'], (r) => res(r?.usg_provider_health_debug ?? null));
 	})).catch(() => null) : null;
 	console.log('✗ CTA deshabilitado');
 	console.log('  motivo visible:', aviso ? aviso[1] : '(sin aviso: el bloqueo no se explica en la UI)');

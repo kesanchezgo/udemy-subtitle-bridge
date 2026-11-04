@@ -260,6 +260,8 @@ interface ProviderHealth {
 	endpoint: string;
 	status: number;
 	checkedAt: number;
+	/** Motivo por candidata cuando fallan todas (diagnostico). */
+	failures?: string[];
 }
 
 let providerHealthCache: { at: number; value: ProviderHealth } | null = null;
@@ -300,7 +302,8 @@ async function checkProviderHealth(): Promise<ProviderHealth> {
 		candidates.push({ url: endpoint, headers: {} });
 	}
 
-	let result: ProviderHealth = { configured, ok: false, endpoint: '', status: 0, checkedAt: now };
+	let result: ProviderHealth = { configured, ok: false, endpoint: candidates[0]?.url ?? '', status: 0, checkedAt: now };
+	const failures: string[] = [];
 	for (const candidate of candidates) {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 1800);
@@ -316,12 +319,14 @@ async function checkProviderHealth(): Promise<ProviderHealth> {
 				break;
 			}
 			if (!result.endpoint) result = { configured, ok: false, endpoint: candidate.url, status: response.status, checkedAt: now };
-		} catch {
-			// Siguiente candidato.
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (failures.length < 3) failures.push(`${candidate.url}: ${msg.slice(0, 90)}`);
 		} finally {
 			clearTimeout(timeout);
 		}
 	}
+	if (!result.ok && failures.length) (result as ProviderHealth & { failures?: string[] }).failures = failures;
 	providerHealthCache = { at: now, value: result };
 	return result;
 }
@@ -584,11 +589,18 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 	}
 
 	if (type === 'USG_PROVIDER_HEALTH') {
-		// El dock pregunta si hay IA disponible: configurada + alcanzable. Sin
-		// esto el CTA se podía pulsar sin IA y el fallo aparecía después.
+		// El dock pregunta si hay IA disponible: configurada + alcanzable.
+		// El veredicto se guarda tambien en storage: la consola del SW no es
+		// visible desde fuera y sin este rastro solo se puede adivinar que paso.
 		void checkProviderHealth()
-			.then((health) => sendResponse({ ok: true, ...health }))
-			.catch((error) => sendResponse({ ok: false, configured: false, error: toErrorMessage(error) }));
+			.then((health) => {
+				void chrome.storage.local.set({ usg_provider_health_debug: { ...health, at: Date.now() } }).catch(() => undefined);
+				sendResponse({ ok: health.ok, configured: health.configured, endpoint: health.endpoint, status: health.status });
+			})
+			.catch((error) => {
+				void chrome.storage.local.set({ usg_provider_health_debug: { ok: false, configured: false, error: toErrorMessage(error), at: Date.now() } }).catch(() => undefined);
+				sendResponse({ ok: false, configured: false, endpoint: '', status: 0, error: toErrorMessage(error) });
+			});
 		return true;
 	}
 
