@@ -165,12 +165,22 @@ const qaAi = createHttpServer((req, res) => {
 		res.end(JSON.stringify({ error: { message: 'API key not valid (QA)' } }));
 		return;
 	}
-	// Proveedor ANTERIOR que tarda en contestar (sección I.5): mantiene el sondeo
-	// en vuelo 3 s y luego lo rechaza, para que llegue tarde al cambio de config.
+	// Proveedor ANTERIOR que tarda en contestar (sección I.5): contesta a los 3 s,
+	// más que el timeout de 1,8 s del sondeo, así que el sondeo sigue en vuelo
+	// cuando cambia la config y termina después.
 	if (req.url.includes('/qa-slow/')) {
 		setTimeout(() => {
 			res.writeHead(401, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ error: { message: 'API key not valid (QA, lento)' } }));
+		}, 3000);
+		return;
+	}
+	// Mismo proveedor y misma URL, distinta key (sección I.6): con la key mala
+	// tarda más que el timeout del sondeo; con la buena responde como el mock.
+	if (req.url.includes('/qa-keyed/') && req.headers.authorization === 'Bearer qa-bad') {
+		setTimeout(() => {
+			res.writeHead(401, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ error: { message: 'API key not valid (QA, key mala)' } }));
 		}, 3000);
 		return;
 	}
@@ -1414,6 +1424,27 @@ if (REAL) {
 	check('un sondeo tarde del proveedor anterior no deja «sin respuesta» al nuevo',
 		sawNewProvider && staleAnswers.length === 0,
 		`respuestas del proveedor viejo: ${JSON.stringify(staleAnswers)}`);
+
+	// I.6 Corregir la key (mismo proveedor, misma URL y mismo modelo) también es
+	// otra configuración: el sondeo con la key MALA, aún en vuelo, no puede dejar
+	// en «sin respuesta» a la buena. Es el caso más habitual: pegar mal la key y
+	// corregirla.
+	const KEYED = (apiKey) => ({ kind: 'openai', baseUrl: `http://127.0.0.1:${QA_PORT}/qa-keyed/v1`, apiKey, model: 'qa-model' });
+	await setProvider(KEYED('qa-bad'));
+	await page.waitForTimeout(700); // el sondeo con la key mala sigue en vuelo
+	await setProvider(KEYED('qa-key'));
+	const staleKey = [];
+	let sawGoodKey = false;
+	for (let i = 0; i < 10; i += 1) {
+		await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:provider-changed')));
+		await page.waitForTimeout(1200);
+		const b = await badge();
+		if (/^OpenAI · nube$/.test(b?.text ?? '')) sawGoodKey = true;
+		else staleKey.push(`${b?.text ?? '—'}@${i}`);
+	}
+	check('corregir la key no deja el veredicto de la key anterior',
+		sawGoodKey && staleKey.length === 0,
+		`respuestas con la key anterior: ${JSON.stringify(staleKey)}`);
 }
 
 // ══ Cierre ════════════════════════════════════════════════════════════════════

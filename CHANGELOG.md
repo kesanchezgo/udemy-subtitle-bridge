@@ -1,3 +1,10 @@
+## [1.6.3] — 2026-11-06
+
+Corregir la API key ya no deja el indicador en «sin respuesta». Sin cambios en el flujo de estudio, los mazos ni Obsidian.
+
+- **La huella de la caché de salud incluye la key.** En 1.6.2 la huella solo guardaba si había key, no cuál: al corregir una key mala con el mismo proveedor, la misma URL y el mismo modelo, la huella no cambiaba y el sondeo con la key anterior, aún en vuelo, volvía a llenar la caché con su «no responde» hasta 15 s, con las acciones de IA bloqueadas. Es el caso más habitual (pegar mal la key y corregirla). Ahora la key entra como resumen FNV-1a de 32 bits: cambiarla cambia la huella y la key no queda en claro en la caché.
+- **Arnés:** `qa:full` pasa a **59/59** con «corregir la key no deja el veredicto de la key anterior» (mismo proveedor y URL; con la key mala el mock tarda más que el timeout del sondeo). Sin el arreglo falla; con él, pasa. Corregido el comentario del mock lento de I.5: el sondeo aborta a los 1,8 s, antes de que el mock conteste.
+
 ## [1.6.2] — 2026-11-06
 
 La caché de salud del proveedor de IA dejaba bloqueada la extensión con un proveedor sano. Cambia código de la extensión, por eso sube la versión.

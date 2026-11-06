@@ -269,9 +269,17 @@ interface ProviderHealth {
 // anterior. Ver providerConfigFingerprint.
 let providerHealthCache: { at: number; fingerprint: string; value: ProviderHealth } | null = null;
 
-/** Huella de la configuración del proveedor; identifica de quién es un veredicto. */
+/**
+ * Huella de la configuración del proveedor; identifica de quién es un veredicto.
+ * La key entra como resumen (FNV-1a de 32 bits), no como «hay key»: corregir una
+ * key mala con el mismo proveedor y la misma URL es otra configuración. Así la
+ * key tampoco queda en claro en la caché.
+ */
 function providerConfigFingerprint(cfg: AiProviderConfig): string {
-	return `${cfg.kind}|${cfg.baseUrl}|${cfg.model}|${cfg.apiKey ? 'key' : ''}`;
+	const key = cfg.apiKey ?? '';
+	let digest = 0x811c9dc5;
+	for (let i = 0; i < key.length; i += 1) digest = Math.imul(digest ^ key.charCodeAt(i), 0x01000193) >>> 0;
+	return `${cfg.kind}|${cfg.baseUrl}|${cfg.model}|${key ? digest.toString(36) : ''}`;
 }
 
 /**
