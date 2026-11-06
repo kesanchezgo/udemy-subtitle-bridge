@@ -1,168 +1,49 @@
-# 🎓 Udemy Subtitle Bridge - Chrome Extension Instalación
+# Instalar Kinema — by Kivara
 
-## ✅ Estado Actual
-La extensión ha sido **completamente probada y funciona correctamente**:
-- ✅ Carga sin bloquear páginas (1.3s en Udemy)
-- ✅ Panel se inyecta correctamente debajo del reproductor
-- ✅ Botones interactivos funcionan
-- ✅ Sin errores de consola
-- ✅ Storage API lista
-- ✅ Background script (service worker) operacional
+Extensión de Chrome (MV3) para estudiar lecciones de Udemy: subtítulos en español sobre el vídeo, sesión de estudio en 4 pasos (Recordar → Comprobar → Aplicar → Fijar), mazos de Anki y nota de Obsidian. La versión instalada es la de `manifest.json`.
 
-## 📥 Cómo Instalar en Tu Chrome
+## 1. Compilar
 
-### Paso 1: Abre Chrome Extensions
-1. En tu navegador Chrome, ve a: `chrome://extensions/`
-2. O usa atajo: `Ctrl+Shift+J` → Menú → Más herramientas → Extensiones
+Requisitos: Node.js 20 o posterior y Chrome (o Chromium).
 
-### Paso 2: Activar Modo Desarrollador
-1. En la esquina **superior derecha** de chrome://extensions/
-2. Busca el toggle **"Modo de desarrollador"** y **actívalo**
-
-### Paso 3: Cargar Extensión Sin Empaquetar
-1. Haz clic en el botón **"Cargar extensión sin empaquetar"**
-2. Navega a la carpeta generada por build: `D:\Proyectos\OTROS\udemy-subtitle-bridge\dist`
-3. Selecciona **esa carpeta** y haz clic en **"Seleccionar carpeta"**
-
-> Importante: no cargues la raíz del repositorio. Chrome debe abrir el `manifest.json` generado dentro de `dist/`, donde los scripts ya salen como JavaScript válido.
-
-### Error común (MIME con .ts)
-
-Si ves este error:
-
-`Invalid script mime type ... src/content_script.ts ...`
-
-significa que cargaste el `manifest.json` de la raíz del repo. Vuelve a cargar la extensión desde `dist/`.
-
-En MV3, Chrome solo acepta scripts JavaScript finales (`.js`) para `content_scripts` y `service_worker`.
-
-### QA automatizada sin Udemy/Cloudflare
-
-Si tu entorno de pruebas no puede pasar Cloudflare o no permite instalar extensiones, ejecuta:
-
-```powershell
-npm run qa:local
+```bash
+npm ci
+npm run build
 ```
 
-Este flujo valida la UI React (`index.html`) desde `dist/` con Playwright, incluyendo tabs `Captions`, `Overlay` y `Dev`.
+El build deja la extensión lista en `dist/`.
 
-### Paso 4: Verificar Instalación
-1. Deberías ver la extensión aparecer en chrome://extensions/
-2. Si aparece, la extensión está lista
+## 2. Cargar en Chrome
 
-### Paso 5: Probar en Udemy
-1. **Importante**: Asegúrate de estar logueado en Udemy en tu navegador
-2. Navega a cualquier curso donde tengas acceso
-3. Abre cualquier lectura de video
-4. **Debajo del reproductor de video**, deberías ver el panel "📚 USG Learning Panel"
-5. El panel tiene un botón "Traducir Subtítulos" para iniciar las funciones
+1. Abre `chrome://extensions`.
+2. Activa **Modo de desarrollador** (arriba a la derecha).
+3. Pulsa **Cargar descomprimida** y elige la carpeta **`dist/`**, no la raíz del repositorio.
 
-## 📁 Estructura de Archivos
+Después de cada `git pull`: `npm run build`, recarga Kinema en `chrome://extensions` y recarga también las pestañas de Udemy que tengas abiertas. Una pestaña abierta antes de recargar la extensión pierde la conexión con ella.
 
-```
-udemy-subtitle-bridge/
-├── manifest.json          ← Configuración MV3 de Chrome
-├── dist/                  ← Carpeta que debes cargar en chrome://extensions/
-├── src/
-│   ├── content-script.js  ← Se inyecta en Udemy, observa DOM
-│   └── background.js      ← Service worker, maneja API calls
-├── token.txt              ← Cookies de sesión (no versionado)
-└── test-complete-extension.js  ← Prueba de validación
-```
+**Error «Invalid script mime type … src/content_script.ts»:** cargaste la raíz del repositorio. Quita la extensión y vuelve a cargarla desde `dist/`: Chrome solo ejecuta el JavaScript compilado.
 
-## 🔧 Características Implementadas
+## 3. Configurar la IA
 
-### Content Script (content-script.js)
-- 🔍 Detecta automáticamente clases de Udemy
-- 💉 Inyecta panel debajo del reproductor de video
-- 📨 Recibe mensajes del background script
-- 💾 Carga datos locales del storage
+1. Abre una lección de Udemy (`https://www.udemy.com/course/…/learn/lecture/…`). El panel de Kinema aparece bajo el reproductor.
+2. En **Ajustes → Proveedor de IA**, elige el motor: **Local** (en tu equipo, sin llave; por defecto `127.0.0.1:8010`), **OpenAI** o compatible (DeepSeek, OpenRouter, Groq), **Claude** o **Gemini**, con su API key.
+3. Si el endpoint está en un dominio que Kinema no tiene declarado, aparece **Conceder permiso**: abre una pestaña donde Chrome te pide ese acceso.
 
-### Background Script (background.js)
-- 🔌 Actúa como service worker (MV3 compatible)
-- 🤖 Enruta llamadas a API (máximo 1 por acción)
-- 💬 Maneja comunicación entre componentes
-- ⚡ Fail-fast sin reintentos automáticos
+El indicador de la cabecera muestra el estado real del motor: «conectada» o «sin conexión» en local; «nube», «sin configurar» o «sin respuesta» en la nube. Mientras la IA no responde, las acciones que la necesitan quedan desactivadas y dicen por qué; se activan solas en cuanto el proveedor responde.
 
-## ⚙️ Configuración
+## 4. Comprobar que funciona
 
-### Permisos Utilizados
-- `scripting` - Inyectar content-script
-- `storage` - Guardar datos locales
-- `tabs` - Monitorear pestañas activas
-- `activeTab` - Acceder a pestaña actual
+- `npm run qa:full`: el flujo completo contra un clon local de Udemy con IA simulada, sin cuenta ni IA real. Necesita el puerto 8010 libre y, la primera vez, `npx playwright install chromium`. Resultado esperado: «57/57 comprobaciones en verde».
+- `npm run qa:ai-health`: textos y estados de la IA, sin navegador.
 
-### Host Permissions
-- `https://*.udemy.com/*` - Solo funciona en Udemy
+En la consola de la pestaña (F12), los mensajes de Kinema empiezan por `[USG]`.
 
-## 🐛 Solución de Problemas
+## 5. Problemas frecuentes
 
-### "La extensión no aparece en chrome://extensions/"
-- Verifica que "Modo de desarrollador" esté **activado**
-- Intenta recargar la página (F5)
+| Síntoma | Qué hacer |
+|---|---|
+| El panel no aparece | Comprueba que estás en una lección (`/course/…`) y recarga la pestaña. |
+| Las acciones de IA siguen desactivadas | Lee el motivo en el propio botón o en el indicador de la cabecera y revisa **Ajustes → Proveedor de IA**. Con IA local, arranca antes el servidor. |
+| «No se pudo contactar con el background de la extensión» | La extensión se recargó con la pestaña abierta: recarga la pestaña de Udemy. |
 
-### "El panel no aparece en Udemy"
-1. Verifica que **estés logueado** en Udemy
-2. Abre la consola (F12) → Pestaña "Console"
-3. Busca mensajes con `[USG]` para ver logs de la extensión
-
-### "Error de lectura en console"
-- Es esperado si visitas un sitio que no es Udemy
-- La extensión solo se activa en `https://*.udemy.com/*`
-
-## 📊 Pruebas Realizadas
-
-Todos los tests pasaron ✅:
-```
-✅ Sintaxis válida (content-script.js, background.js)
-✅ Extensión carga sin errores
-✅ Panel se inyecta correctamente
-✅ Botones son interactivos
-✅ Sin errores de consola
-✅ API Storage lista para usar
-```
-
-## 🎯 Funciones Principales
-
-### Panel de Aprendizaje
-Aparece automáticamente en cada lectura con:
-- 📚 Título "USG Learning Panel"
-- 🔘 Botón "Traducir Subtítulos"
-- 📝 Área de visualización de transcripciones
-- 🌐 Soporte para subtítulos en inglés y español
-
-### Traducción Automática
-(Cuando se implemente LLM API):
-- 1️⃣ Un solo llamada a IA por traducción
-- ⏱️ Caché local de traducciones previas
-- 💾 Persistencia entre sesiones
-
-## 📝 Logs Disponibles
-
-En la consola (F12), busca mensajes que empiezan con `[USG]`:
-```javascript
-[USG] Panel inyectado correctamente
-[USG] Subtítulos cargados
-[USG] Traducción en progreso...
-```
-
-## 🚀 Próximas Etapas (Opcional)
-
-Después de probar el panel:
-1. Integración con API local (LLM endpoint)
-2. Importar/exportar subtítulos (.srt)
-3. Historial de traducciones
-4. Configuración de idiomas
-
-## 📞 Soporte
-
-Si hay problemas:
-1. Abre F12 → Console
-2. Recopia el error o el comportamiento
-3. Revisa los logs `[USG]`
-4. Si persiste, recrea manualmente: chrome://extensions/ → Quitar extensión → Volver a Cargar sin empaquetar
-
----
-
-**Versión**: 1.0 (MV3 - Mayo 3, 2026)  
-**Estado**: ✅ Funcional y Listo para Usar
+Funciones, mazos de Anki, Obsidian y privacidad: [`README.md`](README.md) y [`docs/`](docs/README.md).

@@ -1,4 +1,4 @@
-# Udemy Subtitle Bridge
+# Kinema — by Kivara
 
 A Chrome (MV3) extension that turns any Udemy course into a learning system:
 it captures the English subtitles, translates them into a Spanish overlay
@@ -134,6 +134,8 @@ so nothing mixes with your other decks.
 
 Loading the root fails: Chrome would read the source manifest/TypeScript.
 After pulling changes, rebuild (`npm run build`) and reload the extension.
+
+Step-by-step guide in Spanish: [`INSTALAR.md`](INSTALAR.md).
 
 **Branding**: the toolbar / extensions-page / store icons are the Kinema K
 (`public/icons/`, master SVG + `node scripts/generate-icons.mjs` to regenerate;

@@ -21,9 +21,9 @@ export type AiState = "comprobando" | "no-config" | "lista" | "sin-respuesta";
 /** Motivo, en una frase, de por qué una acción de IA está bloqueada. Nunca lleva la query del endpoint. */
 export function aiBlockedMessage(state: AiState, endpoint: string): string {
   if (state === "no-config") return "Sin proveedor de IA: configúralo en Ajustes → Proveedor.";
-  if (state === "comprobando") return "Comprobando la IA...";
+  if (state === "comprobando") return "Comprobando la IA…";
   const where = redactProviderUrl(endpoint);
-  return `El proveedor no responde${where ? ` (${where})` : ""}. Reintentando...`;
+  return `El proveedor no responde${where ? ` (${where})` : ""}. Reintentando…`;
 }
 
 export type AiBadge = { name: string; state: string; tone: "ok" | "cloud" | "off"; title: string };
@@ -40,7 +40,7 @@ export function aiBadgeStatus(input: { kind: string; ok: boolean | null; configu
   const cloudName = CLOUD_NAMES[input.kind];
   if (cloudName) {
     if (!input.configured) return { name: cloudName, state: "sin configurar", tone: "off", title: `${cloudName} sin configurar: añade la API key en Ajustes → Proveedor` };
-    if (input.ok === false) return { name: cloudName, state: "sin respuesta", tone: "off", title: `${cloudName} no responde${where ? ` (${where})` : ""}. Reintentando...` };
+    if (input.ok === false) return { name: cloudName, state: "sin respuesta", tone: "off", title: `${cloudName} no responde${where ? ` (${where})` : ""}. Reintentando…` };
     return { name: cloudName, state: "nube", tone: "cloud", title: `Proveedor activo: ${cloudName}` };
   }
   const localWhere = where || "127.0.0.1:8010";

@@ -25,10 +25,10 @@ assert.ok(!redactProviderUrl(`no es una url?key=${SECRET}`).includes(SECRET));
 // 2. aiBlockedMessage
 const blocked = aiBlockedMessage('sin-respuesta', `${G}/models?key=${SECRET}`);
 assert.ok(!blocked.includes(SECRET) && !blocked.includes('key='), blocked);
-assert.equal(blocked, `El proveedor no responde (${G}/models). Reintentando...`);
-assert.equal(aiBlockedMessage('sin-respuesta', ''), 'El proveedor no responde. Reintentando...');
+assert.equal(blocked, `El proveedor no responde (${G}/models). Reintentando…`);
+assert.equal(aiBlockedMessage('sin-respuesta', ''), 'El proveedor no responde. Reintentando…');
 assert.equal(aiBlockedMessage('no-config', 'x'), 'Sin proveedor de IA: configúralo en Ajustes → Proveedor.');
-assert.equal(aiBlockedMessage('comprobando', 'x'), 'Comprobando la IA...');
+assert.equal(aiBlockedMessage('comprobando', 'x'), 'Comprobando la IA…');
 
 // 3. aiBadgeStatus: los 7 estados
 const badge = (o) => aiBadgeStatus({ kind: 'gemini', ok: null, configured: true, endpoint: G, localConnected: true, ...o });
