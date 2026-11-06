@@ -537,6 +537,19 @@ const clickInShadow = (match) => page.evaluate((m) => {
 // Click con reintento: los pasos del dock montan con animación (framer-motion
 // + AnimatePresence) y un click one-shot puede correr antes de que el botón
 // exista — bajo carga el fallo es intermitente.
+// Pulsa y confirma el efecto: si tras el clic no aparece lo que debe, reintenta.
+// Un clic que no llega (la vista aún montando) se perdía en silencio y arrastraba
+// toda la cadena del bloque.
+const clickAndWait = async (clickRe, readyRe, tries = 6, stepMs = 1500) => {
+	for (let i = 0; i < tries; i += 1) {
+		await clickInShadow(clickRe);
+		for (let waited = 0; waited < stepMs; waited += 300) {
+			await page.waitForTimeout(300);
+			if (readyRe.test(await shadow())) return true;
+		}
+	}
+	return false;
+};
 const waitClickInShadow = async (match, ms = 12000) => {
 	const deadline = Date.now() + ms;
 	while (Date.now() < deadline) {
@@ -545,23 +558,72 @@ const waitClickInShadow = async (match, ms = 12000) => {
 	}
 	return false;
 };
-// La pila de sonner está plegada hasta que el puntero entra: el segundo aviso
-// queda recortado por el panel (124 px por debajo) y medirlo ahí no dice nada de
-// lo que ve el usuario. Se despliega con un movimiento REAL del ratón, como
-// haría cualquiera para leer los avisos, y se mide ya desplegado.
-const expandToasts = async () => {
-	const box = await page.evaluate(() => {
-		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-		const ol = root?.querySelector('[data-sonner-toaster]');
-		if (!ol) return null;
-		const r = ol.getBoundingClientRect();
-		return { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) };
-	});
-	if (!box) return false;
-	await page.mouse.move(box.cx, box.cy);
-	await page.waitForTimeout(400);
-	return true;
-};
+/**
+ * Mide un aviso cuando está REALMENTE a la vista, no cuando toca por tiempo.
+ * Sonner crea el aviso en su posición de salida —`--y: translateY(100%)` y
+ * `opacity: 0`— hasta que lleva `data-mounted="true"`, y solo entonces
+ * transiciona 0,4 s hasta su sitio. En una máquina cargada ese montaje puede
+ * empezar casi 2 s tarde, así que medir tras una espera fija mide un fantasma
+ * invisible una altura por debajo del panel. Aquí se espera hasta 4 s a que esté
+ * montado, opaco y quieto, sin tocar el ratón (pasar por encima pausa los
+ * temporizadores de los avisos); si no llega, se devuelve en qué estado quedó.
+ */
+const measureNotice = ({ text = '', celebrate = false, ms = 4000 } = {}) => page.evaluate(async ({ text, celebrate, ms }) => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const dock = root?.querySelector('.usb-dock');
+	if (!root || !dock) return { error: 'sin dock en la página' };
+	// Siempre se mide el AVISO (el <li data-sonner-toast>), nunca el div de dentro:
+	// el hijo tiene su propio `opacity: 1` y se movería con el padre invisible.
+	const pick = () => (celebrate
+		? root.querySelector('[data-sonner-toast] .kx-celebrate')?.closest('[data-sonner-toast]') ?? null
+		: [...root.querySelectorAll('[data-sonner-toast]')].find((el) => new RegExp(text, 'i').test(el.textContent ?? '')));
+	const round = (r) => ({ x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
+	const toasts = () => [...root.querySelectorAll('[data-sonner-toast]')];
+	const t0 = Date.now();
+	let prev = null;
+	let stable = 0;
+	let last = null;
+	while (Date.now() - t0 < ms) {
+		const el = pick();
+		if (el) {
+			const r = el.getBoundingClientRect();
+			const opacity = Number(getComputedStyle(el).opacity);
+			const mounted = el.getAttribute('data-mounted') === 'true';
+			last = { mounted, opacity, ...round(r) };
+			const visible = mounted && opacity > 0.99 && r.width > 0 && r.height > 0;
+			const same = Boolean(prev) && Math.abs(r.left - prev.left) < 0.5 && Math.abs(r.top - prev.top) < 0.5
+				&& Math.abs(r.width - prev.width) < 0.5 && Math.abs(r.height - prev.height) < 0.5;
+			stable = visible && same ? stable + 1 : 0;
+			prev = { left: r.left, top: r.top, width: r.width, height: r.height };
+			if (stable >= 2) {
+				const d = dock.getBoundingClientRect();
+				return {
+					found: true, waitedMs: Date.now() - t0, opacity,
+					inside: r.left >= d.left - 1 && r.right <= d.right + 1 && r.bottom <= d.bottom + 1,
+					centered: Math.abs((r.left + r.right) / 2 - (d.left + d.right) / 2) < 24,
+					low: r.top > d.top + d.height / 2,
+					dockInViewport: d.width > 0 && d.height > 0,
+					// Ninguna celebración fuera de un toast: antes salía arriba, sobre el vídeo.
+					otherLayer: root.querySelectorAll('.kx-celebrate:not([data-sonner-toast] .kx-celebrate)').length,
+					overflow: {
+						left: Math.round((d.left - r.left) * 10) / 10,
+						right: Math.round((r.right - d.right) * 10) / 10,
+						bottom: Math.round((r.bottom - d.bottom) * 10) / 10,
+					},
+					geom: { dock: round(d), notice: round(r), toasts: toasts().length },
+				};
+			}
+		}
+		await new Promise((done) => setTimeout(done, 100));
+	}
+	return {
+		found: false, waitedMs: Date.now() - t0, lastState: last,
+		toastStates: toasts().map((el) => {
+			const r = el.getBoundingClientRect();
+			return { mounted: el.getAttribute('data-mounted'), opacity: Number(getComputedStyle(el).opacity), ...round(r), text: (el.textContent ?? '').replace(/\s+/g, ' ').slice(0, 40) };
+		}),
+	};
+}, { text, celebrate, ms });
 const toastsInShadow = () => page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	return [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((t) => (t.textContent ?? '').trim());
@@ -645,59 +707,9 @@ if (await apkgBtn.count().catch(() => 0)) {
 	check('primer export muestra «Antes de importar en Anki»',
 		hintToasts.some((x) => /Antes de importar en Anki/i.test(x)), JSON.stringify(hintToasts).slice(0, 140));
 	// Un solo sitio para los avisos: abajo y centrados DENTRO del panel, no sobre
-	// el vídeo. Se mide el aviso real (redondeo de subpíxeles → tolerancia de 1 px
-	// en los bordes) y con la animación de entrada ya terminada.
-	await page.waitForTimeout(600);
-	await expandToasts(); // la pila plegada deja el segundo aviso fuera del panel
-	// La entrada del aviso es una animación: se mide cuando el rectángulo ya no
-	// cambia (dos lecturas iguales seguidas) para no medir un fotograma a medias.
-	const noticePlacement = await page.evaluate(async () => {
-		const host = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-		const find = () => [...(host?.querySelectorAll('[data-sonner-toast]') ?? [])]
-			.find((el) => /Antes de importar en Anki/i.test(el.textContent ?? ''));
-		const dock = host?.querySelector('.usb-dock');
-		if (!find() || !dock) return { found: Boolean(find()), dock: Boolean(dock) };
-		const rect = () => { const r = find().getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
-		let prev = rect();
-		for (let i = 0; i < 20; i += 1) {
-			await new Promise((r) => setTimeout(r, 100));
-			const next = rect();
-			if (Math.abs(next.l - prev.l) < 0.5 && Math.abs(next.r - prev.r) < 0.5
-				&& Math.abs(next.t - prev.t) < 0.5 && Math.abs(next.b - prev.b) < 0.5) { prev = next; break; }
-			prev = next;
-		}
-		const t = prev;
-		const d = dock.getBoundingClientRect();
-		return {
-			found: true,
-			// 1 px de tolerancia por el redondeo de subpíxeles del propio borde.
-			inside: t.l >= d.left - 1 && t.r <= d.right + 1 && t.b <= d.bottom + 1,
-			centered: Math.abs((t.l + t.r) / 2 - (d.left + d.right) / 2) < 24,
-			low: t.t > d.top + d.height / 2,
-			dockInViewport: d.width > 0 && d.height > 0,
-			// Cuánto se sale, si se sale (para el informe del fallo).
-			overflow: {
-				left: Math.round((d.left - t.l) * 10) / 10,
-				right: Math.round((t.r - d.right) * 10) / 10,
-				bottom: Math.round((t.b - d.bottom) * 10) / 10,
-			},
-			// Geometría de la cadena de anclaje: dónde está el panel, su área de
-			// avisos, la lista de sonner y el aviso medido.
-			geom: (() => {
-				const round = (r) => ({ x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
-				const ol = host.querySelector('[data-sonner-toaster]');
-				const inner = dock.querySelector('.relative.flex-1') ?? ol?.parentElement ?? null;
-				return {
-					dock: round(d),
-					inner: inner ? round(inner.getBoundingClientRect()) : null,
-					ol: ol ? round(ol.getBoundingClientRect()) : null,
-					toast: { x: Math.round(t.l), y: Math.round(t.t), w: Math.round(t.r - t.l), h: Math.round(t.b - t.t) },
-					toastStyle: ol ? getComputedStyle(ol).position : null,
-					toasts: [...host.querySelectorAll('[data-sonner-toast]')].length,
-				};
-			})(),
-		};
-	});
+	// el vídeo. Se mide el aviso real cuando está montado y opaco (tolerancia de
+	// 1 px por el redondeo de subpíxeles del borde); ver measureNotice.
+	const noticePlacement = await measureNotice({ text: 'Antes de importar en Anki' });
 	check('el aviso sale dentro del panel, abajo y centrado',
 		noticePlacement.found && noticePlacement.dockInViewport && noticePlacement.inside
 			&& noticePlacement.centered && noticePlacement.low,
@@ -743,9 +755,9 @@ if (await apkgBtn.count().catch(() => 0)) {
 // ── D.1 — flujo mínimo: nivel → 1 respuesta → Saltar este paso → Terminar ───
 // Lección NUEVA: Reiniciar (confirmando en el dock) lleva a objetivo.
 const MIN_LESSON = 'Flujo minimo QA';
-await clickInShadow(/Reiniciar/);
+await waitClickInShadow(/Reiniciar/);
 await page.waitForTimeout(400);
-await clickInShadow(/Sí, reiniciar/);
+await waitClickInShadow(/Sí, reiniciar/);
 let objTxt0 = '';
 for (let i = 0; i < 8; i += 1) {
 	await page.waitForTimeout(600);
@@ -766,7 +778,7 @@ check('el indicador de transcripción es un estado real (nunca «248 líneas»)'
 	/Subtítulos listos|Esperando subtítulos|Sin subtítulos/.test(d1txt2) && !/248 líneas/.test(d1txt2),
 	(d1txt2.match(/Subtítulos listos[^.]*|Esperando subtítulos[^.]*|Sin subtítulos[^.]*/) ?? ['?'])[0]);
 
-await clickInShadow(/Editar curso o lección/);
+await waitClickInShadow(/Editar curso o lección/);
 await page.waitForTimeout(400);
 await fillInputInShadow('Nombre del video/clase actual', MIN_LESSON);
 await page.waitForTimeout(300);
@@ -786,7 +798,8 @@ for (let i = 0; i < 25; i += 1) {
 	if (/¿Qué tan claro te quedó la lección\?/.test(dbg)) break;
 	await page.waitForTimeout(400);
 }
-await clickInShadow(/^Confuso/); // paso Recordar: 1 toque de nivel
+// Nivel → recuerdo libre, confirmando el efecto (si el clic no llega, reintenta).
+await clickAndWait(/^Confuso/, /Lo que recuerdo es/);
 await page.waitForTimeout(600);
 // Gate del recuerdo libre (§1.1): rellenarlo y comparar con la lista.
 const fillRecall = await page.evaluate(() => {
@@ -799,10 +812,9 @@ const fillRecall = await page.evaluate(() => {
 	return true;
 });
 check('el recuerdo libre admite texto antes de la lista', fillRecall);
-await clickInShadow(/Comparar con las ideas clave|Ver las ideas clave/);
-await page.waitForTimeout(600);
-await clickInShadow(/Ponerme a prueba/);
-await page.waitForTimeout(1600); // la transición de paso + render de la cola
+await clickAndWait(/Comparar con las ideas clave|Ver las ideas clave/, /Ponerme a prueba/);
+await clickAndWait(/Ponerme a prueba/, /Escribe tu respuesta con tus propias palabras/);
+await page.waitForTimeout(1200); // la transición de paso + render de la cola
 // Responde la pregunta (≥20 caracteres para el XP de submit).
 const fillQ = await page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
@@ -891,39 +903,7 @@ check('«Terminar lección» cierra sin exportar', /Lección terminada/.test(don
 // no en una capa propia sobre el vídeo. Es la aserción de .mock/scripts/qa-doubts.mjs.
 await page.locator(`${OUTER} [data-sonner-toast] .kx-celebrate`).first()
 	.waitFor({ timeout: 5000 }).catch(() => {});
-await page.waitForTimeout(600);
-await expandToasts(); // misma pila de avisos, mismo despliegue
-// Igual que el aviso: la celebración también entra con animación, así que se
-// mide cuando su rectángulo se estabiliza.
-const celebration = await page.evaluate(async () => {
-	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-	const el = root?.querySelector('[data-sonner-toast] .kx-celebrate');
-	const dock = root?.querySelector('.usb-dock');
-	if (!el || !dock) return { found: Boolean(el), dock: Boolean(dock) };
-	const rect = () => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
-	let prev = rect();
-	for (let i = 0; i < 20; i += 1) {
-		await new Promise((r) => setTimeout(r, 100));
-		const next = rect();
-		if (Math.abs(next.l - prev.l) < 0.5 && Math.abs(next.r - prev.r) < 0.5
-			&& Math.abs(next.t - prev.t) < 0.5 && Math.abs(next.b - prev.b) < 0.5) { prev = next; break; }
-		prev = next;
-	}
-	const c = prev;
-	const d = dock.getBoundingClientRect();
-	return {
-		found: true,
-		inside: c.l >= d.left - 1 && c.r <= d.right + 1 && c.b <= d.bottom + 1,
-		low: c.t > d.top + d.height / 2,
-		// Ninguna celebración fuera de un toast: antes salía arriba, sobre el vídeo.
-		otherLayer: root.querySelectorAll('.kx-celebrate:not([data-sonner-toast] .kx-celebrate)').length,
-		overflow: {
-			left: Math.round((d.left - c.l) * 10) / 10,
-			right: Math.round((c.r - d.right) * 10) / 10,
-			bottom: Math.round((c.b - d.bottom) * 10) / 10,
-		},
-	};
-});
+const celebration = await measureNotice({ celebrate: true });
 check('la celebración sale en la pila de avisos del panel',
 	celebration.found && celebration.inside && celebration.low && celebration.otherLayer === 0,
 	JSON.stringify(celebration));
@@ -974,24 +954,24 @@ check('sepia: «Incluir» tras «Quitar» usa el verde AA (rgb(4, 120, 87))',
 
 // ── D.2 — «Saltar» SÍ emite el aviso y el resumen lo refleja ────────────────
 const SKIP_LESSON = 'Saltar QA';
-await clickInShadow(/Reiniciar/);
+await waitClickInShadow(/Reiniciar/);
 await page.waitForTimeout(400);
-await clickInShadow(/Sí, reiniciar/);
+await waitClickInShadow(/Sí, reiniciar/);
 await page.waitForTimeout(1200);
-await clickInShadow(/Editar curso o lección/);
+await waitClickInShadow(/Editar curso o lección/);
 await page.waitForTimeout(400);
 await fillInputInShadow('Nombre del video/clase actual', SKIP_LESSON);
 await page.waitForTimeout(300);
 await fillInputInShadow('Ej: Conseguir trabajo en fintech como Java dev en 3 meses…', 'Dominar la portabilidad de Java');
 await page.waitForTimeout(300);
 for (let i = 0; i < 10; i += 1) { if (await clickInShadow(/Empezar · ~4–10 min|Generar sesión de aprendizaje/)) break; await page.waitForTimeout(700); }
-await page.waitForTimeout(9000);
-await clickInShadow(/^Confuso/);
+// El nivel existe cuando la sesión ya está generada. Con 9 s fijos, en una
+// máquina cargada se pulsaba antes de que el botón estuviera y toda la cadena
+// de D.2 caía en silencio; se espera al botón.
+await clickAndWait(/^Confuso/, /Lo que recuerdo es/, 10, 3000);
 await page.waitForTimeout(600);
-await waitClickInShadow(/Comparar con las ideas clave|Ver las ideas clave/);
-await page.waitForTimeout(600);
-await waitClickInShadow(/Ponerme a prueba/);
-await page.waitForTimeout(1200);
+await clickAndWait(/Comparar con las ideas clave|Ver las ideas clave/, /Ponerme a prueba/);
+await clickAndWait(/Ponerme a prueba/, /^Saltar este paso$|Escribe tu respuesta con tus propias palabras/);
 await waitClickInShadow(/^Saltar este paso$/);
 await page.waitForTimeout(900);
 const skipToasts = await toastsInShadow();
@@ -1003,7 +983,7 @@ check('el salto queda registrado (questionsDone + questionsSkipped)',
 	JSON.stringify({ q: recSkip?.questionsDone, sk: recSkip?.questionsSkipped }));
 
 // ── D.3 — confirmación de reinicio DENTRO del dock (§6, v1.5.1) ────────────
-await clickInShadow(/Reiniciar/);
+await waitClickInShadow(/Reiniciar/);
 await page.waitForTimeout(500);
 const d3txt = await shadow();
 check('al pulsar «Reiniciar» aparece «¿Borrar respuestas?» sin diálogo nativo',
@@ -1021,7 +1001,7 @@ const focusAfterCancel = await page.evaluate(() => {
 check('el foco vuelve al botón «Reiniciar» tras «Cancelar»',
 	/^Reiniciar$/.test(focusAfterCancel), focusAfterCancel);
 // Temporizador real: segunda confirmación y 5,5 s SIN tocar nada.
-await clickInShadow(/Reiniciar/);
+await waitClickInShadow(/Reiniciar/);
 await page.waitForTimeout(500);
 const d3txt2 = await shadow();
 check('la segunda confirmación aparece («¿Borrar respuestas?»)',
@@ -1043,11 +1023,11 @@ if (REAL) {
 	console.log('  · omitido en modo REAL: escribiría notas en el vault real del usuario');
 } else {
 // D terminó en otra lección: volver a la sembrada (rehydrate automático).
-await clickInShadow(/Reiniciar/);
+await waitClickInShadow(/Reiniciar/);
 await page.waitForTimeout(400);
-await clickInShadow(/Sí, reiniciar/);
+await waitClickInShadow(/Sí, reiniciar/);
 await page.waitForTimeout(1500);
-await clickInShadow(/Editar curso o lección/);
+await waitClickInShadow(/Editar curso o lección/);
 await page.waitForTimeout(400);
 await fillInputInShadow('Nombre del video/clase actual', LESSON);
 // El Reiniciar del flujo limpió el registro sembrado (clearProgress): re-sembrar.
@@ -1348,15 +1328,24 @@ if (REAL) {
 		await page.waitForTimeout(150);
 	}
 	await page.waitForTimeout(2500); // los sondeos inmediatos ya respondieron
+	// Se cuentan los sondeos SANOS. Cadencia sana: uno por superficie cada 30 s,
+	// así que en 31 s hay como mucho 2. Un fallo transitorio (el SW dormido, que
+	// devuelve ok:false y reintenta a los 5 s) también emite, y eso no es una
+	// cadena acumulada: contarlo daba 4 y un rojo falso. Una cadena de más
+	// (el fallo que este check busca) multiplica los eventos SANOS en la ventana.
 	await page.evaluate(() => {
-		window.__qaHealthEvents = 0;
-		window.addEventListener('usb:ai-health', () => { window.__qaHealthEvents += 1; });
+		window.__qaHealth = [];
+		window.addEventListener('usb:ai-health', (e) => {
+			window.__qaHealth.push({ at: Date.now(), ok: Boolean(e.detail?.ok) });
+		});
 	});
 	await page.waitForTimeout(31000);
-	const periodic = await page.evaluate(() => window.__qaHealthEvents);
-	check('tras 3 cambios de proveedor no se acumulan sondeos (≤ 2 en 31 s: uno por superficie)',
-		/^OpenAI · nube$/.test(restored?.text ?? '') && periodic >= 1 && periodic <= 2,
-		`indicador: ${restored?.text ?? '—'} · sondeos: ${periodic}`);
+	const events = await page.evaluate(() => window.__qaHealth ?? []);
+	const healthyEvents = events.filter((e) => e.ok).length;
+	const gaps = events.map((e, i, all) => (i === 0 ? null : e.at - all[i - 1].at));
+	check('tras 3 cambios de proveedor no se acumulan sondeos (≤ 2 sanos en 31 s: uno por superficie)',
+		/^OpenAI · nube$/.test(restored?.text ?? '') && healthyEvents >= 1 && healthyEvents <= 2,
+		`indicador: ${restored?.text ?? '—'} · sanos: ${healthyEvents} · total: ${events.length} · huecos(ms): ${JSON.stringify(gaps)}`);
 }
 
 // ══ Cierre ════════════════════════════════════════════════════════════════════
