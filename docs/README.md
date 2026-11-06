@@ -5,11 +5,11 @@
 
 ## Documentos Disponibles
 
-### Vocabulario opcional del prototipo
+### Vocabulario opcional
 
-La configuración previa y el panel final comparten candidatas y selección por curso, lección e idioma. El chip selecciona para exportar; no guarda directamente en Anki. La configuración se abre desde el engranaje del encabezado: proveedor de IA, idiomas, mazo raíz de Anki, Obsidian y caché. Triple clic mantiene el acceso al modo Dev. No se añade configuración a Overlay, Study ni Captions. Study no muestra accesos, contadores ni resúmenes de vocabulario en la pantalla inicial. Las tarjetas de contenido pendientes de descarga se consultan desde el historial global, sin barras de «memoria» ni contadores de lecciones exportadas en Study. App.tsx carga fixtures de vocabulario e historial automáticamente para validar el prototipo: no hay botones ni modos de demo en la interfaz. La extensión no importa este inicializador. Idioma, nivel e idioma de explicación requieren actualizar las candidatas; cambiar límite, audio o mazo no requiere otra llamada a IA. La redescarga permite elegir entre los lotes exportados y conserva sus palabras y configuración de exportación. Los vencimientos desconocidos de Anki no se sustituyen por conteos ficticios.
+La configuración previa y el panel final comparten candidatas y selección por curso, lección e idioma. El chip selecciona para exportar; no guarda directamente en Anki. La configuración se abre desde el engranaje del encabezado: proveedor de IA, idiomas, mazo raíz de Anki, Obsidian y caché. Triple clic mantiene el acceso al modo Dev. No se añade configuración a Overlay, Study ni Captions. Study no muestra accesos, contadores ni resúmenes de vocabulario en la pantalla inicial. Las tarjetas de contenido pendientes de descarga se consultan desde el historial global, sin barras de «memoria» ni contadores de lecciones exportadas en Study. En el prototipo, `App.tsx` carga fixtures de vocabulario e historial automáticamente para validarlo: no hay botones ni modos de demo en la interfaz. La extensión no tiene `App.tsx`; en ella, la demo de Study solo existe en desarrollo. Idioma, nivel e idioma de explicación requieren actualizar las candidatas; cambiar límite, audio o mazo no requiere otra llamada a IA. La redescarga permite elegir entre los lotes exportados y conserva sus palabras y configuración de exportación. Los vencimientos desconocidos de Anki no se sustituyen por conteos ficticios.
 
-Validación local: `pnpm run build` y `pnpm run qa:local` (también `pnpm run qa:vocabulary`). La suite usa Chromium y respuestas deterministas de IA; comprueba selección video/panel, persistencia, límites, duplicados, exportación `.apkg`, redescarga sin IA, respuestas atrasadas, temas y listas de 100 cursos. No certifica acceso autenticado a Udemy ni importación o vencimientos en Anki Desktop. Usa Chromium del sistema, `CHROMIUM_PATH` o el navegador instalado con `pnpm exec playwright install chromium`.
+Validación del prototipo (en el repo vive en `.mock/`, ignorado por git): `pnpm run build` y `pnpm run qa:local` (vocabulario y dudas; por separado, `pnpm run qa:vocabulary` y `pnpm run qa:doubts`). La suite de vocabulario usa Chromium y respuestas deterministas de IA; comprueba selección video/panel, persistencia, límites, duplicados, exportación `.apkg`, redescarga sin IA, respuestas atrasadas, temas y listas de 100 cursos. No certifica acceso autenticado a Udemy ni importación o vencimientos en Anki Desktop. Usa Chromium del sistema, `CHROMIUM_PATH` o el navegador instalado con `pnpm exec playwright install chromium`. En la extensión: `npm run typecheck`, `npm run build` y `npm run qa:full` (tabla «Automated QA» del README de la raíz).
 
 | # | Archivo | Audiencia | Contenido |
 |---|---------|-----------|-----------|
@@ -21,6 +21,13 @@ Validación local: `pnpm run build` y `pnpm run qa:local` (también `pnpm run qa
 | 5 | `05-MCP-HERRAMIENTAS.md` | **Agente IA** | MCPs disponibles, cuándo usar cada uno, protocolo del agente |
 | 6 | `06-UDEMY-HTML-INTEGRACION.md` | Dev + Agente IA | **Selectores DOM reales de Udemy, overlay injection, in-page dock** |
 | 7 | `07-INPAGE-DOCK-SHADOW-DOM.md` | Dev + Agente IA | **⭐ NUEVO: Guía completa Shadow DOM dock (resize, collapse, fullscreen)** |
+| 8 | `06-AUDITORIA-PARIDAD-UI.md` | Dev | Auditoría de paridad 1:1 de la UI frente a `03-DISEÑO-UI-DETALLADO.md` |
+| 9 | `STUDY_FLOW_PEDAGOGY.md` | Dev + Agente IA | Flujo de 4 pasos, gamificación, avisos y dudas: cada decisión con su referencia |
+| 10 | `ANKI_PEDAGOGY.md` | Dev + Agente IA | Diseño de los dos mazos (conceptos y vocabulario) con bibliografía |
+| 11 | `obsidian-integration.md` | Dev + Agente IA | Contrato del vault, formatos de nota y estructura (`CLAUDE.md` / `AGENTS.md`) |
+| 12 | `ejemplo-nota-obsidian.md` | Dev / QA | Nota de sesión e índice del curso tal como llegan al vault |
+| 13 | `KINEMA-BRAND.md` | Diseño | Identidad de Kinema by Kivara |
+| 14 | `QA_HUMAN_SESSION.md` | QA | Sesión humana de tiempos A → B (solo en el repo de la extensión) |
 
 ---
 

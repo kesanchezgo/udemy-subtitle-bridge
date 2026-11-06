@@ -1983,7 +1983,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     let timer: ReturnType<typeof setTimeout> | null = null;
     const probe = async () => {
       try {
-        const res = await sendRuntimeMessage<{ ok?: boolean; configured?: boolean; ok2?: boolean; endpoint?: string; okHealth?: boolean } & { ok?: boolean; configured?: boolean; endpoint?: string; status?: number }>({ type: "USG_PROVIDER_HEALTH" });
+        const res = await sendRuntimeMessage<{ ok?: boolean; configured?: boolean; endpoint?: string; status?: number }>({ type: "USG_PROVIDER_HEALTH" });
         if (!alive) return;
         const healthy = Boolean(res?.ok);
         const configured = res?.configured !== false;

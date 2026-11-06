@@ -622,20 +622,53 @@ if (await apkgBtn.count().catch(() => 0)) {
 	// el vídeo. Se mide el aviso real (redondeo de subpíxeles → tolerancia de 1 px
 	// en los bordes) y con la animación de entrada ya terminada.
 	await page.waitForTimeout(600);
-	const noticePlacement = await page.evaluate(() => {
+	// La entrada del aviso es una animación: se mide cuando el rectángulo ya no
+	// cambia (dos lecturas iguales seguidas) para no medir un fotograma a medias.
+	const noticePlacement = await page.evaluate(async () => {
 		const host = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-		const toast = [...(host?.querySelectorAll('[data-sonner-toast]') ?? [])]
+		const find = () => [...(host?.querySelectorAll('[data-sonner-toast]') ?? [])]
 			.find((el) => /Antes de importar en Anki/i.test(el.textContent ?? ''));
 		const dock = host?.querySelector('.usb-dock');
-		if (!toast || !dock) return { found: Boolean(toast), dock: Boolean(dock) };
-		const t = toast.getBoundingClientRect();
+		if (!find() || !dock) return { found: Boolean(find()), dock: Boolean(dock) };
+		const rect = () => { const r = find().getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+		let prev = rect();
+		for (let i = 0; i < 20; i += 1) {
+			await new Promise((r) => setTimeout(r, 100));
+			const next = rect();
+			if (Math.abs(next.l - prev.l) < 0.5 && Math.abs(next.r - prev.r) < 0.5
+				&& Math.abs(next.t - prev.t) < 0.5 && Math.abs(next.b - prev.b) < 0.5) { prev = next; break; }
+			prev = next;
+		}
+		const t = prev;
 		const d = dock.getBoundingClientRect();
 		return {
 			found: true,
-			inside: t.left >= d.left - 1 && t.right <= d.right + 1 && t.bottom <= d.bottom + 1,
-			centered: Math.abs((t.left + t.right) / 2 - (d.left + d.right) / 2) < 24,
-			low: t.top > d.top + d.height / 2,
+			// 1 px de tolerancia por el redondeo de subpíxeles del propio borde.
+			inside: t.l >= d.left - 1 && t.r <= d.right + 1 && t.b <= d.bottom + 1,
+			centered: Math.abs((t.l + t.r) / 2 - (d.left + d.right) / 2) < 24,
+			low: t.t > d.top + d.height / 2,
 			dockInViewport: d.width > 0 && d.height > 0,
+			// Cuánto se sale, si se sale (para el informe del fallo).
+			overflow: {
+				left: Math.round((d.left - t.l) * 10) / 10,
+				right: Math.round((t.r - d.right) * 10) / 10,
+				bottom: Math.round((t.b - d.bottom) * 10) / 10,
+			},
+			// Geometría de la cadena de anclaje: dónde está el panel, su área de
+			// avisos, la lista de sonner y el aviso medido.
+			geom: (() => {
+				const round = (r) => ({ x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
+				const ol = host.querySelector('[data-sonner-toaster]');
+				const inner = dock.querySelector('.relative.flex-1') ?? ol?.parentElement ?? null;
+				return {
+					dock: round(d),
+					inner: inner ? round(inner.getBoundingClientRect()) : null,
+					ol: ol ? round(ol.getBoundingClientRect()) : null,
+					toast: { x: Math.round(t.l), y: Math.round(t.t), w: Math.round(t.r - t.l), h: Math.round(t.b - t.t) },
+					toastStyle: ol ? getComputedStyle(ol).position : null,
+					toasts: [...host.querySelectorAll('[data-sonner-toast]')].length,
+				};
+			})(),
 		};
 	});
 	check('el aviso sale dentro del panel, abajo y centrado',
@@ -832,19 +865,35 @@ check('«Terminar lección» cierra sin exportar', /Lección terminada/.test(don
 await page.locator(`${OUTER} [data-sonner-toast] .kx-celebrate`).first()
 	.waitFor({ timeout: 5000 }).catch(() => {});
 await page.waitForTimeout(600);
-const celebration = await page.evaluate(() => {
+// Igual que el aviso: la celebración también entra con animación, así que se
+// mide cuando su rectángulo se estabiliza.
+const celebration = await page.evaluate(async () => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	const el = root?.querySelector('[data-sonner-toast] .kx-celebrate');
 	const dock = root?.querySelector('.usb-dock');
 	if (!el || !dock) return { found: Boolean(el), dock: Boolean(dock) };
-	const c = el.getBoundingClientRect();
+	const rect = () => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+	let prev = rect();
+	for (let i = 0; i < 20; i += 1) {
+		await new Promise((r) => setTimeout(r, 100));
+		const next = rect();
+		if (Math.abs(next.l - prev.l) < 0.5 && Math.abs(next.r - prev.r) < 0.5
+			&& Math.abs(next.t - prev.t) < 0.5 && Math.abs(next.b - prev.b) < 0.5) { prev = next; break; }
+		prev = next;
+	}
+	const c = prev;
 	const d = dock.getBoundingClientRect();
 	return {
 		found: true,
-		inside: c.left >= d.left - 1 && c.right <= d.right + 1 && c.bottom <= d.bottom + 1,
-		low: c.top > d.top + d.height / 2,
+		inside: c.l >= d.left - 1 && c.r <= d.right + 1 && c.b <= d.bottom + 1,
+		low: c.t > d.top + d.height / 2,
 		// Ninguna celebración fuera de un toast: antes salía arriba, sobre el vídeo.
 		otherLayer: root.querySelectorAll('.kx-celebrate:not([data-sonner-toast] .kx-celebrate)').length,
+		overflow: {
+			left: Math.round((d.left - c.l) * 10) / 10,
+			right: Math.round((c.r - d.right) * 10) / 10,
+			bottom: Math.round((c.b - d.bottom) * 10) / 10,
+		},
 	};
 });
 check('la celebración sale en la pila de avisos del panel',
@@ -911,11 +960,11 @@ for (let i = 0; i < 10; i += 1) { if (await clickInShadow(/Empezar · ~4–10 mi
 await page.waitForTimeout(9000);
 await clickInShadow(/^Confuso/);
 await page.waitForTimeout(600);
-await clickInShadow(/Comparar con las ideas clave|Ver las ideas clave/);
+await waitClickInShadow(/Comparar con las ideas clave|Ver las ideas clave/);
 await page.waitForTimeout(600);
-await clickInShadow(/Ponerme a prueba/);
-await page.waitForTimeout(700);
-await clickInShadow(/^Saltar este paso$/);
+await waitClickInShadow(/Ponerme a prueba/);
+await page.waitForTimeout(1200);
+await waitClickInShadow(/^Saltar este paso$/);
 await page.waitForTimeout(900);
 const skipToasts = await toastsInShadow();
 check('«Saltar este paso» emite «Comprobación saltada»',

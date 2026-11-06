@@ -27,11 +27,37 @@ parties beyond the AI endpoint you configure.
 
 - Resizable, collapsible in-page dock (scales with the browser font size;
   wheel over the dock never scrolls the Udemy page).
-- Generates objectives per course and a full study session per lecture from
-  the real transcript: relevance score, key concepts, 4 questions calibrated
-  to your confidence level, an application challenge, an interview question,
-  and next actions.
-- Lecture history with Supabase sync option.
+- Pick an objective per course (AI-generated, or your own and refined), then
+  a study session is generated per lecture from the real lesson: subtitles
+  for video lectures, the article text for text lectures.
+- Four steps — **Recordar → Comprobar → Aplicar → Fijar**
+  (`docs/STUDY_FLOW_PEDAGOGY.md`):
+  - **Recordar**: free recall before seeing the key ideas, then mark the ones
+    you remembered without looking.
+  - **Comprobar**: proportional check — at most `min(5, key ideas)` open
+    questions: one at the level you chose, one per idea you didn't mark and,
+    if you marked any, one that confirms a marked idea. Ideas that don't fit
+    go to Anki as reinforcement. Each answer gets a Kinema review (what's
+    right / what's missing / to remember) and a «¿Cómo sigues?» choice.
+  - **Aplicar**: one practice — solve the case or explain it.
+  - **Fijar**: closing summary with real data, the lesson cards (plus up to
+    2 reinforcement cards from what you missed), vocabulary and the Obsidian
+    note, with «Ir a la siguiente lección» right below.
+- **Lesson doubts**: ask about the lesson while you work. Answers quote the
+  transcript (without AI: verified transcript excerpts, marked as local);
+  1 question + 2 follow-ups per thread; a resolved doubt can become a card
+  (max 2 per lesson).
+- **Progress**: XP and level (`floor(sqrt(xp/60)) + 1`), streaks with best
+  streak, achievements from real answers; one celebration per lesson, at the
+  close. Notices and celebrations share one stack, bottom-centred inside the
+  dock.
+- **History**: lessons with their result and pending steps, the same Anki
+  due-review count as Progress (configurable root deck; shown as unknown —
+  never a fake 0 — if AnkiConnect doesn't answer) and «Repasar en Anki».
+  Optional Supabase sync.
+- AI actions are enabled only when the configured provider actually answers
+  (re-probed every 5 s until ready, then every 30 s); otherwise the dock says
+  why.
 
 ### Anki export — two deck families
 
@@ -49,7 +75,6 @@ so nothing mixes with your other decks.
   enable once in Deck Options (Anki 23.10+). Your existing decks and the
   `Default` preset are never touched; re-importing a lesson updates its
   notes instead of duplicating (content-addressed GUIDs).
-- A legacy `.txt` path (CSS + templates) remains as a repair fallback.
 - Every concept card carries a **color-coded type pill** (Concepto / Código /
   Entrevista / Comparación / Proceso / Aplicación) next to the lesson pill —
   the AI classifies each card and the design signals it (signaling principle,
@@ -79,11 +104,18 @@ so nothing mixes with your other decks.
 
 ### Obsidian
 
-- Session notes and per-course MOCs created through `obsidian://` URIs (no
-  plugins, no servers), with frontmatter, flashcard sections, raw SRT under
-  `raw/`, a universal vault scaffold (`CLAUDE.md` + `AGENTS.md` mirror) and
-  a duplicate guard for re-exports. Optional auto-export after each session.
-- Contract for the AI-assistant integration: `docs/VAULT_INTEGRATION.md`.
+- One session note per lesson through `obsidian://` URIs (no plugins, no
+  servers): frontmatter plus the sections shown in
+  `docs/ejemplo-nota-obsidian.md`.
+- Chrome opens one external protocol per click, so «Exportar» writes only the
+  note; the course index (MOC, first time per course) and the raw SRT under
+  `raw/` are offered as follow-up actions in the notice («Crear índice»,
+  «Guardar subtítulos»).
+- Re-exporting never overwrites silently: «Añadir» appends a dated «Repaso»
+  section, «Reemplazar» rebuilds the note. «Copiar» and «.md» are fallbacks;
+  optional auto-save on «Terminar lección».
+- Vault scaffold (`CLAUDE.md` + `AGENTS.md` mirror, index, log, templates)
+  as a `.zip` from Settings. Contract: `docs/obsidian-integration.md`.
 
 ### AI providers
 
@@ -109,12 +141,13 @@ see `docs/KINEMA-BRAND.md` for the identity rules).
 
 ## Typical session
 
-1. Open a Udemy lecture; the dock mounts under the video player.
+1. Open a Udemy lecture (video or article); the dock mounts under the player.
 2. Pick an objective (or type your own) and generate the session.
-3. Work the concepts → questions → application challenge; mark your
-   confidence as you go.
-4. Export: **.apkg** (concepts), **Vocabulary .apkg**, **.txt**, or
-   **Obsidian** — the ES overlay keeps running the whole time.
+3. Recordar → Comprobar → Aplicar → Fijar; ask a lesson doubt whenever you
+   get stuck. «Saltar este paso» skips a step and can be undone.
+4. Export from Fijar: concepts **.apkg**, vocabulary **.apkg** and the
+   **Obsidian** note — then «Ir a la siguiente lección». The ES overlay keeps
+   running the whole time.
 
 ## Companion: ANKI-IMAGE-SENTENCE
 
@@ -129,6 +162,7 @@ configurable voices per language and a batch "Generar Audio TTS" mode
 
 | Command | What it does |
 |---|---|
+| `npm run qa:full` | Deterministic clone (local HTTPS Udemy-shaped page + mock AI): dock injection, settings and sepia, the 4-step Study flow, Anki export notices inside the dock, Obsidian (one URI per click, then «Crear índice»), provider permission, vocabulary restore, glossary and no console errors. `node scripts/qa-full-flows.mjs --real` runs the safe subset against a real lecture. |
 | `npm run qa:extension` | Full 12-phase E2E against `dist/`: local Udemy-shaped fixture over HTTPS, real AI through the configured provider, session render, scroll-boundary assertion, real `.apkg` audit (unzip + SQLite: deck tree, presets, note type), Obsidian URIs + duplicate guard, clipboard, typography scaling. Exit 0 = all green. |
 | `node scripts/qa-anki-all.mjs N` | Anki suite ×N runs: structural `.apkg` assertions against production modules (`qa-anki-decks.mjs`), real import into desktop Anki via AnkiConnect with preset/FSRS verification, screenshots and cleanup (`qa-anki-import-verify.mjs`), and model-in-the-loop vocabulary quality via the local proxy (`qa-vocab-ai.mjs`). |
 | `node scripts/qa-udemy-real.mjs` | Same E2E flow against a REAL Udemy lecture using exported session cookies (`USB_COOKIES`). Requires the provider proxy running. |
@@ -140,12 +174,18 @@ QA fixtures live under `tmp/` (gitignored); reports as `qa-*.png`.
 ## Documentation
 
 - [`CHANGELOG.md`](CHANGELOG.md) — detailed change history.
+- [`docs/STUDY_FLOW_PEDAGOGY.md`](docs/STUDY_FLOW_PEDAGOGY.md) — the 4-step
+  flow, gamification, notices and lesson doubts, each decision with its
+  reference.
 - [`docs/ANKI_PEDAGOGY.md`](docs/ANKI_PEDAGOGY.md) — design rationale for
   both deck families with a Scopus-verified bibliography (DOIs).
 - [`docs/obsidian-integration.md`](docs/obsidian-integration.md) — Obsidian
-  vault contract and note formats.
-- [`docs/VAULT_INTEGRATION.md`](docs/VAULT_INTEGRATION.md) — tools contract
-  for the AI-assistant vault integration.
+  vault contract, note formats and the vault scaffold.
+- [`docs/ejemplo-nota-obsidian.md`](docs/ejemplo-nota-obsidian.md) — a full
+  session note and course index exactly as they reach the vault.
+- [`docs/KINEMA-BRAND.md`](docs/KINEMA-BRAND.md) — Kinema identity rules.
+- [`docs/QA_HUMAN_SESSION.md`](docs/QA_HUMAN_SESSION.md) — the human timing
+  session (A → B).
 - Architecture notes: `docs/00…07-*.md` (plan, stack, dock/Shadow DOM,
   Udemy page integration).
 

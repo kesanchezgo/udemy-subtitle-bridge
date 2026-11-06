@@ -11,7 +11,7 @@
 //  3. si marcó alguna y ninguna pregunta la tocó, UNA sobre una idea marcada:
 //     confirma que el autoinforme es fiable (sobreconfianza, R5).
 // Tope de fatiga: MAX_CHECK_QUESTIONS (≈10 min de respuestas abiertas). Solo
-// actúa en lecciones con 6–7 ideas y nada marcado; las ideas que quedan fuera
+// actúa en lecciones con 6–7 ideas y casi nada marcado; las ideas que quedan fuera
 // se dicen en pantalla y van a Anki como refuerzo (no se pierden).
 // Orden: cada siguiente cubre más ideas pendientes; a igualdad, la de
 // dificultad más cercana a la meta (baja tras fallar, sube tras acertar, R7).
