@@ -264,7 +264,15 @@ interface ProviderHealth {
 	failures?: string[];
 }
 
-let providerHealthCache: { at: number; value: ProviderHealth } | null = null;
+// La caché va LIGADA a la configuración con la que se sondeó: servirla sin
+// comprobarlo dejaba al dock con el veredicto (y el endpoint) del proveedor
+// anterior. Ver providerConfigFingerprint.
+let providerHealthCache: { at: number; fingerprint: string; value: ProviderHealth } | null = null;
+
+/** Huella de la configuración del proveedor; identifica de quién es un veredicto. */
+function providerConfigFingerprint(cfg: AiProviderConfig): string {
+	return `${cfg.kind}|${cfg.baseUrl}|${cfg.model}|${cfg.apiKey ? 'key' : ''}`;
+}
 
 /**
  * Salud del proveedor de IA configurado, valga el tipo que valga. Se sondea su
@@ -283,10 +291,15 @@ async function checkProviderHealth(): Promise<ProviderHealth> {
 	// Misma carrera que ya se corrigio en el relay (allowlist).
 	await providerConfigReady;
 	const now = Date.now();
-	if (providerHealthCache && now - providerHealthCache.at < LOCAL_AI_HEALTH_CACHE_MS) {
+	const cfg = getAiProviderConfig();
+	const fingerprint = providerConfigFingerprint(cfg);
+	// Solo vale un veredicto del MISMO proveedor y reciente. Sin la huella, un
+	// sondeo del proveedor anterior que llega tarde se servía como si fuera del
+	// nuevo.
+	if (providerHealthCache && providerHealthCache.fingerprint === fingerprint
+		&& now - providerHealthCache.at < LOCAL_AI_HEALTH_CACHE_MS) {
 		return providerHealthCache.value;
 	}
-	const cfg = getAiProviderConfig();
 	const configured = Boolean(cfg.baseUrl) && (cfg.kind === 'local' || Boolean(cfg.apiKey));
 
 	const candidates: Array<{ url: string; headers: Record<string, string> }> = [];
@@ -327,7 +340,13 @@ async function checkProviderHealth(): Promise<ProviderHealth> {
 		}
 	}
 	if (!result.ok && failures.length) (result as ProviderHealth & { failures?: string[] }).failures = failures;
-	providerHealthCache = { at: now, value: result };
+	// Si el usuario cambió de proveedor mientras el sondeo estaba en vuelo, este
+	// resultado es de OTRO proveedor: guardarlo dejaba el dock en «sin
+	// respuesta», con el endpoint anterior y las acciones de IA bloqueadas hasta
+	// que caducara la caché (15 s). Se descarta.
+	if (providerConfigFingerprint(getAiProviderConfig()) === fingerprint) {
+		providerHealthCache = { at: now, fingerprint, value: result };
+	}
 	return result;
 }
 

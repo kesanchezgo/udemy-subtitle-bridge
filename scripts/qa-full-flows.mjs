@@ -138,7 +138,20 @@ const evalVerdictFor = (body) => {
 	}
 	return '[CORRECTO]\nBIEN: Capturas la idea central del concepto preguntado.\nFALTO: (nada)\nPARA RECORDAR: Conecta siempre el mecanismo con un ejemplo propio.';
 };
-const QA_PORT = 8123;
+// Puerto del mock de IA: el primero libre desde 8123. Fijarlo hacía que una
+// corrida que muriera dejara su servidor vivo y la siguiente muriese con
+// EADDRINUSE, arrastrando a todas las de después.
+const portFree = (candidate) => new Promise((resolve) => {
+	const probe = createHttpServer();
+	probe.once('error', () => resolve(false));
+	probe.once('listening', () => probe.close(() => resolve(true)));
+	probe.listen(candidate, '127.0.0.1');
+});
+let QA_PORT = 8123;
+for (let candidate = 8123; candidate < 8140; candidate += 1) {
+	if (await portFree(candidate)) { QA_PORT = candidate; break; }
+}
+
 const qaAi = createHttpServer((req, res) => {
 	// CORS: el fetch sale del content script (origen de la página), así que el
 	// mock debe responder como cualquier proveedor OpenAI-compatible alojado.
@@ -150,6 +163,15 @@ const qaAi = createHttpServer((req, res) => {
 	if (req.url.includes('/qa-down/')) {
 		res.writeHead(401, { 'Content-Type': 'application/json' });
 		res.end(JSON.stringify({ error: { message: 'API key not valid (QA)' } }));
+		return;
+	}
+	// Proveedor ANTERIOR que tarda en contestar (sección I.5): mantiene el sondeo
+	// en vuelo 3 s y luego lo rechaza, para que llegue tarde al cambio de config.
+	if (req.url.includes('/qa-slow/')) {
+		setTimeout(() => {
+			res.writeHead(401, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ error: { message: 'API key not valid (QA, lento)' } }));
+		}, 3000);
 		return;
 	}
 	// Sondeo de disponibilidad del dock: GET /v1/models
@@ -179,6 +201,8 @@ const qaAi = createHttpServer((req, res) => {
 	});
 });
 qaAi.listen(QA_PORT, '127.0.0.1');
+// Si la corrida muere, no se deja el puerto tomado para la siguiente.
+process.on('exit', () => { try { qaAi.close(); } catch { /* ya cerrado */ } });
 console.log(`  (mock IA OpenAI-compatible en 127.0.0.1:${QA_PORT})`);
 
 // Lección ya completada, con el mismo esquema que escribe historyService. Solo
@@ -449,7 +473,7 @@ if (hasCaptionsTab) {
 	});
 	check('los controles de subtítulos se renderizan',
 		cap.desfase || cap.perfiles || cap.posicion, JSON.stringify(cap));
-	await page.screenshot({ path: path.join(SHOTS, 'b-subtitulos.png') });
+	await page.screenshot({ path: path.join(SHOTS, 'b-subtitulos.png') }).catch(() => {});
 }
 
 // ══ C. Ajustes (regresión de revisión 2) ══════════════════════════════════════
@@ -512,7 +536,7 @@ check('el tema sepia se aplica al dock', sepia.sepia === true);
 check('los campos toman la piel clara en sepia', /^rgb\(255,\s*255,\s*255\)/.test(sepia.fieldBg ?? ''), String(sepia.fieldBg));
 check('el toaster vive dentro del panel y por encima de todo',
 	/position:\s*absolute/.test(sepia.toasterRule) && /2147483647/.test(sepia.toasterRule), sepia.toasterRule.slice(0, 90));
-await page.screenshot({ path: path.join(SHOTS, 'c-sepia.png') });
+await page.screenshot({ path: path.join(SHOTS, 'c-sepia.png') }).catch(() => {});
 
 
 const shadow = () => page.evaluate(() => {
@@ -539,13 +563,21 @@ const clickInShadow = (match) => page.evaluate((m) => {
 // exista — bajo carga el fallo es intermitente.
 // Pulsa y confirma el efecto: si tras el clic no aparece lo que debe, reintenta.
 // Un clic que no llega (la vista aún montando) se perdía en silencio y arrastraba
-// toda la cadena del bloque.
-const clickAndWait = async (clickRe, readyRe, tries = 6, stepMs = 1500) => {
+// toda la cadena del bloque. La confirmación es por SELECTOR o por texto de un
+// BOTÓN: esperar un placeholder nunca se cumple, porque no vive en textContent.
+const clickAndWait = async (clickRe, ready, tries = 6, stepMs = 1500) => {
+	const readyNow = () => page.evaluate(({ sel, text }) => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		if (!root) return false;
+		if (sel && root.querySelector(sel)) return true;
+		if (text) return [...root.querySelectorAll('button')].some((b) => new RegExp(text).test((b.textContent ?? '').trim()));
+		return false;
+	}, { sel: ready.sel ?? null, text: ready.text?.source ?? null });
 	for (let i = 0; i < tries; i += 1) {
 		await clickInShadow(clickRe);
-		for (let waited = 0; waited < stepMs; waited += 300) {
-			await page.waitForTimeout(300);
-			if (readyRe.test(await shadow())) return true;
+		for (let waited = 0; waited < stepMs; waited += 250) {
+			await page.waitForTimeout(250);
+			if (await readyNow()) return true;
 		}
 	}
 	return false;
@@ -799,7 +831,7 @@ for (let i = 0; i < 25; i += 1) {
 	await page.waitForTimeout(400);
 }
 // Nivel → recuerdo libre, confirmando el efecto (si el clic no llega, reintenta).
-await clickAndWait(/^Confuso/, /Lo que recuerdo es/);
+await clickAndWait(/^Confuso/, { sel: 'textarea[placeholder^="Lo que recuerdo"]' });
 await page.waitForTimeout(600);
 // Gate del recuerdo libre (§1.1): rellenarlo y comparar con la lista.
 const fillRecall = await page.evaluate(() => {
@@ -812,8 +844,8 @@ const fillRecall = await page.evaluate(() => {
 	return true;
 });
 check('el recuerdo libre admite texto antes de la lista', fillRecall);
-await clickAndWait(/Comparar con las ideas clave|Ver las ideas clave/, /Ponerme a prueba/);
-await clickAndWait(/Ponerme a prueba/, /Escribe tu respuesta con tus propias palabras/);
+await clickAndWait(/Comparar con las ideas clave|Ver las ideas clave/, { text: /Ponerme a prueba/ });
+await clickAndWait(/Ponerme a prueba/, { sel: 'textarea[placeholder^="Escribe tu respuesta"]' });
 await page.waitForTimeout(1200); // la transición de paso + render de la cola
 // Responde la pregunta (≥20 caracteres para el XP de submit).
 const fillQ = await page.evaluate(() => {
@@ -864,7 +896,7 @@ for (let i = 0; i < 10 && !flowOk; i += 1) {
 	if (await clickInShadow(/^Terminar y ver la respuesta esperada$|^Terminar aquí$/)) { await page.waitForTimeout(1200); continue; }
 	await page.waitForTimeout(800);
 }
-await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') });
+await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') }).catch(() => {});
 check('el paso Comprobar se completa (a la primera o con consolidación)', flowOk, flowOk ? '' : (await shadow()).slice(0, 120));
 if (!flowOk) {
 	// Diagnóstico del bloqueo: estado del feedback, la petición en vuelo (lo que
@@ -907,6 +939,21 @@ const celebration = await measureNotice({ celebrate: true });
 check('la celebración sale en la pila de avisos del panel',
 	celebration.found && celebration.inside && celebration.low && celebration.otherLayer === 0,
 	JSON.stringify(celebration));
+// Informativo, no una aserción: ¿el aviso tapa «Ir a la siguiente lección»?
+// Es una decisión de diseño pendiente (el aviso no tiene botón de cerrar y, al
+// pasar el ratón, se pausa). Aquí solo se mide y se dice.
+const nextLessonOverlap = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const btn = root?.querySelector('[data-next-lesson] button');
+	const toast = root?.querySelector('[data-sonner-toast]');
+	if (!btn || !toast) return null;
+	const b = btn.getBoundingClientRect();
+	const t = toast.getBoundingClientRect();
+	const overlapY = Math.max(0, Math.min(b.bottom, t.bottom) - Math.max(b.top, t.top));
+	const overlapX = Math.max(0, Math.min(b.right, t.right) - Math.max(b.left, t.left));
+	return { tapa: overlapX > 0 && overlapY > 0, solapePx: Math.round(overlapY), botonY: Math.round(b.top), avisoY: Math.round(t.top) };
+});
+if (nextLessonOverlap) console.log(`  · «Ir a la siguiente lección» y el aviso de celebración: ${nextLessonOverlap.tapa ? `lo tapa (${nextLessonOverlap.solapePx} px de solape vertical)` : 'no se solapan'}`);
 const recMin = await readHistoryRecord(MIN_LESSON);
 check('el registro guarda finishedAt + status completed + questionsDone',
 	Boolean(recMin?.finishedAt) && recMin?.status === 'completed' && recMin?.questionsDone === true,
@@ -968,10 +1015,10 @@ for (let i = 0; i < 10; i += 1) { if (await clickInShadow(/Empezar · ~4–10 mi
 // El nivel existe cuando la sesión ya está generada. Con 9 s fijos, en una
 // máquina cargada se pulsaba antes de que el botón estuviera y toda la cadena
 // de D.2 caía en silencio; se espera al botón.
-await clickAndWait(/^Confuso/, /Lo que recuerdo es/, 10, 3000);
+await clickAndWait(/^Confuso/, { sel: 'textarea[placeholder^="Lo que recuerdo"]' }, 10, 3000);
 await page.waitForTimeout(600);
-await clickAndWait(/Comparar con las ideas clave|Ver las ideas clave/, /Ponerme a prueba/);
-await clickAndWait(/Ponerme a prueba/, /^Saltar este paso$|Escribe tu respuesta con tus propias palabras/);
+await clickAndWait(/Comparar con las ideas clave|Ver las ideas clave/, { text: /Ponerme a prueba/ });
+await clickAndWait(/Ponerme a prueba/, { sel: '[data-skip-step]' });
 await waitClickInShadow(/^Saltar este paso$/);
 await page.waitForTimeout(900);
 const skipToasts = await toastsInShadow();
@@ -1013,7 +1060,7 @@ check('tras 5,5 s sin tocar nada vuelve «Reiniciar» y desaparece la confirmaci
 const recAfterTimer = await readHistoryRecord(SKIP_LESSON);
 check('revertirse sola no borra nada (questionsDone sigue en true)',
 	Boolean(recAfterTimer?.questionsDone), String(Boolean(recAfterTimer)));
-await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') });
+await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') }).catch(() => {});
 
 } // fin del bloque D (solo modo CLON)
 
@@ -1094,7 +1141,7 @@ if (await obsBtn.count().catch(() => 0)) {
 	check('«Crear índice» emite la URI del MOC en su carpeta',
 		clickedIndex && obsidianUris.length === 2 && /cursos\/[^&]*\.md/.test(moc),
 		JSON.stringify({ clickedIndex, uris: obsidianUris.length, moc: moc.slice(0, 120) }));
-	await page.screenshot({ path: path.join(SHOTS, 'e-obsidian.png') });
+	await page.screenshot({ path: path.join(SHOTS, 'e-obsidian.png') }).catch(() => {});
 } else {
 	check('el botón de Obsidian está presente', false, 'no encontrado tras scroll');
 }
@@ -1200,7 +1247,7 @@ if (REAL) {
 	});
 	check('el panel de Mazo de idiomas se renderiza con sus controles',
 		vocabUi.panel && (vocabUi.cefr || vocabUi.nivel), JSON.stringify(vocabUi));
-	await page.screenshot({ path: path.join(SHOTS, 'g-vocabulario.png') });
+	await page.screenshot({ path: path.join(SHOTS, 'g-vocabulario.png') }).catch(() => {});
 }
 
 // ══ H. Glosario — el interruptor de Captions llega al content script ═════════
@@ -1244,7 +1291,7 @@ if (REAL) {
 	await page.waitForTimeout(700);
 	const on = await glossDebug();
 	check('glosario ON: showGlossaryChip=true aceptado de nuevo', Boolean(on) && on.chip === true, JSON.stringify(on));
-	await page.screenshot({ path: path.join(SHOTS, 'h-glosario.png') });
+	await page.screenshot({ path: path.join(SHOTS, 'h-glosario.png') }).catch(() => {});
 }
 
 // ══ I. IA ═════════════════════════════════════════════════════════════════════
@@ -1328,11 +1375,11 @@ if (REAL) {
 		await page.waitForTimeout(150);
 	}
 	await page.waitForTimeout(2500); // los sondeos inmediatos ya respondieron
-	// Se cuentan los sondeos SANOS. Cadencia sana: uno por superficie cada 30 s,
-	// así que en 31 s hay como mucho 2. Un fallo transitorio (el SW dormido, que
-	// devuelve ok:false y reintenta a los 5 s) también emite, y eso no es una
-	// cadena acumulada: contarlo daba 4 y un rojo falso. Una cadena de más
-	// (el fallo que este check busca) multiplica los eventos SANOS en la ventana.
+	// Estricto: se cuentan TODOS los sondeos. Cadencia sana: uno por superficie
+	// cada 30 s, así que en 31 s hay como mucho 2. Los `ok:false` de más que antes
+	// veía no eran el SW dormido, eran la caché de salud sirviendo el veredicto
+	// del proveedor ANTERIOR (ver sección I.5): con la caché ligada a la config
+	// dejan de aparecer, así que el conteo puede volver a ser estricto.
 	await page.evaluate(() => {
 		window.__qaHealth = [];
 		window.addEventListener('usb:ai-health', (e) => {
@@ -1341,11 +1388,32 @@ if (REAL) {
 	});
 	await page.waitForTimeout(31000);
 	const events = await page.evaluate(() => window.__qaHealth ?? []);
-	const healthyEvents = events.filter((e) => e.ok).length;
 	const gaps = events.map((e, i, all) => (i === 0 ? null : e.at - all[i - 1].at));
-	check('tras 3 cambios de proveedor no se acumulan sondeos (≤ 2 sanos en 31 s: uno por superficie)',
-		/^OpenAI · nube$/.test(restored?.text ?? '') && healthyEvents >= 1 && healthyEvents <= 2,
-		`indicador: ${restored?.text ?? '—'} · sanos: ${healthyEvents} · total: ${events.length} · huecos(ms): ${JSON.stringify(gaps)}`);
+	check('tras 3 cambios de proveedor no se acumulan sondeos (≤ 2 en 31 s: uno por superficie)',
+		/^OpenAI · nube$/.test(restored?.text ?? '') && events.length >= 1 && events.length <= 2,
+		`indicador: ${restored?.text ?? '—'} · sondeos: ${events.length} · huecos(ms): ${JSON.stringify(gaps)}`);
+
+	// I.5 La caché de salud va ligada a la configuración: un sondeo del proveedor
+	// ANTERIOR que llega tarde no puede dejar en «sin respuesta» al nuevo (ni su
+	// endpoint en pantalla). Se lanza un sondeo que contesta a los 3 s y se cambia
+	// de proveedor mientras está en vuelo; todas las respuestas posteriores deben
+	// ser del proveedor nuevo.
+	const SLOW_OLD = { kind: 'gemini', baseUrl: `http://127.0.0.1:${QA_PORT}/qa-slow/v1beta`, apiKey: QA_SECRET, model: 'gemini-qa' };
+	await setProvider(SLOW_OLD);
+	await page.waitForTimeout(700); // el sondeo del anterior ya salió y tarda 3 s
+	await setProvider(OPENAI_MOCK);
+	const staleAnswers = [];
+	let sawNewProvider = false;
+	for (let i = 0; i < 10; i += 1) {
+		await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:provider-changed')));
+		await page.waitForTimeout(1200);
+		const b = await badge();
+		if (/^OpenAI · nube$/.test(b?.text ?? '')) sawNewProvider = true;
+		else staleAnswers.push(`${b?.text ?? '—'}@${i}`);
+	}
+	check('un sondeo tarde del proveedor anterior no deja «sin respuesta» al nuevo',
+		sawNewProvider && staleAnswers.length === 0,
+		`respuestas del proveedor viejo: ${JSON.stringify(staleAnswers)}`);
 }
 
 // ══ Cierre ════════════════════════════════════════════════════════════════════

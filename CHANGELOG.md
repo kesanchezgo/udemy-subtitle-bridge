@@ -1,3 +1,13 @@
+## [1.6.2] — 2026-11-06
+
+La caché de salud del proveedor de IA dejaba bloqueada la extensión con un proveedor sano. Cambia código de la extensión, por eso sube la versión.
+
+- **La caché de salud va ligada a la configuración del proveedor** (`providerConfigFingerprint`). El veredicto del sondeo se guardaba sin relación con la configuración con la que se había hecho: al cambiar de proveedor, un sondeo del ANTERIOR que seguía en vuelo terminaba después y volvía a llenar la caché con su «no responde». El dock leía ese veredicto, mostraba el endpoint viejo y dejaba bloqueadas las acciones de IA hasta que caducaba la caché (15 s) — con el proveedor nuevo funcionando. Ahora un veredicto solo se sirve y se guarda si la configuración es la misma, así que el resultado de un sondeo obsoleto se descarta.
+- **El arnés lo reproduce**: la sección I estrena la comprobación «un sondeo tarde del proveedor anterior no deja «sin respuesta» al nuevo» (mock que contesta a los 3 s y cambio de proveedor durante el sondeo). Sin el arreglo falla; con él, pasa. Verificado en las dos direcciones.
+- **Las confirmaciones de clic del arnés son por selector.** Esperaban el texto de un `placeholder` —«Lo que recuerdo es…», «Escribe tu respuesta…»—, que no vive en `textContent`: tres de las seis agotaban su plazo entero (unos 58 s por ejecución) y el clic funcionaba por tiempo, el mismo patrón que la medición de los avisos. Ahora esperan un `textarea[placeholder^=…]`, el botón por su texto o `[data-skip-step]`. Las capturas de pantalla de la suite dejan de ser fatales: son evidencia, no aserciones, y una captura que no llega por carga de la máquina no debe tumbar el informe.
+- **El conteo de sondeos vuelve a ser estricto** (todos los eventos, ≤ 2 en 31 s). Los `ok:false` de más que obligaron a contarlos por separado no eran el service worker dormido: eran esta caché sirviendo el veredicto del proveedor anterior. Con el arreglo dejan de aparecer.
+- **`qa:full` pasa de 57 a 58 comprobaciones** y baja de ~254 s a ~200 s por ejecución, al no gastar los plazos de las confirmaciones que nunca se cumplían.
+
 ## [1.6.1] — 2026-11-06
 
 Correcciones de la auditoría posterior a 1.6.0. Sin cambios en el flujo de estudio, los mazos ni Obsidian.
