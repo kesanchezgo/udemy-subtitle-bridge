@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Icon, ChevronDown } from "./icons";
+import JSZip from "jszip";
 import {
-  DEFAULT_OBSIDIAN_EXPORT_CONFIG, buildObsidianOpenVaultUri, createVaultScaffold,
-  loadObsidianExportConfig, openObsidianUri, saveObsidianExportConfig,
+  DEFAULT_OBSIDIAN_EXPORT_CONFIG, buildObsidianOpenVaultUri, buildVaultScaffold,
+  loadObsidianExportConfig, openObsidianUri, saveObsidianExportConfig, slugifyVault,
 } from "../services/obsidianExport";
 import { Field, SettingsGroup, ToggleRow, fieldCls, primaryBtnCls, secondaryBtnCls } from "./settings/SettingsKit";
 
@@ -34,6 +35,22 @@ export function ObsidianSettings({ active }: { active: boolean }) {
     return false;
   };
 
+  // La estructura viaja como .zip: Chrome abre un solo protocolo por clic y
+  // obsidian://new no crea carpetas vacías. Se descomprime dentro del vault.
+  const downloadScaffold = async () => {
+    const { notes: files, folders } = buildVaultScaffold(config, { platform: "udemy" });
+    const zip = new JSZip();
+    folders.forEach(folder => zip.folder(folder));
+    files.forEach(note => zip.file(note.path, note.markdown));
+    const blob = await zip.generateAsync({ type: "blob" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${slugifyVault(config.vaultName || "vault") || "vault"}-estructura-kinema.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast.success("Estructura descargada", { description: `Descomprímela dentro de la carpeta de tu vault: ${files.length} notas y ${folders.length} carpetas.` });
+  };
+
   return <div className="space-y-4">
     <p className="text-[11.5px] leading-relaxed text-[var(--usb-fg-mid)]">Obsidian es una app de notas. Kinema guarda ahí cada lección como una nota con conceptos y preguntas. Un <span className="font-semibold text-[var(--usb-fg)]">vault</span> es la carpeta donde Obsidian guarda tus notas.</p>
 
@@ -55,8 +72,8 @@ export function ObsidianSettings({ active }: { active: boolean }) {
         {config.includeCards && (
           <ToggleRow label="Repasar también en Obsidian" description="Formato del plugin Spaced Repetition (#flashcards). Apagado por defecto: Anki es el único planificador." checked={config.srFlashcards === true} onChange={value => set({ srFlashcards: value })} />
         )}
-        <ToggleRow label="Subtítulos originales" description="La transcripción completa." checked={config.includeRawSrt} onChange={value => set({ includeRawSrt: value })} />
-        <ToggleRow label="Guardar automáticamente" description="Al preparar cada lección. Si no, desde el final de Study." checked={config.autoExport} onChange={value => set({ autoExport: value })} />
+        <ToggleRow label="Subtítulos originales" description="La transcripción completa, en raw/. Tras exportar la nota, Kinema te ofrece guardarla (un clic más)." checked={config.includeRawSrt} onChange={value => set({ includeRawSrt: value })} />
+        <ToggleRow label="Guardar automáticamente" description="Al pulsar «Terminar lección», con el resultado de la sesión. Si no, desde el final de Study." checked={config.autoExport} onChange={value => set({ autoExport: value })} />
       </div>
     </SettingsGroup>
 
@@ -64,9 +81,9 @@ export function ObsidianSettings({ active }: { active: boolean }) {
       <button type="button" disabled={busy} className={`${primaryBtnCls} w-full`} onClick={async () => { setBusy(true); try { await saveObsidianExportConfig(config); toast.success("Preferencias de Obsidian guardadas"); } catch { toast.error("No se pudieron guardar las preferencias"); } finally { setBusy(false); } }}>Guardar preferencias</button>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" className={secondaryBtnCls} onClick={() => { if (!requireVault()) return; openObsidianUri(buildObsidianOpenVaultUri(config.vaultName)); toast.info("Obsidian debería abrir ese vault ahora", { description: "Si avisa que no existe, revisa el nombre exacto." }); }}><Icon name="externalLink" size={14} />Probar vault</button>
-        <button type="button" className={secondaryBtnCls} onClick={() => { if (!requireVault()) return; const count = createVaultScaffold(config, { platform: "udemy" }); toast.success(`Creando estructura (${count} notas)…`, { description: "Índice, log y plantillas dentro del vault." }); }}><Icon name="folderPlus" size={14} />Crear carpetas</button>
+        <button type="button" className={secondaryBtnCls} onClick={() => { void downloadScaffold(); }}><Icon name="folderPlus" size={14} />Estructura (.zip)</button>
       </div>
-      <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">Chrome preguntará si abrir Obsidian: elige «Siempre».</p>
+      <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">Chrome preguntará si abrir Obsidian: elige «Siempre». La estructura (índice, plantillas y carpetas) es opcional: descomprímela en tu vault.</p>
     </div>
   </div>;
 }

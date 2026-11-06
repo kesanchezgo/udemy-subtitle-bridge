@@ -1,4 +1,4 @@
-import { getStreak } from "./streak";
+import { getBestStreak, getStreak, touchStreak } from "./streak";
 
 export interface Achievement {
   id: string;
@@ -50,6 +50,8 @@ export function getMasteryTier(level: number): MasteryTier {
 interface State {
   xp: number;
   correct: number;          // aciertos a la primera (first_try_correct)
+  answered: number;         // preguntas respondidas (primer intento, bien o mal)
+  improved: number;         // respuestas corregidas tras la revisión (answer_improved)
   sessions: number;
   exports: number;
   codeChallenges: number;
@@ -80,6 +82,8 @@ const XP: Record<string, number> = {
 const empty = (): State => ({
   xp: 0,
   correct: 0,
+  answered: 0,
+  improved: 0,
   sessions: 0,
   exports: 0,
   codeChallenges: 0,
@@ -140,6 +144,7 @@ export function getProgress() {
     history, week, weekXp: week.reduce((a, b) => a + b.xp, 0),
     todayXp, dailyGoalXp, dailyGoalPct,
     unlocked: s.unlocked, correct: s.correct, sessions: s.sessions,
+    answered: Math.max(s.answered || 0, s.correct), improved: s.improved || 0, bestStreak: getBestStreak(),
     exports: s.exports, codeChallenges: s.codeChallenges,
     practiceAttempted: s.practiceAttempted || 0, practiceCorrect: s.practiceCorrect || 0,
     reinforced: s.reinforced || 0,
@@ -150,11 +155,16 @@ export function getProgress() {
 export function recordActivity(type: string, meta?: { bonus?: number }): { gained: number; levelUp: number | null; unlocked: Achievement[] } {
   const base = XP[type];
   if (base === undefined) return { gained: 0, levelUp: null, unlocked: [] };
+  // Cualquier actividad de estudio cuenta para la racha (responder, practicar,
+  // terminar, exportar): la misma regla que el calendario de «Constancia».
+  touchStreak();
   const gain = base + Math.max(0, Math.round(meta?.bonus ?? 0));
   const s = read();
   const before = levelOf(s.xp);
   s.xp += gain;
   s.days[dayKey()] = (s.days[dayKey()] || 0) + gain;
+  if (type === "first_try_correct" || type === "first_try_miss") s.answered = (s.answered || 0) + 1;
+  if (type === "answer_improved") s.improved = (s.improved || 0) + 1;
   if (type === "first_try_correct") {
     s.correct++;
     s.recentFirstTry = [...(Array.isArray(s.recentFirstTry) ? s.recentFirstTry : []), true].slice(-20);
@@ -176,7 +186,7 @@ export function recordActivity(type: string, meta?: { bonus?: number }): { gaine
   const after = levelOf(s.xp);
   const streak = getStreak();
   const checks: Record<string, boolean> = {
-    first: s.correct >= 1,
+    first: (s.answered || 0) >= 1 || s.correct >= 1,
     c25: s.correct >= 25,
     c100: s.correct >= 100,
     code1: (s.codeChallenges || 0) >= 1,

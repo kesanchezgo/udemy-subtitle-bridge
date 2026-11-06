@@ -285,11 +285,11 @@ step('Waiting for objectives (REAL AI, curso real)');
 let objectivesLoaded = false;
 for (let i = 0; i < 30; i++) {
 	const text = await dockText(page);
-	const pending = /Objetivos pendientes de IA real/i.test(text);
+	const pending = /Son objetivos de ejemplo/i.test(text);
 	objectivesLoaded = !pending && /Regenerar/i.test(text);
 	if (objectivesLoaded && !/Generando/i.test(text)) break;
 	if (pending && i % 4 === 3) {
-		await page.locator('[id^="usb-dock-host-"] button:has-text("Regenerar con IA")').first().click({ timeout: 5000 }).catch(() => null);
+		await page.locator('[id^="usb-dock-host-"] button:has-text("Regenerar")').first().click({ timeout: 5000 }).catch(() => null);
 	}
 	await sleep(2500);
 }
@@ -310,7 +310,7 @@ for (let i = 0; i < 60; i++) {
 	await sleep(2500);
 	const text = await dockText(page);
 	if (/Generando|Analizando|Preparando/i.test(text)) continue;
-	if (/¿Lo sé\?|Próximo paso concreto/i.test(text) && !/No se pudo/i.test(text)) {
+	if (/¿Qué tan claro te quedó la lección\?/i.test(text) && !/No se pudo/i.test(text)) {
 		sessionOk = true;
 		break;
 	}

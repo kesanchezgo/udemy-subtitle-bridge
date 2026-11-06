@@ -10,7 +10,7 @@
 //   3. seeds chrome.storage with the local AI provider (qoder/qwen3.8-flash proxy) and
 //      the Obsidian export config,
 //   4. generates objectives + a study session with REAL AI through the dock,
-//      drives the full stepper to "No olvidar" and verifies the export paths:
+//      drives the full stepper to "Fíjalo en memoria" and verifies the export paths:
 //      ayuda in-app, portapapeles, .apkg real (unzip + SQLite audit), URIs
 //      obsidian:// capturadas y guard de duplicados,
 //   5. screenshots the dock at the default text scale and again with the
@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { sessionExportKey } from '../src/app/services/obsidianExport.ts';
+import { isSessionExported, sessionExportKey } from '../src/app/services/obsidianExport.ts';
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, '')), '..');
 const distDir = path.join(repoRoot, 'dist');
@@ -318,18 +318,18 @@ for (let i = 0; i < 40; i++) {
 	const text = await dockText(page);
 	usedTemplates = TEMPLATE_TITLES.filter((t) => text.includes(t)).length >= 3;
 	if (usedTemplates) break;
-	const pending = /Objetivos pendientes de IA real/i.test(text);
+	const pending = /Son objetivos de ejemplo/i.test(text);
 	// El affordance "Regenerar" solo existe cuando las tarjetas de objetivos
 	// tienen contenido real (el esqueleto no lo renderiza).
 	objectivesLoaded = !pending && /Regenerar/i.test(text);
 	if (objectivesLoaded && !/Generando/i.test(text)) break;
 	// El round-trip del provider puede perder la carrera contra el pipeline de
-	// traducción en proxies gratuitos (rate limits). "Regenerar con IA" es la
+	// traducción en proxies gratuitos (rate limits). "Regenerar" es la
 	// recuperación manual del dock — usarla como un usuario real, máx 3 veces.
 	if (pending && regenerateClicks < 3) {
 		regenerateClicks++;
-		console.log(`   objectives pending — clicking "Regenerar con IA" (${regenerateClicks}/3)`);
-		await page.locator('[id^="usb-dock-host-"] button:has-text("Regenerar con IA")')
+		console.log(`   objectives pending — clicking "Regenerar" (${regenerateClicks}/3)`);
+		await page.locator('[id^="usb-dock-host-"] button:has-text("Regenerar")')
 			.first().click({ timeout: 5000 }).catch(() => null);
 		await sleep(4000);
 		continue;
@@ -368,14 +368,24 @@ step('Waiting for the study session to finish generating');
 // La pista VTT del fixture carga async; el content script refresca los cues
 // del video ~3 s tras el bootstrap. Si el primer intento llega antes, el
 // background rechaza con "too short" — esperar y reintentar una vez.
+// Presupuesto: el propio dock promete «~5–15 min» y el payload del prototipo
+// pide más campos que antes (conceptTerms, conceptRefs, bloom, ankiCards...),
+// así que con un modelo de razonamiento la generación puede pasar de los 150 s
+// que aguantaba el arnés. Se espera hasta 300 s y se traza el avance.
 let sessionOk = false;
 let retriedShortTranscript = false;
-for (let i = 0; i < 60; i++) {
+const genStart = Date.now();
+for (let i = 0; i < 120; i++) {
 	await sleep(2500);
 	const text = await dockText(page);
+	if (i % 12 === 11) {
+		const stage = (text.match(/Generando[^.]{0,40}|Analizando[^.]{0,40}|Preparando[^.]{0,40}|No se pudo[^.]{0,60}|Error al generar[^.]{0,60}/) ?? ['(sin marcador)'])[0];
+		console.log(`   … ${Math.round((Date.now() - genStart) / 1000)}s · ${stage.replace(/\s+/g, ' ')}`);
+	}
 	if (/Generando|Analizando|Preparando/i.test(text)) continue;
-	if (/¿Lo sé\?|Próximo paso concreto/i.test(text) && !/No se pudo/i.test(text)) {
+	if (/¿Qué tan claro te quedó la lección\?/i.test(text) && !/No se pudo/i.test(text)) {
 		sessionOk = true;
+		console.log(`   sesión lista en ${Math.round((Date.now() - genStart) / 1000)}s`);
 		break;
 	}
 	if (/too short|No hay transcripción disponible/i.test(text) && !retriedShortTranscript) {
@@ -393,7 +403,7 @@ for (let i = 0; i < 60; i++) {
 	}
 }
 if (!sessionOk) {
-	await fail('study session did not render after 150s', page, 'study-timeout');
+	await fail(`study session did not render after ${Math.round((Date.now() - genStart) / 1000)}s`, page, 'study-timeout');
 }
 
 await page.screenshot({ path: path.join(repoRoot, 'qa-extension-study.png') });
@@ -403,17 +413,23 @@ console.log('   study session rendered → qa-extension-study.png');
 // que las señales se leen del DOM compartido (data-usb-qa-last breadcrumb,
 // MutationObserver para hrefs obsidian://) y de CDP para las descargas.
 
-step('Driving the full stepper to step 5 (Anki)');
+step('Driving the full stepper to the export step (Fijar, paso 4)');
 try {
-	// Flujo Kinema v2: Nivel (confianza) → Repaso → Recordar → Práctica → Anki.
-	// 1) Nivel: elegir confianza (auto-avanza a Repaso, 2/5).
+	// Flujo de 4 pasos: Recordar → Comprobar → Aplicar → Fijar. El avance entre
+	// pasos es el «Siguiente» del dock, y el escape de cada paso que lo admite es
+	// «Saltar este paso» (§1.7). Aquí interesa llegar a Fijar, que es donde viven
+	// Obsidian, el mazo y el .apkg.
+	// 1) Recordar: el toque de nivel desbloquea Comprobar.
 	await page.locator('[id^="usb-dock-host-"] button:has-text("Entendido")').first().click({ timeout: 15000 });
-	// 2) Avanzar a Recordar (preguntas).
+	// 2) Recordar → Comprobar: basta el «Siguiente» del dock (el nivel ya está
+	//    elegido); es el mismo avance que «Ponerme a prueba», sin desplegar antes
+	//    las ideas clave.
 	await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 15000 });
-	// 3) Recordar: escape hatch que completa las preguntas (→ Práctica, 4/5).
-	await page.locator('[id^="usb-dock-host-"] button:has-text("Saltar a la práctica")').first().click({ timeout: 15000 });
-	// 4) Práctica → Anki (5/5).
-	await page.locator('[id^="usb-dock-host-"] button:has-text("Siguiente")').first().click({ timeout: 15000 });
+	// 3) Comprobar: saltarla la cierra («Comprobación saltada») y ofrece continuar.
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Saltar este paso")').first().click({ timeout: 15000 });
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Continuar a Aplicar")').first().click({ timeout: 15000 });
+	// 4) Aplicar: saltarla la deja pendiente y salta a Fijar.
+	await page.locator('[id^="usb-dock-host-"] button:has-text("Saltar este paso")').first().click({ timeout: 15000 });
 } catch (e) {
 	await fail(`stepper did not reach the export step: ${String(e).slice(0, 140)}`, page, 'stepper');
 }
@@ -472,7 +488,8 @@ try {
 	}
 	console.log(`   toast de copiado: ${copyToast || '(no visible)'}`);
 	const md = await page.evaluate(() => navigator.clipboard.readText());
-	if (md && md.includes('type: sesion') && md.includes('#flashcards')) {
+	// C6: las tarjetas viajan como callout plegado, sin el tag #flashcards.
+	if (md && md.includes('type: sesion') && md.includes('Tarjetas de esta lección')) {
 		clipboardOk = true;
 		console.log(`   ✅ markdown en portapapeles (${(md.length / 1024).toFixed(1)} kB)`);
 	} else {
@@ -576,7 +593,22 @@ if (ev.d) {
 		if (!model) throw new Error('modelo Udemy Bridge Concept ausente: ' + Object.values(models).map((m) => m.name).join(', '));
 		if (!model.css.includes('.nightMode')) throw new Error('CSS dev-card (nightMode) ausente');
 		if (!model.tmpls[0].qfmt.includes('anki-wrapper dev-card')) throw new Error('plantilla front dev-card ausente');
-		if (!model.tmpls[0].afmt.includes('prism-java.min.js')) throw new Error('plantilla back sin Prism (fix cara B ausente)');
+		// Prism viaja DENTRO del .apkg (_kinema-prism-v1.*): el resaltado del
+		// código no depende de internet. Se comprueba el <script> de la plantilla
+		// y que el medio exista de verdad en el paquete.
+		if (!model.tmpls[0].afmt.includes('_kinema-prism-v1.js')) throw new Error('plantilla back sin Prism (fix cara B ausente)');
+		// En .apkg los medios van numerados (0, 1, ...) y el índice `media` mapea
+		// índice → nombre de archivo. Se comprueba ahí, no como entrada del zip.
+		const mediaIdx = zip.file('media');
+		if (!mediaIdx) throw new Error('índice de medios ausente del .apkg');
+		const mediaMap = JSON.parse(await mediaIdx.async('string'));
+		const mediaNames = Object.values(mediaMap);
+		for (const need of ['_kinema-prism-v1.js', '_kinema-prism-v1.css']) {
+			if (!mediaNames.includes(need)) throw new Error('media de Prism ausente del .apkg: ' + need + ' (tiene ' + mediaNames.join(', ') + ')');
+			const slot = Object.keys(mediaMap).find((k) => mediaMap[k] === need);
+			const bytes = await zip.file(slot)?.async('uint8array');
+			if (!bytes || bytes.length < 200) throw new Error('media de Prism vacío: ' + need);
+		}
 		if (!model.tmpls[0].qfmt.includes('{{Leccion}}')) throw new Error('píldora de lección ({{Leccion}}) ausente');
 		const flds = model.flds.map((f) => f.name);
 		if (JSON.stringify(flds) !== JSON.stringify(['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'])) throw new Error('campos incorrectos: ' + flds.join(','));
@@ -586,7 +618,9 @@ if (ev.d) {
 		}
 		const dconf = JSON.parse(db.exec('SELECT dconf FROM col LIMIT 1')[0].values[0][0]);
 		const presetNames = Object.values(dconf).map((c) => c.name);
-		if (!presetNames.includes('Udemy Bridge · Cursos') || !presetNames.includes('Udemy Bridge · Vocabulario')) {
+		// Presets propios con el nombre de la marca (los IDs siguen derivando del
+		// nombre histórico, así que actualizar no duplica el preset).
+		if (!presetNames.includes('Kinema · Cursos') || !presetNames.includes('Kinema · Vocabulario')) {
 			throw new Error('presets propios ausentes: ' + presetNames.join(', '));
 		}
 		const lessonDeck = Object.values(decks).find((d) => d.name.startsWith('Kinema::Courses::') && d.name.split('::').length === 4);
@@ -634,22 +668,33 @@ await sleep(2500);
 const uris = await page.evaluate(() => window.__qaUris || []);
 let obsidianOk = false;
 try {
-	if (uris.length !== 2) throw new Error('esperaba 2 URIs (MOC+sesión), llegaron ' + uris.length);
+	// El export emite la URI del DESTINO (la sesión). El MOC se ofrece aparte, así
+	// que su URI puede no venir en el mismo gesto: no se exige.
+	if (uris.length < 1) throw new Error('esperaba al menos la URI de la sesión, llegaron ' + uris.length);
 	const decoded = uris.map((u) => decodeURIComponent(u));
 	const session = decoded.find((d) => d.includes('type%3A%20sesion') || d.includes('type: sesion'));
-	const moc = decoded.find((d) => d.includes('type%3A%20curso') || d.includes('type: curso'));
 	if (!session) throw new Error('falta la URI de sesión');
-	if (!moc) throw new Error('falta la URI de MOC');
-	for (const marker of ['#flashcards', 'relevance_score', 'source_url', '## Ideas clave']) {
+	// Contrato de la nota (docs/ejemplo-nota-obsidian.md): frontmatter, ideas clave
+	// y tarjetas como callout plegado; `source_url` y `#flashcards` NO vuelven.
+	for (const marker of ['relevance_score', 'lesson_url', '## Ideas clave', 'Tarjetas de esta lección']) {
 		if (!session.includes(marker)) throw new Error('la nota de sesión no incluye "' + marker + '"');
+	}
+	for (const banned of ['source_url', '%23flashcards', '#flashcards']) {
+		if (session.includes(banned)) throw new Error('la nota de sesión todavía incluye "' + banned + '"');
 	}
 	if (!session.includes('obsidian://new?vault=')) throw new Error('vault malformado en la URI');
 	obsidianOk = true;
-	console.log('   ✅ 2 URIs capturadas: sesión (' + (session.length / 1024).toFixed(1) + ' kB) + MOC, frontmatter y tarjetas correctas');
+	console.log('   ✅ URIs capturadas: ' + uris.length + ' (sesión ' + (session.length / 1024).toFixed(1) + ' kB), frontmatter y tarjetas correctas');
 	const stored = await sw.evaluate(() => new Promise((res) => chrome.storage.local.get(['obsidian_exported_notes'], (r) => res(r.obsidian_exported_notes || []))));
-	const expKey = sessionExportKey('Java Programming Bootcamp: Spring Boot & REST APIs', 'Platform Independence in Java');
-	if (!stored.includes(expKey)) throw new Error('la exportación no registró la sesión (guard no podrá detectar duplicados)');
-	console.log('   ✅ guard sembrado en storage: ' + expKey);
+	// La clave del guard incluye el vault, así que se comprueba con la misma
+	// función que usa la app (que además acepta la clave heredada).
+	const exportCfg = await sw.evaluate(() => new Promise((res) => chrome.storage.local.get(['obsidian_export_config'], (r) => res(r.obsidian_export_config))));
+	const course = 'Java Programming Bootcamp: Spring Boot & REST APIs';
+	const lesson = 'Platform Independence in Java';
+	if (!isSessionExported(stored, exportCfg, course, lesson)) {
+		throw new Error('la exportación no registró la sesión (guard no podrá detectar duplicados)');
+	}
+	console.log('   ✅ guard sembrado en storage: ' + sessionExportKey(exportCfg, course, lesson));
 } catch (e) {
 	await fail('obsidian export URI check: ' + e.message, page, 'obsidian-uri');
 }

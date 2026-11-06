@@ -6,7 +6,7 @@ import { describeProviderFailure, getAiProviderConfig } from "../../services/ai-
 import { chromeLocalStorage } from "../../services/chromeStorage";
 import { contentBridge } from "../../services/contentBridge";
 import { buildVocabularySpec, markVocabularyExported, parseVocabularyPayload, type VocabConfig } from "../../services/vocabularyService";
-import { exportedVocabularyKeys, prepareVocabularyCandidates, readVocabularySession, toggleVocabularySelection, updateVocabularySession, vocabularyCriteriaKey, vocabularySessionKey, vocabularyWordKey, withVocabularyExportLock, type VocabularySession } from "../../services/vocabularySession";
+import { type KnownVocabularyWord, exportedVocabularyKeys, exportedVocabularyOrigins, prepareVocabularyCandidates, readVocabularySession, toggleVocabularySelection, updateVocabularySession, vocabularyCriteriaKey, vocabularySessionKey, vocabularyWordKey, withVocabularyExportLock, type VocabularySession } from "../../services/vocabularySession";
 import { buildAnkiApkg, downloadApkg } from "../../services/ankiApkg";
 import { ChoiceGroup, MiniScale, Notice, Picker, RowList, SettingRow, SettingsGroup, Stepper, fieldCls, primaryBtnCls, secondaryBtnCls } from "../settings/SettingsKit";
 import { ExportModule } from "./ExportModule";
@@ -46,6 +46,8 @@ export function VocabularyPanel({
   const key = vocabularySessionKey(course, lesson, config.targetLang);
   const [session, setSession] = useState<VocabularySession | null>(null);
   const [exported, setExported] = useState<Set<string>>(new Set());
+  // Curso de donde salió cada palabra que ya tienes (una palabra vive una sola vez en Anki).
+  const [origins, setOrigins] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState(false);
   const [archiveChoice, setArchiveChoice] = useState("latest");
   const lock = useRef(false);
@@ -59,8 +61,9 @@ export function VocabularyPanel({
     if (compact) void contentBridge.sendToContent({ type: "GLOSSARY_UPDATE", payload: { sessionKey: key, words: [] } });
     const load = async () => {
       const sequence = ++loadSequence;
-      const [next, seen] = await Promise.all([readVocabularySession(key), exportedVocabularyKeys(config.targetLang)]);
+      const [next, seen, from] = await Promise.all([readVocabularySession(key), exportedVocabularyKeys(config.targetLang), exportedVocabularyOrigins(config.targetLang)]);
       if (generation.current !== version || loadSequence !== sequence) return;
+      setOrigins(from);
       // Comparación semántica, no JSON.stringify: chrome.storage reordena las
       // claves alfabéticamente al escribir, así que una sesión recién leída
       // "difiere" siempre en stringify aunque los valores sean idénticos. Con
@@ -101,13 +104,17 @@ export function VocabularyPanel({
         type: "GLOSSARY_UPDATE",
         payload: {
           sessionKey: key, course, lesson,
-          words: next?.candidates.map(word => ({
-            ...word,
-            selected: next.selected.includes(vocabularyWordKey(word.word)),
-            exported: seen.has(vocabularyWordKey(word.word)),
-            demo: next.demo,
-            needsUpdate: vocabularyCriteriaKey(next.config) !== vocabularyCriteriaKey(config),
-          })) ?? [],
+          words: next ? [
+            ...next.candidates.map(word => ({
+              ...word,
+              selected: next.selected.includes(vocabularyWordKey(word.word)),
+              exported: seen.has(vocabularyWordKey(word.word)),
+              demo: next.demo,
+              needsUpdate: vocabularyCriteriaKey(next.config) !== vocabularyCriteriaKey(config),
+            })),
+            // Las que ya tienes: re-exposición en contexto, sin acción posible.
+            ...(next.known ?? []).map(k => ({ word: k.word, phonetic: k.phonetic, monolingual: k.monolingual, selected: false, exported: true, demo: next.demo, needsUpdate: false })),
+          ] : [],
         },
       });
     };
@@ -141,12 +148,18 @@ export function VocabularyPanel({
     } finally { if (timeout) clearTimeout(timeout); }
     if (generation.current !== version) return;
     const words = prepareVocabularyCandidates(parseVocabularyPayload(payload), config);
-    if (!words.length) throw new Error("No hay candidatas que cumplan el nivel configurado.");
+    const rawKnown = (payload as { known?: unknown })?.known;
+    const known = Array.isArray(rawKnown)
+      ? rawKnown.filter((k): k is KnownVocabularyWord => Boolean(k) && typeof (k as KnownVocabularyWord).word === "string")
+        .filter(k => !words.some(word => vocabularyWordKey(word.word) === vocabularyWordKey(k.word)))
+      : [];
+    if (!words.length && !known.length) throw new Error("No hay candidatas que cumplan el nivel configurado.");
     await updateVocabularySession(key, previous => {
       const real = previous?.demo ? previous.realBackup : previous;
-      return { course, lesson, config: { ...config }, candidates: words, selected: real?.selected.filter(value => words.some(word => vocabularyWordKey(word.word) === value)) ?? [], demo: false, partial: Boolean((payload as { partial?: boolean })?.partial), exports: real?.exports ?? [] };
+      return { course, lesson, config: { ...config }, candidates: words, known, selected: real?.selected.filter(value => words.some(word => vocabularyWordKey(word.word) === value)) ?? [], demo: false, partial: Boolean((payload as { partial?: boolean })?.partial), exports: real?.exports ?? [] };
     });
-    toast.success("Candidatas preparadas", { description: "Selecciona desde el video o esta lista; todavía no se ha exportado nada." });
+    if (!words.length) toast.message("Esta lección no trae palabras nuevas", { description: `Las ${known.length} que ya tienes se verán marcadas en el video, como repaso.` });
+    else toast.success("Candidatas preparadas", { description: "Selecciona desde el video o esta lista; todavía no se ha exportado nada." });
   });
   const selected = session?.candidates.filter(word => session.selected.includes(vocabularyWordKey(word.word)) && !exported.has(vocabularyWordKey(word.word))) ?? [];
   const exportWords = (redownload: boolean) => run(() => withVocabularyExportLock(key, async () => {
@@ -180,7 +193,6 @@ export function VocabularyPanel({
     toast.success(redownload ? "Archivo descargado de nuevo" : "Vocabulario exportado", { description: "Importa el archivo en Anki Desktop. La descarga no confirma la importación." });
   }));
 
-  const exportedCount = session?.candidates.filter(word => exported.has(vocabularyWordKey(word.word))).length ?? 0;
   const toggleWord = (word: string) => run(async () => { const latestSeen = await exportedVocabularyKeys(config.targetLang); await updateVocabularySession(key, current => { if (!current) throw new Error("Prepara la lección primero."); return toggleVocabularySelection(current, word, latestSeen); }); });
 
   // Proponer / rehacer la lista. El texto explica qué hace: la IA lee los
@@ -192,15 +204,24 @@ export function VocabularyPanel({
   </div>;
 
   // Lista + exportación: idéntica en Configuración y al final de Study.
+  const cardsPerWord = config.production === false ? 1 : 2;
+  // Las nuevas primero; las que ya tienes (de otra lección o curso) al final, sin seleccionar.
+  // «Ya tienes»: las que llegaron igual a la lista + las que la lección repasa (session.known).
+  const knownInList = session?.candidates.filter(word => exported.has(vocabularyWordKey(word.word))).length ?? 0;
+  const knownCount = knownInList + (session?.known?.length ?? 0);
+  const newCount = (session?.candidates.length ?? 0) - knownInList;
+  const orderedCandidates = session ? [...session.candidates].sort((a, b) => Number(exported.has(vocabularyWordKey(a.word))) - Number(exported.has(vocabularyWordKey(b.word)))) : [];
   const wordList = session && <div className="space-y-3">
+    {/* Cuántas y por qué: la lista crece con la lección; el máximo lo pones tú. */}
+    <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]" data-vocab-count>{newCount === 1 ? "1 palabra nueva" : `${newCount} palabras nuevas`} de nivel {session.config.minLevel} o más en esta lección{knownCount > 0 ? ` (y ${knownCount} que ya tienes)` : ""} · puedes exportar hasta {config.maxWords}.</p>
     {session.partial && <Notice tone="warn" icon="info">Transcripción parcial: esta lista no cubre toda la lección.</Notice>}
     {selected.length > config.maxWords && <Notice tone="warn" icon="alertCircle">La selección supera el máximo. Desmarca palabras antes de exportar.</Notice>}
-    <div className="max-h-72 overflow-y-auto overscroll-contain space-y-1.5" role="region" aria-label="Candidatas de vocabulario" tabIndex={0}>{session.candidates.map(word => {
+    <div className="max-h-72 overflow-y-auto overscroll-contain space-y-1.5" role="region" aria-label="Candidatas de vocabulario" tabIndex={0}>{orderedCandidates.map(word => {
       const wordKey = vocabularyWordKey(word.word); const seen = exported.has(wordKey); const on = session.selected.includes(wordKey);
       return <label key={wordKey} className={`flex gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer transition-colors ${on ? "border-[#6d4aff]/45 bg-[var(--usb-accent-soft)]" : "border-[var(--usb-border)] bg-[var(--usb-bg-2)] hover:border-[#6d4aff]/30"} ${seen ? "opacity-70 cursor-default" : ""}`}>
         <input type="checkbox" aria-label={`Seleccionar ${word.word}`} checked={on} disabled={seen || busy || Boolean(stale)} onChange={() => toggleWord(word.word)} className="mt-0.5 h-4 w-4 shrink-0 rounded accent-[#6d4aff]" />
         <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-1.5 flex-wrap"><span className="text-[12.5px] font-bold text-[var(--usb-fg-hi)]">{word.word}</span><span className="font-mono text-[11px] text-[var(--usb-fg-mid)]">{word.phonetic}</span><span className="text-[10.5px] font-bold px-1.5 rounded bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)]">{word.level}</span>{seen && <span className="text-[10.5px] font-semibold text-[var(--usb-fg-mid)]">Ya exportada</span>}</span>
+          <span className="flex items-baseline gap-1.5 flex-wrap"><span className="text-[12.5px] font-bold text-[var(--usb-fg-hi)]">{word.word}</span><span className="font-mono text-[11px] text-[var(--usb-fg-mid)]">{word.phonetic}</span><span className="text-[10.5px] font-bold px-1.5 rounded bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)]">{word.level}</span>{seen && <span className="text-[10.5px] font-semibold text-[var(--usb-fg-mid)]" data-vocab-known>Ya en tu mazo{origins.get(wordKey) && origins.get(wordKey) !== course ? ` · ${origins.get(wordKey)}` : ""}</span>}</span>
           <span className="block text-[11.5px] text-[var(--usb-fg)]">{word.meaning}</span>
           <span className="block text-[11px] italic text-[var(--usb-fg-mid)] mt-0.5">{word.sentence}</span>
         </span>
@@ -210,10 +231,10 @@ export function VocabularyPanel({
       <ChoiceGroup label="Lote de vocabulario exportado" columns={2} disabled={busy} value={archiveChoice} onChange={setArchiveChoice} options={[{ id: "latest", label: "Último", hint: `${session.exports.at(-1)?.words.length ?? 0} palabras` }, ...session.exports.map((archive, index) => ({ id: String(index), label: `Lote ${index + 1}`, hint: `${archive.words.length} palabras · ${new Date(archive.createdAt).toLocaleDateString("es-ES")}` }))]} />
     </SettingsGroup>}
     <div className={`grid gap-2 ${session.exports.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
-      <button type="button" disabled={busy || !selected.length || selected.length > config.maxWords || session.demo || Boolean(stale)} onClick={() => exportWords(false)} className={primaryBtnCls}><Download size={14} />Exportar {selected.length} nuevas</button>
-      {session.exports.length > 0 && <button type="button" disabled={busy || session.demo} onClick={() => exportWords(true)} className={secondaryBtnCls}>Volver a descargar · sin IA</button>}
+      <button type="button" disabled={busy || !selected.length || selected.length > config.maxWords || session.demo || Boolean(stale)} onClick={() => exportWords(false)} className={primaryBtnCls}><Download size={14} />{selected.length === 0 ? "Marca palabras para exportar" : `Exportar ${selected.length} ${selected.length === 1 ? "palabra" : "palabras"}`}</button>
+      {session.exports.length > 0 && <button type="button" disabled={busy || session.demo} onClick={() => exportWords(true)} className={secondaryBtnCls}>Volver a descargar (sin regenerar)</button>}
     </div>
-    <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">Descargar el archivo no confirma que se haya importado en Anki.</p>
+    <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">{selected.length > 0 ? `${selected.length * cardsPerWord} ${selected.length * cardsPerWord === 1 ? "tarjeta" : "tarjetas"} en Anki${cardsPerWord === 2 ? ": reconocer y, al día siguiente, producir" : ""}. ` : ""}Descargar el archivo no confirma que se haya importado en Anki.</p>
   </div>;
 
   const staleNotice = stale && <Notice tone="warn" icon="alertCircle">Configuración modificada. La lista usa los criterios anteriores: aplica los cambios antes de exportar.</Notice>;
@@ -221,12 +242,15 @@ export function VocabularyPanel({
 
   if (!compact) {
     // Final de Study: seleccionar y exportar. Los criterios viven en Configuración.
-    return <ExportModule icon={Languages} title="Mazo de idiomas · opcional" subtitle={`${language} · desde ${config.minLevel} · hasta ${config.maxWords} nuevas`} configLabel="Ajustar" onToggleConfig={() => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "vocabulary" } }))}>
+    return <ExportModule icon={Languages} title="Mazo de idiomas · opcional" subtitle={`${language} · desde ${config.minLevel} · hasta ${config.maxWords} palabras`} configLabel="Ajustar" onToggleConfig={() => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "vocabulary" } }))}>
       <div role="region" aria-label="Selección de vocabulario" className="space-y-3">
-        <p className="text-[11.5px] leading-relaxed text-[var(--usb-fg-mid)]">Palabras de esta lección para tu mazo de idiomas. Márcalas aquí o en el video.</p>
+        <p className="text-[11.5px] leading-relaxed text-[var(--usb-fg-mid)]">Palabras nuevas de esta lección para tu mazo de idiomas (las que ya tienes, de cualquier curso, no se repiten). Márcalas aquí o, en un video, mientras lo ves.</p>
         {staleNotice}
-        {generateBlock}
+        {/* Sin lista (o con ajustes nuevos), proponer es lo principal y va arriba;
+            con lista, lo principal es elegir y exportar: rehacerla va al final. */}
+        {(!session || stale) && generateBlock}
         {wordList}
+        {session && !stale && generateBlock}
       </div>
     </ExportModule>;
   }
@@ -236,7 +260,7 @@ export function VocabularyPanel({
     ? EXPLANATION_LANGUAGES
     : [...EXPLANATION_LANGUAGES, { id: config.baseLangLabel, label: config.baseLangLabel }];
   const settings = <section aria-label="Selección de vocabulario" className="space-y-4">
-    <p className="text-[11.5px] leading-relaxed text-[var(--usb-fg-mid)]">Al terminar una lección, la IA propone palabras de sus subtítulos para tu mazo de idiomas en Anki.</p>
+    <p className="text-[11.5px] leading-relaxed text-[var(--usb-fg-mid)]">Al terminar una lección, Kinema propone palabras de sus subtítulos para tu mazo de idiomas en Anki: de 6 en una lección corta a 20 en una larga, desde tu nivel. Tú eliges cuáles exportar. Cada palabra vive una sola vez en Anki: las que ya tienes no se vuelven a proponer y reimportar nunca pisa su imagen, audio ni tus cambios.</p>
     <SettingsGroup title="Idiomas">
       <RowList>
         <SettingRow label="Aprendo"><Picker label="Idioma objetivo del vocabulario" value={config.targetLang} onChange={id => onConfig({ targetLang: id, targetLangLabel: TARGET_LANGUAGES.find(option => option.id === id)?.english ?? id })} options={TARGET_LANGUAGES} /></SettingRow>
@@ -246,12 +270,12 @@ export function VocabularyPanel({
     <SettingsGroup title="Por lección">
       <RowList>
         <SettingRow label="Desde el nivel" hint="CEFR"><MiniScale label="Nivel mínimo de vocabulario" value={config.minLevel} onChange={id => onConfig({ minLevel: id })} options={["A1", "A2", "B1", "B2", "C1", "C2"]} /></SettingRow>
-        <SettingRow label="Palabras nuevas" hint="Máximo, de 3 a 20"><Stepper label="Máximo palabras nuevas" min={3} max={20} value={config.maxWords} onChange={value => onConfig({ maxWords: value })} /></SettingRow>
+        <SettingRow label="Exportar por lección" hint="Máximo de palabras nuevas, de 3 a 20"><Stepper label="Máximo palabras nuevas" min={3} max={20} value={config.maxWords} onChange={value => onConfig({ maxWords: value })} /></SettingRow>
       </RowList>
     </SettingsGroup>
     <SettingsGroup title="Anki">
       <RowList>
-        <SettingRow label="Tarjeta para producir"><Picker label="Tarjeta para producir" value={config.production === false ? "no" : "si"} onChange={id => onConfig({ production: id === "si" })} options={[{ id: "si", label: "Activada", hint: "Reconocer + Producir (español →)" }, { id: "no", label: "Solo reconocer", hint: "Una tarjeta por palabra" }]} /></SettingRow>
+        <SettingRow label="Tarjeta para producir"><Picker label="Tarjeta para producir" value={config.production === false ? "no" : "si"} onChange={id => onConfig({ production: id === "si" })} options={[{ id: "si", label: "Activada", hint: `Reconocer + producir (${config.baseLangLabel.trim().toLowerCase() || "español"} → ${language.toLowerCase()}): 2 tarjetas por palabra` }, { id: "no", label: "Solo reconocer", hint: "Una tarjeta por palabra" }]} /></SettingRow>
         <div className="px-3 py-2.5 space-y-1.5">
           <label className="flex items-center justify-between gap-3"><span className="text-[12.5px] font-semibold text-[var(--usb-fg)]">Mazo raíz</span><input aria-label="Mazo raíz de Anki" className={`${fieldCls} !h-8 !w-40 !rounded-lg`} value={config.rootDeck} onChange={event => onConfig({ rootDeck: event.target.value })} /></label>
           <p className="text-[10.5px] text-[var(--usb-fg-mid)]">También agrupa las tarjetas de la lección.</p>
@@ -264,7 +288,7 @@ export function VocabularyPanel({
     {session && <details className="group rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)]">
       <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-3 py-2.5 select-none">
         <span className="text-[12.5px] font-semibold text-[var(--usb-fg)]">Palabras de esta lección</span>
-        <span className="flex items-center gap-2 text-[11px] tabular-nums text-[var(--usb-fg-mid)]">{session.candidates.length} · {selected.length} sel. · {exportedCount} exp.<ChevronDown size={14} className="transition-transform group-open:rotate-180" /></span>
+        <span className="flex items-center gap-2 text-[11px] tabular-nums text-[var(--usb-fg-mid)]">{newCount} nuevas · {selected.length} marcadas · {knownCount} en tu mazo<ChevronDown size={14} className="transition-transform group-open:rotate-180" /></span>
       </summary>
       <div className="border-t border-[var(--usb-border)] p-3">{wordList}</div>
     </details>}

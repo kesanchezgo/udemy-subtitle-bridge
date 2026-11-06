@@ -20,9 +20,11 @@ Obsidian (protocol handler registrado por la app de escritorio)
 ```
 
 - **Transporte**: URI scheme nativo `obsidian://new` — no requiere plugins ni servidores. `encodeURIComponent` en cada parámetro (Obsidian espera `%20`, no `+`).
+- **Cómo crece el vault**: una nota por lección (`wiki/fuentes/`), un índice por curso (`cursos/`) y, si lo activas, los subtítulos en `raw/`. Exportar otra vez una lección que ya tiene nota (en ese vault y carpeta) **añade** un «## Repaso · fecha» al final (`append=true`) con el resultado, lo que recordaste, los puntos a reforzar y las dudas de esa sesión: lo que escribiste no se toca. «Reemplazar» rehace la nota entera (y borra tus cambios). Nunca se crean «nombre 1.md».
+- **Una URI por clic**: Chrome bloquea un segundo protocolo externo hasta la siguiente interacción del usuario (protección «flooded with requests» del manejador de protocolos externos). Exportar abre SOLO la nota de la lección; el índice del curso (MOC) y los subtítulos se ofrecen después en el aviso como acciones propias, encadenadas, cada una con su clic. Antes se abrían MOC + nota en el mismo clic y, en el primer export de cada curso, la nota se perdía.
 - **Fallbacks** en la UI: copiar al portapapeles (`navigator.clipboard`) y descarga `.md`.
-- **MOC**: se crea una vez por curso; la lista de sesiones la mantiene una query Dataview (`WHERE course = "<slug>"`), así el MOC nunca se actualiza a mano. Los slugs ya creados se persisten en `obsidian_created_mocs`.
-- **SRT crudo → raw/** (toggle `includeRawSrt`): tras la nota, la extensión pide el SRT EN al content script (`GET_EN_SRT` → `EN_SRT_RESULT`, timeout 5 s) y crea `raw/<plataforma>/<curso>/<curso>---<leccion>.md` con el SRT en un bloque ```srt — material inmutable para el destilado del agente. Si no hay SRT capturado, se omite con un aviso y el export no falla.
+- **MOC**: se ofrece una vez por curso y vault («Crear índice del curso» en el aviso del export); la lista de sesiones la mantiene una query Dataview (`WHERE course = "<slug>"`), así el MOC nunca se actualiza a mano. Se marca creado (`obsidian_created_mocs`) solo cuando el usuario lo abre; si no, se vuelve a ofrecer en el siguiente export.
+- **Subtítulos → raw/** (toggle `includeRawSrt`, «Subtítulos originales»): antes de abrir la nota, la extensión pide el SRT EN al content script (`GET_EN_SRT` → `EN_SRT_RESULT`, timeout 5 s); tras la nota, el aviso ofrece «Guardar subtítulos», que crea `raw/<plataforma>/<curso>/<curso>---<leccion>.md` con el SRT en un bloque ```srt. Si no hay SRT capturado, se avisa y el export no falla.
 - **Multi-agente**: el scaffold genera `CLAUDE.md` **y** `AGENTS.md` (espejo) — Claude Code lee el primero; Codex/Cursor/Jules/ZCode leen el segundo.
 
 ## Almacenamiento
@@ -30,7 +32,8 @@ Obsidian (protocol handler registrado por la app de escritorio)
 | Clave (chrome.storage.local / fallback localStorage) | Contenido |
 |---|---|
 | `obsidian_export_config` | `{ vaultName, sourcesFolder, mocsFolder, includeCards, autoExport, includeRawSrt }` |
-| `obsidian_created_mocs` | `string[]` de slugs de curso con MOC ya creado |
+| `obsidian_created_mocs` | `string[]` de `vault|slug` de curso con MOC ya creado |
+| `obsidian_exported_notes` | `string[]` de `vault|ruta` de notas ya exportadas (las claves viejas `curso---lección` se siguen reconociendo) |
 
 ## Convenciones del vault (contrato con CLAUDE.md / AGENTS.md)
 
@@ -38,22 +41,23 @@ Obsidian (protocol handler registrado por la app de escritorio)
 - MOCs: `cursos/<curso-slug>.md`
 - Raw: `raw/<plataforma>/<curso-slug>/<curso-slug>---<leccion-slug>.md` (SRT EN envuelto en un bloque ```srt, frontmatter `type: raw-srt`)
 - Slugs: kebab-case, sin tildes, minúsculas (`slugifyVault`).
-- Frontmatter de sesión: `title, date, type: sesion, platform, course, lesson, objective, relevance_score, source_url, tags`.
-- Tarjetas: sección `## Tarjetas Anki` con `#flashcards` y líneas `pregunta :: respuesta` (plugin Spaced Repetition). El `.apkg` con la plantilla dev-card sigue siendo el camino principal a Anki.
+- Frontmatter de sesión: `title, date, type: sesion, platform, course, lesson, objective, relevance_score, lesson_url, anki_deck, concepts, tags` (la plantilla del scaffold usa el mismo esquema).
+- Secciones de la nota, alineadas con Study: Resumen · Ideas clave · Preguntas para comprobarte (una por idea + síntesis, con lo que piden: definir, explicar, usar en un caso…) · Práctica oral · Aplicación práctica · Próximo paso · Resultado de la sesión · Lo que recordé sin mirar · Puntos a reforzar (ideas no marcadas, preguntas falladas y la práctica que no salió: lo mismo que Anki refuerza) · Dudas resueltas · Tarjetas.
+- Tarjetas: las mismas que el mazo (las aceptadas, con las de refuerzo y de duda), como referencia plegada; con «Repasar también en Obsidian», formato multilínea del plugin Spaced Repetition bajo `#flashcards`. El `.apkg` sigue siendo el camino principal a Anki.
 
 ## UI (StudyAgentTab)
 
 - Tarjeta **Obsidian** en el paso "No olvidar" (junto a los botones de export Anki):
-  - **Exportar** — nota + MOC (si falta) vía URI.
+  - **Exportar** — la nota vía URI; el aviso ofrece después el índice del curso y los subtítulos.
   - **Copiar** / **.md** — respaldos.
-  - **Configurar** — vault, carpetas, toggles, **Probar vault** (`obsidian://open`) y **Crear desde cero** (6 notas de scaffold, disparadas en secuencia con 900 ms de separación).
-- **Auto-export**: si `autoExport` y hay vault configurado, tras generar la sesión se exporta sola (guard `obsidianAutoRef` para que las restauraciones del historial no re-exporten).
+  - **Ajustar** — vault, carpetas, toggles, **Probar vault** (`obsidian://open`) y **Estructura (.zip)**: CLAUDE.md, AGENTS.md, index, log, plantillas y las carpetas configuradas, para descomprimir dentro del vault (7 URIs seguidas no funcionaban y `obsidian://new` no crea carpetas vacías).
+- **Guardar automáticamente**: al pulsar «Terminar lección» (con la sesión completa y dentro de ese clic); si la lección ya tenía nota, le añade el repaso. Antes se exportaba al generar la sesión: la nota salía sin recuerdo ni resultados, el export final chocaba con «ya exportada» y, por un cierre obsoleto, a veces no exportaba nada.
 
 ## Pruebas
 
 ```bash
-node scripts/test-obsidian-export.mjs   # asserts sobre los builders puros (Node 24+, sin chrome)
-npm run build                           # tsc + vite
+node scripts/qa-doubts.mjs   # incluye la nota, una URI por export, el índice aparte y la estructura .zip
+npm run build
 ```
 
 ## Cambios 1.4.0 (2026-10-29)

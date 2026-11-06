@@ -6,7 +6,11 @@ import dockStylesheet from './app/styles/index.css?inline';
 import { THEME_CSS } from './app/styles/sepia-overrides';
 import { InPageDock } from './app/components/InPageDock';
 import { onMessageFromSidebar, sendToSidebar } from './app/services/contentBridge';
+import { collectArticleText, getLectureKind, goToNextLecture } from './app/services/udemyLecture';
 import { initAiProviderConfig } from './app/services/ai-providers';
+import { vocabularyMatches } from './shared/vocabMatch';
+import { toast } from 'sonner';
+import { exportedVocabularyKeys, readVocabularySession, toggleVocabularySelection, updateVocabularySession, vocabularyWordKey } from './app/services/vocabularySession';
 import {
 	DOCK_COLLAPSED_WIDTH,
 	DOCK_DEFAULT_WIDTH,
@@ -127,8 +131,10 @@ let importedEsCues: CapturedCue[] = [];
 
 // Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
 // el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
-type GlossaryEntry = { word: string; phonetic: string; monolingual: string };
+type GlossaryEntry = { word: string; form?: string; phonetic: string; monolingual: string; selected?: boolean; exported?: boolean; needsUpdate?: boolean };
 let lessonGlossary: GlossaryEntry[] = [];
+/** Sesión de vocabulario de la lección (la misma que el panel): el chip marca sobre ella. */
+let glossarySessionKey = '';
 let glossChipEl: HTMLDivElement | null = null;
 let collectedLines: Array<{ text: string; ts: number }> = [];
 let lastImportedSubtitleAt = 0;
@@ -821,6 +827,10 @@ function collectTranscriptText(maxChars: number): { text: string; source: string
 			}
 		}
 	}
+
+	// Priority 5: lección de texto (artículo) — sin video, el texto ES la lección.
+	const article = collectArticleText(maxChars);
+	if (article && article.text.length >= MIN_USEFUL_TRANSCRIPT) return article;
 
 	return { text: '', source: 'none', cueCount: 0, truncated: false };
 }
@@ -2333,7 +2343,15 @@ function sendLectureContextUpdate() {
 					const lessonIsDemoOrEmpty = !lessonStored || lessonStored.toLowerCase() === DEMO_LESSON;
 					const updates: Record<string, unknown> = {};
 					if (courseTitle && courseIsDemoOrEmpty) updates.agent_course_name = courseTitle;
-					if (lectureTitle && lessonIsDemoOrEmpty) updates.agent_lesson_name = lectureTitle;
+					if (lectureTitle && lessonIsDemoOrEmpty) {
+						updates.agent_lesson_name = lectureTitle;
+						// La marca y el valor del relleno automático van con el nombre: si
+						// no, el dock lo tomaría por una edición del usuario y dejaría de
+						// corregirlo cuando llegue el título bueno de la lección.
+						updates.agent_lesson_autofill_value = lectureTitle;
+						const key = getLectureKey();
+						if (key) updates.agent_lesson_autofill_key = key;
+					}
 					if (Object.keys(updates).length > 0) sync.set(updates);
 				});
 			}
@@ -2656,6 +2674,22 @@ function createOverlay(container: HTMLElement) {
 		`z-index:${OVERLAY_Z_INDEX + 1}`
 	].join(';');
 	overlayEl.appendChild(glossChipEl);
+	// «Añadir a mi mazo» desde el video (en pausa): un solo manejador delegado,
+	// porque el chip se vuelve a pintar en cada cue. El clic no debe llegar al
+	// video (pausa/reproduce) ni al arrastre del subtítulo.
+	const glossButton = (event: Event) => (event.target as HTMLElement | null)?.closest?.('button[data-gloss-word]') as HTMLButtonElement | null;
+	for (const type of ['pointerdown', 'mousedown']) {
+		// preventDefault: el botón no se queda con el foco, así la barra
+		// espaciadora sigue reanudando el video (y no vuelve a marcar la palabra).
+		glossChipEl.addEventListener(type, (event) => { if (glossButton(event)) { event.stopPropagation(); event.preventDefault(); } });
+	}
+	glossChipEl.addEventListener('click', (event) => {
+		const button = glossButton(event);
+		if (!button) return;
+		event.stopPropagation();
+		event.preventDefault();
+		if (!button.disabled) void toggleGlossWord(button.dataset.glossWord || '');
+	});
 
 	overlayHandleEl = document.createElement('div');
 	overlayHandleEl.id = 'usb-drag-handle';
@@ -2698,15 +2732,36 @@ function createOverlay(container: HTMLElement) {
 	applyOverlayStyle();
 }
 
+/** Marca/desmarca la palabra del chip en la sesión de vocabulario (la misma del panel). */
+async function toggleGlossWord(word: string): Promise<void> {
+	const key = glossarySessionKey;
+	if (!key || !word) return;
+	try {
+		const session = await readVocabularySession(key);
+		if (!session) throw new Error('Prepara el vocabulario de esta lección en Kinema primero.');
+		const seen = await exportedVocabularyKeys(session.config.targetLang);
+		const wasSelected = session.selected.includes(vocabularyWordKey(word));
+		await updateVocabularySession(key, (current) => {
+			if (!current) throw new Error('La lección cambió.');
+			return toggleVocabularySelection(current, word, seen);
+		});
+		// El panel escucha el almacenamiento y vuelve a enviar el glosario con el estado nuevo.
+		toast.success(wasSelected ? 'Palabra quitada de tu selección' : 'Palabra añadida a tu selección', {
+			description: 'Se exporta desde Fijar o Ajustes → Vocabulario; todavía no está en Anki.',
+		});
+	} catch (error) {
+		toast.error(error instanceof Error ? error.message : 'No se pudo marcar la palabra.');
+	}
+}
+
 /** Busca la palabra del glosario presente en la cue EN que cubre `time`. */
 function findGlossForTime(time: number): GlossaryEntry | null {
 	if (lessonGlossary.length === 0) return null;
 	const cue = capturedCues.find((c) => time >= c.startTime && time <= c.endTime);
 	if (!cue) return null;
-	const lower = cue.text.toLowerCase();
+	// Misma regla que el panel y el filtro de candidatas (lema + flexiones + forma vista).
 	for (const entry of lessonGlossary) {
-		const escaped = entry.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		if (new RegExp(`\\b${escaped}\\b`, 'i').test(lower)) return entry;
+		if (vocabularyMatches(entry.word, cue.text, entry.form)) return entry;
 	}
 	return null;
 }
@@ -2760,16 +2815,43 @@ function updateGlossChip() {
 	glossChipEl.style.color = toneColor;
 
 	glossChipEl.textContent = '';
+	// Misma anatomía que el chip del diseño (VocabularyChip): punto de estado ·
+	// palabra · IPA · acción a la derecha; en pausa, la definición debajo.
+	const header = document.createElement('div');
+	header.style.cssText = 'display:flex;align-items:center;gap:7px';
+	const dot = document.createElement('span');
+	dot.setAttribute('aria-hidden', 'true');
+	dot.style.cssText = `width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${entry.exported ? '#34d399' : entry.selected ? '#a48bff' : 'rgba(255,255,255,0.55)'}`;
+	header.appendChild(dot);
 	const wordSpan = document.createElement('span');
-	wordSpan.style.cssText = 'font-weight:700';
+	wordSpan.style.cssText = 'font-weight:700;white-space:nowrap';
 	wordSpan.textContent = entry.word;
-	glossChipEl.appendChild(wordSpan);
+	header.appendChild(wordSpan);
 	if (entry.phonetic) {
 		const ipaSpan = document.createElement('span');
-		ipaSpan.style.cssText = 'margin-left:6px;font-style:italic;opacity:0.82';
-		ipaSpan.textContent = ` ${entry.phonetic}`;
-		glossChipEl.appendChild(ipaSpan);
+		ipaSpan.style.cssText = 'font-style:italic;opacity:0.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+		ipaSpan.textContent = entry.phonetic;
+		header.appendChild(ipaSpan);
 	}
+	// En pausa, la misma acción y los mismos textos que el chip del diseño.
+	if (paused && glossarySessionKey) {
+		const action = document.createElement('button');
+		action.type = 'button';
+		action.dataset.glossWord = entry.word;
+		action.disabled = Boolean(entry.exported || entry.needsUpdate);
+		const title = entry.exported ? 'Ya en tu mazo' : entry.needsUpdate ? 'Actualizar palabras en Kinema' : entry.selected ? 'Desmarcar selección' : 'Seleccionar para exportar';
+		action.title = title;
+		action.setAttribute('aria-label', title);
+		action.textContent = entry.exported ? '✓ En tu mazo' : entry.needsUpdate ? 'Actualizar' : entry.selected ? '✓ En tu selección' : '+ Mazo';
+		action.style.cssText = [
+			'margin-left:auto', 'flex-shrink:0', 'padding:1px 6px', 'border-radius:6px', 'border:0',
+			'background:transparent', 'font:inherit', 'font-size:11px', 'font-weight:600',
+			`color:${entry.exported ? '#6ee7b7' : entry.selected ? '#c9bbff' : entry.needsUpdate ? 'rgba(253,230,138,0.85)' : 'rgba(255,255,255,0.78)'}`,
+			action.disabled ? 'cursor:default' : 'cursor:pointer',
+		].join(';');
+		header.appendChild(action);
+	}
+	glossChipEl.appendChild(header);
 	if (paused && entry.monolingual) {
 		const defDiv = document.createElement('div');
 		defDiv.style.cssText = 'margin-top:3px;opacity:0.85;font-weight:400;font-style:normal;font-size:11.5px';
@@ -3149,10 +3231,18 @@ function setupChromeMessageHandler() {
 			const maxChars = typeof msg.maxChars === 'number' ? msg.maxChars : 22000;
 			const result = collectTranscriptText(maxChars);
 			if (!result.text) {
-				sendResponse({ ok: false, error: 'No hay transcripción disponible. Reproduce el video con subtítulos en inglés activados.' });
+				const lectureKind = getLectureKind();
+				sendResponse({
+					ok: false,
+					lectureKind,
+					error: lectureKind === 'other'
+						? 'Esta lección no tiene video ni texto que analizar (cuestionario o ejercicio).'
+						: 'No hay transcripción disponible. Reproduce el video con subtítulos en inglés activados.'
+				});
 			} else {
 				sendResponse({
 					ok: true,
+					lectureKind: getLectureKind(),
 					transcriptText: result.text,
 					source: result.source,
 					cueCount: result.cueCount,
@@ -3333,6 +3423,11 @@ function bootstrap() {
 			return;
 		}
 
+		if (message.type === 'GO_TO_NEXT_LECTURE') {
+			void sendToSidebar({ type: 'NEXT_LECTURE_RESULT', payload: { ok: goToNextLecture() } }).catch(() => undefined);
+			return;
+		}
+
 		if (message.type === 'REFRESH_CAPTURE') {
 			refreshCapturedCuesFromVideo();
 			scanForSubtitleChanges();
@@ -3429,7 +3524,8 @@ function bootstrap() {
 		}
 
 		if (message.type === 'GLOSSARY_UPDATE') {
-			const payload = message.payload as { words?: GlossaryEntry[] } | undefined;
+			const payload = message.payload as { words?: GlossaryEntry[]; sessionKey?: string } | undefined;
+			glossarySessionKey = typeof payload?.sessionKey === 'string' ? payload.sessionKey : '';
 			lessonGlossary = Array.isArray(payload?.words)
 				? payload.words.filter((w) => w && typeof w.word === 'string' && w.word.trim())
 				: [];
@@ -3506,6 +3602,7 @@ function bootstrap() {
 				type: 'TRANSCRIPT_RESULT',
 				payload: {
 					...result,
+					lectureKind: getLectureKind(),
 					lectureKey: getLectureKey(),
 					courseSlug: getCourseSlug(),
 					courseTitle: getCourseTitle(),

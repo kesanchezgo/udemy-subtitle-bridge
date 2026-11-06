@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import React, { useEffect, useRef } from "react";
+import { motion } from "motion/react";
 import confetti from "canvas-confetti";
+import { toast } from "sonner";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { playSound } from "../services/sounds";
-import { touchStreak } from "../services/streak";
+import { claimStreakCelebration } from "../services/streak";
 import { Check, Flame, Cloud, Sparkles, Award, TrendingUp } from "./icons";
 import { recordActivity } from "../services/progress";
 
@@ -174,25 +175,26 @@ const DEFAULT_ICON: Record<CelebrationType, React.ReactNode> = {
 };
 const ACTIVITY: CelebrationType[] = ["session_complete", "export_done", "anki_export"];
 
+/**
+ * Las celebraciones van por el MISMO sistema que el resto de avisos (sonner,
+ * toast.custom): mismo sitio —abajo y centrado dentro del panel—, misma pila
+ * y sin solaparse. Antes salían arriba del panel con su propia capa mientras
+ * los avisos salían abajo (y a veces en el centro de toda la pantalla).
+ */
+type Shown = CelebrationConfig & { followUps?: { levelUp: number | null; unlocked: string[] } };
+
 export function CelebrationOverlay() {
-  const { isSepia } = useDockTheme();
-  const [current, setCurrent] = useState<CelebrationConfig | null>(null);
-  const [visible, setVisible] = useState(false);
-  const [nonce, setNonce] = useState(0);
-  const [followUps, setFollowUps] = useState<{ levelUp: number | null; unlocked: string[] }>({ levelUp: null, unlocked: [] });
-  const queueRef = useRef<CelebrationConfig[]>([]);
+  const queueRef = useRef<Shown[]>([]);
   const busyRef = useRef(false);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
     const later = (fn: () => void, ms: number) => { timersRef.current.push(setTimeout(fn, ms)); };
 
-    const show = (config: CelebrationConfig) => {
+    const show = (config: Shown) => {
       const cfg = TYPE_CFG[config.type];
       busyRef.current = true;
-      setCurrent(config);
-      setNonce((n) => n + 1);
-      setVisible(true);
+      toast.custom(() => <CelebrationCard config={config} />, { duration: cfg.duration, id: `kx-celebrate-${Date.now()}` });
 
       playSound(config.type === "streak" || config.type === "achievement" ? "streak" : config.type === "level_up" ? "celebrate" : cfg.size === "big" ? "celebrate" : "success");
 
@@ -207,19 +209,15 @@ export function CelebrationOverlay() {
         }
       }
 
+      // Una celebración a la vez: la siguiente, cuando esta termina.
       later(() => {
-        setVisible(false);
-        later(() => {
-          setCurrent(null);
-          setFollowUps({ levelUp: null, unlocked: [] });
-          busyRef.current = false;
-          const next = queueRef.current.shift();
-          if (next) show(next);
-        }, 450);
-      }, cfg.duration);
+        busyRef.current = false;
+        const next = queueRef.current.shift();
+        if (next) show(next);
+      }, cfg.duration + 450);
     };
 
-    const enqueue = (config: CelebrationConfig) => {
+    const enqueue = (config: Shown) => {
       if (!busyRef.current) { show(config); return; }
       if (queueRef.current.length < 4) queueRef.current.push(config);
     };
@@ -232,7 +230,6 @@ export function CelebrationOverlay() {
       let followLevelUp: number | null = null;
       const followUnlocked: string[] = [];
       if (ACTIVITY.includes(config.type) && (!config.rewardKey || claimReward(config.rewardKey))) {
-        const { count, isNewDay, usedFreeze } = touchStreak();
         // Los tipos de celebración se traducen a eventos de XP de progress.ts:
         // el cierre = lesson_finished; exportar (Anki u Obsidian) = export_done.
         const xpType = config.type === "session_complete"
@@ -243,7 +240,10 @@ export function CelebrationOverlay() {
         const { gained, levelUp, unlocked } = recordActivity(xpType, { bonus: config.bonusXp });
         followLevelUp = levelUp;
         unlocked.forEach((a) => followUnlocked.push(a.title));
-        if (isNewDay && count >= 2) enqueue({ type: "streak", title: `Racha de ${count} días`, subtitle: usedFreeze ? "Tu día de descanso semanal salvó la racha. Vuelve mañana." : "Constancia que se nota. Vuelve mañana para mantenerla." });
+        // La racha ya contó desde la primera respuesta del día (recordActivity);
+        // aquí solo se celebra, una vez al día, al cerrar o exportar.
+        const streakToday = claimStreakCelebration();
+        if (streakToday) enqueue({ type: "streak", title: `Racha de ${streakToday.count} días`, subtitle: streakToday.usedFreeze ? "Tu día de descanso semanal salvó la racha. Vuelve mañana." : "Constancia que se nota. Vuelve mañana para mantenerla." });
         if (config.mergeFollowUps) {
           (config.levelUp ? [config.levelUp] : []).forEach((l) => { followLevelUp = followLevelUp ?? l; });
           (config.unlockedTitles ?? []).forEach((t) => { if (!followUnlocked.includes(t)) followUnlocked.push(t); });
@@ -252,8 +252,7 @@ export function CelebrationOverlay() {
           unlocked.forEach((a) => enqueue({ type: "achievement", title: a.title, subtitle: `Logro desbloqueado · ${a.desc}` }));
         }
       }
-      if (config.mergeFollowUps) setFollowUps({ levelUp: followLevelUp, unlocked: followUnlocked });
-      if (!config.silent) enqueue(config);
+      if (!config.silent) enqueue(config.mergeFollowUps ? { ...config, followUps: { levelUp: followLevelUp, unlocked: followUnlocked } } : config);
     };
 
     window.addEventListener("usb:celebrate", handler);
@@ -266,74 +265,67 @@ export function CelebrationOverlay() {
     };
   }, []);
 
-  const cfg = current ? TYPE_CFG[current.type] : null;
-  const accent = current ? ACCENT[current.type] : "#6d4aff";
+  return null;
+}
 
+/** Tarjeta de celebración (dentro de la pila de avisos del panel). */
+function CelebrationCard({ config }: { config: Shown }) {
+  const { isSepia } = useDockTheme();
+  const cfg = TYPE_CFG[config.type];
+  const accent = ACCENT[config.type];
+  const followUps = config.followUps ?? { levelUp: null, unlocked: [] };
   return (
-    <AnimatePresence>
-      {visible && current && cfg && (
+    <div role="status" className="kx-celebrate pointer-events-auto w-full">
+      <div
+        className="relative overflow-hidden rounded-2xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-4 py-3.5 flex items-center gap-3.5"
+        style={{ boxShadow: isSepia ? "0 1px 2px rgba(60,40,10,.06), 0 18px 40px -16px rgba(60,40,10,.30)" : "0 1px 2px rgba(0,0,0,.10), 0 18px 44px -14px rgba(0,0,0,.65)" }}
+      >
+        <span className="absolute left-4 right-4 top-0 h-[2px] rounded-b" style={{ background: accent, opacity: 0.85 }} aria-hidden="true" />
         <motion.div
-          key={nonce}
-          role="status"
-          aria-live="polite"
-          className="kx-celebrate absolute top-[76px] left-4 right-4 z-[999998] pointer-events-none mx-auto max-w-[380px]"
-          initial={{ opacity: 0, y: -18, scale: 0.94 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -10, scale: 0.97, transition: { duration: 0.3 } }}
-          transition={{ type: "spring", stiffness: 420, damping: 30 }}
+          className="kx-celebrate-tile shrink-0 h-11 w-11 rounded-2xl flex items-center justify-center border"
+          style={{
+            background: `color-mix(in srgb, ${accent} 18%, var(--usb-bg-3))`,
+            borderColor: `color-mix(in srgb, ${accent} 42%, var(--usb-border))`,
+            color: accent,
+          }}
+          initial={{ scale: 0.4, rotate: -20 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: "spring", stiffness: 500, damping: 14, delay: 0.08 }}
         >
-          <div
-            className="relative overflow-hidden rounded-2xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-4 py-3.5 flex items-center gap-3.5"
-            style={{ boxShadow: isSepia ? "0 1px 2px rgba(60,40,10,.06), 0 18px 40px -16px rgba(60,40,10,.30)" : "0 1px 2px rgba(0,0,0,.10), 0 18px 44px -14px rgba(0,0,0,.65)" }}
-          >
-            <span className="absolute left-4 right-4 top-0 h-[2px] rounded-b" style={{ background: accent, opacity: 0.85 }} aria-hidden="true" />
-            <motion.div
-              className="kx-celebrate-tile shrink-0 h-11 w-11 rounded-2xl flex items-center justify-center border"
-              style={{
-                background: `color-mix(in srgb, ${accent} 18%, var(--usb-bg-3))`,
-                borderColor: `color-mix(in srgb, ${accent} 42%, var(--usb-border))`,
-                color: accent,
-              }}
-              initial={{ scale: 0.4, rotate: -20 }}
-              animate={{ scale: 1, rotate: 0 }}
-              transition={{ type: "spring", stiffness: 500, damping: 14, delay: 0.08 }}
-            >
-              {current.icon ?? DEFAULT_ICON[current.type]}
-            </motion.div>
-            <div className="min-w-0">
-              <p className="text-[13.5px] font-bold leading-tight tracking-tight text-[var(--usb-fg-hi)]">
-                {current.title}
-              </p>
-              {current.subtitle && (
-                <p className="text-[11.5px] font-medium leading-snug mt-0.5 text-[var(--usb-fg-mid)]">
-                  {current.subtitle}
-                </p>
-              )}
-              {(followUps.levelUp || followUps.unlocked.length > 0) && (
-                <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                  {followUps.levelUp && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `color-mix(in srgb, ${accent} 22%, var(--usb-bg-3))`, color: "var(--usb-fg-hi)" }}>
-                      <TrendingUp size={10} weight="fill" style={{ color: accent }} /> Nivel {followUps.levelUp}
-                    </span>
-                  )}
-                  {followUps.unlocked.slice(0, 3).map((t) => (
-                    <span key={t} className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--usb-bg-2)] border border-[var(--usb-border)] text-[var(--usb-fg-mid)]">
-                      <Award size={10} /> {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <motion.span
-              className="absolute left-0 bottom-0 h-[2.5px] origin-left"
-              style={{ background: accent, width: "100%" }}
-              initial={{ scaleX: 1 }}
-              animate={{ scaleX: 0 }}
-              transition={{ duration: cfg.duration / 1000, ease: "linear" }}
-            />
-          </div>
+          {config.icon ?? DEFAULT_ICON[config.type]}
         </motion.div>
-      )}
-    </AnimatePresence>
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-bold leading-tight tracking-tight text-[var(--usb-fg-hi)]">
+            {config.title}
+          </p>
+          {config.subtitle && (
+            <p className="text-[11.5px] font-medium leading-snug mt-0.5 text-[var(--usb-fg-mid)]">
+              {config.subtitle}
+            </p>
+          )}
+          {(followUps.levelUp || followUps.unlocked.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {followUps.levelUp && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `color-mix(in srgb, ${accent} 22%, var(--usb-bg-3))`, color: "var(--usb-fg-hi)" }}>
+                  <TrendingUp size={10} weight="fill" style={{ color: accent }} /> Nivel {followUps.levelUp}
+                </span>
+              )}
+              {followUps.unlocked.slice(0, 3).map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--usb-bg-2)] border border-[var(--usb-border)] text-[var(--usb-fg-mid)]">
+                  <Award size={10} /> {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <motion.span
+          className="absolute left-0 bottom-0 h-[2.5px] origin-left"
+          style={{ background: accent, width: "100%" }}
+          initial={{ scaleX: 1 }}
+          animate={{ scaleX: 0 }}
+          transition={{ duration: cfg.duration / 1000, ease: "linear" }}
+        />
+      </div>
+    </div>
   );
 }

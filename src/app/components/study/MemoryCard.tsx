@@ -27,7 +27,7 @@ export function PendingContentExports({ onExportLesson }: { onExportLesson: (rec
     } finally { setBusy(false); setProgress(""); load(); }
   };
   if (!pending.length) return null;
-  return <ExportModule icon={Download} title="Tarjetas de contenido por descargar" subtitle="Lecciones terminadas cuyos archivos aún no has exportado">
+  return <ExportModule icon={Download} title="Tarjetas por descargar" subtitle="Lecciones terminadas que aún no exportaste a Anki">
     <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-2">{pending.map(record => <div key={record.courseId + record.lectureId} className="text-[11px]"><p className="font-semibold text-[var(--usb-fg-hi)]">{record.lectureName}</p><p className="text-[var(--usb-fg-mid)]">{record.courseName} · {record.ankiCards?.length} tarjetas</p></div>)}</div>
     <button onClick={exportAll} disabled={busy} className={exportPrimaryBtnCls + " w-full"}><Download size={13} />{busy ? "Descargando…" : "Descargar archivos pendientes"}</button>
     {progress && <p role="status" className="text-[11px] text-[var(--usb-fg-mid)]">{progress}</p>}

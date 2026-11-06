@@ -677,9 +677,17 @@ MEJORAR: ❌ El cambio que hiciste sigue usando == bajo el capó en un caso. Tra
 SIGUIENTE NIVEL: (nada)`,
 ];
 
-// Index to rotate through mock responses for variety
-let _mockEvalIdx = 0;
-let _mockCodeIdx = 0;
+// Demo del prototipo (en la extensión nunca hay mock: se devuelve el error).
+// El veredicto depende de la respuesta —la misma respuesta da el mismo
+// veredicto y ampliarla lo mejora—, así reintentar tiene sentido en la demo.
+function mockEvalContent(debugContext: string, messages: AIMessage[]): string {
+  const user = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  const answer = user.match(/(?:RESPUESTA|EXPLICACION) DEL ESTUDIANTE:\n([\s\S]*?)(?:\n\n|$)/)?.[1] ?? "";
+  const words = answer.trim().split(/\s+/).filter(Boolean).length;
+  const verdict = words >= 18 ? "[CORRECTO]" : words >= 8 ? "[PARCIAL]" : "[INCORRECTO]";
+  const pool = debugContext === "eval-code" ? MOCK_CODE_RESPONSES : MOCK_QUESTION_RESPONSES;
+  return pool.find((r) => r.startsWith(verdict)) ?? pool[0];
+}
 
 // Streams mock text token-by-token to simulate SSE, respects AbortSignal
 async function mockStreamText(
@@ -769,10 +777,13 @@ async function fallbackNonStreamingAI(
     };
   }
 
-  const mockContent =
-    debugContext === "eval-code"
-      ? MOCK_CODE_RESPONSES[_mockCodeIdx++ % MOCK_CODE_RESPONSES.length]
-      : MOCK_QUESTION_RESPONSES[_mockEvalIdx++ % MOCK_QUESTION_RESPONSES.length];
+  // §5 dudas: sin IA no hay respuesta inventada — el servicio de dudas cae a
+  // los fragmentos verificados de la transcripción (o a la demo en desarrollo).
+  if (debugContext === "doubt") {
+    return { success: false, content: "", rating: "unknown", error: "Sin IA disponible para responder la duda." };
+  }
+
+  const mockContent = mockEvalContent(debugContext, messages);
   return { success: true, content: mockContent, rating: parseRating(mockContent), isMock: true };
 }
 
@@ -1002,11 +1013,9 @@ export async function streamLocalAI(
       }
 
       const mockContent =
-        debugContext === "eval-code"
-          ? MOCK_CODE_RESPONSES[_mockCodeIdx++ % MOCK_CODE_RESPONSES.length]
-          : debugContext === "translate"
-          ? "" // translation has its own mock in TranslationPipeline
-          : MOCK_QUESTION_RESPONSES[_mockEvalIdx++ % MOCK_QUESTION_RESPONSES.length];
+        debugContext === "translate" || debugContext === "doubt"
+          ? "" // translation: mock propio en TranslationPipeline · dudas: sin texto inventado (§5)
+          : mockEvalContent(debugContext, messages);
 
       if (mockContent) {
         // Register a mock request in the debug store so the Dev tab shows activity

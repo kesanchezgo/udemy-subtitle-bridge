@@ -30,7 +30,7 @@ import {
 	vocabModelName,
 	type VocabAudioMode,
 } from './ankiDesign';
-import type { ApkgSpec } from './ankiApkgCore';
+import { KINEMA_NOTE_MOD, type ApkgSpec } from './ankiApkgCore';
 
 export interface VocabConfig {
 	/** Mazo raíz de TODA la extensión (Courses + Vocabulary cuelgan de él). */
@@ -67,6 +67,9 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 };
 
 const VOCAB_CONFIG_KEY = 'usb_vocab_config';
+
+/** Misma regla que todas las notas de Kinema (ver KINEMA_NOTE_MOD): reimportar no pisa. */
+export const VOCAB_NOTE_MOD = KINEMA_NOTE_MOD;
 const VOCAB_REGISTRY_KEY = 'usb_vocab_registry';
 
 /** Clave estable de la sesión de candidatas de una lección (curso+lección+idioma). */
@@ -240,7 +243,9 @@ export function parseVocabularyPayload(payload: unknown): VocabularyWord[] {
 			monolingual: cleanText(raw.monolingual),
 			// B6: colocación frecuente y natural con la palabra («memory leak»);
 			// se tolera vacío — la plantilla la oculta.
-			collocation: cleanText(raw.collocation ?? raw.collocation),
+			collocation: cleanText(raw.collocation),
+			// Forma vista en la transcripción: reconoce irregulares («ran» → «run»).
+			form: cleanText(raw.form) || undefined,
 			// Gate F2-1: sin transcripción temporizada, t del modelo es ruido.
 			t: TIMED_TRANSCRIPT && typeof raw.t === 'string' && raw.t.includes(':') ? raw.t : undefined,
 		});
@@ -308,6 +313,7 @@ export function buildVocabularySpec(
 		modelName: vocabModelName(config.targetLang),
 		deck: deckPath,
 		guid: stableGuid(`usb-vocab|${config.targetLang}|${normalizeLemma(word.word)}`),
+		mod: VOCAB_NOTE_MOD,
 		fields: [
 			word.word,
 			word.phonetic, // IPA (o lectura en kana para japonés) generada por la IA
@@ -353,12 +359,12 @@ export function buildVocabularySpec(
 			{
 				name: paths[2],
 				conf: VOCAB_PRESET.id,
-				desc: `Vocabulario de ${langLabel} (nivel ${config.minLevel}+) generado desde cursos reales de Udemy.`,
+				desc: `Vocabulario · ${langLabel} · desde ${config.minLevel}. Palabras de tus cursos de Udemy; cada palabra vive una sola vez, en el curso donde la exportaste primero.`,
 			},
 			{
 				name: deckPath,
 				conf: VOCAB_PRESET.id,
-				desc: `Palabras de ${langLabel} extraídas de las lecciones de «${course}». Imágenes y audios los completa el pipeline externo.`,
+				desc: `Palabras (${langLabel}) de las lecciones de «${course}». La imagen y el audio de archivo pueden añadirse después; sin audio, la tarjeta usa la voz del sistema.`,
 			},
 		],
 		models: [buildVocabModel(config.targetLang)],

@@ -28,6 +28,34 @@ export function streakIsFrozen(): boolean {
   return s.last === daysAgo(2) && freezeAvailable(s) && s.count > 0;
 }
 
+/** ¿Hoy ya cuenta para la racha? (hubo actividad de estudio). */
+export function studiedToday(): boolean {
+  return read().last === day();
+}
+
+/** Mejor racha de siempre (no solo la de los últimos 35 días del calendario). */
+export function getBestStreak(): number {
+  const s = read();
+  return Math.max(s.best || 0, getStreak());
+}
+
+const SHOWN_KEY = "kinema-streak-shown";
+/**
+ * La racha cuenta desde la PRIMERA actividad del día (responder ya estudia),
+ * pero se celebra una sola vez al día y en el momento de cierre (lección o
+ * exportación). Devuelve qué celebrar, o null si no toca.
+ */
+export function claimStreakCelebration(): { count: number; usedFreeze: boolean } | null {
+  const s = read();
+  const count = getStreak();
+  if (count < 2 || s.last !== day()) return null;
+  try {
+    if (localStorage.getItem(SHOWN_KEY) === day()) return null;
+    localStorage.setItem(SHOWN_KEY, day());
+  } catch { return null; }
+  return { count, usedFreeze: s.freezeAt === daysAgo(1) };
+}
+
 /** Registra actividad de hoy. Devuelve la racha y si hoy es un día nuevo. */
 export function touchStreak(): { count: number; isNewDay: boolean; usedFreeze: boolean } {
   const s = read();

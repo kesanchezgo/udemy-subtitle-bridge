@@ -12,15 +12,19 @@ export interface VocabularySession {
   partial?: boolean;
   realBackup?: VocabularySession;
   exports: { words: VocabularyWord[]; config: VocabConfig; createdAt: number }[];
+  /** Palabras que ya tienes (de otra lección o curso) y salen en esta: no se
+   *  proponen, pero el chip del video las muestra como «En tu mazo». */
+  known?: KnownVocabularyWord[];
 }
+
+export interface KnownVocabularyWord { word: string; phonetic: string; monolingual: string; course: string }
 
 export { vocabularySessionKey } from "./vocabularyService";
 export const vocabularyWordKey = (word: string) => word.toLowerCase().trim().replace(/\s+/g, " ");
 export const vocabularyCriteriaKey = (config: VocabConfig) => JSON.stringify([config.targetLang, config.baseLangLabel.trim().toLowerCase(), config.minLevel]);
-export function vocabularyMatches(word: string, text: string): boolean {
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "iu").test(text);
-}
+// Una sola regla de coincidencia (lema + flexiones + forma vista): shared/vocabMatch.ts.
+import { vocabularyMatches } from "../../shared/vocabMatch";
+export { vocabularyMatches };
 let writes = Promise.resolve();
 const exportLocks = new Set<string>();
 export async function withVocabularyExportLock(key: string, action: () => Promise<void>): Promise<void> {
@@ -41,6 +45,24 @@ export function updateVocabularySession(key: string, update: (session: Vocabular
   });
   writes = task.catch(() => {});
   return task;
+}
+
+/** Las palabras de tu mazo (este idioma) que aparecen en el texto de la lección. */
+export async function knownVocabularyIn(lang: string, text: string): Promise<KnownVocabularyWord[]> {
+  const registry = await loadVocabRegistry();
+  const out: KnownVocabularyWord[] = [];
+  for (const [key, entry] of Object.entries(registry)) {
+    if (!key.startsWith(`${lang}|`)) continue;
+    const word = key.slice(lang.length + 1);
+    if (vocabularyMatches(word, text)) out.push({ word, phonetic: entry.phonetic ?? "", monolingual: entry.monolingual ?? "", course: entry.course });
+  }
+  return out;
+}
+
+/** De qué curso salió cada lema ya exportado (para decir dónde está en tu mazo). */
+export async function exportedVocabularyOrigins(lang: string): Promise<Map<string, string>> {
+  const registry = await loadVocabRegistry();
+  return new Map(Object.entries(registry).filter(([key]) => key.startsWith(`${lang}|`)).map(([key, entry]) => [key.slice(lang.length + 1), entry.course]));
 }
 
 export async function exportedVocabularyKeys(lang: string): Promise<Set<string>> {

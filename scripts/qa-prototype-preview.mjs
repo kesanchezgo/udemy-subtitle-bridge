@@ -151,7 +151,7 @@ await page.waitForTimeout(2000); // fuera de runtime no hay polling: nada que es
 	// v1.5.1 §4: sin runtime, la tira dice la verdad y no queda «Comprobando…» eterno.
 	check('la tira de subtítulos dice «Vista previa sin extensión»', /Vista previa sin extensión/i.test(txt), txt.slice(0, 160));
 	check('el subtítulo promete sesión de ejemplo', /Se usará una sesión de ejemplo/i.test(txt));
-	check('no queda «Comprobando subtítulos» pasados 2 s', !/Comprobando subtítulos/i.test(txt));
+	check('no queda «Comprobando la lección» pasados 2 s', !/Comprobando la lección/i.test(txt));
 	check('no queda el subtítulo «Un momento…»', !/Un momento/i.test(txt));
 	check('la píldora «…» no aparece (solo con subtítulos reales)', !/^…\s*$/m.test(txt));
 	await page.screenshot({ path: path.join(SHOTS, 'study-export.png') });

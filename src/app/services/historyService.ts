@@ -10,6 +10,8 @@
 // When logged in, AuthGuard can push the entire namespace to Supabase and
 // re-hydrate it on next login (same pattern as the existing migrate flow).
 
+import type { LessonDoubtThread } from "./lessonDoubts";
+
 const HISTORY_PREFIX = "usb_history_";
 
 function getChromeLocal(): { get: Function; set: Function; remove: Function } | undefined {
@@ -87,6 +89,9 @@ export interface QuestionAttempt {
   rating?: AnswerRating;
   feedback?: string;        // AI explanation
   answeredAt?: number;
+  /** El PRIMER intento fue correcto (el rating guardado es el del último):
+   *  sin esto, al recargar «a la primera» volvía a 0 y lo acertado contaba como corregido. */
+  firstTryCorrect?: boolean;
 }
 
 export interface CodeChallengeAttempt {
@@ -106,6 +111,8 @@ export interface StoredAnkiCard {
   conceptRefs?: number[];   // índices de keyConcepts que evalúa (para tarjetas de refuerzo)
   reinforce?: boolean;      // tarjeta de refuerzo generada desde un fallo de Study
   excluded?: boolean;       // el estudiante la quitó del paquete (no se exporta)
+  doubt?: boolean;          // §5: guardada desde una duda sobre la lección
+  isHtml?: boolean;         // front/back ya son HTML de confianza (no se re-escapan)
 }
 
 export interface StoredStudyQuestion {
@@ -120,7 +127,7 @@ export interface StoredStudyQuestion {
 export interface StoredStudyContent {
   relevance: { score: number; reason: string };
   keyConcepts: string[];
-  quickWin: string;
+  quickWin?: string;
   questions: StoredStudyQuestion[];
   application: { setup: string; challenge: string; solution: string; isCode: boolean };
   interviewQ: { q: string; idealAnswer: string } | null;
@@ -158,12 +165,14 @@ export interface LectureHistoryRecord {
   questionsDone?: boolean;
   /** El estudiante usó «Saltar» en el paso 2. */
   questionsSkipped?: boolean;
-  /** Paso 3: intentado / correcto / «Hacerlo después». */
+  /** Paso 3: intentado / correcto / saltado («Saltar este paso» → pendiente). */
   practiceStatus?: "done" | "correct" | "later";
   /** «Terminar lección» — el cierre real; exportar ya no es requisito. */
   finishedAt?: number;
   /** GUIDs de la última exportación — para avisar solo si el paquete cambió. */
   exportedGuids?: string[];
+  /** §5: dudas de la sesión (de ellas perdura la tarjeta). Se limpian con clearProgress. */
+  doubts?: LessonDoubtThread[];
   /** Tombstone used to sync deletes/resets across devices without resurrecting old cloud data. */
   deletedAt?: number;
   /** Monotonic edit counter — survives clock skew. Higher wins on merge. */
@@ -230,7 +239,9 @@ export const CLOUD_HISTORY_LEGACY_BUNDLE_KEY = "__history__";
  * Migración v1 (5 pasos) → v2 (4 pasos), en memoria al leer.
  * Sin flowVersion: 0,1→0 · 2→1 · 3→2 · 4→3; status "completed" → finishedAt.
  * `questionsDone` hereda del flag v1 questionsComplete; `practiceStatus` se
- * infiere del reto de código si existe.
+ * infiere del reto de código si existe y, en una lección terminada, se da por
+ * hecha: v1 no lo guardaba y llamar «con pasos pendientes» a algo que el
+ * usuario ya cerró sería mentirle. Nunca «correcta»: eso no lo sabemos.
  */
 const V1_STEP_MAP: Record<number, number> = { 0: 0, 1: 0, 2: 1, 3: 2, 4: 3 };
 
@@ -244,7 +255,7 @@ function normalizeRecord(rec: LectureHistoryRecord): LectureHistoryRecord {
     questionsDone: rec.questionsDone ?? (rec.questionsComplete ?? undefined),
     practiceStatus: rec.practiceStatus ?? (rec.codeChallenge
       ? (rec.codeChallenge.rating === "correct" || rec.codeChallenge.rating === "excellent" ? "correct" : "done")
-      : undefined),
+      : rec.status === "completed" ? "done" : undefined),
   };
 }
 
@@ -329,6 +340,7 @@ export const historyService = {
         ?? (partial.status === "completed" ? (prev?.finishedAt ?? now) : undefined)
         ?? (clearProgress ? undefined : prev?.finishedAt),
       exportedGuids: partial.exportedGuids ?? (clearProgress ? undefined : prev?.exportedGuids),
+      doubts: partial.doubts ?? (clearProgress ? undefined : prev?.doubts),
       keyConcepts:  partial.keyConcepts  ?? (clearProgress ? undefined : prev?.keyConcepts),
       questions:    partial.questions    ?? (clearProgress ? [] : prev?.questions)    ?? [],
       codeChallenge: partial.codeChallenge ?? (clearProgress ? undefined : prev?.codeChallenge),

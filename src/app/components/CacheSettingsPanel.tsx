@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import { Trash2, Clock, RefreshCw, Loader2 } from "./icons";
 import { Slider } from "./ui/slider";
 import { cacheService, type CacheStats } from "../services/cacheService";
@@ -16,7 +17,6 @@ function daysUntil(ts: number): number {
 export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelProps) {
   const [stats,         setStats]         = useState<CacheStats | null>(null);
   const [loading,       setLoading]       = useState(false);
-  const [feedback,      setFeedback]      = useState<string | null>(null);
   const [clearingId,    setClearingId]    = useState<string | null>(null);
 
   const loadStats = useCallback(async () => {
@@ -32,10 +32,8 @@ export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelP
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const showFeedback = (msg: string) => {
-    setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
-  };
+  // Resultado de una acción = aviso del panel (el mismo sistema que el resto de la app).
+  const showFeedback = (msg: string) => { toast.success(msg); };
 
   const handleClearExpired = async () => {
     const n = await cacheService.clearExpired();
@@ -145,7 +143,6 @@ export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelP
         <button type="button" onClick={handleClearAll} className={dangerBtnCls}><Trash2 size={14} />Limpiar todo</button>
       </div>
 
-      {feedback && <Notice tone="ok" icon="checkCircle2">{feedback}</Notice>}
     </div>
   );
 }

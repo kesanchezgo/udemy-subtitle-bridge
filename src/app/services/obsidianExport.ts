@@ -10,6 +10,12 @@
  * instalarse y crea la nota en la ruta indicada del vault. Fallbacks: copiar
  * al portapapeles y descargar el .md.
  *
+ * UNA URI POR CLIC: Chrome bloquea un segundo protocolo externo hasta la
+ * siguiente interacción del usuario («flooded with requests»). Por eso
+ * exportar abre SOLO la nota de la lección; el índice del curso y los
+ * subtítulos se ofrecen después como acciones propias (cada una, su clic),
+ * y la estructura del vault se descarga como .zip en vez de abrir 7 URIs.
+ *
  * Convenciones del vault (ver CLAUDE.md del vault):
  *   <vault>/
  *   ├── raw/<fuente>/<curso>/        material bruto inmutable (srt, pdf…)
@@ -27,6 +33,7 @@
 // importe este módulo directamente; Vite y tsc (allowImportingTsExtensions) lo
 // resuelven igual.
 import { chromeLocalStorage } from './chromeStorage.ts';
+import { bloomTaskLabel } from '../../shared/prompts.ts';
 
 export interface ObsidianExportConfig {
 	/** Nombre EXACTO del vault tal como aparece en el selector de Obsidian. */
@@ -60,13 +67,13 @@ export const DEFAULT_OBSIDIAN_EXPORT_CONFIG: ObsidianExportConfig = {
 
 /** Resumen de cierre de la lección (el mismo que muestra Study, §1.4). */
 export interface StudyResultSummary {
-	/** Título del cierre: «Lección dominada» / «Lección completada» / «… · con puntos a reforzar». */
+	/** Título del cierre: «Lección dominada» / «Lección completada» / «Lección con pasos pendientes». */
 	title: string;
 	remembered: { count: number; total: number };
 	check: { firstTry: number; improved: number; skipped: boolean };
 	practice: 'done' | 'correct' | 'later';
 	calibration?: { said: string; shown: string; message: string };
-	cards: { total: number; reinforce: number; destination: 'anki' | 'obsidian' | 'none' };
+	cards: { total: number; reinforce: number; destination: 'anki' | 'obsidian' | 'none'; /** §5: guardadas desde dudas. */ doubt?: number };
 }
 
 /** Forma mínima del contenido de sesión que la nota necesita. */
@@ -83,12 +90,18 @@ export interface ObsidianSessionData {
 	recallNotes?: string;
 	/** Preguntas respondidas mal o parcial: la pregunta con su respuesta correcta. */
 	weakPoints?: { q: string; answer: string }[];
+	/** Ideas clave que no marcaste en Recordar (las mismas que Anki refuerza). */
+	unrecalledIdeas?: string[];
+	/** La práctica se intentó sin acierto o se vio la solución: repetirla. */
+	practiceToRedo?: boolean;
+	/** §5: dudas resueltas sobre la lección (respuesta + citas verificadas). */
+	doubts?: { q: string; answer: string; quotes: string[]; outside: boolean; t?: string }[];
 	/** Resumen de cierre del flujo (§1.4) para la nota. */
 	result?: StudyResultSummary;
 	content: {
 		relevance: { score: number; reason: string };
 		keyConcepts: string[];
-		quickWin: string;
+		quickWin?: string;
 		questions: { q: string; bloom?: string; difficulty?: string; hint?: string; answer?: string }[];
 		application: { isCode: boolean; setup: string; challenge: string; solution: string };
 		interviewQ: { q: string; idealAnswer: string } | null;
@@ -142,9 +155,19 @@ export async function saveCreatedMocs(slugs: string[]): Promise<void> {
 	await chromeLocalStorage.set({ [OBSIDIAN_CREATED_MOCS_KEY]: slugs });
 }
 
-/** Clave de sesión para detectar exportaciones duplicadas (<curso>---<leccion>). */
-export function sessionExportKey(courseName: string, lessonName: string): string {
-	return `${slugifyVault(courseName)}---${slugifyVault(lessonName)}`;
+/**
+ * Clave de una nota exportada: vault + ruta. Si cambias de vault o de carpeta,
+ * la nota de ese destino aún no existe y se crea entera (no se le «añade» un
+ * repaso a una nota que no está). Las claves viejas (<curso>---<leccion>, sin
+ * vault) se siguen reconociendo.
+ */
+export function sessionExportKey(config: ObsidianExportConfig, courseName: string, lessonName: string): string {
+	return `${config.vaultName.trim()}|${buildSessionNotePath(config, courseName, lessonName)}`;
+}
+
+export function isSessionExported(keys: string[], config: ObsidianExportConfig, courseName: string, lessonName: string): boolean {
+	const legacy = `${slugifyVault(courseName)}---${slugifyVault(lessonName)}`;
+	return keys.includes(sessionExportKey(config, courseName, lessonName)) || keys.includes(legacy);
 }
 
 export async function loadObsidianExportedNotes(): Promise<string[]> {
@@ -320,7 +343,10 @@ export function buildSessionNoteMarkdown(
 	lines.push(`course: ${course}`);
 	lines.push(`lesson: ${yamlEscape(data.lessonName)}`);
 	if (data.objective) lines.push(`objective: ${yamlEscape(data.objective)}`);
-	lines.push(`relevance_score: ${Math.round(Number(c.relevance?.score) || 0)}`);
+	// score < 0 = sin estimación (plantilla local): no se inventa una cifra.
+	const relScore = Math.round(Number(c.relevance?.score));
+	const hasRel = Number.isFinite(relScore) && relScore >= 0;
+	if (hasRel) lines.push(`relevance_score: ${relScore}`);
 	if (data.sourceUrl) lines.push(`lesson_url: ${yamlEscape(data.sourceUrl)}`);
 	if (data.ankiDeck) lines.push(`anki_deck: ${yamlEscape(data.ankiDeck)}`);
 	// F2-2: concepts en el frontmatter (grafo entre cursos).
@@ -344,12 +370,14 @@ export function buildSessionNoteMarkdown(
 		lines.push('');
 		lines.push(summary);
 		lines.push('');
-		lines.push(`> Relevancia para tu objetivo: ${Math.round(Number(c.relevance?.score) || 0)}/100 — ${c.relevance?.reason || ''}`);
-		lines.push('');
+		if (hasRel) {
+			lines.push(`> Relevancia para tu objetivo: ${relScore}/100 — ${c.relevance?.reason || ''}`);
+			lines.push('');
+		}
 	} else {
 		lines.push('## Relevancia');
 		lines.push('');
-		lines.push(`${c.relevance?.reason || ''} (relevancia ${Math.round(Number(c.relevance?.score) || 0)}/100 para el objetivo).`);
+		lines.push(hasRel ? `${c.relevance?.reason || ''} (relevancia ${relScore}/100 para el objetivo).` : (c.relevance?.reason || ''));
 		lines.push('');
 	}
 	lines.push('## Ideas clave');
@@ -373,20 +401,15 @@ export function buildSessionNoteMarkdown(
 		lines.push(`Conceptos: ${conceptTerms.map((term) => `[[wiki/conceptos/${slugifyVault(term)}|${term}]]`).join(' · ')}`);
 		lines.push('');
 	}
-	if (c.quickWin) {
-		lines.push('## Quick win');
-		lines.push('');
-		lines.push(`- ${c.quickWin}`);
-		lines.push('');
-	}
 	if ((c.questions || []).length > 0) {
-		lines.push('## Preguntas de calibración');
+		lines.push('## Preguntas para comprobarte');
 		lines.push('');
 		// C5: autoevaluación real — cada pregunta es un callout PLEGADO con la
-		// pista y la respuesta dentro (recuperación antes que relectura).
+		// pista y la respuesta dentro (recuperación antes que relectura). Una por
+		// idea clave + síntesis, como en Comprobar; sin la dificultad interna
+		// (confused/partial…), que no significa nada fuera de la app.
 		c.questions.forEach((q) => {
-			const meta = [q.bloom, q.difficulty].filter(Boolean).join(' · ');
-			lines.push(`> [!question]- ${q.q}${meta ? ` _(${meta})_` : ''}`);
+			lines.push(`> [!question]- ${q.q}${q.bloom ? ` _(${bloomTaskLabel(q.bloom)})_` : ''}`);
 			if (q.hint) lines.push(`> _Pista:_ ${q.hint}`);
 			if (q.answer) lines.push(`> **Respuesta:** ${q.answer}`);
 			lines.push('');
@@ -418,43 +441,7 @@ export function buildSessionNoteMarkdown(
 		lines.push(`- [ ] ${c.nextAction}`);
 		lines.push('');
 	}
-	// flowVersion 2: el cierre de Study viaja a la nota — resultado, recuerdo
-	// libre y puntos a reforzar, antes de las tarjetas.
-	if (data.result) {
-		const r = data.result;
-		lines.push('## Resultado de la sesión');
-		lines.push('');
-		lines.push(`**${r.title}**`);
-		lines.push('');
-		const parts = [
-			`Recordaste ${r.remembered.count} de ${r.remembered.total} ideas (marcadas por ti)`,
-			`Comprobación: ${r.check.firstTry} a la primera${r.check.improved ? ` · ${r.check.improved} tras corregir` : ''}${r.check.skipped ? ' · saltada' : ''}`,
-			`Práctica: ${r.practice === 'correct' ? 'correcta' : r.practice === 'done' ? 'hecha' : 'pendiente'}`,
-			`Tarjetas: ${r.cards.total} (${r.cards.reinforce} de refuerzo) · ${r.cards.destination === 'anki' ? 'en Anki' : r.cards.destination === 'obsidian' ? 'en Obsidian' : 'sin exportar'}`,
-		];
-		parts.forEach((p) => lines.push(`- ${p}`));
-		if (r.calibration) {
-			lines.push('');
-			lines.push(`> [!info] Calibración: dijiste «${r.calibration.said}», mostraste «${r.calibration.shown}». ${r.calibration.message}`);
-		}
-		lines.push('');
-	}
-	if (data.recallNotes?.trim()) {
-		lines.push('## Lo que recordé sin mirar');
-		lines.push('');
-		lines.push(data.recallNotes.trim());
-		lines.push('');
-	}
-	if ((data.weakPoints || []).length > 0) {
-		lines.push('## Puntos a reforzar');
-		lines.push('');
-		// C5: la respuesta correcta va plegada — primero intenta recordar.
-		data.weakPoints!.forEach((w) => {
-			lines.push(`> [!question]- ${w.q}`);
-			lines.push(`> **Respuesta:** ${w.answer}`);
-			lines.push('');
-		});
-	}
+	lines.push(...sessionOutcomeLines(data, '##'));
 	if (config.includeCards && (c.ankiCards || []).length > 0) {
 		// C6: por defecto, referencia plegada bien formateada y SIN #flashcards —
 		// un solo planificador (Anki). «Repasar también en Obsidian» activa el
@@ -473,12 +460,16 @@ export function buildSessionNoteMarkdown(
 			lines.push('');
 		} else {
 			lines.push(`> [!example]- Tarjetas de esta lección (${c.ankiCards.length}) · repásalas en Anki`);
+			// Cada línea con «> »: un reverso multilínea (código, o respuesta + cita
+			// de una tarjeta de duda) no debe salirse del callout plegado.
+			const inCallout = (text: string) => text.split('\n').map((line) => (line.trim() ? `> ${line}` : '>'));
 			c.ankiCards.forEach((card) => {
 				const front = htmlToMarkdown(card.front);
 				const back = htmlToMarkdown(card.back);
 				if (front && back) {
-					lines.push(`> **${front}**`);
-					lines.push(`> ${back}`);
+					const [head, ...tail] = front.split('\n');
+					lines.push(`> **${head}**`, ...(tail.length ? inCallout(tail.join('\n')) : []));
+					lines.push(...inCallout(back));
 					lines.push('>');
 				}
 			});
@@ -488,6 +479,87 @@ export function buildSessionNoteMarkdown(
 		}
 	}
 	return lines.join('\n');
+}
+
+/**
+ * Lo que cambia de una sesión a otra: resultado, recuerdo libre, puntos a
+ * reforzar y dudas. Va en la nota completa (##) y en cada «Repaso» que se
+ * añade al final de una nota ya exportada (###).
+ */
+function sessionOutcomeLines(data: ObsidianSessionData, h: '##' | '###'): string[] {
+	const lines: string[] = [];
+	// flowVersion 2: el cierre de Study viaja a la nota — resultado, recuerdo
+	// libre y puntos a reforzar, antes de las tarjetas.
+	if (data.result) {
+		const r = data.result;
+		lines.push(`${h} Resultado de la sesión`);
+		lines.push('');
+		lines.push(`**${r.title}**`);
+		lines.push('');
+		const parts = [
+			`Recordaste (según tú): ${r.remembered.count} de ${r.remembered.total} ideas`,
+			r.check.skipped
+				? 'Comprobación: saltada'
+				: `Comprobación: ${r.check.firstTry} a la primera${r.check.improved ? ` · ${r.check.improved} tras corregir` : ''}`,
+			`Práctica: ${r.practice === 'correct' ? 'correcta' : r.practice === 'done' ? 'hecha' : 'pendiente'}`,
+			`Tarjetas: ${r.cards.total} (${r.cards.reinforce} de refuerzo${r.cards.doubt ? `, ${r.cards.doubt} de duda` : ''}) · ${r.cards.destination === 'anki' ? 'en Anki' : r.cards.destination === 'obsidian' ? 'en Obsidian' : 'sin exportar'}`,
+		];
+		parts.forEach((p) => lines.push(`- ${p}`));
+		if (r.calibration) {
+			lines.push('');
+			// El mensaje ya nombra el nivel elegido y el demostrado (solo hay calibración con respuestas).
+			lines.push(`> [!info] Calibración: ${r.calibration.message}`);
+		}
+		lines.push('');
+	}
+	if (data.recallNotes?.trim()) {
+		lines.push(`${h} Lo que recordé sin mirar`);
+		lines.push('');
+		lines.push(data.recallNotes.trim());
+		lines.push('');
+	}
+	const unrecalled = data.unrecalledIdeas || [];
+	if ((data.weakPoints || []).length > 0 || unrecalled.length > 0 || data.practiceToRedo) {
+		// Lo mismo que Anki refuerza: ideas no recordadas, preguntas falladas y la práctica.
+		lines.push(`${h} Puntos a reforzar`);
+		lines.push('');
+		if (unrecalled.length > 0) {
+			lines.push('No me salieron sin mirar:');
+			unrecalled.forEach((idea) => lines.push(`- ${idea}`));
+			lines.push('');
+		}
+		if (data.practiceToRedo) {
+			lines.push('- Repetir la práctica sin mirar la solución (ver «Aplicación práctica»).');
+			lines.push('');
+		}
+		// C5: la respuesta correcta va plegada — primero intenta recordar.
+		(data.weakPoints || []).forEach((w) => {
+			lines.push(`> [!question]- ${w.q}`);
+			lines.push(`> **Respuesta:** ${w.answer}`);
+			lines.push('');
+		});
+	}
+	if ((data.doubts || []).length > 0) {
+		lines.push(`${h} Dudas resueltas`);
+		lines.push('');
+		// §5: mismo patrón plegado que «Puntos a reforzar»: la duda a la vista,
+		// la respuesta (y su respaldo literal en la transcripción) plegada.
+		data.doubts!.forEach((d) => {
+			lines.push(`> [!question]- ${d.t ? `(${d.t}) ` : ''}${d.q.replace(/\s*\n\s*/g, ' ')}`);
+			lines.push(`> ${d.outside ? '**Fuera de la lección.** ' : ''}${d.answer.replace(/\s*\n\s*/g, ' ')}`);
+			d.quotes.forEach((quote) => lines.push(`> > «${quote}»`));
+			lines.push('');
+		});
+	}
+	return lines;
+}
+
+/**
+ * Repaso para AÑADIR al final de una nota ya exportada (obsidian://new con
+ * append): suma el resultado de hoy sin tocar lo que el estudiante escribió.
+ */
+export function buildSessionUpdateMarkdown(data: ObsidianSessionData, options: { today?: Date } = {}): string {
+	return [`## Repaso · ${todayIso(options.today)}`, '', ...sessionOutcomeLines(data, '###')].join('\n');
 }
 
 // ── MOC del curso (índice automático con Dataview) ──────────────────────────
@@ -568,7 +640,7 @@ export function buildRawSrtNoteMarkdown(
 	lines.push(`platform: ${platform}`);
 	lines.push(`course: ${course}`);
 	lines.push(`lesson: ${yamlEscape(lessonName)}`);
-	if (options.sourceUrl) lines.push(`source_url: ${yamlEscape(options.sourceUrl)}`);
+	if (options.sourceUrl) lines.push(`lesson_url: ${yamlEscape(options.sourceUrl)}`);
 	lines.push(`tags: [${platform}, raw, srt, ${course}]`);
 	lines.push('---');
 	lines.push('');
@@ -596,7 +668,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'Cualquier aprendizaje: cursos de cualquier plataforma (Udemy, YouTube, Coursera…), libros, artículos, habilidades personales.',
 		'',
 		'## Estructura de carpetas',
-		'- `raw/<fuente>/<curso>/` — material bruto INMUTABLE (transcripciones .srt como nota .md, PDFs, capturas). El LLM lee pero nunca modifica. La extensión puede crearlos sola (toggle «SRT crudo → raw/»).',
+		'- `raw/<fuente>/<curso>/` — material bruto INMUTABLE (transcripciones .srt como nota .md, PDFs, capturas). El LLM lee pero nunca modifica. La extensión puede crearlos (opción «Subtítulos originales»).',
 		'- `cursos/` — un MOC (Map of Content) por curso/tema, con índice automático Dataview de sus sesiones.',
 		'- `wiki/fuentes/` — UNA nota por sesión o recurso consumido (la extensión exporta aquí).',
 		'- `wiki/entidades/` — personas, organizaciones, productos, tecnologías.',
@@ -606,8 +678,8 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'- `index.md` — catálogo. `log.md` — registro cronológico de operaciones.',
 		'',
 		'## Formato de nota de sesión (wiki/fuentes/)',
-		'Frontmatter: title, date, type: sesion, platform, course, lesson, objective, relevance_score, source_url, tags',
-		'Secciones: Resumen, Ideas clave, Quick win, Aplicación práctica, Preguntas de calibración, Práctica oral, Próximo paso, Tarjetas Anki (#flashcards, formato `pregunta :: respuesta`).',
+		'Frontmatter: title, date, type: sesion, platform, course, lesson, objective, relevance_score, lesson_url, anki_deck, concepts, tags (kinema/sesion, kinema/curso/<curso>).',
+		'Secciones: Resumen, Ideas clave, Preguntas para comprobarte, Práctica oral, Aplicación práctica, Próximo paso, Resultado de la sesión, Lo que recordé sin mirar, Puntos a reforzar, Dudas resueltas y las tarjetas de la lección (referencia plegada; con «Repasar también en Obsidian», formato multilínea del plugin Spaced Repetition bajo #flashcards). Cada nueva sesión de la misma lección AÑADE al final un «## Repaso · fecha» (la nota no se reescribe).',
 		'',
 		'## Formato de MOC de curso (cursos/)',
 		'Frontmatter: title, date, type: curso, platform, status, tags. Secciones: Sesiones (query Dataview por `course`), Progreso, Conceptos del curso.',
@@ -660,6 +732,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'- Dominio: aprendizaje universal (cursos, libros, habilidades)',
 	].join('\n');
 
+	// Mismo esquema que la nota que exporta Kinema (buildSessionNoteMarkdown).
 	const plantillaSesion = [
 		'---',
 		'title: "Lección — Curso"',
@@ -670,8 +743,8 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'lesson: "Nombre de la lección"',
 		'objective: "Para qué estudio esto"',
 		'relevance_score: 0',
-		'source_url: ""',
-		`tags: [${platform}, sesion, slug-del-curso]`,
+		'lesson_url: ""',
+		`tags: [kinema/sesion, kinema/curso/slug-del-curso, ${platform}]`,
 		'---',
 		'',
 		'# Nombre de la lección',
@@ -684,26 +757,28 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'',
 		'- ',
 		'',
+		'## Preguntas para comprobarte',
+		'',
+		'> [!question]- ¿Pregunta? _(qué pide: definir, explicar, usar en un caso…)_',
+		'> _Pista:_ ',
+		'> **Respuesta:** ',
+		'',
 		'## Aplicación práctica',
 		'',
 		'**Escenario:** ',
+		'',
 		'**Reto:** ',
-		'**Solución:** ',
 		'',
-		'## Preguntas de calibración',
-		'',
-		'1. **¿Pregunta?** _(bloom · dificultad)_',
-		'   - Pista: ',
-		'   - Respuesta: ',
+		'> [!example]- Ver solución',
+		'> ',
 		'',
 		'## Próximo paso',
 		'',
 		'- [ ] ',
 		'',
-		'## Tarjetas Anki',
+		'## Puntos a reforzar',
 		'',
-		'#flashcards',
-		'- Pregunta :: Respuesta',
+		'- ',
 		'',
 	].join('\n');
 
@@ -784,12 +859,15 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 export function buildObsidianNewUri(
 	vaultName: string,
 	note: VaultNote,
-	options: { overwrite?: boolean; clipboard?: boolean } = {},
+	options: { overwrite?: boolean; append?: boolean; clipboard?: boolean } = {},
 ): string {
 	// encodeURIComponent (no URLSearchParams): Obsidian espera %20 para los
 	// espacios en los query params del scheme obsidian://.
 	let uri = `obsidian://new?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(note.path)}`;
-	if (options.overwrite) uri += '&overwrite=true';
+	// append: añade al final de la nota existente (sin tocar lo escrito);
+	// overwrite: la rehace entera. Obsidian ignora overwrite si hay append.
+	if (options.append) uri += '&append=true';
+	else if (options.overwrite) uri += '&overwrite=true';
 	if (options.clipboard) uri += '&clipboard=true';
 	else uri += `&content=${encodeURIComponent(note.markdown)}`;
 	return uri;
@@ -803,7 +881,7 @@ const OBSIDIAN_URI_LIMIT = 30_000;
  * de una lección larga), escribe el markdown en el portapapeles y abre con
  * clipboard=true — Obsidian toma el contenido del portapapeles.
  */
-export function openObsidianNote(vaultName: string, note: VaultNote, options: { overwrite?: boolean } = {}): void {
+export function openObsidianNote(vaultName: string, note: VaultNote, options: { overwrite?: boolean; append?: boolean } = {}): void {
 	const encodedLength = encodeURIComponent(note.markdown).length;
 	if (encodedLength > OBSIDIAN_URI_LIMIT) {
 		try {
@@ -858,12 +936,11 @@ export function exportSessionToObsidian(
 	config: ObsidianExportConfig,
 	orchestration: {
 		createdMocs: string[];
-		onMocCreated: (key: string) => void;
 		today?: Date;
 		/** C7: «Reemplazar nota» — true solo en el reemplazo explícito. */
 		overwrite?: boolean;
 	},
-): { notePath: string; mocPath: string | null } {
+): { notePath: string; moc: { note: VaultNote; key: string } | null } {
 	if (!config.vaultName.trim()) {
 		throw new Error('Configura el nombre del vault en Ajustes antes de exportar.');
 	}
@@ -874,9 +951,11 @@ export function exportSessionToObsidian(
 	// actual para no recrear MOCs al migrar.
 	const mocKey = `${vault}|${courseSlug}`;
 	const knownMocs = orchestration.createdMocs.map((m) => (m.includes('|') ? m : `${vault}|${m}`));
-	let mocPath: string | null = null;
-	if (!knownMocs.includes(mocKey)) {
-		const moc: VaultNote = {
+	// El índice del curso NO se abre aquí (una URI por clic): se devuelve para
+	// ofrecerlo como acción aparte; el llamador lo marca creado al abrirlo.
+	const moc = knownMocs.includes(mocKey) ? null : {
+		key: mocKey,
+		note: {
 			path: buildCourseMocPath(config, data.courseName),
 			markdown: buildCourseMocMarkdown(data.courseName, {
 				platform: data.platform,
@@ -884,11 +963,8 @@ export function exportSessionToObsidian(
 				today: orchestration.today,
 				sourcesFolder: config.sourcesFolder, // C1
 			}),
-		};
-		openObsidianNote(vault, moc);
-		orchestration.onMocCreated(mocKey);
-		mocPath = moc.path;
-	}
+		},
+	};
 	const note: VaultNote = {
 		path: buildSessionNotePath(config, data.courseName, data.lessonName),
 		markdown: buildSessionNoteMarkdown(data, config, { today: orchestration.today }),
@@ -896,14 +972,46 @@ export function exportSessionToObsidian(
 	// C7: overwrite=true SOLO en «Reemplazar nota» (el usuario pide pisar la
 	// nota en vez de crear "nombre 1.md").
 	openObsidianNote(vault, note, { overwrite: orchestration.overwrite });
-	return { notePath: note.path, mocPath };
+	return { notePath: note.path, moc };
 }
 
-/** Crea la estructura completa del vault desde cero (CLAUDE.md, index, log, plantillas). */
-export function createVaultScaffold(config: ObsidianExportConfig, options: { platform?: string } = {}): number {
-	const notes = buildScaffoldNotes({ platform: options.platform });
-	notes.forEach((note, i) => {
-		setTimeout(() => openObsidianUri(buildObsidianNewUri(config.vaultName, note)), i * 900);
-	});
-	return notes.length;
+/**
+ * Añade un «Repaso · fecha» al final de la nota ya exportada (append): el
+ * vault crece con el resultado de cada sesión y lo que escribiste no se toca.
+ */
+export function exportSessionUpdateToObsidian(
+	data: ObsidianSessionData,
+	config: ObsidianExportConfig,
+	options: { today?: Date } = {},
+): { notePath: string } {
+	if (!config.vaultName.trim()) {
+		throw new Error('Configura el nombre del vault en Ajustes antes de exportar.');
+	}
+	const note: VaultNote = {
+		path: buildSessionNotePath(config, data.courseName, data.lessonName),
+		markdown: buildSessionUpdateMarkdown(data, options),
+	};
+	openObsidianNote(config.vaultName.trim(), note, { append: true });
+	return { notePath: note.path };
+}
+
+/**
+ * Estructura completa del vault (CLAUDE.md, index, log, plantillas y las
+ * carpetas configuradas) para empaquetar en un .zip: abrir 7 URIs seguidas no
+ * funciona (Chrome solo deja una por clic) y obsidian://new no crea carpetas vacías.
+ */
+export function buildVaultScaffold(config: ObsidianExportConfig, options: { platform?: string } = {}): { notes: VaultNote[]; folders: string[] } {
+	const clean = (folder: string, fallback: string) => folder.replace(/^\/+|\/+$/g, '') || fallback;
+	const platform = slugifyVault(options.platform || 'curso', 24);
+	return {
+		notes: buildScaffoldNotes({ platform: options.platform }),
+		folders: [
+			clean(config.sourcesFolder, DEFAULT_OBSIDIAN_EXPORT_CONFIG.sourcesFolder),
+			clean(config.mocsFolder, DEFAULT_OBSIDIAN_EXPORT_CONFIG.mocsFolder),
+			`raw/${platform}`,
+			'wiki/conceptos',
+			'wiki/entidades',
+			'wiki/sintesis',
+		],
+	};
 }

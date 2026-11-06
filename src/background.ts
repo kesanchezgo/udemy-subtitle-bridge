@@ -696,7 +696,9 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		handleAnkiDue(course, lesson, browse, rootDeck, scope)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
-		return false;
+		// true: la respuesta llega después (asíncrona). Con false Chrome cerraba el
+		// canal y «Repasos pendientes en Anki» se quedaba siempre en «—».
+		return true;
 	}
 
 	// ¿El endpoint ya tiene permiso de red? permissions.request NO se puede
@@ -763,6 +765,7 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			baseLang?: unknown;
 			minLevel?: unknown;
 			maxWords?: unknown;
+			knownWords?: unknown;
 		};
 		const vocabularyOptions = {
 			course: String(opts.course || ''),
@@ -770,7 +773,8 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			targetLang: String(opts.targetLang || 'inglés'),
 			baseLang: String(opts.baseLang || 'español'),
 			minLevel: String(opts.minLevel || 'B1'),
-			maxWords: typeof opts.maxWords === 'number' && opts.maxWords > 0 ? Math.min(opts.maxWords, 20) : 8
+			maxWords: typeof opts.maxWords === 'number' && opts.maxWords > 0 ? Math.min(opts.maxWords, 20) : 8,
+			knownWords: Array.isArray(opts.knownWords) ? opts.knownWords.map(String).filter(Boolean).slice(0, 80) : []
 		};
 
 		generateVocabularyFromTranscript(transcriptText, vocabularyOptions)
@@ -1609,7 +1613,7 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 
 async function generateVocabularyFromTranscript(
 	transcriptText: string,
-	options: { course: string; lesson: string; targetLang: string; baseLang: string; minLevel: string; maxWords: number }
+	options: { course: string; lesson: string; targetLang: string; baseLang: string; minLevel: string; maxWords: number; knownWords?: string[] }
 ) {
 	const cleaned = String(transcriptText || '').replace(/\r/g, '').trim();
 	if (cleaned.length < 120) {

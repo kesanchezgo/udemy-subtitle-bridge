@@ -5,6 +5,12 @@
 
 ## Documentos Disponibles
 
+### Vocabulario opcional del prototipo
+
+La configuración previa y el panel final comparten candidatas y selección por curso, lección e idioma. El chip selecciona para exportar; no guarda directamente en Anki. La configuración se abre desde el engranaje del encabezado: proveedor de IA, idiomas, mazo raíz de Anki, Obsidian y caché. Triple clic mantiene el acceso al modo Dev. No se añade configuración a Overlay, Study ni Captions. Study no muestra accesos, contadores ni resúmenes de vocabulario en la pantalla inicial. Las tarjetas de contenido pendientes de descarga se consultan desde el historial global, sin barras de «memoria» ni contadores de lecciones exportadas en Study. App.tsx carga fixtures de vocabulario e historial automáticamente para validar el prototipo: no hay botones ni modos de demo en la interfaz. La extensión no importa este inicializador. Idioma, nivel e idioma de explicación requieren actualizar las candidatas; cambiar límite, audio o mazo no requiere otra llamada a IA. La redescarga permite elegir entre los lotes exportados y conserva sus palabras y configuración de exportación. Los vencimientos desconocidos de Anki no se sustituyen por conteos ficticios.
+
+Validación local: `pnpm run build` y `pnpm run qa:local` (también `pnpm run qa:vocabulary`). La suite usa Chromium y respuestas deterministas de IA; comprueba selección video/panel, persistencia, límites, duplicados, exportación `.apkg`, redescarga sin IA, respuestas atrasadas, temas y listas de 100 cursos. No certifica acceso autenticado a Udemy ni importación o vencimientos en Anki Desktop. Usa Chromium del sistema, `CHROMIUM_PATH` o el navegador instalado con `pnpm exec playwright install chromium`.
+
 | # | Archivo | Audiencia | Contenido |
 |---|---------|-----------|-----------|
 | 0 | `00-PLAN-PROYECTO.md` | Equipo / PM | Ciclo de vida completo, fases, sprints, testing matrix, MCPs |

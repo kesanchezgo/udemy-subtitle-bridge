@@ -36,8 +36,24 @@ export function formatOriginalSrtBlocks(blocks: SrtBlock[]) {
 }
 
 /**
+ * Cuántas ideas clave puede tener la lección según su densidad. Es un RANGO:
+ * la IA elige dentro de él según lo que la lección realmente enseña (una
+ * lección corta puede ser densa y una larga, repetitiva). El tamaño de
+ * Comprobar sale de aquí (una pregunta por idea, ver services/checkPlan.ts),
+ * así que este rango es también el que escala la comprobación con la lección.
+ */
+export function keyConceptRange(transcriptText: string, cueCount?: number): { min: number; max: number } {
+	const target = estimateAnkiCardTarget(transcriptText, cueCount);
+	if (target.max <= 4) return { min: 2, max: 3 };
+	if (target.max <= 5) return { min: 3, max: 4 };
+	if (target.max <= 6) return { min: 4, max: 5 };
+	return { min: 5, max: 7 };
+}
+
+/**
  * Objetivo de cantidad de tarjetas Anki según la densidad de la lección.
- * Una lección corta no debe inflarse con tarjetas de relleno.
+ * Una lección corta no debe inflarse con tarjetas de relleno. Siempre cabe
+ * al menos una tarjeta por idea clave (max ≥ ideas máx. del mismo rango).
  */
 export function estimateAnkiCardTarget(transcriptText: string, cueCount?: number) {
 	const chars = transcriptText.trim().length;
@@ -46,6 +62,19 @@ export function estimateAnkiCardTarget(transcriptText: string, cueCount?: number
 	if (chars < 6000 || cues > 0 && cues < 90) return { min: 4, max: 5, label: 'leccion breve con pocos conceptos' };
 	if (chars < 12000 || cues > 0 && cues < 180) return { min: 5, max: 6, label: 'leccion normal' };
 	return { min: 6, max: 8, label: 'leccion larga o densa' };
+}
+
+/**
+ * Qué pide una pregunta, en palabras de tarea. El nivel de Bloom tal cual
+ * («recordar», «aplicar») se confundía con los pasos Recordar y Aplicar.
+ */
+export function bloomTaskLabel(bloom: string): string {
+	const key = String(bloom || '').trim().toLowerCase();
+	const labels: Record<string, string> = {
+		recordar: 'definir', comprender: 'explicar', aplicar: 'usar en un caso',
+		analizar: 'analizar', evaluar: 'valorar', crear: 'proponer',
+	};
+	return labels[key] ?? key;
 }
 
 export function buildSrtTranslationPrompt(blocks: SrtBlock[]): string {
@@ -152,6 +181,7 @@ export function buildRefinePrompt(courseName: string, description: string, rawGo
 
 export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata) {
 	const cardTarget = estimateAnkiCardTarget(transcriptText, metadata.cueCount);
+	const ideas = keyConceptRange(transcriptText, metadata.cueCount);
 	return [
 		'Eres un diseñador instruccional experto para cursos online de Udemy.',
 		'Genera una sesión de estudio adaptada al curso, la lección actual y el objetivo del estudiante.',
@@ -163,16 +193,16 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		`LECCIÓN: ${metadata.lessonName || metadata.lectureId || 'Desconocida'}`,
 		`OBJETIVO DEL ESTUDIANTE: ${metadata.objective || 'Dominar la lección y aplicarla correctamente'}`,
 		`DENSIDAD DE LA LECCIÓN: ${cardTarget.label}; transcripción ${transcriptText.length} caracteres; cues ${metadata.cueCount ?? 'desconocidos'}; truncada: ${metadata.transcriptTruncated ? 'sí' : 'no'}`,
+		`IDEAS CLAVE ESPERABLES: ${ideas.min}-${ideas.max}`,
 		`CANTIDAD RECOMENDADA DE ANKI: ${cardTarget.min}-${cardTarget.max} tarjetas`,
 		'',
-		'TRANSCRIPCIÓN DEL VIDEO:',
+		'TRANSCRIPCIÓN (O TEXTO) DE LA LECCIÓN:',
 		transcriptText.slice(0, 18000),
 		'',
 		'Genera un JSON VÁLIDO (sin markdown, sin ```json) con esta estructura EXACTA:',
 		'{',
 		'  "relevance": { "score": 85, "reason": "explicación breve" },',
-		'  "keyConcepts": ["concepto 1 en una oración", "concepto 2", "concepto 3", "concepto 4"],',
-		'  "quickWin": "una acción rápida que el estudiante puede hacer ahora",',
+		'  "keyConcepts": ["idea 1 en una oración", "idea 2", "..."],',
 		'  "questions": [',
 		'    { "q": "pregunta", "bloom": "comprender|aplicar|analizar|evaluar", "difficulty": "confused|partial|clear|mastered", "conceptRefs": [0], "hint": "pista", "answer": "respuesta ideal" }',
 		'  ],',
@@ -183,7 +213,7 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'    "solution": "solución explicada"',
 		'  },',
 		'  "interviewQ": { "q": "pregunta oral/de cierre", "idealAnswer": "estructura ideal de respuesta" },',
-		'  "nextAction": "siguiente paso recomendado",',
+		'  "nextAction": "una acción concreta para usar lo aprendido en algo propio",',
 		'  "ankiCards": [',
 		'    { "id": "card-001", "type": "concepto|aplicacion|codigo|entrevista|comparacion|proceso", "conceptRefs": [0], "front": "pregunta clara (HTML simple)", "back": "respuesta estructurada (HTML del vocabulario permitido)", "tags": ["tag1", "tag2"] }',
 		'  ]',
@@ -191,10 +221,11 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'',
 		'REGLAS:',
 		'- "relevance.score" es un entero 0-100 que mide qué tan útil es ESTA lección para el objetivo del estudiante; "reason" lo justifica en una frase.',
-		'- Genera exactamente 4 keyConcepts. El indice de cada concepto (0, 1, 2, 3) se usara para calibrar preguntas.',
-		'- Genera exactamente 4 preguntas, una por difficulty: confused, partial, clear, mastered.',
-		'- Cada pregunta DEBE incluir conceptRefs con 1-3 indices de keyConcepts que evalua. Usa indices validos entre 0 y 3.',
-		'- Cada ankiCard DEBE incluir conceptRefs con 1-3 indices de keyConcepts que refuerza (los mismos indices validos 0-3).',
+		`- Genera entre ${ideas.min} y ${ideas.max} keyConcepts: las ideas centrales que la lección realmente enseña. Elige el número por el contenido, no por el tiempo: no rellenes, no partas una idea en dos y no dejes fuera una idea central. El índice de cada idea (0, 1, 2…) se usa en conceptRefs.`,
+		'- questions: UNA pregunta por cada keyConcept, en el mismo orden (la pregunta i evalúa la idea i y su conceptRefs empieza por i), MÁS una pregunta final de síntesis que combine 2-3 ideas. Total = número de keyConcepts + 1. Ninguna idea puede quedar sin pregunta.',
+		'- difficulty: la de síntesis es "mastered". Las de cada idea van de "confused" (recordar o definir) a "partial" (explicar) o "clear" (aplicar o analizar) según lo que exija esa idea. Incluye al menos una "confused" y, si hay 3 o más ideas, al menos una "partial" y una "clear".',
+		'- conceptRefs de preguntas y tarjetas: 1-3 índices VÁLIDOS de keyConcepts (de 0 al número de ideas menos 1).',
+		'- ankiCards: al menos una tarjeta por keyConcept (todas las ideas cubiertas). Si generas más ideas que el mínimo de tarjetas, sube las tarjetas hasta cubrirlas.',
 		'- Las preguntas deben enfocarse en verificar comprension aplicable, no repetir literalmente el subtitulo.',
 		'- Usa el objetivo para decidir el enfoque de preguntas y tarjetas. Ejemplo: si el objetivo es entrevista, favorece explicación oral, comparaciones, trade-offs y preguntas tipo entrevista, PERO solo cuando se justifiquen desde la transcripción.',
 		`- Genera entre ${cardTarget.min} y ${cardTarget.max} tarjetas Anki útiles y específicas de la lección. No rellenes por cantidad: una lección corta debe tener pocas tarjetas de alta calidad; una lección densa puede tener más.`,
@@ -224,9 +255,11 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- Usa type="aplicacion" para casos, decisiones, ejercicios de transferencia, práctica profesional o uso real que no sea código.',
 		'- Usa type="codigo" solo si la lección realmente enseña código, comandos, APIs o sintaxis. Usa type="entrevista" solo si aporta valor para explicar el tema oralmente o para el objetivo del estudiante, y nunca para rellenar cantidad.',
 		'- interviewQ representa una práctica oral/de cierre para consolidar la lección. Puede ser null si no aporta valor.',
+		'- nextAction: una acción concreta de aplicación (probarlo en un proyecto, un ejemplo propio). Nada de «repasa tus apuntes» ni «relee la lección»: el estudio ocurre en la app y el repaso lo hace Anki.',
 		'- Hazla de entrevista SOLO si el objetivo del estudiante, el curso o la lección lo justifican claramente. Si no, formula una explicación en voz alta, reflexión guiada o pregunta de transferencia del dominio.',
 		'- Si el objetivo es entrevista pero la lección no contiene material entrevistable, genera una pregunta oral sobre lo que sí aparece en la transcripción, no sobre temas externos.',
 		'- Las tags deben ser cortas, sin espacios, y reflejar curso/tema/tipo. No inventes tags genéricas si hay términos específicos en la transcripción.',
+		'- application: UNA práctica que transfiera a un caso nuevo las ideas más útiles para el objetivo; en una lección densa, que integre 2-3 ideas en el mismo caso. No repitas ninguna pregunta de questions ni pidas recordar definiciones (eso ya lo hacen Comprobar y Anki).',
 		'- application.isCode debe ser true solo si la lección realmente requiere código.',
 		'- Si no es código, challenge debe ser un caso práctico, análisis, decisión o ejercicio aplicable.',
 		'- Todo en español excepto términos técnicos, marcas, comandos, APIs, librerías o nombres propios que convenga mantener.',
@@ -242,21 +275,21 @@ EJEMPLO A — lección técnica (Java/JVM):
   "conceptTerms": ["bytecode", "JVM", "JIT"],
   "relevance": {"score": 92, "reason": "La lección explica el mecanismo central de portabilidad de Java, directamente útil para entrevistas backend."},
   "keyConcepts": ["javac compila el fuente a bytecode, no a código nativo", "la JVM interpreta el bytecode en cada plataforma", "el JIT compila hot spots a nativo en runtime", "portabilidad = un .class corre donde exista JVM"],
-  "quickWin": "Compila HolaMundo.java con javac y ejecútalo en otra máquina distinta",
   "questions": [
     {"q": "¿Qué archivo genera exactamente javac a partir del código fuente?", "bloom": "comprender", "difficulty": "confused", "conceptRefs": [0], "hint": "No es un .exe; es un formato intermedio", "answer": "Un archivo .class con bytecode"},
-    {"q": "¿Por qué el mismo .class puede correr en Windows y Linux sin recompilar?", "bloom": "aplicar", "difficulty": "partial", "conceptRefs": [0, 3], "hint": "Algo específico de la plataforma hace el trabajo", "answer": "La JVM de cada plataforma interpreta el mismo bytecode"},
+    {"q": "¿Qué componente ejecuta el bytecode en cada sistema operativo?", "bloom": "comprender", "difficulty": "partial", "conceptRefs": [1], "hint": "Es específico de cada plataforma", "answer": "La JVM instalada en esa plataforma, que lo interpreta"},
     {"q": "Si Java interpreta bytecode, ¿por qué no es lento como un intérprete puro?", "bloom": "analizar", "difficulty": "clear", "conceptRefs": [2], "hint": "Parte del código se transforma durante la ejecución", "answer": "El JIT detecta hot spots y los compila a código nativo, cacheando y reutilizando el resultado"},
+    {"q": "¿Por qué el mismo .class puede correr en Windows y Linux sin recompilar?", "bloom": "aplicar", "difficulty": "partial", "conceptRefs": [3, 1], "hint": "Algo específico de la plataforma hace el trabajo", "answer": "La JVM de cada plataforma interpreta el mismo bytecode"},
     {"q": "Un compañero dice que Java es más lento que C++ para todo. Evalúa esa afirmación.", "bloom": "evaluar", "difficulty": "mastered", "conceptRefs": [1, 2, 3], "hint": "Depende del workload y del JIT", "answer": "En picos cálidos el JIT acerca el rendimiento a nativo; C++ sigue ganando en latencia predecible y control de memoria. La afirmación es una simplificación."}
   ],
   "application": {"isCode": true, "setup": "Tienes App.java compilado en tu laptop", "challenge": "Lleva solo el .class a una PC con otra JVM y ejecútalo sin recompilar", "solution": "java -cp . App funciona si la JVM soporta la versión del bytecode; documenta la diferencia entre JDK y JRE"},
-  "interviewQ": {"q": "Explica en 60 segundos cómo Java logra independencia de plataforma sin perder velocidad.", "idealAnswer": "Dos capas: compilación a bytecode (portabilidad) + JVM con JIT (velocidad). Mencionar write-once-run-anywhere y warm-up."},
+  "interviewQ": {"q": "Explica en un minuto cómo Java logra independencia de plataforma sin perder velocidad.", "idealAnswer": "Dos capas: compilación a bytecode (portabilidad) + JVM con JIT (velocidad). Mencionar write-once-run-anywhere y warm-up."},
   "nextAction": "Ejecuta tu app con -XX:+PrintCompilation y observa el JIT en acción",
   "ankiCards": [
     {"id": "card-001", "type": "concepto", "conceptRefs": [0], "front": "¿Qué produce <code>javac</code> a partir del código fuente?", "back": "<p><b>Bytecode</b> en archivos <code>.class</code>, no código máquina nativo.</p><div class='concept-box'>El bytecode es un formato intermedio: solo la JVM puede ejecutarlo.</div>", "tags": ["java", "compilacion"]},
-    {"id": "card-002", "type": "codigo", "conceptRefs": [1], "front": "¿Qué imprime <code>System.out.println(1 + 2 + 3)</code> y por qué?", "back": "<p>Imprime <b>6</b>: los tres operandos son <code>int</code>, así que <code>+</code> suma aritméticamente.</p><pre><code class='language-java'>System.out.println(1 + 2 + 3); // imprime 6</code></pre>", "tags": ["java", "tipos"]},
+    {"id": "card-002", "type": "codigo", "conceptRefs": [1, 3], "front": "¿Qué comando ejecuta <code>App.class</code> en cualquier máquina con JVM?", "back": "<p><b><code>java App</code></b>: la JVM de esa máquina carga e interpreta el bytecode, sin recompilar.</p><pre><code class='language-bash'>javac App.java   # genera App.class\\njava App         # la JVM lo ejecuta</code></pre>", "tags": ["java", "jvm"]},
     {"id": "card-003", "type": "comparacion", "conceptRefs": [2], "front": "¿Cuándo compila el JIT frente al AOT y qué gana cada uno?", "back": "<p><b>JIT compila en runtime</b> (gana optimización con perfiles reales); <b>AOT antes de ejecutar</b> (gana arranque inmediato, sin warm-up).</p><table><tr><th></th><th>JIT</th><th>AOT</th></tr><tr><td>Cuándo</td><td>en runtime</td><td>antes de ejecutar</td></tr></table>", "tags": ["java", "rendimiento"]},
-    {"id": "card-004", "type": "entrevista", "conceptRefs": [1, 2], "front": "¿Por qué Java es portable pero rápido?", "back": "<div class='interview-box'><div class='label'>Entrevista</div><ul><li><b>Portabilidad:</b> el bytecode corre donde haya JVM.</li><li><b>Velocidad:</b> el JIT compila hot spots a nativo en caliente.</li><li><b>Frase de cierre:</b> «compila una vez, ejecuta donde haya JVM; acelera en caliente con JIT».</li></ul></div>", "tags": ["java", "entrevista"]}
+    {"id": "card-004", "type": "entrevista", "conceptRefs": [3, 2], "front": "¿Por qué Java es portable pero rápido?", "back": "<div class='interview-box'><div class='label'>Entrevista</div><ul><li><b>Portabilidad:</b> el bytecode corre donde haya JVM.</li><li><b>Velocidad:</b> el JIT compila hot spots a nativo en caliente.</li><li><b>Frase de cierre:</b> «compila una vez, ejecuta donde haya JVM; acelera en caliente con JIT».</li></ul></div>", "tags": ["java", "entrevista"]}
   ]
 }
 
@@ -264,9 +297,9 @@ EJEMPLO B — lección NO técnica (cocina):
 {
   "relevance": {"score": 85, "reason": "La técnica del punto de cocción es transversal a cualquier receta de la clase."},
   "keyConcepts": ["al dente = resistencia firme al morder, núcleo apenas húmedo", "el agua debe hervir fuerte y estar bien salada", "la pasta sigue cocinándose un minuto fuera del fuego", "reservar agua de cocción emulsiona la salsa"],
-  "quickWin": "En tu próxima pasta, saca la sartén del fuego un minuto antes de lo que harías",
   "questions": [
     {"q": "¿Qué significa «al dente» al morder la pasta?", "bloom": "comprender", "difficulty": "confused", "conceptRefs": [0], "hint": "No es blanda ni cruda", "answer": "Firme con el núcleo apenas húmedo"},
+    {"q": "¿Por qué el agua debe hervir fuerte y estar bien salada antes de echar la pasta?", "bloom": "comprender", "difficulty": "partial", "conceptRefs": [1], "hint": "Temperatura y sabor desde dentro", "answer": "El hervor fuerte aguanta la bajada de temperatura y evita que se pegue; la sal la sazona por dentro porque la pasta absorbe el agua"},
     {"q": "¿Por qué se apaga el fuego un minuto antes?", "bloom": "aplicar", "difficulty": "partial", "conceptRefs": [2], "hint": "El calor residual existe", "answer": "Termina de cocinarse con calor residual y al saltear con la salsa"},
     {"q": "Tu salsa quedó cortada, ¿qué recurso de la lección la salva?", "bloom": "analizar", "difficulty": "clear", "conceptRefs": [3], "hint": "Un líquido de la cocción", "answer": "Agregar agua de cocción almidonada y emulsionar"},
     {"q": "Evalúa si conviene pasta fresca o seca para una salsa pesada de caza.", "bloom": "evaluar", "difficulty": "mastered", "conceptRefs": [0, 2], "hint": "Superficie y morder", "answer": "La seca, con superficie rugosa y bocado firme, aguanta salsas densas; la fresca se pasa"}
@@ -277,7 +310,8 @@ EJEMPLO B — lección NO técnica (cocina):
   "ankiCards": [
     {"id": "card-001", "type": "concepto", "conceptRefs": [0], "front": "Define «al dente»", "back": "Firme al morder, con el núcleo apenas húmedo", "tags": ["cocina", "pasta"]},
     {"id": "card-002", "type": "concepto", "conceptRefs": [3], "front": "¿Para qué sirve el agua de cocción reservada?", "back": "El almidón emulsiona y liga la salsa con la pasta", "tags": ["cocina", "salsas"]},
-    {"id": "card-003", "type": "aplicacion", "conceptRefs": [2], "front": "¿Por qué sacar la pasta 1 minuto antes del tiempo del paquete?", "back": "Termina de cocerse con calor residual y al saltearse con la salsa", "tags": ["cocina", "tecnica"]}
+    {"id": "card-003", "type": "aplicacion", "conceptRefs": [2], "front": "¿Por qué sacar la pasta 1 minuto antes del tiempo del paquete?", "back": "Termina de cocerse con calor residual y al saltearse con la salsa", "tags": ["cocina", "tecnica"]},
+    {"id": "card-004", "type": "concepto", "conceptRefs": [1], "front": "¿Por qué se sala el agua de la pasta y no solo la salsa?", "back": "La pasta absorbe agua al cocerse: la sal la sazona por dentro; la salsa solo la sazona por fuera", "tags": ["cocina", "pasta"]}
   ]
 }
 	`,
@@ -315,9 +349,25 @@ export type VocabularyWord = {
 	/** B6: colocación frecuente y natural con la palabra (2-5 palabras, p. ej.
 	 *  «memory leak»). Vacío tolerado: la plantilla oculta la sección. */
 	collocation?: string;
+	/** Forma exacta en que aparece en la transcripción («ran», «figured it out»):
+	 *  así se reconoce aunque el lema sea irregular (shared/vocabMatch.ts). */
+	form?: string;
 	/** Fase 2: minuto de la lección donde se enseña («mm:ss»). */
 	t?: string;
 };
+
+/**
+ * Cuántas candidatas pedir según el volumen de la lección. Una lección corta
+ * no da para 20 palabras útiles: pedir de más empuja a la IA a rellenar. El
+ * estudiante elige después hasta su máximo por lección (VocabConfig.maxWords).
+ */
+export function vocabularyCandidateTarget(transcriptText: string): number {
+	const chars = transcriptText.trim().length;
+	if (chars < 2500) return 6;
+	if (chars < 6000) return 10;
+	if (chars < 12000) return 15;
+	return 20;
+}
 
 const CEFR_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 
@@ -341,6 +391,9 @@ export interface VocabularyOptions {
 	minLevel: string;
 	/** Máximo de palabras a extraer de la lección. */
 	maxWords: number;
+	/** Lemas que el estudiante YA tiene en su mazo y aparecen en esta lección:
+	 *  no se proponen, así las candidatas son todas nuevas. */
+	knownWords?: string[];
 }
 
 /**
@@ -366,11 +419,15 @@ export function buildVocabularyPrompt(transcriptText: string, options: Vocabular
 		'REGLAS DE SELECCIÓN:',
 		'- Solo palabras de contenido: sustantivos, verbos, adjetivos, adverbios y phrasal verbs.',
 		'- "word" SIEMPRE en forma base (lema) y minúsculas: "run", no "ran"; "framework"; "look up".',
+		'- "form": la forma EXACTA en que aparece en la transcripción, copiada tal cual ("ran", "figured it out", "leaks"). Si coincide con el lema, repítelo.',
 		'- Excluye SIEMPRE: nombres propios, personas, marcas, productos y tecnologías concretas (Java, Spring Boot, JVM, Docker), siglas y acrónimos (API, HTTP), números, contracciones, interjecciones y palabras de menos de 3 letras.',
 		'- Excluye todo lo que esté por debajo del nivel mínimo: si el mínimo es B1, no incluyas palabras A1/A2 ni vocabulario escolar básico (house, water, make).',
 		'- Sí incluye: phrasal verbs útiles (figure out, wrap up), términos técnicos del dominio del curso (overhead, throughput, leak, pitfalls) y palabras frecuentes en registros profesionales.',
 		'- Prioriza palabras que aporten más: aparecen varias veces en la lección, se reutilizan en contextos profesionales, o son de nivel más alto.',
 		'- Cada lema una sola vez; cero relleno: mejor 4 palabras excelentes que 8 mediocres.',
+		...((options.knownWords || []).length > 0
+			? [`- YA ESTÁN EN SU MAZO (de otras lecciones o cursos): NO las propongas: ${(options.knownWords || []).slice(0, 80).join(', ')}.`]
+			: []),
 		'- Si la transcripción NO está en ' + options.targetLang + ' o es demasiado corta, devuelve {"words": []}.',
 		'',
 		'REGLAS DE ORACIÓN (críticas para la retención):',
@@ -396,8 +453,8 @@ export function buildVocabularyPrompt(transcriptText: string, options: Vocabular
 		'- Sin comillas dobles dentro de los valores; usa « » si necesitas citar.',
 		'- Esquema exacto:',
 		(TIMED_TRANSCRIPT
-			? '{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural.", "t": "03:12"}]}'
-			: '{"words": [{"word": "lema", "level": "B2", "pos": "noun", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}'),
+			? '{"words": [{"word": "lema", "level": "B2", "pos": "noun", "form": "forma vista", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural.", "t": "03:12"}]}'
+			: '{"words": [{"word": "lema", "level": "B2", "pos": "noun", "form": "forma vista", "meaning": "sentido 1; sentido 2", "phonetic": "/pronunciación/", "monolingual": "definición simple en el idioma objetivo", "collocation": "colocación natural", "sentence": "Oración nueva de 8 a 14 palabras.", "sentenceTranslation": "Traducción fiel y natural."}]}'),
 		`- Máximo ${options.maxWords} elementos en "words".`,
 		'',
 		'Genera AHORA el JSON:',

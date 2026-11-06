@@ -98,11 +98,9 @@ const source = readFileSync(UI_SOURCE, 'utf8');
 const ELLIPSIS = '\u2026';
 
 const EVAL_TEXTS = [
-  `Analizando${ELLIPSIS}`,                        // botón, evaluación cargando
-  `Leyendo tu respuesta${ELLIPSIS}`,              // cargador 0 - 1.6 s
-  `Comparando con los conceptos${ELLIPSIS}`,      // cargador 1.6 - 3.2 s
-  `Generando feedback personalizado${ELLIPSIS}`,  // cargador desde 3.2 s
-  'Analizando tu respuesta',                       // streaming antes del primer texto
+  `Leyendo tu respuesta${ELLIPSIS}`,             // cargador 0 - 1.6 s
+  `Comparando con la lecci${'\u00f3'}n${ELLIPSIS}`,     // cargador 1.6 - 3.2 s
+  `Preparando tu revisi${'\u00f3'}n${ELLIPSIS}`,        // cargador desde 3.2 s
 ];
 const GENERATION_TEXT = `Analizando la transcripci${'\u00f3'}n${ELLIPSIS}`;
 
@@ -115,6 +113,12 @@ for (const text of EVAL_TEXTS) {
 const genInSource = source.includes(GENERATION_TEXT);
 check(`«${GENERATION_TEXT}» existe en la app (pantalla de generación)`, genInSource, 'el texto cambió');
 check(`«${GENERATION_TEXT}» NO cuenta como espera de evaluación`, !EVAL_LOADING.test(GENERATION_TEXT), 'lo detecta por error');
+// El cargador de evaluación dice «Preparando tu revisión...» y la generación
+// «Preparando tu sesión»: casi el mismo arranque, y confundirlos cargaría a
+// Recordar la espera de la generación dos veces.
+const SESSION_TEXT = 'Preparando tu sesión';
+check(`«${SESSION_TEXT}» existe en la app (generación)`, source.includes(SESSION_TEXT), 'el texto cambió');
+check(`«${SESSION_TEXT}» NO cuenta como espera de evaluación`, !EVAL_LOADING.test(SESSION_TEXT), 'lo detecta por error');
 
 console.log(fails === 0 ? '\n✅ OBSERVADOR OK (medición validada con reloj virtual)' : `\n❌ ${fails} fallos`);
 process.exit(fails === 0 ? 0 : 1);

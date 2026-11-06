@@ -3,7 +3,8 @@ import { motion, useInView } from "motion/react";
 import { Icon, type IconName } from "./icons";
 import { DockSheet } from "./DockSheet";
 import { ACHIEVEMENTS, getProgress, setDailyGoal, MASTERY_TIERS } from "../services/progress";
-import { getStreak } from "../services/streak";
+import { getStreak, studiedToday } from "../services/streak";
+import { fetchAnkiDue } from "../services/ankiDue";
 import { useDockTheme } from "../contexts/ThemeContext";
 
 const ICON: Record<string, IconName> = {
@@ -35,7 +36,8 @@ const tint = (hue: string, pct: number, base = "var(--usb-bg-3)") => `color-mix(
 type Prog = ReturnType<typeof getProgress>;
 function achValue(id: string, p: Prog, streak: number): number {
   switch (id) {
-    case "first": case "c25": case "c100": return p.correct;
+    case "first": return p.answered;
+    case "c25": case "c100": return p.correct;
     case "code1": return p.codeChallenges || 0;
     case "s1": case "s10": return p.sessions;
     case "e1": return p.exports || 0;
@@ -43,22 +45,6 @@ function achValue(id: string, p: Prog, streak: number): number {
     case "l5": case "l10": return p.level;
     default: return 0;
   }
-}
-
-/** Repasos pendientes en todo el mazo raíz (AnkiConnect; null si no responde). */
-async function fetchAnkiDue(): Promise<number | null> {
-  const chromeApi = (globalThis as typeof globalThis & {
-    chrome?: { runtime?: { id?: string; sendMessage?: (msg: unknown, cb: (res: unknown) => void) => void } };
-  }).chrome;
-  if (!chromeApi?.runtime?.id || !chromeApi.runtime.sendMessage) return null;
-  return new Promise((resolve) => {
-    try {
-      chromeApi.runtime!.sendMessage!({ type: "USG_ANKI_DUE", course: "", lesson: "", browse: false, rootDeck: "Kinema", scope: "all" }, (res: unknown) => {
-        const due = (res as { due?: number } | null)?.due;
-        resolve(typeof due === "number" ? due : null);
-      });
-    } catch { resolve(null); }
-  });
 }
 
 function useCountUp(target: number, ms = 800) {
@@ -230,7 +216,9 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
     : toLevel <= 25
     ? { icon: "zap" as IconName, text: `Estás a ${toLevel} XP del nivel ${p.level + 1}. Una pregunta más.` }
     : streak > 0
-    ? { icon: "flame" as IconName, text: `Racha de ${streak} ${streak === 1 ? "día" : "días"}. Estudia hoy para mantenerla.` }
+    ? { icon: "flame" as IconName, text: studiedToday()
+        ? `Racha de ${streak} ${streak === 1 ? "día" : "días"}: hoy ya cuenta. Vuelve mañana para seguirla.`
+        : `Racha de ${streak} ${streak === 1 ? "día" : "días"}. Estudia hoy para mantenerla.` }
     : { icon: "target" as IconName, text: "Responde una pregunta hoy y empieza tu racha." };
 
   const shownAchievements = ACHIEVEMENTS
@@ -247,15 +235,17 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
   const activeDays = pastDays.filter((d) => d.xp > 0).length;
   let bestRun = 0, run = 0;
   for (const d of pastDays) { run = d.xp > 0 ? run + 1 : 0; bestRun = Math.max(bestRun, run); }
-  bestRun = Math.max(bestRun, streak);
+  // La mejor racha guardada (de siempre), no solo la de estas 5 semanas.
+  bestRun = Math.max(bestRun, streak, p.bestStreak);
   const avg = Math.round(p.weekXp / 7);
 
+  // Sin repetir lo de «Aprendizaje» (lecciones): cada cifra aparece una vez.
   const stats = [
-    { v: streak, s: "d", l: "Racha", icon: "flame", tone: "amber" },
-    { v: p.correct, s: "", l: "Aciertos", icon: "checkCircle2", tone: "green" },
-    { v: p.codeChallenges || 0, s: "", l: "Retos", icon: "trophy", tone: "violet" },
-    { v: p.sessions, s: "", l: "Lecciones", icon: "bookOpen", tone: "violet" },
-  ] as { v: number; s: string; l: string; icon: IconName; tone: Tone }[];
+    { v: streak, s: "d", l: "Racha", icon: "flame", tone: "amber", h: "Días seguidos estudiando (un día de descanso por semana no la rompe)" },
+    { v: p.correct, s: "", l: "Aciertos", icon: "checkCircle2", tone: "green", h: "Respuestas correctas a la primera" },
+    { v: p.practiceCorrect, s: "", l: "Prácticas", icon: "trophy", tone: "violet", h: "Prácticas resueltas bien (caso, código o explicación)" },
+    { v: p.exports || 0, s: "", l: "Exportadas", icon: "layers", tone: "violet", h: "Lecciones exportadas a Anki u Obsidian" },
+  ] as { v: number; s: string; l: string; icon: IconName; tone: Tone; h: string }[];
 
   return (
     <DockSheet eyebrow="Tu progreso" title={`Nivel ${p.level} · ${p.tier.name}`} ariaLabel="Tu progreso" onClose={onClose}>
@@ -329,7 +319,9 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
             {([
               { icon: "bookOpen" as IconName, v: `${p.weekLessons} / ${p.sessions}`, l: "Lecciones (semana / total)" },
               { icon: "checkCircle2" as IconName, v: p.firstTryPct === null ? "—" : `${p.firstTryPct}%`, l: "Aciertos a la primera · últ. 20" },
-              { icon: "refreshCcw" as IconName, v: p.reinforced, l: "Puntos reforzados" },
+              // Corregir tras la revisión es aprender del error (R4); antes aquí había un
+              // contador de «puntos reforzados» que nada incrementaba (siempre 0).
+              { icon: "refreshCcw" as IconName, v: p.improved, l: "Corregidas tras revisar" },
               { icon: "repeat2" as IconName, v: ankiDue === null ? "—" : ankiDue, l: "Repasos pendientes en Anki" },
             ] as { icon: IconName; v: number | string; l: string }[]).map((x) => (
               <div key={x.l} className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 flex items-center gap-2.5 min-w-0">
@@ -346,7 +338,7 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
         {/* Estadísticas */}
         <Reveal i={1} className="bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl grid grid-cols-4 divide-x divide-[var(--usb-divider)]">
           {stats.map((x, i) => (
-            <div key={x.l} className="group py-3.5 px-1 flex flex-col items-center gap-1.5 min-w-0">
+            <div key={x.l} title={x.h} className="group py-3.5 px-1 flex flex-col items-center gap-1.5 min-w-0">
               <motion.span
                 initial={{ scale: 0.5, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -468,7 +460,7 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
         {/* Constancia */}
         <Card
           i={4} tone="green" icon="flame" title="Constancia"
-          right={<span className="text-[11px] font-semibold text-[var(--usb-fg-mid)]"><strong className="text-[var(--usb-fg-hi)] tabular-nums">{activeDays}</strong> días · mejor racha {bestRun}d</span>}
+          right={<span className="text-[11px] font-semibold text-[var(--usb-fg-mid)]"><strong className="text-[var(--usb-fg-hi)] tabular-nums">{activeDays}</strong> {activeDays === 1 ? "día" : "días"} · mejor racha {bestRun}d</span>}
         >
           <div>
             <div className="grid grid-cols-7 gap-1.5 mb-1.5">

@@ -3,7 +3,7 @@ import {
   Download, Upload, RefreshCcw, CheckCircle2, AlertCircle, PlaySquare,
   Sparkles, RotateCcw, Type, Eye, EyeOff, AlignCenter,
   FileText, Loader2, ArrowUpDown, Baseline, GripHorizontal, Keyboard, Play, Pause, Flame,
-  X, Icon, Settings, History, LogOut, Cloud, Check, ChevronRight, ChevronDown, type IconName,
+  X, Icon, Settings, History, LogOut, LogIn, Cloud, Check, ChevronRight, ChevronDown, type IconName,
 } from "./icons";
 import { motion, AnimatePresence } from "motion/react";
 import { getProgress } from "../services/progress";
@@ -17,6 +17,13 @@ import { VocabularyMountContext } from "./SettingsSheet";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { contentBridge, type OverlayConfig } from "../services/contentBridge";
+
+// Relleno automático del nombre de la lección: valor heredado de la plantilla
+// (el content script usa el mismo) y marca de la última lección rellenada.
+const DEMO_LESSON_NAME = "02 - jvm y tipos de datos";
+const LESSON_AUTOFILL_KEY = "agent_lesson_autofill_key";
+/** Lo que escribimos nosotros la última vez (si el campo sigue igual, nadie lo editó). */
+const LESSON_AUTOFILL_VALUE = "agent_lesson_autofill_value";
 import { KinemaBrand, FrameMarks } from "./AppLogo";
 import { Session } from "@supabase/supabase-js";
 import { useDockTheme } from "../contexts/ThemeContext";
@@ -309,6 +316,9 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
 
   // ── Captions state ────────────────────────────────────────────────────────
   const [autoTranslate, setAutoTranslate] = usePersistedState("captions_auto_translate", true);
+  // Aviso «Sincronizar en la nube» (modo invitado): se puede ocultar; para volver a
+  // iniciar sesión queda «Iniciar sesión» en la cabecera, siempre en el mismo sitio.
+  const [syncBannerHidden, setSyncBannerHidden] = usePersistedState("kinema_sync_banner_hidden", false);
   const [pasteSrt, setPasteSrt]           = useState("");
 
   // ── Cache config (persisted) ──────────────────────────────────────────────
@@ -420,26 +430,55 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     // can pre-populate course/lesson name and description for the
     // dynamic objectives generator. We only auto-fill when the course
     // slug changes (so we don't overwrite the user's edits within the
-    // same course). The lesson name always tracks the active lecture.
+    // same course).
     const courseSlug = typeof (context as { courseSlug?: unknown })?.courseSlug === "string" ? (context as { courseSlug?: string }).courseSlug?.trim() : "";
     const courseTitle = typeof context?.courseTitle === "string" ? context.courseTitle.trim() : "";
     const courseDescription = typeof context?.courseDescription === "string" ? context.courseDescription.trim() : "";
     const courseContext = typeof context?.courseContext === "string" ? context.courseContext.trim() : "";
     const lectureTitle = typeof context?.lectureTitle === "string" ? context.lectureTitle.trim() : "";
     if (courseTitle || courseDescription || lectureTitle) {
-      void chromeStorage.get(["agent_autofilled_course_slug"]).then((existing) => {
+      void (async () => {
+        const existing = await chromeStorage.get(["agent_autofilled_course_slug", "agent_lesson_name", LESSON_AUTOFILL_KEY, LESSON_AUTOFILL_VALUE]);
         const lastFilledSlug = typeof existing.agent_autofilled_course_slug === "string" ? existing.agent_autofilled_course_slug : "";
+        const lastLessonAutoKey = typeof existing[LESSON_AUTOFILL_KEY] === "string" ? String(existing[LESSON_AUTOFILL_KEY]) : "";
+        const lastLessonAutoValue = typeof existing[LESSON_AUTOFILL_VALUE] === "string" ? String(existing[LESSON_AUTOFILL_VALUE]) : "";
         const isNewCourse = !!courseSlug && courseSlug !== lastFilledSlug;
         const updates: Record<string, unknown> = {};
         if (isNewCourse && courseTitle) updates.agent_course_name = courseTitle;
         if (isNewCourse && courseDescription) updates.agent_course_description = courseDescription;
         if (isNewCourse) updates.agent_autofilled_course_slug = courseSlug;
-        // Lesson name always tracks the active lecture — overwrite freely.
-        if (lectureTitle) updates.agent_lesson_name = lectureTitle;
-        if (Object.keys(updates).length > 0) {
-          void chromeStorage.set(updates);
+        // El nombre de la lección sigue a la lección ABIERTA sin pisar lo que el
+        // usuario escribió en «Nombre del video/clase actual» (ese campo es suyo).
+        // Se rellena si:
+        //  · el campo sigue vacío/heredado, o
+        //  · nadie lo ha tocado desde el último relleno (el valor guardado es el
+        //    que escribimos nosotros: así se corrige si la página tardó en dar el
+        //    título bueno — en Udemy el primer contexto puede llegar con el
+        //    temario aún sin actualizar y dejar el nombre de la lección anterior), o
+        //  · CAMBIÓ la lección: su edición pertenecía a la anterior.
+        // Antes se pisaba en cada actualización (se perdía lo que escribía el
+        // usuario) y después nunca (un título viejo se quedaba fijo y la sesión
+        // acababa apuntando a otra lección).
+        const storedLesson = typeof existing.agent_lesson_name === "string" ? existing.agent_lesson_name.trim() : "";
+        const lessonIsPlaceholder = !storedLesson || storedLesson.toLowerCase() === DEMO_LESSON_NAME;
+        // Sin marca previa (primera vez tras la actualización) se adopta el título
+        // de la página una vez: si no, un nombre que quedó viejo se fijaría para
+        // siempre y la sesión sería de otra lección.
+        const autoFillUntouched = Boolean(storedLesson) && (storedLesson === lastLessonAutoValue || !lastLessonAutoValue);
+        const lectureChanged = Boolean(lectureKey) && lectureKey !== lastLessonAutoKey;
+        if (lectureTitle && (lessonIsPlaceholder || autoFillUntouched || lectureChanged)) {
+          updates.agent_lesson_name = lectureTitle;
+          updates[LESSON_AUTOFILL_VALUE] = lectureTitle;
         }
-      });
+        if (Object.keys(updates).length > 0) {
+          await chromeStorage.set(updates);
+        }
+        // La marca de la lección abierta se guarda SIEMPRE que la sepamos: así una
+        // edición del usuario no se reescribe al recargar la misma lección.
+        if (lectureKey && lectureKey !== lastLessonAutoKey) {
+          await chromeStorage.set({ [LESSON_AUTOFILL_KEY]: lectureKey });
+        }
+      })();
     }
     if (courseSlug) {
       void chromeLocalStorage.get(["agent_course_context", "agent_course_context_slug"]).then((existing) => {
@@ -802,7 +841,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   const preview_en = liveEn || MOCK_LINES[currentLine]?.en || "";
   const preview_es = liveEs || MOCK_LINES[currentLine]?.es || "";
   const overlayPreviewText = preview_es;
-  const previewWord = previewWords.find(word => vocabularyMatches(word.word, preview_en));
+  const previewWord = previewWords.find(word => vocabularyMatches(word.word, preview_en, word.form));
   const previewBounds = previewRef.current?.getBoundingClientRect();
   const subtitleBounds = dragRef.current?.getBoundingClientRect();
   const previewChipHeight = Math.max(32, previewBounds && subtitleBounds ? previewBounds.bottom - subtitleBounds.bottom - 12 : 80);
@@ -893,6 +932,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         <AnimatePresence>
           {session && (
             <motion.div
+              key="account"
               initial={{ opacity: 0, height: 0, marginTop: 0 }}
               animate={{ opacity: 1, height: 'auto', marginTop: 10 }}
               exit={{ opacity: 0, height: 0, marginTop: 0 }}
@@ -922,12 +962,33 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 <button
                   onClick={onSignOut}
                   title="Cerrar sesión"
-                  className={`flex items-center gap-1 text-[9px] border px-2 py-1 rounded-lg transition-all shrink-0 ml-2 ${t("text-white/22 hover:text-red-400/80 border-white/6 hover:border-red-500/20","text-[#3d3a38]/55 hover:text-red-600/80 border-black/8 hover:border-red-400/30")}`}
+                  className="flex items-center gap-1 text-[10.5px] font-semibold border border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-err-text)] hover:border-red-500/30 px-2 py-1 rounded-lg transition-colors shrink-0 ml-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
                 >
                   <LogOut size={12} />
                   <span>Salir</span>
                 </button>
               )}
+            </motion.div>
+          )}
+          {/* Invitado: el mismo sitio que la cuenta, con la vuelta a «Iniciar sesión». */}
+          {!session && onRequestLogin && (
+            <motion.div
+              key="guest"
+              initial={{ opacity: 0, height: 0, marginTop: 0 }}
+              animate={{ opacity: 1, height: 'auto', marginTop: 10 }}
+              exit={{ opacity: 0, height: 0, marginTop: 0 }}
+              transition={{ duration: 0.22 }}
+              className="flex items-center justify-between overflow-hidden"
+              data-guest-account
+            >
+              <span className="text-[11px] font-medium text-[var(--usb-fg-mid)] truncate">Sin cuenta · solo en este dispositivo</span>
+              <button
+                onClick={onRequestLogin}
+                className="flex items-center gap-1 text-[10.5px] font-semibold border border-[var(--usb-border)] text-[var(--usb-fg-hi)] hover:border-[#6d4aff]/45 px-2 py-1 rounded-lg transition-colors shrink-0 ml-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+              >
+                <LogIn size={12} />
+                <span>Iniciar sesión</span>
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1434,30 +1495,45 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       </div>
 
       {/* ── Guest mode sync banner ────────────────────────────────────────── */}
-      {!session && onRequestLogin && (
+      {/* Se puede ocultar (ocupa espacio del dock); «Iniciar sesión» sigue en la cabecera. */}
+      {!session && onRequestLogin && !syncBannerHidden && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.4 }}
           className="shrink-0 mx-3 mb-3"
         >
-          <button
-            onClick={onRequestLogin}
-            className="kx-sync w-full group relative overflow-hidden flex items-center gap-3 px-4 py-3.5 text-left rounded-2xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:border-[#6d4aff]/50 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
-          >
-            <div className={`w-9 h-9 rounded-xl bg-[var(--usb-bg-2)] border border-[var(--usb-border)] flex items-center justify-center shrink-0 ${t("text-[#b7a6ff]","text-[#5b37e8]")}`}>
-              <Cloud size={17} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-bold tracking-tight text-[var(--usb-fg-hi)]">
-                Sincronizar en la nube
-              </p>
-              <p className="text-[11.5px] mt-0.5 font-medium text-[var(--usb-fg-mid)]">
-                Tu configuración solo está en este dispositivo
-              </p>
-            </div>
-            <ChevronRight size={16} className="text-[var(--usb-fg-mid)] group-hover:translate-x-1 group-hover:text-[var(--usb-fg-hi)] transition-all shrink-0" />
-          </button>
+          <div className="kx-sync relative flex items-center rounded-2xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:border-[#6d4aff]/50 transition-colors duration-200" data-sync-banner>
+            <button
+              onClick={onRequestLogin}
+              className="group flex-1 min-w-0 flex items-center gap-3 pl-4 pr-1 py-3.5 text-left rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+            >
+              <div className={`w-9 h-9 rounded-xl bg-[var(--usb-bg-2)] border border-[var(--usb-border)] flex items-center justify-center shrink-0 ${t("text-[#b7a6ff]","text-[#5b37e8]")}`}>
+                <Cloud size={17} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-bold tracking-tight text-[var(--usb-fg-hi)]">
+                  Sincronizar en la nube
+                </p>
+                <p className="text-[11.5px] mt-0.5 font-medium text-[var(--usb-fg-mid)]">
+                  Tu configuración solo está en este dispositivo
+                </p>
+              </div>
+              <ChevronRight size={16} className="text-[var(--usb-fg-mid)] group-hover:translate-x-1 group-hover:text-[var(--usb-fg-hi)] transition-all shrink-0" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSyncBannerHidden(true);
+                toast.message("Aviso ocultado", { description: "Cuando quieras sincronizar, pulsa «Iniciar sesión» arriba, junto a Kinema." });
+              }}
+              aria-label="Ocultar el aviso de sincronización"
+              title="Ocultar"
+              className="w-8 h-8 mr-2 rounded-lg flex items-center justify-center shrink-0 text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-2)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+            >
+              <X size={14} />
+            </button>
+          </div>
         </motion.div>
       )}
 
@@ -1477,35 +1553,17 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
               <div className={`flex items-center justify-between px-3 py-2 border-b ${t("border-white/8","border-black/6")}`}>
                 <div className="flex items-center gap-1.5">
                   <Keyboard size={10} className="text-violet-400/70" />
-                  <span className={`text-[10px] ${t("text-white/55","text-[#2c2a28]")}`} style={{ fontWeight: 600 }}>Atajos de teclado</span>
+                  <span className={`text-[10px] ${t("text-white/55","text-[#2c2a28]")}`} style={{ fontWeight: 600 }}>Atajos y trucos</span>
                 </div>
                 <button onClick={() => setShowHotkeys(false)} className={`transition-colors ${t("text-white/25 hover:text-white/60","text-[#3d3a38]/55 hover:text-[#1a1918]")}`}>
                   <X size={10} />
                 </button>
               </div>
-              <div className="p-2.5 space-y-1.5">
-                {[
-                  { keys: ["Alt", "P"], desc: "Play / Pause video" },
-                  { keys: ["Alt", "C"], desc: "Captura a notas" },
-                  { keys: ["Alt", "S"], desc: "Abrir Study Agent" },
-                ].map(({ keys, desc }) => (
-                  <div key={desc} className="flex items-center justify-between gap-3">
-                    <span className={`text-[10px] ${t("text-white/40","text-[#3d3a38]/70")}`}>{desc}</span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {keys.map((k, i) => (
-                        <React.Fragment key={k}>
-                          <kbd className={`px-1.5 py-0.5 rounded border text-[9px] font-mono ${t("bg-white/8 border-white/12 text-white/55","bg-black/5 border-black/12 text-[#3d3a38]/80")}`}>{k}</kbd>
-                          {i < keys.length - 1 && <span className={`text-[8px] ${t("text-white/20","text-[#3d3a38]/45")}`}>+</span>}
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <div className={`pt-2 border-t space-y-1 ${t("border-white/5","border-black/6")}`}>
-                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Triple clic en Ajustes: modo Dev (telemetría SSE)</p>
-                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Engranaje → Configuración de Kinema</p>
-                  <p className={`text-[9px] ${t("text-white/18","text-[#6e6b68]/55")}`}>Overlay tab → arrastra ⠿ para posición libre</p>
-                </div>
+              {/* Solo lo que existe en la extensión: el manifest no declara atajos de teclado. */}
+              <div className="p-2.5 space-y-1">
+                <p className={`text-[10px] ${t("text-white/55","text-[#3d3a38]/80")}`}>Engranaje → Configuración de Kinema</p>
+                <p className={`text-[10px] ${t("text-white/55","text-[#3d3a38]/80")}`}>Overlay → arrastra ⠿ para posición libre</p>
+                <p className={`text-[10px] ${t("text-white/55","text-[#3d3a38]/80")}`}>Triple clic en Ajustes: modo Dev (telemetría SSE)</p>
               </div>
             </motion.div>
           )}
@@ -1515,7 +1573,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           <span className={`text-[10px] font-mono ${t("text-white/40","text-[#6e6b68]/70")}`}>{(providerConfig.baseUrl || "127.0.0.1:8010").replace(/^https?:\/\//, "").replace(/\/+$/, "")}</span>
           <button
             onClick={() => setShowHotkeys(v => !v)}
-            title="Atajos de teclado"
+            title="Atajos y trucos"
             className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md border transition-all text-[9px] ${
               showHotkeys
                 ? "text-violet-300/80 bg-violet-500/10 border-violet-500/20"
@@ -1542,7 +1600,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.5.15"}</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.6.0"}</span>
         </div>
       </div>
 

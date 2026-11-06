@@ -432,7 +432,7 @@ export function AuthGuard({
   return (
     <div className="kx-page flex flex-col h-full w-full overflow-y-auto custom-scrollbar p-4 space-y-4 bg-[var(--usb-bg-2)]">
       {/* Hero */}
-      <motion.div {...rise(0)} className="kx-hero-solid relative overflow-hidden rounded-2xl p-4.5" style={{ ["--kinema-wordmark" as string]: "#fff", ["--kinema-signature" as string]: "#e4dcff" }}>
+      <motion.div {...rise(0)} className="kx-hero-solid relative shrink-0 overflow-hidden rounded-2xl p-4.5" style={{ ["--kinema-wordmark" as string]: "#fff", ["--kinema-signature" as string]: "#e4dcff" }}>
         <span className="kx-ring kx-ring-1" aria-hidden="true" />
         <div className="relative">
           <KinemaBrand dense />

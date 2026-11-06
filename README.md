@@ -105,7 +105,7 @@ After pulling changes, rebuild (`npm run build`) and reload the extension.
 
 **Branding**: the toolbar / extensions-page / store icons are the Kinema K
 (`public/icons/`, master SVG + `node scripts/generate-icons.mjs` to regenerate;
-see `.mock/docs/KINEMA-BRAND.md` for the identity rules).
+see `docs/KINEMA-BRAND.md` for the identity rules).
 
 ## Typical session
 

@@ -128,7 +128,7 @@ export function stableNumericId(input: string, offset: number): number {
 	return offset + fnv1a(input);
 }
 
-/** GUID estable por contenido: reimportar actualiza en vez de duplicar. */
+/** GUID estable por contenido: reimportar no duplica (y no pisa: KINEMA_NOTE_MOD). */
 export function stableGuid(input: string): string {
 	return `usb${fnv1a(input).toString(36)}`;
 }
@@ -1404,6 +1404,29 @@ hr {
  */
 const ESCAPE_REGEX_SPECIALS = '[.*+?^${}()|[\\]\\\\]';
 
+/**
+ * La misma regla que shared/vocabMatch.ts, en ES5 para las plantillas de Anki
+ * (resaltado en «Reconocer», hueco en «Producir»): lema + flexiones regulares
+ * («leak» → «leaks», «figure out» → «figured it out»), con límites de palabra.
+ * Antes era una subcadena: «art» marcaba «st[art]ed» y «figure out» no se
+ * encontraba. Grupo 1 = el borde previo; grupo 2 = la palabra tal como está.
+ */
+export const VOCAB_WORD_REGEX_JS = String.raw`function kxWordRegex(word) {
+    var esc = function (s) { return s.replace(new RegExp(${JSON.stringify(ESCAPE_REGEX_SPECIALS)}, "g"), "\\$&"); };
+    var tokens = word.toLowerCase().split(/\s+/).filter(function (t) { return t.length > 0; });
+    var parts = tokens.map(function (t) {
+      if (t.length < 3 || /[^a-z\u00c0-\u024f]/.test(t)) return esc(t);
+      var alts = [esc(t) + "(?:s|es|ed|ing|er|ers)?"];
+      if (/e$/.test(t)) alts.push(esc(t.slice(0, -1)) + "(?:ing|ed|er|ers|es)");
+      if (/[^aeiou]y$/.test(t)) alts.push(esc(t.slice(0, -1)) + "(?:ies|ied|ier|iers)");
+      if (/[^aeiou][aeiou][bdgklmnprt]$/.test(t)) alts.push(esc(t) + esc(t.slice(-1)) + "(?:ed|ing|er|ers)");
+      return "(?:" + alts.join("|") + ")";
+    });
+    var body = parts.join("(?:\\s+\\S+){0,2}?\\s+");
+    try { return new RegExp("(^|[^\\p{L}\\p{N}])(" + body + ")(?=$|[^\\p{L}\\p{N}])", "giu"); }
+    catch (e) { return new RegExp("(^|[^A-Za-z0-9\\u00c0-\\u024f])(" + body + ")(?=$|[^A-Za-z0-9\\u00c0-\\u024f])", "gi"); }
+  }`;
+
 // ── B3 · Front de PRODUCIR ───────────────────────────────────────────────────
 // Da el significado y la traducción, y pide PRODUCIR la palabra en el idioma
 // objetivo: la oración trae [ ... ] en su lugar. Sin IPA y sin audio (darían
@@ -1456,22 +1479,22 @@ const VOCAB_PRODUCE_FRONT_TEMPLATE = `<div class="anki-wrapper">
       // (a), ?) no lancen una excepción ni marquen de más.
       container.style.display = "block";
       try {
-        // Paso 1: escapar los metacaracteres de la palabra (C++ → C\\+\\+).
-        var escapeRe = new RegExp(${JSON.stringify(ESCAPE_REGEX_SPECIALS)}, "g");
-        var wordRe = new RegExp(wordRaw.replace(escapeRe, ${JSON.stringify('\\$&')}), "gi");
-        // Paso 2: partir la frase por la palabra escapada y montar por DOM.
+        // La palabra (o su flexión) con límites de palabra; nunca dentro de otra.
+        ${VOCAB_WORD_REGEX_JS}
+        var wordRe = kxWordRegex(wordRaw);
         var match, lastIndex = 0, matched = false;
         while ((match = wordRe.exec(sentenceRaw)) !== null) {
+          var start = match.index + match[1].length;
+          if (!match[2]) { wordRe.lastIndex += 1; continue; }
           matched = true;
-          if (match.index > lastIndex) {
-            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, match.index)));
+          if (start > lastIndex) {
+            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, start)));
           }
           var gap = document.createElement("span");
           gap.className = "cloze-gap";
           gap.textContent = "[ ... ]";
           output.appendChild(gap);
-          lastIndex = match.index + match[0].length;
-          if (match[0].length === 0) { wordRe.lastIndex += 1; }
+          lastIndex = start + match[2].length;
         }
         if (matched) {
           if (lastIndex < sentenceRaw.length) {
@@ -1541,20 +1564,21 @@ const VOCAB_RECOGNIZE_FRONT_TEMPLATE = `<div class="anki-wrapper">
       // metacaracteres (C++, node.js) y cada coincidencia se marca.
       container.style.display = "block";
       try {
-        var escapeRe = new RegExp(${JSON.stringify(ESCAPE_REGEX_SPECIALS)}, "g");
-        var wordRe = new RegExp(wordRaw.replace(escapeRe, ${JSON.stringify('\\$&')}), "gi");
+        ${VOCAB_WORD_REGEX_JS}
+        var wordRe = kxWordRegex(wordRaw);
         var match, lastIndex = 0, matched = false;
         while ((match = wordRe.exec(sentenceRaw)) !== null) {
+          var start = match.index + match[1].length;
+          if (!match[2]) { wordRe.lastIndex += 1; continue; }
           matched = true;
-          if (match.index > lastIndex) {
-            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, match.index)));
+          if (start > lastIndex) {
+            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, start)));
           }
           var mark = document.createElement("mark");
           mark.className = "target";
-          mark.textContent = match[0];
+          mark.textContent = match[2];
           output.appendChild(mark);
-          lastIndex = match.index + match[0].length;
-          if (match[0].length === 0) { wordRe.lastIndex += 1; }
+          lastIndex = start + match[2].length;
         }
         if (matched) {
           if (lastIndex < sentenceRaw.length) {

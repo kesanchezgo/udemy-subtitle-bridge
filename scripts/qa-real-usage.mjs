@@ -3,7 +3,7 @@
 // por SW, transcripción del vídeo real.
 import { chromium } from 'playwright';
 import { createObserverTimeline, EVAL_LOADING } from './observer-timeline.mjs';
-import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -134,6 +134,14 @@ if (existsSync('.qa-udemy-cookies.json')) {
 // Captura de consola (el content script escribe en la consola de la página)
 page_console_attach(context);
 
+// Export real a Obsidian: solo si el usuario lo pide (QA_OBSIDIAN_VAULT=<vault>).
+// El vault real vive fuera del repo; sin esta variable no se toca nada suyo.
+const obsidianVault = process.env.QA_OBSIDIAN_VAULT ?? '';
+let celebrationOk = null;
+const obsidianUris = [];
+context.on('request', (r) => { if (r.url().startsWith('obsidian://')) obsidianUris.push(r.url()); });
+if (obsidianVault) console.log(`  export a Obsidian activado → vault «${obsidianVault}»`);
+
 // Siembra el objetivo del curso (escenario de la 2ª lección). Debe correr
 // DESPUÉS de cualquier limpieza de historial y ANTES de montar el dock.
 const seedCourseObjectiveRecord = async (label = '') => {
@@ -173,7 +181,7 @@ let seeded = false;
 for (let attempt = 1; attempt <= 5 && !seeded; attempt++) {
 	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	if (!sw) { await new Promise((r) => setTimeout(r, 1500)); continue; }
-	await sw.evaluate(({ real, seedCourseObjective, courseNameSeed }) => new Promise((res) => {
+	await sw.evaluate(({ real, seedCourseObjective, courseNameSeed, obsidianVault }) => new Promise((res) => {
 		// (nada de process.env aqui dentro: no existe en el navegador y abortaba el set)
 		if (seedCourseObjective) {
 			const slug = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '').slice(0, 80) || 'untitled';
@@ -193,8 +201,16 @@ for (let attempt = 1; attempt <= 5 && !seeded; attempt++) {
 			usg_ai_provider_config: real
 				? { kind: 'local', baseUrl: 'http://127.0.0.1:6660/v1', apiKey: '', model: 'deepseek-v4.1-flash:free' }
 				: { kind: 'openai', baseUrl: 'http://127.0.0.1:8123/v1', apiKey: 'qa-key', model: 'qa-model' },
+			// Export real a Obsidian (opt-in con QA_OBSIDIAN_VAULT): apunta al vault
+			// de verdad para poder entregar la URI al sistema y comprobar la nota.
+			...(obsidianVault ? {
+				obsidian_export_config: {
+					vaultName: obsidianVault, sourcesFolder: 'wiki/fuentes', mocsFolder: 'cursos',
+					includeCards: true, autoExport: false, includeRawSrt: false,
+				},
+			} : {}),
 		}, res);
-	}), { real: REAL_PROXY, seedCourseObjective: process.env.QA_SEED_COURSE_OBJECTIVE === '1', courseNameSeed: 'Java In-Depth: Become a Complete Java Engineer! [2026]' }).catch(() => {});
+	}), { real: REAL_PROXY, seedCourseObjective: process.env.QA_SEED_COURSE_OBJECTIVE === '1', courseNameSeed: 'Java In-Depth: Become a Complete Java Engineer! [2026]', obsidianVault }).catch(() => {});
 	await new Promise((r) => setTimeout(r, 500));
 	const back = await sw.evaluate(() => new Promise((res) => {
 		chrome.storage.local.get(['usg_ai_provider_config'], (r) => res(r?.usg_ai_provider_config ?? null));
@@ -613,7 +629,7 @@ if (process.env.QA_MULTI_LESSON === '1') {
 		await page.waitForTimeout(1000);
 	}
 	if (!tCta) { console.log('✗ CTA de B deshabilitado', objectiveReady.slice(-120)); process.exit(1); }
-	const resultB = await waitFor(/¿Qué tan claro te quedó el video\??/, 400000);
+	const resultB = await waitFor(/¿Qué tan claro te quedó la lección\??/, 400000);
 	const genMs = Date.now() - tCta;
 	const consumed = pageConsoleBuf.some((l) => /mazo pre-generado consumido/.test(l));
 	const discarded = pageConsoleBuf.some((l) => /pre-generación descartada/.test(l));
@@ -684,7 +700,7 @@ if (process.env.QA_HUMAN_OBSERVE === '1') {
 			console.log(`  Empezar detectado @ ${Math.round((now - t0obs) / 1000)}s`);
 		}
 		if (started) {
-			if (!genCounted && has(/¿Qué tan claro te quedó el video\??/)) {
+			if (!genCounted && has(/¿Qué tan claro te quedó la lección\??/)) {
 				genCounted = true;
 				firstResultAt = now;
 				timeline.addAi(now - genAt, now); // la generación es espera de IA de Recordar
@@ -775,7 +791,7 @@ markStep('Recordar'); // Empezar: la generacion es espera de IA de Recordar
 console.log('  generación iniciada…');
 
 // Resultado
-const txt = await waitFor(/¿Qué tan claro te quedó el video\??/, 600000);
+const txt = await waitFor(/¿Qué tan claro te quedó la lección\??/, 600000);
 if (!/¿Qué tan claro/.test(txt)) {
 	await page.screenshot({ path: path.join(SHOTS, 'gen-fail.png') });
 	console.log('✗ generación sin resultado');
@@ -794,7 +810,7 @@ await click(/^Más o menos/);
 await page.waitForTimeout(600);
 
 // Conceptos
-await click(/Ver los conceptos|Comparar con los conceptos/);
+await click(/Ver las ideas clave|Comparar con las ideas clave/);
 await page.waitForTimeout(600);
 
 // Pregunta (paso Comprobar)
@@ -808,6 +824,22 @@ await dwellRead(35); // lee la pregunta y piensa
 if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'javac produce bytecode y la JVM lo interpreta en cualquier plataforma.')) {
 	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
 	console.log('✗ textarea de pregunta no apareció');
+	// Diagnostico: se quedo en Recordar (no avanzo) o el paso Comprobar esta
+	// vacio (sin preguntas)? El dock y el registro persistido lo dicen.
+	const dumpTxt = await shadow();
+	console.log('  dock:', dumpTxt.replace(/\s+/g, ' ').slice(-260));
+	const swNow2 = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	const rec = swNow2 ? await swNow2.evaluate((lid) => new Promise((res) => {
+		chrome.storage.local.get(null, (all) => {
+			const k = Object.keys(all || {}).find((x) => x.startsWith('usb_history_lecture::') && x.endsWith('::' + lid));
+			const r = k ? all[k] : null;
+			const sc = r?.studyContent;
+			res({ key: k || null, concepts: sc?.keyConcepts?.length ?? null, questions: sc?.questions?.length ?? null, confidence: r?.confidence ?? null });
+		});
+	}), String(currentLesson.id)).catch(() => null) : null;
+	console.log('  registro:', JSON.stringify(rec));
+	console.log('  consola reciente:');
+	for (const l of pageConsoleBuf.slice(-25)) console.log('   ', l);
 	process.exit(1);
 }
 if (process.env.QA_COLD_SW === '1') {
@@ -818,12 +850,18 @@ if (process.env.QA_COLD_SW === '1') {
 	await page.waitForTimeout(35000);
 }
 let tEvalWait = Date.now();
-pageConsoleBuf.push('=== click Evaluar Q1 ===');
-await clickUntil(/^Evaluar$/, 10000);
+pageConsoleBuf.push('=== click Revisar mi respuesta Q1 ===');
+await clickUntil(/^Revisar mi respuesta$/, 10000);
 
 // Esperar veredictos reales (marcadores [CORRECTO]/[PARCIAL]/[INCORRECTO] del
 // feedback) y avanzar pregunta a pregunta. El paginador del dock dice
 // "Siguiente" siempre, así que el texto del dock no sirve de señal: se cuenta.
+// El prototipo ya no pinta [CORRECTO]/FALTO: en crudo: el veredicto llega como
+// rótulos + caja de opciones. La caja y el repaso de cierre son las señales.
+const nextMovesReady = () => page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	return Boolean(root?.querySelector('[data-next-moves]')) || Boolean(root?.querySelector('[data-verify-review]'));
+});
 const clickLast = (m) => page.evaluate((mm) => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	const b = [...root.querySelectorAll('button')].filter((x) => mm.test((x.textContent ?? '').trim()) && !x.disabled).pop();
@@ -845,7 +883,7 @@ for (let i = 0; i < 12 && !ok; i++) {
 	while (Date.now() < dEval && !outcome) {
 		const now = await shadow();
 		if (/Continuar a Aplicar/.test(now)) { outcome = 'continuar'; break; }
-		if (/FALTO:/.test(now)) {
+		if (/FALTO:|FALTÓ:/.test(now) || await nextMovesReady()) {
 			addAiWait('Comprobar', Date.now() - tEvalWait);
 			let stable = 0;
 			let last = now;
@@ -866,39 +904,27 @@ for (let i = 0; i < 12 && !ok; i++) {
 		if (await click(/Continuar a Aplicar/)) { ok = true; break; }
 		break;
 	}
-	// Esperar el botón correcto tras el veredicto. "Continuar a Aplicar" es
-	// texto único; para "Siguiente" hay que distinguir el del card del paginador
-	// de pasos (que al completarse el paso también queda habilitado): si hay
-	// DOS habilitados, el último en el DOM es el del card. Con uno solo se
-	// espera 3 s más y se re-verifica Continuar antes de arriesgar el click.
-	const dPost = Date.now() + 20000;
-	let action = '';
-	while (Date.now() < dPost && !action) {
-		const now = await shadow();
-		if (/Continuar a Aplicar/.test(now)) { action = 'continuar'; break; }
-		const nNext = await page.evaluate(() => {
-			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-			return [...root.querySelectorAll('button')].filter((b) => (b.textContent ?? '').trim() === 'Siguiente' && !b.disabled).length;
-		});
-		if (nNext >= 2 || (nNext === 1 && Date.now() > dPost - 17000)) { action = 'next'; break; }
-		await page.waitForTimeout(600);
+	// §1.7: «Siguiente» del dock cierra la comprobación con una respuesta
+	// revisada y pasa a Aplicar; el plan puede ofrecer antes la pregunta de
+	// consolidación («Siguiente pregunta (2 de N)»), que se responde igual.
+	if (await click(/^Siguiente pregunta/)) {
+		await page.waitForTimeout(1200);
+		tEvalWait = Date.now();
+		pageConsoleBuf.push(`=== click Revisar mi respuesta Q${i + 2} ===`);
+		await dwellRead(90); // lee el feedback de la IA
+		if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.')) break;
+		await clickUntil(/^Revisar mi respuesta$/, 10000);
+		continue;
 	}
-	if (!action) {
-		// último intento antes de rendirse
-		if (/Continuar a Aplicar/.test(await shadow())) action = 'continuar';
-		else break;
-	}
-	if (action === 'continuar') {
-		if (await click(/Continuar a Aplicar/)) { ok = true; break; }
-		break;
+	if (await click(/^Terminar y ver la respuesta esperada$|^Terminar aquí$/)) {
+		await page.waitForTimeout(1200);
+		if (/Continuar a Aplicar/.test(await shadow())) { ok = true; break; }
+		continue;
 	}
 	if (!await clickLast(/^Siguiente$/)) break;
-	await page.waitForTimeout(1200);
-	tEvalWait = Date.now();
-	pageConsoleBuf.push(`=== click Evaluar Q${i + 2} ===`);
-	await dwellRead(90); // lee el feedback de la IA
-if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.')) break;
-	await clickUntil(/^Evaluar$/, 10000);
+	await page.waitForTimeout(1500);
+	// ¿Se avanzó a Aplicar? Es el cierre real de la comprobación.
+	if (/Continuar a Fijar|Saltar este paso|Ver la solución/.test(await shadow())) { ok = true; break; }
 }
 if (!ok) {
 	await page.screenshot({ path: path.join(SHOTS, 'comprobar-fail.png') });
@@ -925,16 +951,38 @@ if (QA_FLOW === 'full') {
 	// COMPLETO: resolver el desafío y pasarlo por la revisión de la IA.
 	const tA = Date.now();
 	await dwellRead(45); // lee el desafio
-	const filled = await fillUntil('// Tu solución aquí…', 'javac App.java && java App', 8000)
-		|| await fillUntil('Tu respuesta aquí…', 'Compila con javac y ejecuta el .class en otro SO con la JVM.', 8000);
+	// Cerrar Comprobar deja el paso Aplicar montando con animación; si el click
+	// de «Continuar a Aplicar» se adelantó, se reintenta (antes se fallaba con
+	// «textarea del desafío no apareció» estando todavía en Comprobar).
+	const practiceReady = () => page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		if (!root) return false;
+		if (root.querySelector('[data-practice-modes]')) return true;
+		return [...root.querySelectorAll('textarea')].some((t) => /Escribe tu (soluci|respuesta)|Escribe tu explicaci/.test(t.placeholder ?? ''));
+	});
+	for (let i = 0; i < 8 && !(await practiceReady()); i += 1) {
+		if (await click(/Continuar a Aplicar/)) console.log('  (reintento: «Continuar a Aplicar»)');
+		await page.waitForTimeout(1500);
+	}
+	const filled = await fillUntil('// Escribe tu solución aquí…', 'javac App.java && java App', 8000)
+		|| await fillUntil('Escribe tu respuesta aquí…', 'Compila con javac y ejecuta el .class en otro SO con la JVM.', 8000);
 	if (!filled) {
 		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
 		console.log('✗ textarea del desafío no apareció');
+		const dbg = await page.evaluate(() => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			return {
+				placeholders: [...(root?.querySelectorAll('textarea, input') ?? [])].map((e) => e.placeholder).filter(Boolean),
+				botones: [...(root?.querySelectorAll('button') ?? [])].map((b) => (b.textContent ?? '').trim().slice(0, 22)).filter(Boolean).slice(0, 14),
+				cola: (root?.textContent ?? '').replace(/\s+/g, ' ').slice(-200),
+			};
+		});
+		console.log('  diagnóstico Aplicar:', JSON.stringify(dbg));
 		process.exit(1);
 	}
-	if (!await clickUntil(/Revisar con IA/, 15000)) {
+	if (!await clickUntil(/Revisar mi respuesta/, 15000)) {
 		await page.screenshot({ path: path.join(SHOTS, 'aplicar-fail.png') });
-		console.log('✗ botón Revisar con IA no apareció');
+		console.log('✗ botón Revisar mi respuesta no apareció');
 		process.exit(1);
 	}
 	// Muestreo del indicador de carga de evaluacion (igual que el observador):
@@ -961,7 +1009,7 @@ if (QA_FLOW === 'full') {
 		for (const l of pageConsoleBuf.slice(-20)) console.log('   ', l);
 		process.exit(1);
 	}
-	await clickUntil(/Fíjalo en memoria|Continuar de todas formas/, 15000);
+	await clickUntil(/Fíjalo en memoria|Continuar a Fijar/, 15000);
 	// Fijar: revisar las tarjetas y EXPORTAR el .apkg. El mazo es la prioridad
 	// del producto, asi que el flujo completo lo incluye (antes se pulsaba
 	// 'Terminar leccion' sin exportar nada).
@@ -973,17 +1021,84 @@ if (QA_FLOW === 'full') {
 	if (apkg) console.log(`  .apkg exportado: ${apkg.suggestedFilename()}`);
 	else console.log('  (aviso: no se detecto la descarga del .apkg)');
 	await dwellRead(15); // lee el aviso de importacion si aparece
+	// Export real a Obsidian (solo con QA_OBSIDIAN_VAULT): la URI se le entrega
+	// al sistema después, fuera del navegador, para comprobar la nota en el vault.
+	if (obsidianVault) {
+		if (await clickUntil(/^Exportar$/, 25000)) {
+			await page.waitForTimeout(2500);
+			console.log(`  URIs obsidian:// capturadas: ${obsidianUris.length}`);
+		} else {
+			console.log('  ✗ no apareció el botón «Exportar» de Obsidian en Fijar');
+		}
+	}
+		// La celebración de racha se reclama UNA vez al día (`kinema-streak-shown`
+		// en el localStorage de la página): se libera para poder observarla en
+		// una corrida de QA. Es estado del perfil de prueba, no del usuario.
+		await page.evaluate(() => { try { localStorage.removeItem('kinema-streak-shown'); } catch {} });
 	await clickUntil(/Terminar lección/, 20000);
 	tAplicar = Date.now() - tA;
 } else {
-	// MÍNIMO: práctica pendiente («Hacerlo después»).
-	await clickUntil(/Hacerlo después/, 15000);
+	// MÍNIMO: práctica pendiente («Saltar este paso»).
+	await clickUntil(/^Saltar este paso$/, 15000);
+		// La celebración de racha se reclama UNA vez al día (`kinema-streak-shown`
+		// en el localStorage de la página): se libera para poder observarla en
+		// una corrida de QA. Es estado del perfil de prueba, no del usuario.
+		await page.evaluate(() => { try { localStorage.removeItem('kinema-streak-shown'); } catch {} });
 	await clickUntil(/Terminar lección/, 15000);
 }
 markStep('Fijar');
 const done = await waitFor(/Lección terminada/, 20000);
 const ms = Date.now() - t0;
 await page.screenshot({ path: path.join(SHOTS, `resultado-${QA_LESSON}-${QA_FLOW}.png`) });
+
+// La celebración del cierre, en la página REAL: debe salir dentro de la pila de
+// avisos del panel (abajo), no en una capa propia sobre el vídeo.
+await page.waitForTimeout(1200);
+const celebration = await page.evaluate((outer) => {
+	const root = document.querySelector(outer)?.shadowRoot;
+	const el = root?.querySelector('[data-sonner-toast] .kx-celebrate');
+	const dock = root?.querySelector('.usb-dock');
+	if (!el || !dock) return { found: Boolean(el), dock: Boolean(dock) };
+	const c = el.getBoundingClientRect();
+	const d = dock.getBoundingClientRect();
+	return {
+		found: true,
+		inside: c.left >= d.left - 1 && c.right <= d.right + 1 && c.bottom <= d.bottom + 1,
+		low: c.top > d.top + d.height / 2,
+		otherLayer: root.querySelectorAll('.kx-celebrate:not([data-sonner-toast] .kx-celebrate)').length,
+		toasts: root.querySelectorAll('[data-sonner-toast]').length,
+	};
+}, OUTER).catch(() => null);
+if (celebration) {
+	const ok = celebration.found && celebration.inside && celebration.low && celebration.otherLayer === 0;
+	console.log(`  celebración en la pila de avisos del panel: ${ok ? 'OK' : 'FALLO'} ${JSON.stringify(celebration)}`);
+	if (!ok) {
+		// ¿No salió la celebración, o salió fuera? Se distingue con el estado del
+		// cierre: la racha se reclama una sola vez por lección.
+		const diag = await page.evaluate((outer) => {
+			const root = document.querySelector(outer)?.shadowRoot;
+			const text = (root?.textContent ?? '').replace(/\s+/g, ' ');
+			return {
+				terminada: /Leccion terminada|Lección terminada/.test(text),
+				toasts: [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((t) => (t.textContent ?? '').replace(/\s+/g, ' ').slice(0, 60)),
+				celebrateAnywhere: root?.querySelectorAll('.kx-celebrate').length ?? -1,
+				cola: text.slice(-180),
+			};
+		}, OUTER).catch(() => null);
+		console.log('  diagnóstico celebración:', JSON.stringify(diag));
+	}
+	celebrationOk = ok;
+}
+
+if (obsidianVault && obsidianUris.length > 0) {
+	const out = path.join(SHOTS, `obsidian-uris-${QA_LESSON}-${QA_FLOW}.json`);
+	writeFileSync(out, JSON.stringify(obsidianUris, null, 2));
+	console.log(`  URIs obsidian:// escritas en ${out}`);
+	for (const u of obsidianUris) {
+		const n = decodeURIComponent(u).match(/\n#+ /g)?.length ?? 0;
+		console.log(`   · ${u.slice(0, 90)}… (${u.length} chars, ${n} encabezados)`);
+	}
+}
 
 if (process.env.QA_VERBOSE === '1') {
 	console.log('\n── consola relevante ──');
@@ -1021,7 +1136,10 @@ console.log(`\n── RESULTADO ──`);
 console.log(`  ${QA_FLOW === 'full' ? 'COMPLETO' : 'mínimo'} · lección ${QA_LESSON} (${currentLesson.seconds}s): ${/Lección terminada/.test(done) ? '✓ COMPLETADO' : '✗'} en ${fmt(ms)}`);
 console.log(`  generación: ${fmt(tGen)} · comprobar: ${fmt(tComprobar)}${QA_FLOW === 'full' ? ` · aplicar: ${fmt(tAplicar)}` : ''}`);
 console.log(`  objetivo ${QA_FLOW === 'full' ? '≤ 12' : '≤ 4'} min: ${ms <= limit ? '✓ CUMPLE' : '✗ NO CUMPLE'}`);
+if (celebrationOk !== null) console.log(`  celebración dentro del panel: ${celebrationOk ? '✓' : '✗ FUERA DEL PANEL'}`);
 
 clearTimeout(watchdog);
 await context.close();
-process.exit(/Lección terminada/.test(done) ? 0 : 1);
+// La celebración fuera de la pila de avisos es un fallo de posición (taparía el
+// vídeo): cuenta como fallo de la corrida, no como aviso.
+process.exit(/Lección terminada/.test(done) && celebrationOk !== false ? 0 : 1);

@@ -229,7 +229,7 @@ async function writeSeedViaSw() {
 		svc.evaluate(({ record }) => new Promise((resolve, reject) => {
 			chrome.storage.sync.set({
 				agent_course_name: record.courseName,
-				agent_lesson_name: record.lessonName,
+				agent_lesson_name: record.lectureName,
 				agent_selected_obj: 'custom',
 			}, () => {
 				if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
@@ -359,10 +359,10 @@ if (sw && !REAL) {
 			resolve();
 		});
 	}), { record: RECORD, qaPort: QA_PORT }), 'seed');
-	const seedSync = (worker) => withTimeout(worker.evaluate(({ record }) => new Promise((resolve, reject) => {
-		chrome.storage.sync.set({
-			agent_course_name: record.courseName,
-			agent_lesson_name: record.lessonName,
+		const seedSync = (worker) => withTimeout(worker.evaluate(({ record }) => new Promise((resolve, reject) => {
+			chrome.storage.sync.set({
+				agent_course_name: record.courseName,
+				agent_lesson_name: record.lectureName,
 			agent_selected_obj: 'custom',
 		}, () => {
 			if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
@@ -501,8 +501,8 @@ for (let i = 0; i < 10; i += 1) {
 }
 check('el tema sepia se aplica al dock', sepia.sepia === true);
 check('los campos toman la piel clara en sepia', /^rgb\(255,\s*255,\s*255\)/.test(sepia.fieldBg ?? ''), String(sepia.fieldBg));
-check('el toaster queda fijo y por encima de todo',
-	/position:\s*fixed/.test(sepia.toasterRule) && /2147483647/.test(sepia.toasterRule), sepia.toasterRule.slice(0, 90));
+check('el toaster vive dentro del panel y por encima de todo',
+	/position:\s*absolute/.test(sepia.toasterRule) && /2147483647/.test(sepia.toasterRule), sepia.toasterRule.slice(0, 90));
 await page.screenshot({ path: path.join(SHOTS, 'c-sepia.png') });
 
 
@@ -618,6 +618,30 @@ if (await apkgBtn.count().catch(() => 0)) {
 	const hintToasts = await toastsInShadow();
 	check('primer export muestra «Antes de importar en Anki»',
 		hintToasts.some((x) => /Antes de importar en Anki/i.test(x)), JSON.stringify(hintToasts).slice(0, 140));
+	// Un solo sitio para los avisos: abajo y centrados DENTRO del panel, no sobre
+	// el vídeo. Se mide el aviso real (redondeo de subpíxeles → tolerancia de 1 px
+	// en los bordes) y con la animación de entrada ya terminada.
+	await page.waitForTimeout(600);
+	const noticePlacement = await page.evaluate(() => {
+		const host = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const toast = [...(host?.querySelectorAll('[data-sonner-toast]') ?? [])]
+			.find((el) => /Antes de importar en Anki/i.test(el.textContent ?? ''));
+		const dock = host?.querySelector('.usb-dock');
+		if (!toast || !dock) return { found: Boolean(toast), dock: Boolean(dock) };
+		const t = toast.getBoundingClientRect();
+		const d = dock.getBoundingClientRect();
+		return {
+			found: true,
+			inside: t.left >= d.left - 1 && t.right <= d.right + 1 && t.bottom <= d.bottom + 1,
+			centered: Math.abs((t.left + t.right) / 2 - (d.left + d.right) / 2) < 24,
+			low: t.top > d.top + d.height / 2,
+			dockInViewport: d.width > 0 && d.height > 0,
+		};
+	});
+	check('el aviso sale dentro del panel, abajo y centrado',
+		noticePlacement.found && noticePlacement.dockInViewport && noticePlacement.inside
+			&& noticePlacement.centered && noticePlacement.low,
+		JSON.stringify(noticePlacement));
 	// «Ver guía» despliega la guía de importación.
 	await page.evaluate(() => {
 		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
@@ -656,7 +680,7 @@ if (await apkgBtn.count().catch(() => 0)) {
 	check('hay botón de exportar .apkg', false, 'no encontrado');
 }
 
-// ── D.1 — flujo mínimo: nivel → 1 respuesta → Hacerlo después → Terminar ───
+// ── D.1 — flujo mínimo: nivel → 1 respuesta → Saltar este paso → Terminar ───
 // Lección NUEVA: Reiniciar (confirmando en el dock) lleva a objetivo.
 const MIN_LESSON = 'Flujo minimo QA';
 await clickInShadow(/Reiniciar/);
@@ -699,7 +723,7 @@ check('el CTA de generación se habilita con detección + objetivo', genOk);
 // Espera activa a la fase de resultado (un fallo de generación avisa con toast).
 for (let i = 0; i < 25; i += 1) {
 	const dbg = await shadow();
-	if (/¿Qué tan claro te quedó el video\?/.test(dbg)) break;
+	if (/¿Qué tan claro te quedó la lección\?/.test(dbg)) break;
 	await page.waitForTimeout(400);
 }
 await clickInShadow(/^Confuso/); // paso Recordar: 1 toque de nivel
@@ -715,7 +739,7 @@ const fillRecall = await page.evaluate(() => {
 	return true;
 });
 check('el recuerdo libre admite texto antes de la lista', fillRecall);
-await clickInShadow(/Comparar con los conceptos|Ver los conceptos/);
+await clickInShadow(/Comparar con las ideas clave|Ver las ideas clave/);
 await page.waitForTimeout(600);
 await clickInShadow(/Ponerme a prueba/);
 await page.waitForTimeout(1600); // la transición de paso + render de la cola
@@ -736,36 +760,37 @@ const fillQ = await page.evaluate(() => {
 check('la pregunta del nivel elegido aparece con su textarea', fillQ === true,
 	fillQ === true ? '' : String(fillQ).slice(0, 200));
 const sawSkippedToast = [];
-await clickInShadow(/^Evaluar/);
+// Rellena la pregunta abierta si aún está vacía.
+const fillOpenQuestion = (text) => page.evaluate((value) => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const ta = [...root.querySelectorAll('textarea')].find((el) => /Escribe tu respuesta con tus propias palabras/.test(el.placeholder));
+	if (!ta || ta.value.trim()) return false;
+	const setter = Object.getOwnPropertyDescriptor(root.ownerDocument.defaultView.HTMLTextAreaElement.prototype, 'value').set;
+	setter.call(ta, value);
+	ta.dispatchEvent(new Event('input', { bubbles: true }));
+	return true;
+}, text);
+// §1.4: la comprobación cerrada se reconoce por su bloque de repaso, no por un
+// rótulo de botón (los rótulos del prototipo son otros: «Continuar a Aplicar»
+// vive dentro de ese bloque).
+const verifyClosed = () => page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	return Boolean(root?.querySelector('[data-verify-review]'));
+});
+await clickInShadow(/^Revisar mi respuesta$/);
 await page.waitForTimeout(4500); // evaluación mock streaming
 let flowOk = false;
-for (let i = 0; i < 8 && !flowOk; i += 1) {
-	const txt = await shadow();
-	if (/Continuar a Aplicar/.test(txt)) { flowOk = true; break; }
-	if (/Continuar a practicar/.test(txt)) { flowOk = true; break; }
-	if (/\bSiguiente\b/.test(txt)) {
-		// Falló: la consolidación del nivel anterior debe aparecer (§1.2).
-		await clickInShadow(/\bSiguiente\b/);
-		await page.waitForTimeout(900);
-		await page.evaluate(() => {
-			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-			const ta = [...root.querySelectorAll('textarea')].find((el) => /Escribe tu respuesta con tus propias palabras/.test(el.placeholder));
-			if (ta && !ta.value) {
-				const setter = Object.getOwnPropertyDescriptor(root.ownerDocument.defaultView.HTMLTextAreaElement.prototype, 'value').set;
-				setter.call(ta, 'Consolidación: la JVM interpreta el bytecode y el JIT compila los puntos calientes.');
-				ta.dispatchEvent(new Event('input', { bubbles: true }));
-			}
-		});
-		await clickInShadow(/^Evaluar/);
-		await page.waitForTimeout(4500);
-		continue;
+for (let i = 0; i < 10 && !flowOk; i += 1) {
+	if (await verifyClosed()) { flowOk = true; break; }
+	if (await fillOpenQuestion('El bytecode es un formato intermedio que la JVM ejecuta en cualquier sistema operativo.')) {
+		await page.waitForTimeout(400);
 	}
+	if (await clickInShadow(/^Revisar mi respuesta$/)) { await page.waitForTimeout(4500); continue; }
+	// Falló: la consolidación del nivel anterior debe aparecer (§1.2).
+	if (await clickInShadow(/^Siguiente pregunta/)) { await page.waitForTimeout(1200); continue; }
+	// Cerrar la comprobación: la última pregunta ofrece ver la respuesta esperada.
+	if (await clickInShadow(/^Terminar y ver la respuesta esperada$|^Terminar aquí$/)) { await page.waitForTimeout(1200); continue; }
 	await page.waitForTimeout(800);
-}
-// El último clic puede ser el que completa: comprobar de nuevo antes de rendirse.
-for (let i = 0; i < 4 && !flowOk; i += 1) {
-	if (await clickInShadow(/Continuar a Aplicar|Continuar a practicar/)) { flowOk = true; break; }
-	await page.waitForTimeout(700);
 }
 await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') });
 check('el paso Comprobar se completa (a la primera o con consolidación)', flowOk, flowOk ? '' : (await shadow()).slice(0, 120));
@@ -774,28 +799,57 @@ if (!flowOk) {
 	// publica el dock) y las últimas líneas de consola.
 	console.log('  ── diagnóstico del bloqueo en Comprobar ──');
 	const dump = await shadow();
-	const fb = dump.match(/(Analizando…|Reintentar|DIAGNOSTICO:|BIEN:)/g);
+	const fb = dump.match(/(Analizando...|Reintentar|DIAGNOSTICO:|BIEN:)/g);
 	console.log(`     feedback: ${fb ? fb.join(', ') : '(sin marcador)'}`);
 	console.log('     últimas líneas de consola:');
 	for (const l of consoleTail.slice(-25)) console.log('       ' + l);
 }
 sawSkippedToast.push(...await toastsInShadow());
-check('responder NO emite «Evaluación saltada»',
-	!sawSkippedToast.some((x) => /Evaluación saltada/i.test(x)), JSON.stringify(sawSkippedToast).slice(0, 120));
-await waitClickInShadow(/Continuar a Aplicar|Continuar a practicar/);
-await waitClickInShadow(/Hacerlo después/);
+check('responder NO emite «Comprobación saltada»',
+	!sawSkippedToast.some((x) => /Comprobación saltada/i.test(x)), JSON.stringify(sawSkippedToast).slice(0, 120));
+await waitClickInShadow(/Continuar a Aplicar/);
+await waitClickInShadow(/^Saltar este paso$/);
 let finTxt = '';
 for (let i = 0; i < 16; i += 1) {
 	await page.waitForTimeout(500);
 	finTxt = await shadow();
 	if (/Terminar lección/.test(finTxt)) break;
 }
-check('«Hacerlo después» lleva a Fijar con práctica pendiente',
-	/Terminar lección/.test(finTxt) && /práctica pendiente/.test(finTxt), finTxt.slice(0, 160));
+// El resumen de cierre marca la práctica saltada en su propio bloque (§1.4).
+const aplicarTile = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	return root?.querySelector('[data-summary-tile="aplicar"]')?.textContent?.trim() ?? null;
+});
+check('«Saltar este paso» lleva a Fijar con práctica pendiente',
+	/Terminar lección/.test(finTxt) && /pendiente/.test(aplicarTile ?? ''),
+	JSON.stringify({ tile: aplicarTile, dock: /Terminar lección/.test(finTxt) }).slice(0, 200));
 await waitClickInShadow(/Terminar lección/);
 await page.waitForTimeout(1500);
 const doneTxt = await shadow();
 check('«Terminar lección» cierra sin exportar', /Lección terminada/.test(doneTxt), doneTxt.slice(0, 140));
+// La celebración del cierre sale en la MISMA pila de avisos (dentro del panel),
+// no en una capa propia sobre el vídeo. Es la aserción de .mock/scripts/qa-doubts.mjs.
+await page.locator(`${OUTER} [data-sonner-toast] .kx-celebrate`).first()
+	.waitFor({ timeout: 5000 }).catch(() => {});
+await page.waitForTimeout(600);
+const celebration = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const el = root?.querySelector('[data-sonner-toast] .kx-celebrate');
+	const dock = root?.querySelector('.usb-dock');
+	if (!el || !dock) return { found: Boolean(el), dock: Boolean(dock) };
+	const c = el.getBoundingClientRect();
+	const d = dock.getBoundingClientRect();
+	return {
+		found: true,
+		inside: c.left >= d.left - 1 && c.right <= d.right + 1 && c.bottom <= d.bottom + 1,
+		low: c.top > d.top + d.height / 2,
+		// Ninguna celebración fuera de un toast: antes salía arriba, sobre el vídeo.
+		otherLayer: root.querySelectorAll('.kx-celebrate:not([data-sonner-toast] .kx-celebrate)').length,
+	};
+});
+check('la celebración sale en la pila de avisos del panel',
+	celebration.found && celebration.inside && celebration.low && celebration.otherLayer === 0,
+	JSON.stringify(celebration));
 const recMin = await readHistoryRecord(MIN_LESSON);
 check('el registro guarda finishedAt + status completed + questionsDone',
 	Boolean(recMin?.finishedAt) && recMin?.status === 'completed' && recMin?.questionsDone === true,
@@ -857,15 +911,15 @@ for (let i = 0; i < 10; i += 1) { if (await clickInShadow(/Empezar · ~4–10 mi
 await page.waitForTimeout(9000);
 await clickInShadow(/^Confuso/);
 await page.waitForTimeout(600);
-await clickInShadow(/Comparar con los conceptos|Ver los conceptos/);
+await clickInShadow(/Comparar con las ideas clave|Ver las ideas clave/);
 await page.waitForTimeout(600);
 await clickInShadow(/Ponerme a prueba/);
 await page.waitForTimeout(700);
-await clickInShadow(/Saltar comprobación/);
+await clickInShadow(/^Saltar este paso$/);
 await page.waitForTimeout(900);
 const skipToasts = await toastsInShadow();
-check('«Saltar comprobación» emite «Evaluación saltada»',
-	skipToasts.some((x) => /Evaluación saltada/i.test(x)), JSON.stringify(skipToasts).slice(0, 120));
+check('«Saltar este paso» emite «Comprobación saltada»',
+	skipToasts.some((x) => /Comprobación saltada/i.test(x)), JSON.stringify(skipToasts).slice(0, 120));
 const recSkip = await readHistoryRecord(SKIP_LESSON);
 check('el salto queda registrado (questionsDone + questionsSkipped)',
 	recSkip?.questionsDone === true && recSkip?.questionsSkipped === true,
@@ -950,7 +1004,14 @@ for (let i = 0; i < 14; i++) {
 if (await obsBtn.count().catch(() => 0)) {
 	await obsBtn.evaluate((el) => el.click()).catch(() => {});
 	await page.waitForTimeout(4000);
-	check('el export emite URIs obsidian:// (MOC + nota)', obsidianUris.length === 2, `${obsidianUris.length} URIs`);
+	// Un clic = UNA nota: el índice del curso es una acción aparte en el aviso
+	// («Crear índice»), con su propio clic. Con «>= 1» un doble lanzamiento
+	// pasaría la prueba.
+	const nota = decodeURIComponent(obsidianUris[0] ?? '');
+	check('«Exportar» emite exactamente la URI de la nota',
+		obsidianUris.length === 1, `${obsidianUris.length} URIs`);
+	check('la nota va a la carpeta de fuentes del vault',
+		/wiki\/fuentes\/[^&]*---[^&]*\.md/.test(nota), nota.slice(0, 160));
 	let listo = false;
 	for (let i = 0; i < 12 && !listo; i += 1) {
 		await page.waitForTimeout(1000);
@@ -962,6 +1023,20 @@ if (await obsBtn.count().catch(() => 0)) {
 		});
 	}
 	check('aparece la insignia «✓ Listo» tras exportar', listo);
+	// El índice del curso, desde el aviso, sí es un segundo clic explícito.
+	const clickedIndex = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const btn = [...(root?.querySelectorAll('[data-sonner-toast] button') ?? [])]
+			.find((b) => /Crear índice/i.test(b.textContent ?? ''));
+		if (!btn) return false;
+		btn.click();
+		return true;
+	});
+	await page.waitForTimeout(3000);
+	const moc = decodeURIComponent(obsidianUris[1] ?? '');
+	check('«Crear índice» emite la URI del MOC en su carpeta',
+		clickedIndex && obsidianUris.length === 2 && /cursos\/[^&]*\.md/.test(moc),
+		JSON.stringify({ clickedIndex, uris: obsidianUris.length, moc: moc.slice(0, 120) }));
 	await page.screenshot({ path: path.join(SHOTS, 'e-obsidian.png') });
 } else {
 	check('el botón de Obsidian está presente', false, 'no encontrado tras scroll');

@@ -4,6 +4,8 @@ import { Check, Plus, ExternalLink } from "../icons";
 
 export interface VocabularyChipWord {
   word: string;
+  /** Forma exacta vista en los subtítulos (irregulares: «ran» para «run»). */
+  form?: string;
   phonetic: string;
   monolingual: string;
   selected?: boolean;
@@ -132,14 +134,14 @@ export function VocabularyChip({
   const action = isPendingUpdate
     ? "Actualizar palabras en Configuración"
     : isExported
-    ? "Ya exportada"
+    ? "Ya en tu mazo"
     : isSelected
     ? "Desmarcar selección"
     : "Seleccionar para exportar";
 
   // Tono del estado: violeta = en tu selección, verde = ya en Anki, neutro = sugerida.
   const dot = isExported ? "bg-emerald-400" : isSelected ? "bg-[#a48bff]" : "bg-white/55";
-  const status = isExported ? "En Anki" : isSelected ? "En tu selección" : null;
+  const status = isExported ? "En tu mazo" : isSelected ? "En tu selección" : null;
 
   return (
     <div

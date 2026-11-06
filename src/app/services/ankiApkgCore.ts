@@ -56,7 +56,20 @@ export interface ApkgNoteSpec {
 	/** Un valor por campo del note type, en orden. */
 	fields: string[];
 	tags?: string[];
+	/** Fecha de modificación (s); por defecto KINEMA_NOTE_MOD. */
+	mod?: number;
 }
+
+/**
+ * Fecha de modificación fija y antigua (2024-01-01) de TODAS las notas de
+ * Kinema. Anki, al reimportar, actualiza una nota con el mismo GUID solo si la
+ * del paquete es más nueva («si es más reciente», su opción por defecto). Con
+ * esta fecha, reimportar (otro lote, «Volver a descargar», otro equipo) solo
+ * AÑADE lo que falta: nunca pisa lo que editaste en Anki ni la imagen y el
+ * audio que añadiste a una palabra. Antes llevaban «ahora» y lo sobrescribían.
+ * Las plantillas (note types) sí se actualizan: así llegan sus arreglos.
+ */
+export const KINEMA_NOTE_MOD = 1704067200;
 
 /**
  * Un archivo de media para el .apkg. `data` puede ser texto (JS/CSS) o bytes.
@@ -380,7 +393,7 @@ export async function buildCollectionBuffer(
 			// cantidad entre exportaciones.
 			note.guid?.trim() || stableGuid(`${note.deck}|${fields}`),
 			model.id,
-			nowSec,
+			note.mod ?? KINEMA_NOTE_MOD,
 			0,
 			tags,
 			fields,

@@ -2,12 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   History, AlertCircle, ChevronDown, ChevronRight, Trash2, BookOpen,
-  CheckCircle2, Circle, RefreshCw, Loader2, X, Layers, Award, Icon, Repeat2, Check, ExternalLink, Download, type IconName,
+  CheckCircle2, Circle, RefreshCw, Loader2, X, Layers, Award, Icon, Repeat2, Check, Download, type IconName,
 } from "./icons";
 import { historyService, type CourseHistorySummary, type LectureHistoryRecord, type HistoryStats } from "../services/historyService";
 import { useDockTheme } from "../contexts/ThemeContext";
-import { celebrate } from "./CelebrationOverlay";
 import { toast } from "sonner";
+import { browseAnkiDue, fetchAnkiDue } from "../services/ankiDue";
 import { PendingContentExports } from "./study/MemoryCard";
 
 interface HistoryPanelProps {
@@ -43,7 +43,7 @@ function Tile({ icon, hue = "#6d4aff", ink, size = 32 }: { icon: IconName; hue?:
   );
 }
 
-/** Anillo: lecciones terminadas (5 pasos) de las que estudiaste en Kinema, con la inicial del curso. */
+/** Anillo: lecciones terminadas de las que empezaste en Kinema (no del curso entero), con la inicial del curso. */
 function CourseRing({ done, total, label }: { done: number; total: number; label: string }) {
   const { t } = useDockTheme();
   const pct = total > 0 ? Math.min(1, done / total) : 0;
@@ -94,7 +94,9 @@ function DeleteConfirm({ what, pending, onConfirm, onCancel, onDownload, extra, 
 const sectionLabelCls = "text-[11px] font-bold uppercase tracking-wider text-[var(--usb-fg-mid)]";
 const deleteBtnCls = "shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-[var(--usb-fg-mid)] hover:!text-rose-400 hover:bg-rose-500/10 transition";
 
-const DOMINIO: Record<string, string> = { confused: "Dominio 1", partial: "Dominio 2", clear: "Dominio 3", mastered: "Dominio 4" };
+// Lo que elegiste en Recordar, con las MISMAS palabras que allí («Nivel» queda
+// solo para tu nivel de XP). Antes decía «Dominio 1–4», un tercer nombre.
+const CLARITY: Record<string, string> = { confused: "Confuso", partial: "Más o menos", clear: "Entendido", mastered: "Lo domino" };
 
 function formatDate(ms: number): string {
   const d = new Date(ms);
@@ -110,10 +112,11 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
   const [allLectures, setAllLectures] = useState<LectureHistoryRecord[]>([]);
   const [openCourse, setOpenCourse] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   /** Fila con confirmación de borrado abierta: "c:<courseId>" o "l:<courseId>::<lectureId>". */
   const [armed, setArmed] = useState<string | null>(null);
+  /** Repasos de hoy en Anki (AnkiConnect); null = Anki no responde. */
+  const [ankiDue, setAnkiDue] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -127,6 +130,9 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
   useEffect(() => {
     if (!expanded) return;
     load();
+    let alive = true;
+    void fetchAnkiDue().then((d) => { if (alive) setAnkiDue(d); });
+    return () => { alive = false; };
   }, [expanded, load]);
 
   useEffect(() => {
@@ -182,10 +188,8 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
     return Array.from(map.values());
   }, [dueReviewLectures]);
 
-  const showFeedback = (msg: string) => {
-    setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
-  };
+  // Resultado de una acción = aviso del panel (el mismo sistema que el resto de la app).
+  const showFeedback = (msg: string) => { toast.success(msg); };
 
   const handleDeleteCourse = async (courseId: string) => {
     setBusyId(courseId);
@@ -247,7 +251,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
   };
 
   const summaryText = stats
-    ? `${stats.totalCourses} ${stats.totalCourses === 1 ? "curso" : "cursos"} · ${stats.completedLectures}/${stats.totalLectures}`
+    ? `${stats.totalCourses} ${stats.totalCourses === 1 ? "curso" : "cursos"} · ${stats.completedLectures} de ${stats.totalLectures} terminadas`
     : "Sin historial aún";
 
   return (
@@ -299,7 +303,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                     { label: "Cursos", value: stats?.totalCourses, dot: "#8b6dff" },
                     { label: "Lecciones", value: stats?.totalLectures, dot: "#8b6dff" },
                     { label: "Terminadas", value: stats?.completedLectures, dot: "#10b981" },
-                    { label: "Tarjetas", value: totalDueCards, dot: "#10b981", hint: "Tarjetas descargadas para Anki" },
+                    { label: "Tarjetas", value: totalDueCards, dot: "#10b981", hint: "Tarjetas de lección exportadas a Anki" },
                   ].map(({ label, value, dot, hint }) => (
                     <div key={label} className="min-w-0 px-1 py-3 text-center" title={hint}>
                       <p className="text-[19px] leading-none font-bold tabular-nums tracking-tight text-[var(--usb-fg-hi)]">{stats ? value : "–"}</p>
@@ -309,20 +313,6 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                     </div>
                   ))}
                 </div>
-                <AnimatePresence>
-                  {feedback && (
-                    <motion.div
-                      key="fb"
-                      initial={{ opacity: 0, y: -4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="kx-ok-strip flex items-center gap-2 text-[12px] font-semibold px-3 py-2 rounded-xl"
-                    >
-                      <CheckCircle2 size={14} />
-                      {feedback}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </section>
 
               {/* ── Acción pendiente (solo si hay archivos sin descargar) ── */}
@@ -348,7 +338,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                               <span className="flex-1 min-w-0">
                                 <span className="block text-[12.5px] font-semibold truncate text-[var(--usb-fg)]">{course.courseName}</span>
                                 <span className="block text-[11px] mt-0.5 text-[var(--usb-fg-mid)] tabular-nums truncate">
-                                  {course.completedCount} de {course.lectureCount} {course.lectureCount === 1 ? "lección terminada" : "lecciones terminadas"} · {formatDate(course.lastSeenAt)}
+                                  {course.completedCount} {course.completedCount === 1 ? "terminada" : "terminadas"}{course.lectureCount > course.completedCount ? ` · ${course.lectureCount - course.completedCount} en curso` : ""} · {formatDate(course.lastSeenAt)}
                                 </span>
                               </span>
                               <motion.span animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.15 }} className="shrink-0">
@@ -408,8 +398,12 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                                         <div className="flex-1 min-w-0">
                                           <p className="text-[12px] font-semibold truncate text-[var(--usb-fg)]">{rec.lectureName}</p>
                                           <div className="mt-1 flex items-center gap-2">
-                                            <p className="min-w-0 flex-1 text-[10.5px] text-[var(--usb-fg-mid)] tabular-nums truncate">
-                                              {DOMINIO[rec.confidence ?? ""] ?? "Sin dominio"} · {rec.questions.length} preguntas
+                                            <p className="min-w-0 flex-1 text-[10.5px] text-[var(--usb-fg-mid)] tabular-nums truncate" title="Qué tan claro te quedó (lo que elegiste en Recordar) · preguntas respondidas">
+                                              {rec.confidence && CLARITY[rec.confidence] ? CLARITY[rec.confidence] : done ? "Terminada" : "Sin empezar"} · {(() => {
+                                                // El historial guarda TODAS las preguntas (orden canónico); solo cuentan las respondidas.
+                                                const answered = rec.questions.filter(a => (a.answer ?? "").trim() || a.rating).length;
+                                                return answered === 1 ? "1 respondida" : `${answered} respondidas`;
+                                              })()}
                                             </p>
                                             {rec.ankiCardsCount > 0 && (inAnki ? (
                                               <button
@@ -420,7 +414,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                                                 aria-label={`${rec.ankiCardsCount} tarjetas ya descargadas. Descargar de nuevo`}
                                                 className={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-opacity enabled:hover:opacity-80 disabled:cursor-default ${t("bg-emerald-400/10 text-emerald-300", "bg-emerald-600/10 text-emerald-800")}`}
                                               >
-                                                {busyId === `dl:${id}` ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}{rec.ankiCardsCount} en Anki
+                                                {busyId === `dl:${id}` ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}{rec.ankiCardsCount} exportadas
                                               </button>
                                             ) : done && canDownload ? (
                                               <button
@@ -436,7 +430,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                                               </button>
                                             ) : (
                                               <span
-                                                title={done ? "Las tarjetas de esta lección ya no están guardadas; vuelve a abrirla para generarlas" : "Termina los 5 pasos de la lección para descargar sus tarjetas"}
+                                                title={done ? "Las tarjetas de esta lección ya no están guardadas; vuelve a abrirla para generarlas" : "Termina la lección (o expórtalas desde Fijar) para descargar sus tarjetas"}
                                                 className="shrink-0 rounded-md bg-[var(--usb-bg-3)] px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-[var(--usb-fg-mid)]"
                                               >
                                                 {rec.ankiCardsCount} {done ? "tarjetas" : "al terminar"}
@@ -481,7 +475,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                   <Icon name="history" size={22} weight="duotone" className="mx-auto text-[var(--usb-fg-mid)]" />
                   <p className="text-[13px] font-bold tracking-tight text-[var(--usb-fg-hi)]">Sin historial aún</p>
                   <p className="text-[12px] max-w-[240px] mx-auto leading-relaxed text-[var(--usb-fg-mid)]">
-                    Cuando completes los 5 pasos de una lección, aparecerá aquí para que no la repitas sin darte cuenta.
+                    Cuando estudies una lección en Kinema, aparecerá aquí: lo que te quedó, lo que respondiste y sus tarjetas.
                   </p>
                 </div>
               )}
@@ -492,28 +486,28 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
                 <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] divide-y divide-[var(--usb-border)]">
                   <div className="flex items-center justify-between gap-3 px-3 py-2.5 min-h-[52px]">
                     <div className="min-w-0 flex-1">
+                      {/* La misma cifra que «Tu progreso» (AnkiConnect, mazo raíz configurado). */}
                       <p className="text-[12.5px] font-semibold text-[var(--usb-fg)] tabular-nums">
-                        {totalDueCards} {totalDueCards === 1 ? "tarjeta exportada" : "tarjetas exportadas"}
+                        {ankiDue === null
+                          ? `${totalDueCards} ${totalDueCards === 1 ? "tarjeta exportada" : "tarjetas exportadas"}`
+                          : ankiDue === 0 ? "Sin repasos pendientes hoy" : `${ankiDue} ${ankiDue === 1 ? "repaso pendiente" : "repasos pendientes"} hoy`}
                       </p>
                       <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">
-                        {dueReviewLectures.length} {dueReviewLectures.length === 1 ? "lección" : "lecciones"} · {dueByCourse.length} {dueByCourse.length === 1 ? "curso" : "cursos"}. Kinema no ve los vencimientos: los repasos se hacen en Anki.
+                        {dueReviewLectures.length} {dueReviewLectures.length === 1 ? "lección exportada" : "lecciones exportadas"} · {dueByCourse.length} {dueByCourse.length === 1 ? "curso" : "cursos"}.{" "}
+                        {ankiDue === null ? "Abre Anki para repasar (con AnkiConnect, Kinema te muestra aquí los pendientes)." : "Los repasos se hacen en Anki."}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        window.open("anki://", "_blank");
-                        celebrate({
-                          type: "achievement",
-                          title: "Solicitud enviada a Anki",
-                          subtitle: "El navegador puede pedir permiso; abrir Anki requiere que esté instalado",
-                          icon: <Repeat2 className="text-amber-400" />,
-                        });
-                      }}
-                      className="kx-chip shrink-0 h-8 px-3 rounded-lg text-[11.5px] font-semibold inline-flex items-center gap-1.5"
-                    >
-                      <ExternalLink size={12} />Abrir Anki
-                    </button>
+                    {/* Solo si Anki responde: abre sus repasos de hoy. Antes, «Abrir Anki» usaba
+                        anki:// (Anki de escritorio no lo registra) y celebraba un «logro» igual. */}
+                    {ankiDue !== null && ankiDue > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => { void browseAnkiDue().then((ok) => { if (!ok) toast.error("Anki no respondió", { description: "Ábrelo en tu ordenador y vuelve a intentarlo." }); }); }}
+                        className="kx-chip shrink-0 h-8 px-3 rounded-lg text-[11.5px] font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <Repeat2 size={12} />Repasar en Anki
+                      </button>
+                    )}
                   </div>
                 </div>
               </section>
@@ -522,7 +516,7 @@ export function HistoryPanel({ onOpenLecture, onExportLesson, defaultOpen = fals
               <div className="space-y-2 pt-1">
                 <div className="flex items-start justify-between gap-3 px-1">
                   <p className="text-[11px] leading-relaxed text-[var(--usb-fg-mid)]">
-                    Tu progreso de estudio no expira. Borrarlo no toca lo que ya está en Anki.
+                    El historial no expira. Borrarlo no cambia tu nivel ni tu XP, ni lo que ya está en Anki.
                   </p>
                   <button
                     onClick={() => setArmed(a => a === "all" ? null : "all")}

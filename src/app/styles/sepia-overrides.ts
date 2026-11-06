@@ -1466,7 +1466,7 @@ ${[
   box-shadow: var(--usb-elev-1);
 }
 .usb-dock.dock-sepia .kx-sync:hover { box-shadow: var(--usb-elev-2); border-color: rgba(91,61,240,0.30) !important; }
-.usb-dock.dock-sepia .kx-sync > div:first-child > div:first-child {
+.usb-dock.dock-sepia .kx-sync > button:first-child > div:first-child {
   background-color: rgba(91,61,240,0.08) !important; border-color: transparent !important; color: #5b3df0;
 }
 
@@ -1704,9 +1704,11 @@ ${[
 .usb-dock.dock-sepia .kx-step-solid [class*="text-white/"] {
   color: var(--usb-fg-lo, #71717a) !important;
 }
+/* Fondo de marca fijo (no --usb-accent, que en oscuro es #8463ff y deja el
+   texto blanco en 4.0:1): #6d4aff da 5.1:1 con blanco (AA). */
 .usb-dock .kx-step-solid {
-  background: var(--usb-accent, #6d4aff) !important;
-  box-shadow: 0 10px 22px -14px var(--usb-accent, #6d4aff), inset 0 1px 0 rgba(255,255,255,.2);
+  background: #6d4aff !important;
+  box-shadow: 0 10px 22px -14px #6d4aff, inset 0 1px 0 rgba(255,255,255,.2);
 }
 .usb-dock .kx-step-solid, .usb-dock .kx-step-solid * { color: #fff !important; }
 .usb-dock .kx-step-count { background: color-mix(in srgb, var(--kx-step, #6d4aff) 14%, transparent); color: var(--kx-ink, var(--usb-accent)) !important; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kx-step, #6d4aff) 30%, transparent); }
@@ -1913,10 +1915,15 @@ ${[
 .usb-dock .kx-cap .kx-card .kx-card-flat { background: color-mix(in srgb, var(--usb-fg) 5%, transparent); box-shadow: none; }
 
 /* ── Notifications (sonner) — same card language as the rest of the dock ── */
-/* z-index y position: los avisos deben flotar sobre el dock (cuyo host llega a
-   2147483646) y sobre el vídeo de Udemy; sin ello pueden quedar debajo. */
-.usb-dock [data-sonner-toaster] { --width: 344px; font-family: inherit; z-index: 2147483647 !important; position: fixed !important; }
-.usb-dock [data-sonner-toast] {
+/* UN solo sitio para todos los avisos (toasts y celebraciones): abajo y
+   centrados DENTRO del panel. Con position:fixed salían centrados en toda la
+   pantalla —encima del vídeo y de los subtítulos— y, cuando un ancestro del
+   dock tenía transform, dentro del panel: dos sitios distintos según el estado. */
+/* Ancho: el de sonner (356px), que cabe en el dock más estrecho (380px). */
+.usb-dock [data-sonner-toaster] { font-family: inherit; z-index: 2147483647 !important; position: absolute !important; }
+/* Las tarjetas de celebración (toast.custom) traen su propio diseño. */
+.usb-dock [data-sonner-toast][data-styled="false"] { width: var(--width); }
+.usb-dock [data-sonner-toast][data-styled="true"] {
   --tone: #6d4aff;
   position: relative; overflow: hidden; align-items: center; gap: 12px;
   padding: 12px 14px !important; border-radius: 16px !important;
@@ -1925,11 +1932,11 @@ ${[
   color: var(--usb-fg-hi) !important;
   z-index: 2147483647 !important;
 }
-.usb-dock.dock-sepia [data-sonner-toast] { box-shadow: 0 1px 2px rgba(60,40,10,.06), 0 14px 28px -16px rgba(60,40,10,.28) !important; }
+.usb-dock.dock-sepia [data-sonner-toast][data-styled="true"] { box-shadow: 0 1px 2px rgba(60,40,10,.06), 0 14px 28px -16px rgba(60,40,10,.28) !important; }
 .usb-dock [data-sonner-toast][data-type="success"] { --tone: #059669; }
 .usb-dock [data-sonner-toast][data-type="warning"] { --tone: #d97706; }
 .usb-dock [data-sonner-toast][data-type="error"] { --tone: #e11d48; }
-.usb-dock [data-sonner-toast]::before {
+.usb-dock [data-sonner-toast][data-styled="true"]::before {
   content: ""; position: absolute; left: 14px; right: 14px; top: 0; height: 2px;
   border-radius: 0 0 4px 4px; background: var(--tone); opacity: .85; pointer-events: none;
 }

@@ -1,14 +1,14 @@
 import { fieldCls, textareaCls } from "./settings/SettingsKit";
-import { TIMED_TRANSCRIPT } from "../../shared/prompts";
+import { TIMED_TRANSCRIPT, bloomTaskLabel, vocabularyCandidateTarget } from "../../shared/prompts";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Target, Sparkles, Wand2, Check, Edit3, ArrowRight, Brain,
   CheckCircle2, Circle, RotateCcw, X, Zap, FlipHorizontal,
-  ChevronLeft, ChevronRight, Info, FileDown, FolderPlus,
-  FolderSync, Send, Loader2, Wifi, WifiOff, Star, BookOpen,
+  ChevronLeft, ChevronRight, Info, FileDown,
+  FolderSync, Send, Loader2, Wifi, WifiOff, BookOpen,
   Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History,
   BookMarked, RefreshCw, Settings2, ClipboardCopy, ExternalLink, Languages,
-  Icon, Glyph, splitLeadingMarker
+  HelpCircle, Plus, Icon, Glyph, splitLeadingMarker
 } from "./icons";
 import type { IconName } from "./icons";
 import { FrameMarks } from "./AppLogo";
@@ -24,11 +24,19 @@ import {
   type VocabConfig,
 } from "../services/vocabularyService";
 import { VocabularyPanel } from "./study/VocabularyPanel";
+import { LessonDoubtPanel } from "./study/LessonDoubtPanel";
+import {
+  DOUBT_TRANSCRIPT_CHARS, MAX_DOUBT_CARDS, cardFrontKey, doubtCardHtml, doubtCardId, doubtThreadId,
+  sanitizeStoredDoubts, savedDoubtCount, snapshotDoubtCard, updateDoubtTurn, upsertDoubtThread,
+  type DoubtTranscript, type LessonDoubtContext, type LessonDoubtKind, type LessonDoubtThread,
+} from "../services/lessonDoubts";
 // Datos de demo SOLO en desarrollo: import estático dejaría el módulo (y sus
 // palabras/historial de ejemplo) dentro del bundle de producción.
 /** Fábrica del generador de demo: en DEV carga el módulo; en prod devuelve null. */
 async function prototypeVocabularyFor(lang: string) {
-  if (!import.meta.env?.DEV) return null;
+  // Prototipo: la vista previa es un build de producción sin runtime de
+  // extensión, así que la demo sustituye a la transcripción real (en el repo: solo DEV).
+  if (!import.meta.env?.DEV) return null; // en el repo: solo DEV
   try {
     const mod = await import("../services/prototypeData");
     return mod.prototypeVocabulary(lang);
@@ -36,8 +44,18 @@ async function prototypeVocabularyFor(lang: string) {
     return null;
   }
 }
-import { vocabularyMatches } from "../services/vocabularySession";
-import { Collapse, ExportModule, exportFieldCls, exportGhostBtnCls, exportLabelCls, exportPrimaryBtnCls } from "./study/ExportModule";
+/** §5: transcripción y respuestas de demostración para las dudas (misma condición que el vocabulario). */
+async function prototypeDoubtDemoFor() {
+  if (!import.meta.env?.DEV) return null; // en el repo: solo DEV
+  try {
+    const mod = await import("../services/prototypeData");
+    return mod.prototypeDoubtDemo();
+  } catch {
+    return null;
+  }
+}
+import { knownVocabularyIn, vocabularyMatches } from "../services/vocabularySession";
+import { ExportModule, exportFieldCls, exportGhostBtnCls, exportLabelCls, exportPrimaryBtnCls } from "./study/ExportModule";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
@@ -45,14 +63,15 @@ import { HistoryPanel } from "./HistoryPanel";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
+import { checkPlanState, conceptCoverage, orderPresented, pickNextCheckQuestion } from "../services/checkPlan";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { conceptDeckPath, kinemaTags } from "../services/ankiDesign";
 import {
   buildSessionNoteMarkdown, buildSessionNotePath, buildRawSrtNoteMarkdown, buildRawSrtNotePath,
-  createVaultScaffold, sessionExportKey,
+  openObsidianNote, sessionExportKey, isSessionExported, exportSessionUpdateToObsidian,
   DEFAULT_OBSIDIAN_EXPORT_CONFIG, exportSessionToObsidian, loadCreatedMocs,
   loadObsidianExportConfig, loadObsidianExportedNotes, openObsidianUri,
-  buildObsidianNewUri, buildObsidianOpenVaultUri,
+  buildObsidianNewUri,
   saveCreatedMocs, saveObsidianExportConfig, saveObsidianExportedNotes,
   slugifyVault,
   type ObsidianExportConfig, type ObsidianSessionData,
@@ -94,6 +113,8 @@ interface AnkiCard {
   excluded?: boolean;
   /** El back ya es HTML de confianza (tarjetas de refuerzo): no se re-escapa. */
   isHtml?: boolean;
+  /** §5: guardada desde una duda sobre la lección (de refuerzo, origen «duda»). */
+  doubt?: boolean;
 }
 
 interface StudyContent {
@@ -103,7 +124,8 @@ interface StudyContent {
   /** F2-2: conceptos enlazables entre cursos (nombres canónicos). */
   conceptTerms?: string[];
   keyConcepts: string[];
-  quickWin: string;
+  /** Legado: ya no se genera ni se muestra (tarea genérica sin verificación). */
+  quickWin?: string;
   questions: { q: string; bloom: string; difficulty: ConfidenceLevel; hint: string; answer: string; conceptRefs?: number[] }[];
   application: { setup: string; challenge: string; solution: string; isCode: boolean };
   interviewQ: { q: string; idealAnswer: string } | null;
@@ -123,6 +145,8 @@ type StudyTranscriptResult = {
   courseSlug?: string;
   courseTitle?: string;
   lectureTitle?: string;
+  /** «video», «article» (lección de texto) u «other» (cuestionario, ejercicio…). */
+  lectureKind?: "video" | "article" | "other";
   error?: string;
 };
 
@@ -174,7 +198,7 @@ const CONFIDENCE = [
     id: "mastered" as ConfidenceLevel,
     icon: "face4" as IconName,
     label: "Lo domino",
-    desc: "Desafío de alto nivel",
+    desc: "Un desafío exigente",
     ring: "ring-violet-500/40",
     bg: "bg-violet-500/8 dark:bg-violet-500/10",
     border: "border-violet-500/30",
@@ -186,7 +210,7 @@ const CONFIDENCE = [
 // Única fuente de nombres del flujo (flowVersion 2): stepper, banner y
 // vista previa toman short/title/sub de aquí. flowVersion 2 = 4 pasos.
 const STEP_META: { short: string; hue: string; inkDark: string; inkLight: string; icon: IconName; title: string; sub: string }[] = [
-  { short: "Recordar",  hue: "#6d4aff", inkDark: "#b7a6ff", inkLight: "#5b37e8", icon: "compass",   title: "Lo que recuerdas",      sub: "Tu nivel y lo que recuerdas sin mirar" },
+  { short: "Recordar",  hue: "#6d4aff", inkDark: "#b7a6ff", inkLight: "#5b37e8", icon: "compass",   title: "Lo que recuerdas",      sub: "Qué tan claro te quedó y lo que recuerdas sin mirar" },
   { short: "Comprobar", hue: "#0284c7", inkDark: "#5cc8fb", inkLight: "#0369a1", icon: "brain",     title: "Ponte a prueba",        sub: "Responde sin mirar, ahí se aprende" },
   { short: "Aplicar",   hue: "#059669", inkDark: "#4ade9f", inkLight: "#047857", icon: "rocket",    title: "Llévalo a la práctica", sub: "Un caso real para aplicar lo visto" },
   { short: "Fijar",     hue: "#e11d48", inkDark: "#fb7185", inkLight: "#be123c", icon: "layers",    title: "Fíjalo en memoria",     sub: "Tarjetas listas para repasar" },
@@ -211,7 +235,7 @@ function StepBanner({ step }: { step: number }) {
         <Icon name={m.icon} size={24} weight="duotone" />
       </div>
       <div className="min-w-0 relative">
-        <span className="kx-step-eyebrow text-[9.5px] font-extrabold tracking-[0.14em] uppercase">{m.short} · Paso {step + 1} de 4</span>
+        <span className="kx-step-eyebrow text-[9.5px] font-extrabold tracking-[0.14em] uppercase">Paso {step + 1} de 4 · {m.short}</span>
         <p className="kx-step-title text-[14px] font-bold leading-tight mt-0.5">{m.title}</p>
         <p className="kx-step-sub text-[11px] leading-snug mt-0.5">{m.sub}</p>
       </div>
@@ -221,10 +245,12 @@ function StepBanner({ step }: { step: number }) {
 
 // Línea de coach neutra por nivel — sin frases inventadas ni hype.
 const COACH_LINE: Record<ConfidenceLevel, { icon: IconName; tip: string }> = {
-  confused:  { icon: "compass", tip: "Sin problema: empezamos por la base y subimos desde ahí." },
-  partial:   { icon: "target",  tip: "Normal en el primer intento; vamos a cerrar justo los puntos que faltaron." },
-  clear:     { icon: "zap",     tip: "Bien. Ahora lo comprobamos con preguntas de aplicación." },
-  mastered:  { icon: "flame",   tip: "Perfecto: te espera un desafío para confirmar el nivel." },
+  // Lo que de verdad hace el nivel: fija la dificultad de la PRIMERA pregunta
+  // de Comprobar (pickStartQuestion); las siguientes se adaptan a tus aciertos.
+  confused:  { icon: "compass", tip: "Sin problema: la primera pregunta será de definir y subimos desde ahí." },
+  partial:   { icon: "target",  tip: "Normal al principio: empezamos explicando y cerramos lo que falte." },
+  clear:     { icon: "zap",     tip: "Bien: la primera pregunta te pedirá usarlo en un caso." },
+  mastered:  { icon: "flame",   tip: "Perfecto: empezamos por la pregunta que combina varias ideas." },
 };
 
 
@@ -401,11 +427,13 @@ function validateStudyPayload(payload: unknown): string[] {
   if (!relevance || !Number.isFinite(Number(relevance.score))) issues.push("relevance.score");
 
   const keyConcepts = Array.isArray(raw.keyConcepts) ? raw.keyConcepts.map(v => asText(v)).filter(Boolean) : [];
-  if (keyConcepts.length < 4) issues.push("keyConcepts[4]");
+  // 2–7 según la densidad de la lección (keyConceptRange): lo elige la IA.
+  if (keyConcepts.length < 2) issues.push("keyConcepts[2]");
 
+  // Una por idea + síntesis; la cobertura idea→pregunta la mide conceptCoverage.
   const questions = Array.isArray(raw.questions) ? raw.questions : [];
-  if (questions.length < 4) issues.push("questions[4]");
-  questions.slice(0, 4).forEach((item, i) => {
+  if (questions.length < 3) issues.push("questions[3]");
+  questions.slice(0, 8).forEach((item, i) => {
     const q = isRecord(item) ? item : {};
     if (!asText(q.q)) issues.push(`questions[${i}].q`);
     if (!asText(q.bloom ?? q.bloomLevel)) issues.push(`questions[${i}].bloom`);
@@ -420,7 +448,6 @@ function validateStudyPayload(payload: unknown): string[] {
   if (!asText(app.solution)) issues.push("application.solution");
   if (typeof app.isCode !== "boolean") issues.push("application.isCode");
 
-  if (!asText(raw.quickWin)) issues.push("quickWin");
   if (!asText(raw.nextAction)) issues.push("nextAction");
 
   const cards = Array.isArray(raw.ankiCards) ? raw.ankiCards : [];
@@ -441,7 +468,7 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
   const fallbackQuestions = fallback.questions;
   const questionDifficulties: ConfidenceLevel[] = ["confused", "partial", "clear", "mastered"];
   const keyConcepts = Array.isArray(raw.keyConcepts)
-    ? raw.keyConcepts.map((v) => asText(v)).filter(Boolean).slice(0, 4)
+    ? raw.keyConcepts.map((v) => asText(v)).filter(Boolean).slice(0, 7)
     : fallback.keyConcepts;
   // C4/F2-2: summary y conceptTerms son opcionales y retrocompatibles.
   const summary = typeof raw.summary === 'string' ? raw.summary.trim() : undefined;
@@ -449,16 +476,17 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
     ? raw.conceptTerms.map((v) => asText(v)).filter(Boolean).slice(0, 5)
     : undefined;
   const questions = Array.isArray(raw.questions)
-    ? raw.questions.slice(0, 4).map((item, i) => {
+    ? raw.questions.slice(0, 8).map((item, i) => {
         const q = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
         const fb = fallbackQuestions[i] ?? fallbackQuestions[0];
         return {
           q: asText(q.q, fb.q),
           bloom: asText(q.bloom ?? q.bloomLevel, fb.bloom),
-          difficulty: normalizeDifficulty(q.difficulty, questionDifficulties[i] ?? fb.difficulty),
+          difficulty: normalizeDifficulty(q.difficulty, questionDifficulties[Math.min(i, questionDifficulties.length - 1)]),
           hint: asText(q.hint, fb.hint),
           answer: asText(q.answer, fb.answer),
-          conceptRefs: normalizeConceptRefs(q.conceptRefs ?? q.concepts, fb.conceptRefs ?? [i % Math.max(1, keyConcepts.length)], keyConcepts.length),
+          // Sin refs: la pregunta i evalúa la idea i; la de síntesis (la última), varias.
+          conceptRefs: normalizeConceptRefs(q.conceptRefs ?? q.concepts, i < keyConcepts.length ? [i] : keyConcepts.map((_, k) => k).slice(0, 3), keyConcepts.length),
         };
       })
     : [];
@@ -483,20 +511,26 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
           front: asText(card.front, fb.front),
           back: asText(card.back, fb.back),
           tags,
+          // Qué ideas refuerza la tarjeta: sin esto, ni el refuerzo de lo no
+          // marcado/fallado ni la cobertura de Fijar veían las tarjetas de la IA.
+          conceptRefs: normalizeConceptRefs(card.conceptRefs ?? card.concepts, [], keyConcepts.length),
+          // Las de refuerzo creadas en Study traen HTML de confianza (al restaurar).
+          ...(card.isHtml === true ? { isHtml: true } : {}),
         };
       })
     : [];
 
   return {
     relevance: {
-      score: clampScore(relevance.score ?? fallback.relevance.score),
+      // -1 = sin estimación (plantilla): se conserva para no mostrar una cifra inventada.
+      score: relevance.score == null ? fallback.relevance.score : clampScore(relevance.score),
       reason: asText(relevance.reason, fallback.relevance.reason),
     },
     summary,
     conceptTerms,
     keyConcepts,
-    quickWin: asText(raw.quickWin, fallback.quickWin),
-    questions: questions.length >= 4 ? questions : fallback.questions,
+    // Con menos de 3 no hay comprobación posible: validateStudyPayload ya lo rechaza antes.
+    questions: questions.length >= 3 ? questions : fallback.questions,
     application: {
       isCode: typeof app.isCode === "boolean" ? app.isCode : fallback.application.isCode,
       setup: asText(app.setup, fallback.application.setup),
@@ -512,23 +546,25 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
           }
         : fallback.interviewQ,
     nextAction: asText(raw.nextAction, fallback.nextAction),
-    ankiCards: cards.length >= 3 ? cards : fallback.ankiCards,
+    // Sin duplicados: mismo frente = misma nota en Anki (una pisaría a la otra).
+    ankiCards: cards.length >= 3 ? cards.filter((c, i, arr) => arr.findIndex(o => cardFrontKey(o.front) === cardFrontKey(c.front)) === i) : fallback.ankiCards,
   };
 }
 
 // §1.2: primera pregunta de la dificultad elegida; desempate por conceptos
-// no marcados (los débiles primero). El contenido trae una por dificultad.
-function pickStartQuestion(conf: ConfidenceLevel, cnt: StudyContent, unchecked: Set<number>): number {
-  const candidates = cnt.questions
-    .map((q, i) => ({ q, i }))
-    .filter(({ q }) => q.difficulty === conf);
-  const pool = candidates.length > 0
-    ? candidates
-    : cnt.questions.map((q, i) => ({ q, i })).filter(({ q }) => q.difficulty === DIFF_ORDER[Math.max(0, DIFF_ORDER.indexOf(conf) - 1)]);
-  const pool2 = pool.length > 0 ? pool : cnt.questions.map((q, i) => ({ q, i }));
+// no marcados (los débiles primero). Hay una pregunta por idea + síntesis, así
+// que varias pueden compartir nivel.
+// Recibe las ideas MARCADAS (las que dijiste recordar); las demás son las débiles.
+function pickStartQuestion(conf: ConfidenceLevel, cnt: StudyContent, checked: Set<number>): number {
+  // El nivel elegido; si la lección no tiene pregunta de ese nivel, la más
+  // cercana (a igualdad, la más baja: empezar fácil no penaliza).
+  const want = DIFF_ORDER.indexOf(conf);
+  const all = cnt.questions.map((q, i) => ({ q, i, gap: Math.abs(DIFF_ORDER.indexOf(q.difficulty) - want), below: DIFF_ORDER.indexOf(q.difficulty) <= want ? 0 : 1 }));
+  const best = Math.min(...all.map(x => x.gap * 2 + x.below));
+  const pool2 = all.filter(x => x.gap * 2 + x.below === best);
   const weakFirst = [...pool2].sort((a, b) => {
-    const aWeak = (a.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
-    const bWeak = (b.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
+    const aWeak = (a.q.conceptRefs ?? []).some(r => !checked.has(r)) ? 1 : 0;
+    const bWeak = (b.q.conceptRefs ?? []).some(r => !checked.has(r)) ? 1 : 0;
     return bWeak - aWeak;
   });
   return weakFirst[0]?.i ?? 0;
@@ -541,24 +577,24 @@ function getOralPracticeMeta(content: StudyContent, objective: string) {
 
   if (isInterview) {
     return {
-      title: "Pregunta de entrevista",
-      subtitle: "Practica tu respuesta en voz alta",
-      answerLabel: "Estructura de respuesta ideal",
+      title: "Como en una entrevista",
+      subtitle: "Responde como en una entrevista",
+      answerLabel: "Ver una buena estructura",
     };
   }
 
   if (isProfessional) {
     return {
-      title: "Explicación profesional",
-      subtitle: "Practica cómo lo dirías en contexto real",
-      answerLabel: "Estructura sugerida",
+      title: "Como en el trabajo",
+      subtitle: "Explícalo como en el trabajo",
+      answerLabel: "Ver una buena estructura",
     };
   }
 
   return {
-    title: "Explícalo en voz alta",
-    subtitle: "Consolida la idea con tus palabras",
-    answerLabel: "Estructura sugerida",
+    title: "Con tus palabras",
+    subtitle: "Explícalo con tus palabras",
+    answerLabel: "Ver una buena estructura",
   };
 }
 
@@ -570,7 +606,7 @@ function humanizeObjectivesError(error: string | null | undefined): string {
   const ctx = { kind: cfg.kind, endpoint: cfg.baseUrl, model: cfg.model };
   const msg = error.toLowerCase();
   if (msg.includes("cortada a mitad") || msg.includes("max_tokens") || msg.includes("max tokens") || msg.includes("límite de tokens")) {
-    return "La IA fue cortada a mitad de respuesta por el límite de tokens. Pulsa Regenerar — el siguiente intento usará más tokens.";
+    return "La respuesta se cortó por el límite de tokens. Pulsa Regenerar: el siguiente intento usará más.";
   }
   if (msg.includes("saturado") || msg.includes("503") || msg.includes("unavailable") || msg.includes("overloaded") || msg.includes("high demand")) {
     return "Gemini está saturado por alta demanda. Espera 1-2 minutos y vuelve a pulsar Regenerar.";
@@ -580,9 +616,9 @@ function humanizeObjectivesError(error: string | null | undefined): string {
   if (msg.includes("api key") || msg.includes("api_key") || (msg.includes("invalid") && msg.includes("key"))) {
     return describeProviderFailure(error, ctx);
   }
-  if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red al hablar con la IA. Revisa tu conexión y reintenta.";
+  if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red: Kinema no pudo conectar con tu proveedor de IA. Revisa tu conexión y reintenta.";
   if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página de Udemy.";
-  if (msg.includes("parse") || msg.includes("json") || msg.includes("formato no era válido")) return "La IA respondió pero el formato no era válido. Pulsa Regenerar para reintentar.";
+  if (msg.includes("parse") || msg.includes("json") || msg.includes("formato no era válido")) return "La respuesta llegó con un formato no válido. Pulsa Regenerar para reintentar.";
   return describeProviderFailure(error, ctx);
 }
 
@@ -638,8 +674,8 @@ function StepHeader({
 function AIAnalyzingLoader() {
   const STEPS = [
     { label: "Leyendo tu respuesta…",             icon: "bookOpen" as IconName },
-    { label: "Comparando con los conceptos…",     icon: "brain" as IconName },
-    { label: "Generando feedback personalizado…",  icon: "edit3" as IconName },
+    { label: "Comparando con la lección…",        icon: "brain" as IconName },
+    { label: "Preparando tu revisión…",           icon: "edit3" as IconName },
   ];
   const [step, setStep] = useState(0);
   useEffect(() => {
@@ -688,7 +724,6 @@ function AIAnalyzingLoader() {
             ))}
           </div>
         </div>
-        <span className="text-white/14 text-[9px] font-mono tracking-wider shrink-0">IA</span>
       </div>
     </motion.div>
   );
@@ -697,61 +732,116 @@ function AIAnalyzingLoader() {
 // ─────────────────────────────────────────────────────────────────────────────
 // AI Feedback v2.0 — verdict hero + structured content + contextual actions
 // ─────────────────────────────────────────────────────────────────────────────
+/** Avance del paso — mismo botón (y misma acción que «Siguiente») en todos los pasos (§1.7). */
+function StepContinueButton({ label, onClick, hint }: { label: string; onClick: () => void; hint?: string }) {
+  return (
+    <div className="space-y-1.5">
+      {hint && <p className="text-[10.5px] text-center leading-relaxed text-[var(--usb-fg-mid)]">{hint}</p>}
+      <button
+        type="button"
+        onClick={onClick}
+        className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+      >
+        {label}<ArrowRight size={12} />
+      </button>
+    </div>
+  );
+}
+
+/** Salto de paso — mismo texto, estilo y lugar en todos los pasos que lo admiten (§1.7). */
+function SkipStepButton({ onClick, title }: { onClick: () => void; title: string }) {
+  return (
+    <div className="text-center" data-skip-step>
+      <button
+        type="button"
+        onClick={onClick}
+        title={title}
+        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[11px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-2)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+      >
+        <FastForward size={11} />Saltar este paso
+      </button>
+    </div>
+  );
+}
+
+// Secciones del feedback (formato pedido al modelo: BIEN / FALTÓ / PARA RECORDAR,
+// o DIAGNÓSTICO / BIEN / MEJORAR / SIGUIENTE NIVEL en la práctica). Se muestran
+// con rótulos legibles en vez del texto crudo con etiquetas en mayúsculas.
+const FEEDBACK_SECTIONS: { key: RegExp; label: string; color: string }[] = [
+  { key: /^DIAGN[OÓ]STICO$/, label: "", color: "" },
+  { key: /^BIEN$/, label: "Lo que está bien", color: "text-[var(--usb-ok-text)]" },
+  { key: /^FALT[OÓ]$/, label: "Lo que faltó", color: "text-[var(--usb-warn-text)]" },
+  { key: /^MEJORAR$/, label: "Qué mejorar", color: "text-[var(--usb-warn-text)]" },
+  { key: /^PARA RECORDAR$/, label: "Para recordar", color: "text-[var(--usb-accent-text)]" },
+  { key: /^SIGUIENTE NIVEL$/, label: "Para ir más allá", color: "text-[var(--usb-info-text)]" },
+];
+
+function parseFeedbackSections(content: string): { label: string; color: string; text: string }[] | null {
+  const body = content.replace(/^\s*\[(?:CORRECTO|PARCIAL|INCORRECTO|EXCELENTE)\]\s*/i, "");
+  const marker = /(?:^|\n)[ \t]*(DIAGN[OÓ]STICO|BIEN|FALT[OÓ]|MEJORAR|PARA RECORDAR|SIGUIENTE NIVEL)[ \t]*:[ \t]*/g;
+  const hits = [...body.matchAll(marker)];
+  if (hits.length === 0) return null;
+  const clean = (t: string) => t.replace(/^[\s\u2705\u274C\u26A0\uFE0F\u{1F4A1}\u{1F680}]+/u, "").trim();
+  const out: { label: string; color: string; text: string }[] = [];
+  const lead = clean(body.slice(0, hits[0].index));
+  if (lead) out.push({ label: "", color: "", text: lead });
+  hits.forEach((m, i) => {
+    const from = (m.index ?? 0) + m[0].length;
+    const to = i + 1 < hits.length ? hits[i + 1].index : body.length;
+    const text = clean(body.slice(from, to));
+    if (!text || /^\(?\s*nada\s*\)?\.?$/i.test(text)) return;
+    const meta = FEEDBACK_SECTIONS.find((sec) => sec.key.test(m[1].toUpperCase())) ?? FEEDBACK_SECTIONS[0];
+    out.push({ label: meta.label, color: meta.color, text });
+  });
+  return out;
+}
+
+/**
+ * Revisión de Kinema: veredicto + qué está bien / qué faltó / para recordar.
+ * Solo informa. Todo lo que se puede HACER después (intentar de nuevo, pasar,
+ * ver la respuesta, preguntar una duda) va justo debajo, en un solo bloque.
+ */
 function AIFeedback({
-  fb, onRetry, onShowHint, onShowModel, onClearAnswer,
+  fb, stale,
 }: {
   fb: FeedbackState;
-  onRetry?: () => void;
-  onShowHint?: () => void;
-  onShowModel?: () => void;
-  onClearAnswer?: () => void;
+  /** La respuesta cambió desde esta revisión: se avisa de que es de la versión anterior. */
+  stale?: boolean;
 }) {
   if (fb.status === "idle") return null;
   if (fb.status === "loading") return <AIAnalyzingLoader />;
 
-  // ── Error ────────────────────────────────────────────────────────────────
+  // ── Error: la respuesta se conserva; se reintenta con el mismo botón de revisar ──
   if (fb.status === "error") return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-      className="border border-red-500/18 bg-red-500/5 rounded-xl overflow-hidden"
+      role="status"
+      className="border border-red-500/25 bg-red-500/5 rounded-xl flex items-start gap-3 p-3.5"
     >
-      <div className="flex items-start gap-3 p-3.5">
-        <div className="w-8 h-8 rounded-xl bg-red-500/12 border border-red-500/20 flex items-center justify-center shrink-0">
-          <WifiOff size={12} className="text-red-400" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-red-300/85 text-[11px]" style={{ fontWeight: 600 }}>Sin conexión con la IA local</p>
-          <p className="text-red-300/45 text-[10px] mt-0.5 leading-relaxed">{fb.content}</p>
-        </div>
+      <div className="w-8 h-8 rounded-xl bg-red-500/12 border border-red-500/20 flex items-center justify-center shrink-0">
+        <WifiOff size={12} className="text-[var(--usb-err-text)]" />
       </div>
-      {onRetry && (
-        <div className="px-3.5 pb-3">
-          <button onClick={onRetry}
-            className="w-full flex items-center justify-center gap-1.5 text-[10px] text-red-300/70 hover:text-red-300 border border-red-500/18 hover:border-red-500/30 py-1.5 rounded-lg transition-all">
-            <Loader2 size={9} />Reintentar conexión
-          </button>
-        </div>
-      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-[var(--usb-err-text)] text-[11.5px] font-semibold">Kinema no pudo revisar tu respuesta</p>
+        <p className="text-[var(--usb-fg-mid)] text-[10.5px] mt-0.5 leading-relaxed">{fb.content} Tu respuesta se conserva: vuelve a pulsar «Revisar».</p>
+      </div>
     </motion.div>
   );
-
-  // (second error block removed — duplicate dead code, handled above)
 
   const isStreaming = fb.status === "streaming";
   const rating = fb.rating ?? "unknown";
 
   // ── Verdict config ────────────────────────────────────────────────────────
   const VERDICT = {
-    correct:   { heroText: "text-emerald-300", heroBg: "bg-emerald-500/10", heroBorder: "border-emerald-500/20", heroIconBg: "bg-emerald-500/18 border-emerald-500/30", icon: "checkCircle2" as IconName, label: "Correcto",    sublabel: "Tu comprensión está en el camino correcto.", ring: "border-emerald-500/22",   cardBg: "bg-emerald-500/[0.04]" },
-    excellent: { heroText: "text-violet-300",  heroBg: "bg-violet-500/10",  heroBorder: "border-violet-500/20",  heroIconBg: "bg-violet-500/18 border-violet-500/30",  icon: "target" as IconName, label: "Excelente",   sublabel: "Dominas este concepto. Respuesta completa.",       ring: "border-violet-500/22", cardBg: "bg-violet-500/[0.05]"  },
-    partial:   { heroText: "text-amber-300",   heroBg: "bg-amber-500/8",    heroBorder: "border-amber-500/18",   heroIconBg: "bg-amber-500/15 border-amber-500/28",    icon: "zap" as IconName, label: "Parcial",     sublabel: "Vas bien — hay algunos gaps por cerrar.",          ring: "border-amber-500/20", cardBg: "bg-amber-500/[0.04]"   },
-    wrong:     { heroText: "text-rose-300",    heroBg: "bg-rose-500/7",     heroBorder: "border-rose-500/16",    heroIconBg: "bg-rose-500/14 border-rose-500/25",      icon: "messageSquare" as IconName, label: "Revisemos",   sublabel: "Todavía no llegaste. La IA te explica por qué.",  ring: "border-rose-500/18",   cardBg: "bg-rose-500/[0.04]"    },
-    unknown:   { heroText: "text-violet-300",  heroBg: "bg-violet-500/7",   heroBorder: "border-violet-500/15",  heroIconBg: "bg-violet-500/14 border-violet-500/25",  icon: "sparkles" as IconName, label: "Evaluando…",  sublabel: "",                                                  ring: "border-violet-500/15",                                         cardBg: "bg-violet-500/[0.04]"  },
+    correct:   { heroText: "text-emerald-300", heroBg: "bg-emerald-500/10", heroBorder: "border-emerald-500/20", heroIconBg: "bg-emerald-500/18 border-emerald-500/30", icon: "checkCircle2" as IconName, label: "Correcto",    sublabel: "Captaste la idea central.",                 ring: "border-emerald-500/22", cardBg: "bg-emerald-500/[0.04]" },
+    excellent: { heroText: "text-violet-300",  heroBg: "bg-violet-500/10",  heroBorder: "border-violet-500/20",  heroIconBg: "bg-violet-500/18 border-violet-500/30",  icon: "target" as IconName,       label: "Excelente",   sublabel: "Respuesta completa y precisa.",              ring: "border-violet-500/22",  cardBg: "bg-violet-500/[0.05]"  },
+    partial:   { heroText: "text-amber-300",   heroBg: "bg-amber-500/8",    heroBorder: "border-amber-500/18",   heroIconBg: "bg-amber-500/15 border-amber-500/28",    icon: "zap" as IconName,          label: "A medias",    sublabel: "Vas bien, pero falta una parte.",            ring: "border-amber-500/20",   cardBg: "bg-amber-500/[0.04]"   },
+    wrong:     { heroText: "text-rose-300",    heroBg: "bg-rose-500/7",     heroBorder: "border-rose-500/16",    heroIconBg: "bg-rose-500/14 border-rose-500/25",      icon: "messageSquare" as IconName, label: "Todavía no", sublabel: "Abajo tienes qué faltó para llegar.",       ring: "border-rose-500/18",    cardBg: "bg-rose-500/[0.04]"    },
+    unknown:   { heroText: "text-violet-300",  heroBg: "bg-violet-500/7",   heroBorder: "border-violet-500/15",  heroIconBg: "bg-violet-500/14 border-violet-500/25",  icon: "sparkles" as IconName,     label: "Revisando…",  sublabel: "",                                           ring: "border-violet-500/15",  cardBg: "bg-violet-500/[0.04]"  },
   } as const;
   const v = VERDICT[isStreaming ? "unknown" : (rating as keyof typeof VERDICT)] ?? VERDICT.unknown;
 
-  const showActions = fb.status === "done";
-  const needsWork = rating === "partial" || rating === "wrong" || rating === "unknown";
-  const paragraphs = (fb.content || "").split(/\n{2,}|\n(?=\s*[-*•]\s)/).map(p => p.trim()).filter(Boolean);
+  const sections = parseFeedbackSections(fb.content || "");
+  const paragraphs = sections ? [] : (fb.content || "").replace(/^\s*\[(?:CORRECTO|PARCIAL|INCORRECTO|EXCELENTE)\]\s*/i, "").split(/\n{2,}|\n(?=\s*[-*•]\s)/).map(p => p.trim()).filter(Boolean);
 
   return (
     <motion.div
@@ -759,6 +849,7 @@ function AIFeedback({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
       className={`rounded-xl border overflow-hidden ${v.ring} ${v.cardBg}`}
+      data-feedback
     >
       {/* ── Verdict hero band ── */}
       <div className={`flex items-center gap-3 px-3.5 py-3 ${v.heroBg} border-b ${v.heroBorder}`}>
@@ -768,29 +859,45 @@ function AIFeedback({
             : <Icon name={v.icon} size={18} />}
         </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-[13px] ${v.heroText}`} style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{v.label}</p>
-          {v.sublabel && <p className="text-white/45 text-[10.5px] mt-0.5 leading-snug">{v.sublabel}</p>}
+          <p className="text-[10px] font-semibold leading-none text-[var(--usb-fg-mid)]">Revisión de Kinema</p>
+          <p className={`text-[13px] mt-1 ${v.heroText}`} style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>{v.label}</p>
+          {v.sublabel && <p className="text-[var(--usb-fg-mid)] text-[10.5px] mt-0.5 leading-snug">{v.sublabel}</p>}
         </div>
         {fb.isMock && (
-          <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300 shrink-0">Local</span>
+          <span title="Revisión de ejemplo del prototipo: no evalúa tu respuesta." className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-[var(--usb-warn-text)] shrink-0">Demo</span>
         )}
       </div>
 
+      {stale && !isStreaming && (
+        <p className="px-3.5 pt-2.5 text-[10.5px] font-medium text-[var(--usb-fg-mid)]">Esta revisión es de tu versión anterior.</p>
+      )}
+
       {/* ── Structured content ── */}
-      <div className="px-3.5 py-3 space-y-2">
-        {paragraphs.length === 0 && isStreaming && (
-          <p className="text-white/35 text-[11px]">Analizando tu respuesta…</p>
+      <div className="px-3.5 py-3 space-y-2.5">
+        {!sections && paragraphs.length === 0 && isStreaming && (
+          <p className="text-[var(--usb-fg-mid)] text-[11px]">Kinema está leyendo tu respuesta…</p>
         )}
+        {sections?.map((sec, i) => (
+          <div key={i} data-feedback-section={sec.label || "resumen"}>
+            {sec.label && <p className={`text-[10.5px] font-bold leading-tight mb-0.5 ${sec.color}`}>{sec.label}</p>}
+            <p className={`text-[11.5px] leading-relaxed whitespace-pre-line ${sec.label ? "text-[var(--usb-fg)]" : "text-[var(--usb-fg-hi)] font-medium"}`}>
+              {renderInline(sec.text)}
+              {isStreaming && i === sections.length - 1 && (
+                <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70" />
+              )}
+            </p>
+          </div>
+        ))}
         {paragraphs.map((p, i) => {
           const isBullet = /^\s*[-*•]\s+/.test(p);
           const textOnly = p.replace(/^\s*[-*•]\s+/, "");
           return isBullet ? (
             <div key={i} className="flex items-start gap-2">
               <span className="mt-[7px] h-1 w-1 rounded-full bg-violet-400/70 shrink-0" aria-hidden="true" />
-              <p className="text-white/70 text-[11.5px] leading-relaxed">{renderInline(textOnly)}</p>
+              <p className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed">{renderInline(textOnly)}</p>
             </div>
           ) : (
-            <p key={i} className="text-white/70 text-[11.5px] leading-relaxed">
+            <p key={i} className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed whitespace-pre-line">
               {renderInline(textOnly)}
               {isStreaming && i === paragraphs.length - 1 && (
                 <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70" />
@@ -800,36 +907,114 @@ function AIFeedback({
         })}
       </div>
 
-      {/* ── Contextual actions ── */}
-      {showActions && (onRetry || onShowHint || onShowModel || onClearAnswer) && (
-        <div className="px-3.5 pb-3 flex flex-wrap gap-1.5">
-          {needsWork && onClearAnswer && (
-            <button onClick={onClearAnswer}
-              className="flex items-center gap-1.5 text-[10px] text-white/60 hover:text-white border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all">
-              <Edit3 size={10} />Reescribir
-            </button>
-          )}
-          {needsWork && onShowHint && (
-            <button onClick={onShowHint}
-              className="flex items-center gap-1.5 text-[10px] text-amber-300/80 hover:text-amber-300 border border-amber-500/20 hover:border-amber-500/35 px-2.5 py-1.5 rounded-lg transition-all">
-              <Zap size={10} />Ver pista
-            </button>
-          )}
-          {onShowModel && (
-            <button onClick={onShowModel}
-              className="flex items-center gap-1.5 text-[10px] text-violet-300/80 hover:text-violet-300 border border-violet-500/20 hover:border-violet-500/35 px-2.5 py-1.5 rounded-lg transition-all">
-              <BookOpen size={10} />Respuesta modelo
-            </button>
-          )}
-          {onRetry && fb.isMock && (
-            <button onClick={onRetry}
-              className="flex items-center gap-1.5 text-[10px] text-white/60 hover:text-white border border-white/10 hover:border-white/20 px-2.5 py-1.5 rounded-lg transition-all">
-              <RotateCcw size={10} />Reevaluar con IA
+    </motion.div>
+  );
+}
+
+/**
+ * «¿Cómo sigues?» — lo que se puede hacer tras una revisión sin acierto, en un
+ * solo bloque y en el mismo orden en cada paso: la opción principal, la
+ * alternativa y, en la misma caja, la ayuda («Tengo una duda»). Los rótulos se
+ * explican solos; la línea de apoyo solo dice una consecuencia que no se ve.
+ */
+type NextMove = { id: string; label: string; hint?: string; onClick: () => void; primary?: boolean; icon: React.ComponentType<{ size?: number; className?: string }>; disabled?: boolean };
+function NextMoves({ moves, help, exit }: { moves: NextMove[]; help?: React.ReactNode; exit?: { label: string; onClick: () => void } }) {
+  return (
+    <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-3 space-y-2" data-next-moves role="group" aria-label="Cómo sigues">
+      <p className="text-[11.5px] font-bold text-[var(--usb-fg-hi)] leading-tight">¿Cómo sigues?</p>
+      {moves.map(({ id, label, hint, onClick, primary, icon: MoveIcon, disabled }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          data-move={id}
+          className={`w-full flex items-center gap-2.5 rounded-xl px-3 min-h-10 py-2 text-left transition-all active:scale-[0.99] disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${
+            primary
+              ? "kx-on-solid kx-cta"
+              : "border border-[var(--usb-border-mid)] bg-[var(--usb-bg-3)] hover:border-[#6d4aff]/45"
+          }`}
+        >
+          <MoveIcon size={13} className={`shrink-0 ${primary ? "" : "text-[var(--usb-fg-mid)]"}`} />
+          <span className="min-w-0">
+            <span className={`block text-[11.5px] font-bold leading-tight ${primary ? "" : "text-[var(--usb-fg-hi)]"}`}>{label}</span>
+            {hint && <span className={`block text-[10.5px] font-medium leading-snug mt-0.5 ${primary ? "" : "text-[var(--usb-fg-mid)]"}`}>{hint}</span>}
+          </span>
+        </button>
+      ))}
+      {(help || exit) && (
+        <div className="pt-1 flex flex-wrap items-center gap-2">
+          {help}
+          {exit && (
+            <button type="button" onClick={exit.onClick} data-move-exit
+              className="ml-auto h-8 px-2 text-[11px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] underline-offset-2 hover:underline rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+              {exit.label}
             </button>
           )}
         </div>
       )}
-    </motion.div>
+    </div>
+  );
+}
+
+/** «Tengo una duda» — mismo botón en todos los sitios: justo debajo de la revisión. */
+function DoubtButton({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-expanded={open} data-doubt-trigger
+      className={`inline-flex items-center gap-1.5 h-8 px-2.5 text-[11px] font-semibold border rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${
+        open
+          ? "text-violet-300 border-violet-500/40 bg-violet-500/10"
+          : "text-[var(--usb-fg-mid)] hover:text-violet-300 border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:border-violet-500/35"
+      }`}>
+      <HelpCircle size={12} />Tengo una duda
+    </button>
+  );
+}
+
+/** Mostrar/ocultar una referencia (respuesta esperada, solución): mismo control en cada paso. */
+function RevealButton({ open, onClick, label, openLabel }: { open: boolean; onClick: () => void; label: string; openLabel: string }) {
+  return (
+    <button type="button" onClick={onClick} aria-expanded={open} data-show-expected
+      className="inline-flex items-center gap-1.5 h-8 px-2.5 text-[11px] font-semibold border rounded-lg border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+      <BookOpen size={12} />{open ? openLabel : label}
+    </button>
+  );
+}
+
+/** Ayuda plegable (pista, estructura): el mismo control en cada paso; no cuenta como intento. */
+function HelpToggle({ open, onToggle, label, openLabel, children }: { open: boolean; onToggle: () => void; label: string; openLabel: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5" data-help-toggle>
+      <button onClick={onToggle} aria-expanded={open}
+        className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${
+          open
+            ? "bg-amber-500/10 border-amber-500/30 text-[var(--usb-warn-text)]"
+            : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
+        }`}>
+        <Sparkles size={12} className="shrink-0 text-amber-400" />
+        <span className="text-[11px] font-semibold flex-1">{open ? openLabel : label}</span>
+        <ChevronDown size={12} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <div className="bg-amber-500/8 border border-amber-500/25 rounded-xl p-3 text-[11.5px] text-[var(--usb-fg)] leading-relaxed whitespace-pre-wrap">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Referencia que se ve al cerrar el intento (respuesta esperada / solución). */
+function ReferenceAnswer({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] overflow-hidden" data-reference-answer>
+      <p className="px-3 pt-2.5 text-[10.5px] font-bold text-[var(--usb-ok-text)]">{label}</p>
+      <div className={`px-3 pb-3 pt-1 text-[11.5px] leading-relaxed text-[var(--usb-fg)] whitespace-pre-wrap overflow-x-auto ${mono ? "font-mono text-[10.5px]" : ""}`}>{children}</div>
+    </div>
   );
 }
 
@@ -909,7 +1094,8 @@ async function exportApkgFile(
       type: c.type,
       // §3: las de refuerzo se ordenan primero dentro de buildConceptSpec.
       reinforce: c.reinforce,
-      tags: kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.reinforce ? "study" : undefined }),
+      // §5: las de duda también son de refuerzo, con su propio origen.
+      tags: kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.doubt ? "duda" : c.reinforce ? "study" : undefined }),
     })),
     course,
     lesson,
@@ -925,10 +1111,24 @@ async function exportApkgFile(
 
 // GUID por contenido (curso|lección|[study:]front): reimportar la misma
 // lección actualiza las notas en vez de duplicarlas aunque cambie el orden
-// o la cantidad. Las de refuerzo llevan el prefijo "study:" (§3), así que
-// una tarjeta de refuerzo y la generada por IA no colisionan nunca.
-function stableAnkiGuid(course: string, lesson: string, card: { front: string; reinforce?: boolean }): string {
-  const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.reinforce ? "study:" : ""}${card.front}`;
+// o la cantidad. Las de refuerzo NUEVAS (study-refuerzo-*) llevan el prefijo
+// "study:" (§3), así que no colisionan con una generada por IA; las de duda
+// (§5) llevan "duda:" por el mismo motivo. Marcar una de IA como refuerzo
+// cambia sus etiquetas y su orden, no su GUID.
+/** Tarjetas que ejercitan lo mismo que Aplicar (refuerzo si la práctica no salió). */
+/** Un solo aviso de Obsidian en pantalla: cada uno reemplaza al anterior. */
+const OBSIDIAN_TOAST_ID = "kx-obsidian";
+
+function isPracticeCard(c: { type: AnkiCard["type"] }): boolean {
+  return c.type === "aplicacion" || c.type === "codigo" || c.type === "entrevista";
+}
+
+function stableAnkiGuid(course: string, lesson: string, card: { id?: string; front: string; reinforce?: boolean; doubt?: boolean }): string {
+  // "study:" solo en las tarjetas NUEVAS de refuerzo (frente = una pregunta). Una
+  // tarjeta de la lección que pasa a ser de refuerzo conserva su GUID: si no,
+  // cambiar una marca o hacer la práctica tras exportar la duplicaría en Anki.
+  const extra = card.reinforce && (card.id ?? "").startsWith("study-refuerzo-");
+  const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.doubt ? "duda:" : extra ? "study:" : ""}${card.front}`;
   let hash = 2166136261;
   for (let i = 0; i < source.length; i += 1) {
     hash ^= source.charCodeAt(i);
@@ -944,7 +1144,8 @@ function generateContent(objectiveId: string, custom: string, course: string, le
   const tags = [tag(course) || "curso", tag(lesson) || "leccion"];
   return {
     relevance: {
-      score: 76,
+      // Sin IA no hay estimación real: -1 oculta la barra (nada de cifras inventadas).
+      score: -1,
       reason: `Plantilla local: «${topic}» sostiene lo que viene después en «${course}». Conectarlo con tu objetivo hoy evita releerlo mañana.`,
     },
     keyConcepts: [
@@ -952,7 +1153,6 @@ function generateContent(objectiveId: string, custom: string, course: string, le
       `Cómo funciona por dentro: las piezas o pasos que hacen que «${topic}» haga lo que hace.`,
       `Cuándo aplicarlo y cuándo no: límites, errores comunes y alternativas.`,
     ],
-    quickWin: `Explica «${topic}» en dos frases, sin mirar, como si se lo contaras a un colega.`,
     questions: [
       { q: `¿Qué problema resuelve «${topic}» y por qué importa?`, bloom: "recordar", difficulty: "confused", hint: "Piensa en qué pasaría si no existiera.", answer: `Debe nombrar el problema central de «${topic}» y una consecuencia concreta de no resolverlo.`, conceptRefs: [0] },
       { q: `Describe con tus palabras cómo funciona «${topic}».`, bloom: "comprender", difficulty: "partial", hint: "Recorre el proceso de principio a fin.", answer: `Una explicación ordenada de las piezas o pasos clave, sin saltos.`, conceptRefs: [1] },
@@ -965,15 +1165,19 @@ function generateContent(objectiveId: string, custom: string, course: string, le
       solution: `Una solución válida aplica la idea central, respeta los límites del tema y justifica al menos una decisión con un criterio claro.`,
       isCode: false,
     },
+    // Entrevista solo si el objetivo lo pide (misma regla que el prompt de la IA).
     interviewQ: {
-      q: `Si te preguntaran sobre «${topic}» en una entrevista, ¿cómo lo explicarías en 60 segundos?`,
+      q: /\b(entrevista|interview)\b/i.test(goal)
+        ? `En una entrevista te piden explicar «${topic}» en un minuto. ¿Qué dirías? Cubre qué es, para qué sirve y un ejemplo.`
+        : `Explícale «${topic}» en un minuto a alguien que no lo conoce. Cubre qué es, para qué sirve y un ejemplo.`,
       idealAnswer: `1) Qué es y qué problema resuelve. 2) Cómo funciona en una frase. 3) Un ejemplo real. 4) Un límite o trade-off.`,
     },
-    nextAction: `Antes de la siguiente clase, vuelve a explicar «${topic}» sin apuntes y anota lo que dudaste.`,
+    nextAction: `Usa «${topic}» en un ejemplo propio (tu proyecto o un ejercicio pequeño) antes de la siguiente lección.`,
     ankiCards: [
-      { id: "card-001", type: "concepto", front: `¿Qué problema resuelve «${topic}»?`, back: `Resuelve la necesidad central del tema dentro de «${course}». Explícalo con un ejemplo propio.`, tags },
-      { id: "card-002", type: "proceso", front: `¿Cómo funciona «${topic}», paso a paso?`, back: `Piezas clave en orden: entrada, transformación y resultado. Di qué hace cada una.`, tags },
-      { id: "card-003", type: "comparacion", front: `¿Cuándo usar «${topic}» y cuándo evitarlo?`, back: `Úsalo cuando encaja con tu objetivo (${goal}); evítalo cuando sus límites lo hacen costoso o frágil.`, tags },
+      // Una por idea clave (conceptRefs): así el refuerzo de lo no marcado también funciona sin IA.
+      { id: "card-001", type: "concepto", conceptRefs: [0], front: `¿Qué problema resuelve «${topic}»?`, back: `Resuelve la necesidad central del tema dentro de «${course}». Explícalo con un ejemplo propio.`, tags },
+      { id: "card-002", type: "proceso", conceptRefs: [1], front: `¿Cómo funciona «${topic}», paso a paso?`, back: `Piezas clave en orden: entrada, transformación y resultado. Di qué hace cada una.`, tags },
+      { id: "card-003", type: "comparacion", conceptRefs: [2], front: `¿Cuándo usar «${topic}» y cuándo evitarlo?`, back: `Úsalo cuando encaja con tu objetivo (${goal}); evítalo cuando sus límites lo hacen costoso o frágil.`, tags },
     ],
   };
 }
@@ -1050,18 +1254,33 @@ function ProgressStepper({ steps, focus }: { steps: { label: string; done: boole
 }
 
 // ─── Review of answered questions ─────────────────────────────────────────────
+/** Comprobación cerrada: cada pregunta con tu respuesta, la revisión y la respuesta esperada. */
+const RATING_LABEL: Record<string, string> = { correct: "Correcta", excellent: "Excelente", partial: "A medias", wrong: "Todavía no" };
 function VerifyDoneReview({
-  questions, answers, feedbacks, onGoApply,
+  questions, answers, feedbacks, onGoApply, onAskDoubt, isDoubtOpen, renderDoubt, onChallenge,
 }: {
   questions: StudyContent["questions"];
   answers: Record<number, string>;
   feedbacks: Record<number, FeedbackState>;
   onGoApply: () => void;
+  /** §5: la duda también se pide al repasar (quien acierta a la primera llega aquí). */
+  onAskDoubt?: (i: number) => void;
+  isDoubtOpen?: (i: number) => boolean;
+  renderDoubt?: (i: number) => React.ReactNode;
+  /** §1.2: «Un reto más», opcional, solo tras acertar y si hay una de nivel más alto. */
+  onChallenge?: () => void;
 }) {
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  // Solo lo respondido; la última queda abierta (su revisión y la duda siguen a la vista).
+  const answered = questions.map((q, i) => ({ q, i })).filter(({ i }) => feedbacks[i]?.status === "done");
+  const [openIdx, setOpenIdx] = useState<number | null>(answered.length > 0 ? answered[answered.length - 1].i : null);
+  const [shownAnswers, setShownAnswers] = useState<Record<number, boolean>>({});
+  const missed = answered.some(({ i }) => !["correct", "excellent"].includes(feedbacks[i]?.rating ?? ""));
   return (
-    <div className="space-y-2">
-      {questions.map((q, i) => {
+    <div className="space-y-2" data-verify-review>
+      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed px-1">
+        <span className="font-bold text-[var(--usb-fg-hi)]">Comprobación terminada.</span>{missed ? " Lo que falló va a Anki como refuerzo." : ""} Toca una pregunta para repasarla.
+      </p>
+      {answered.map(({ q, i }) => {
         const fb = feedbacks[i];
         const open = openIdx === i;
         const rating = fb?.rating ?? "unknown";
@@ -1077,8 +1296,9 @@ function VerifyDoneReview({
               aria-expanded={open}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
             >
-              <span className={`h-2 w-2 rounded-full shrink-0 ${tone}`} />
+              <span className={`h-2 w-2 rounded-full shrink-0 ${tone}`} aria-hidden="true" />
               <span className="flex-1 min-w-0 text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{q.q}</span>
+              <span className="text-[10px] font-semibold text-[var(--usb-fg-mid)] shrink-0">{RATING_LABEL[rating] ?? ""}</span>
               <ChevronDown size={13} className={`text-[var(--usb-fg-lo)] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
             </button>
             <AnimatePresence initial={false}>
@@ -1088,15 +1308,18 @@ function VerifyDoneReview({
                   className="overflow-hidden"
                 >
                   <div className="px-3 pb-3 space-y-2">
-                    {answers[i] ? (
-                      <div className="rounded-xl bg-[var(--usb-bg-3)] border border-[var(--usb-border)] px-3 py-2.5">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--usb-fg-lo)] mb-1">Tu respuesta</p>
-                        <p className="text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">{answers[i]}</p>
-                      </div>
-                    ) : (
-                      <p className="text-[11px] text-[var(--usb-fg-lo)]">Sin respuesta registrada.</p>
-                    )}
-                    {fb && fb.status === "done" && <AIFeedback fb={fb} />}
+                    <div className="rounded-xl bg-[var(--usb-bg-2)] border border-[var(--usb-border)] px-3 py-2.5">
+                      <p className="text-[10.5px] font-bold text-[var(--usb-fg-mid)] mb-1">Tu respuesta</p>
+                      <p className="text-[11.5px] text-[var(--usb-fg)] leading-relaxed whitespace-pre-wrap">{answers[i] || "—"}</p>
+                    </div>
+                    <AIFeedback fb={fb} />
+                    {/* Lo que se puede hacer con esta pregunta, justo bajo su revisión */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <RevealButton open={Boolean(shownAnswers[i])} onClick={() => setShownAnswers(p => ({ ...p, [i]: !p[i] }))} label="Ver la respuesta esperada" openLabel="Ocultar la respuesta esperada" />
+                      {onAskDoubt && <DoubtButton open={Boolean(isDoubtOpen?.(i))} onClick={() => onAskDoubt(i)} />}
+                    </div>
+                    {shownAnswers[i] && <ReferenceAnswer label="Respuesta esperada">{q.answer}</ReferenceAnswer>}
+                    {renderDoubt?.(i)}
                   </div>
                 </motion.div>
               )}
@@ -1104,18 +1327,40 @@ function VerifyDoneReview({
           </div>
         );
       })}
-      <button
-        onClick={onGoApply}
-        className="w-full flex items-center justify-center gap-1.5 text-[11px] text-violet-200 bg-violet-500/14 hover:bg-violet-500/22 border border-violet-500/28 py-2.5 rounded-xl transition-all"
-        style={{ fontWeight: 600 }}
-      >
-        Continuar a Aplicar<ArrowRight size={12} />
-      </button>
+      {onChallenge && (
+        <button
+          type="button"
+          onClick={onChallenge}
+          data-challenge
+          className="w-full flex items-start gap-2.5 rounded-xl border border-[var(--usb-border-mid)] bg-[var(--usb-bg-3)] hover:border-[#6d4aff]/45 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+        >
+          <Zap size={13} className="mt-0.5 shrink-0 text-amber-400" />
+          <span className="min-w-0">
+            <span className="block text-[11.5px] font-bold text-[var(--usb-fg-hi)] leading-tight">Un reto más (opcional)</span>
+            <span className="block text-[10.5px] text-[var(--usb-fg-mid)] leading-snug mt-0.5">Una pregunta más difícil. Cuenta en tu resumen.</span>
+          </span>
+        </button>
+      )}
+      <StepContinueButton label="Continuar a Aplicar" onClick={onGoApply} />
     </div>
   );
 }
 
 // ─── Anki flip-card preview ───────────────────────────────────────────────────
+/** Vista previa legible de una tarjeta con HTML de confianza (refuerzo, duda): sin etiquetas literales. */
+function cardPreviewText(value: string, isHtml?: boolean): string {
+  if (!isHtml) return value;
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<blockquote[^>]*>/gi, "\n«")
+    .replace(/<\/blockquote>/gi, "»")
+    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function AnkiFlipPreview({ cards, onToggleExclude }: { cards: AnkiCard[]; onToggleExclude?: (id: string) => void }) {
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -1135,7 +1380,11 @@ function AnkiFlipPreview({ cards, onToggleExclude }: { cards: AnkiCard[]; onTogg
             <span className={`flex items-center gap-1.5 text-[9.5px] ${meta.color}`} style={{ fontWeight: 600 }}>
               <Icon name={meta.icon} size={11} />{meta.label}
             </span>
-            {card.reinforce && (
+            {card.doubt ? (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300" style={{ fontWeight: 700 }}>
+                Duda{card.t ? ` · ${card.t}` : ""}
+              </span>
+            ) : card.reinforce && (
               <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" style={{ fontWeight: 700 }}>Refuerzo</span>
             )}
           </span>
@@ -1151,7 +1400,7 @@ function AnkiFlipPreview({ cards, onToggleExclude }: { cards: AnkiCard[]; onTogg
             className={`text-[12px] leading-relaxed whitespace-pre-wrap ${flipped ? "text-[var(--usb-fg-mid)]" : "text-[var(--usb-fg-hi)]"}`}
             style={{ fontWeight: flipped ? 400 : 600 }}
           >
-            {flipped ? card.back : card.front}
+            {cardPreviewText(flipped ? card.back : card.front, card.isHtml)}
           </motion.p>
         </AnimatePresence>
       </button>
@@ -1248,7 +1497,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [appFeedback, setAppFeedback]               = useState<FeedbackState>(IDLE_FB);
   const [showAppSolution, setShowAppSolution]       = useState(false);
   const [ankiExported, setAnkiExported]             = useState(false);
-  const [appAttempts, setAppAttempts]               = useState(0);
   const appRewardedRef = useRef(false);
   const [showAppHint, setShowAppHint]               = useState(false);
   const [showAnkiGuide, setShowAnkiGuide]           = useState(false);
@@ -1260,24 +1508,45 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [importHintSeen, setImportHintSeen]         = usePersistedState<boolean>("kinema_import_hint_seen", false);
   const [apkgProgress, setApkgProgress]             = useState("");
   const [showHint, setShowHint]                     = useState(false);
-  const [showModelAnswer, setShowModelAnswer]       = useState(false);
   const [questionAnswers, setQuestionAnswers]       = useState<Record<number, string>>({});
   const [questionFeedbacks, setQuestionFeedbacks]   = useState<Record<number, FeedbackState>>({});
+  // Texto que Kinema revisó por pregunta: si cambia, la revisión es de la versión anterior.
+  const [evaluatedAnswers, setEvaluatedAnswers]     = useState<Record<number, string>>({});
+  // «Un reto más» en curso: la comprobación ya estaba cerrada y sigue cerrada.
+  const [challengeOpen, setChallengeOpen]           = useState(false);
+  // Aplicar: texto revisado y si ya se vio la solución (cierra los intentos: §1.7 honestidad).
+  const [appEvaluated, setAppEvaluated]             = useState("");
+  const [appSolutionSeen, setAppSolutionSeen]       = useState(false);
+  const [oralEvaluated, setOralEvaluated]           = useState("");
+  // §5: dudas sobre la lección — hilos (fuente de verdad de sus tarjetas), el
+  // panel abierto (uno solo, en línea bajo su ancla) y la lección de la sesión
+  // (las dudas se responden con SU transcripción).
+  const [doubts, setDoubts]                         = useState<LessonDoubtThread[]>([]);
+  const [openDoubtKey, setOpenDoubtKey]             = useState<string | null>(null);
+  const [doubtDemo, setDoubtDemo]                   = useState<{ transcript: string; answerFor: (question: string) => string } | null>(null);
+  const [studySession, setStudySession]             = useState<{ course: string; lesson: string } | null>(null);
+  // GUIDs del último .apkg: en Fijar avisa si hay tarjetas que aún no llegaron a Anki.
+  const [lastExportGuids, setLastExportGuids]       = useState<string[] | null>(null);
+  // Recordar: el selector de nivel se pliega al elegir (el recuerdo queda a la vista).
+  const [levelPickerOpen, setLevelPickerOpen]       = useState(false);
   const [currentQIdx, setCurrentQIdx]               = useState(0);
   // §1.2: cola adaptativa de preguntas (índices canónicos de content.questions).
   const [questionQueue, setQuestionQueue]           = useState<number[]>([]);
   const [questionsComplete, setQuestionsComplete]   = useState(false); // paso 2 terminado (respondido o saltado)
   const [questionsSkipped, setQuestionsSkipped]     = useState(false);
   const [challengeUsed, setChallengeUsed]           = useState(false); // «Un reto más» ya usado
-  // §1.3: el paso Aplicar nunca bloquea; «Hacerlo después» cuenta como pendiente.
+  // §1.3/§1.7: Aplicar nunca bloquea; «Saltar este paso» cuenta como pendiente.
   const [practiceStatus, setPracticeStatus]         = useState<"done" | "correct" | "later" | null>(null);
   // §1.4: finished = finishedAt != null — exportar ya no es requisito.
   const [finishedAt, setFinishedAt]                 = useState<number | null>(null);
-  const [showOralPractice, setShowOralPractice]     = useState(false);
+  // §1.7: Aplicar ofrece dos formas de practicar, a la vista (ejercicio o explicarlo).
+  const [practiceMode, setPracticeMode]             = useState<"exercise" | "explain">("exercise");
   // §1.5: indicador REAL de transcripción en la pantalla de objetivo.
   // §1.5: fuera de runtime (vista previa web) no hay bridge que consultar:
   // el estado nace "preview" y la tira lo dice en vez de «Comprobando…» eterno.
-  const [transcriptState, setTranscriptState]       = useState<{ status: "checking" | "ready" | "waiting" | "none" | "preview"; cues: number | null }>(IS_EXTENSION ? { status: "checking", cues: null } : { status: "preview", cues: null });
+  const [transcriptState, setTranscriptState]       = useState<{ status: "checking" | "ready" | "waiting" | "none" | "unsupported" | "preview"; cues: number | null; article?: boolean }>(IS_EXTENSION ? { status: "checking", cues: null } : { status: "preview", cues: null });
+  // «Volver a comprobar»: reinicia la detección (tras activar los subtítulos, por ejemplo).
+  const [transcriptRecheck, setTranscriptRecheck]   = useState(0);
   const [courseDueCount, setCourseDueCount]         = useState<number | null>(null);
   // §2: nivel/logros desbloqueados en el flujo se muestran DENTRO del cierre.
   const [pendingLevelUp, setPendingLevelUp]         = useState<number | null>(null);
@@ -1322,7 +1591,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [showInterviewAnswer, setShowInterviewAnswer] = useState(false);
   const [oralAnswer, setOralAnswer]                 = useState("");
   const [oralFeedback, setOralFeedback]             = useState<FeedbackState>(IDLE_FB);
-  const [oralSkipped, setOralSkipped]               = useState(false);
   const [recallRevealed, setRecallRevealed]         = useState(false);
   const [recallNotes, setRecallNotes]               = useState("");
   const [historyOpen, setHistoryOpen]               = useState(false);
@@ -1344,6 +1612,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [createdMocs, setCreatedMocs]             = useState<string[]>([]);
   const [exportedNotes, setExportedNotes]                    = useState<string[]>([]);
   const [obsidianExportedAt, setObsidianExportedAt]           = useState<number | null>(null);
+  // «Ir a la siguiente lección» (tras terminar).
+  const [nextLessonStatus, setNextLessonStatus] = useState<"idle" | "going" | "failed">("idle");
+  const pendingNextLessonRef = useRef<string | null>(null);
+  const nextLessonRef = useRef<HTMLDivElement | null>(null);
 
   // Focus navigator (one step at a time)
   const [focusStep, setFocusStep] = useState(0);
@@ -1353,6 +1625,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [sessionXp, setSessionXp]       = useState(0);
   const [streakCount, setStreakCount]   = useState(() => getStreak());
   const [userProgress, setUserProgress] = useState(() => getProgress());
+  // Mismo nivel/XP que la cabecera del dock: el cierre suma XP fuera de este componente.
+  useEffect(() => {
+    const sync = () => setUserProgress(getProgress());
+    window.addEventListener("usb:xp", sync);
+    return () => window.removeEventListener("usb:xp", sync);
+  }, []);
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);
 
   // Refs
@@ -1361,7 +1639,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const courseNameEditedRef = useRef(false);
   const objectivesForRef   = useRef<string>("");
   const rehydratedKeyRef   = useRef<string>("");
-  const obsidianAutoRef    = useRef(false);
   const exportedNotesRef   = useRef<string[]>([]);
   const sessionCelebratedRef = useRef(false);
   const qRewardedRef       = useRef<Set<string>>(new Set());
@@ -1490,7 +1767,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const res = await requestStudyTranscript(200);
       if (!alive) return;
       if (res?.ok && typeof res.cueCount === "number" && res.cueCount > 0) {
-        setTranscriptState({ status: "ready", cues: res.cueCount });
+        setTranscriptState({ status: "ready", cues: res.cueCount, article: res.source === "article-text" });
+      } else if (res?.lectureKind === "other") {
+        // Cuestionario/ejercicio: no hay nada que esperar (ni subtítulos ni texto).
+        tries = 12;
+        setTranscriptState({ status: "unsupported", cues: null });
       } else if (tries >= 12) {
         setTranscriptState({ status: "none", cues: null });
       } else {
@@ -1507,7 +1788,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const onCue = () => { void check(); };
     window.addEventListener("usb:video-progress", onCue);
     return () => { alive = false; clearInterval(iv); window.removeEventListener("usb:video-progress", onCue); };
-  }, [phase, courseName, lessonName]);
+  }, [phase, courseName, lessonName, transcriptRecheck]);
 
   // ── §1.5: repasos pendientes del CURSO en la pantalla de objetivo ─────────
   useEffect(() => {
@@ -1780,6 +2061,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
     } catch {}
 
+    // Sesión nueva = estado limpio (antes se arrastraban nivel, respuestas y cierre de la anterior).
+    resetSessionState();
     sessionCelebratedRef.current = false;
     setPhase("generating"); setGenStep(0);
     sessionStartRef.current = Date.now();
@@ -1870,7 +2153,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             console.info("[USG][study][client] raw Gemini response length:", debug.rawResponseLength);
           }
         } else {
-          generationError = "No hubo respuesta del motor de IA. Configura Gemini o inicia la IA local y reintenta.";
+          generationError = "Kinema no recibió respuesta de tu proveedor de IA. Configura Gemini en Ajustes o inicia la IA local y reintenta.";
         }
         } // fin del else de pre-generación
       } else {
@@ -1900,14 +2183,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       clearInterval(iv);
       setContent(newContent);
       setActiveSessionObjective(sessionObjective);
+      // §5: sesión nueva → sus dudas empiezan vacías y se atan a esta lección.
+      setStudySession({ course: courseName, lesson: lessonName }); setDoubts([]); setOpenDoubtKey(null); setLastExportGuids(null);
       setPhase("result");
 
-      // Auto-export a Obsidian (si está activado y el vault está configurado).
-      // Solo tras generar en vivo, nunca al restaurar del historial.
-      if (obsidianCfg.autoExport && obsidianCfg.vaultName.trim() && !obsidianAutoRef.current) {
-        obsidianAutoRef.current = true;
-        setTimeout(() => handleExportObsidian(), 1200);
-      }
+      // «Guardar automáticamente» en Obsidian ocurre al TERMINAR la lección
+      // (handleFinishLesson): aquí la nota aún no tendría recuerdo, resultados
+      // ni dudas, y el export final chocaría con «ya exportada».
 
       // Persist initial history record (paso 1 + paso 2)
       historyService.upsertLecture({
@@ -1929,7 +2211,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
       toast.message("¡Material de estudio listo!", {
         description: usedFallback
-          ? "Usamos una plantilla local porque no se pudo completar la generación con IA."
+          ? "Kinema usó una plantilla local porque tu proveedor de IA no completó la generación."
           : "Analizamos la lección y preparamos tu plan de dominio.",
         icon: <Rocket className="text-violet-400" size={18} />
       });
@@ -1950,9 +2232,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const newContent = generateContent(selectedObj, customObj, courseName, lessonName);
       setContent(newContent);
       setActiveSessionObjective(sessionObjective);
+      setStudySession({ course: courseName, lesson: lessonName }); setDoubts([]); setOpenDoubtKey(null); setLastExportGuids(null);
       setPhase("result");
       toast.warning("Sesión provisional", {
-        description: "No se pudo generar con IA; usamos una plantilla local para no bloquearte.",
+        description: "Tu proveedor de IA no respondió; Kinema usó una plantilla local para no bloquearte.",
         icon: <WifiOff className="text-amber-400" size={18} />,
       });
     }
@@ -1962,7 +2245,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const rehydrateFromRecord = useCallback((rec: import("../services/historyService").LectureHistoryRecord) => {
     // generateContent is deterministic on (objective, course, lesson)
     const obj = rec.objective || customObj || selectedObj;
-    sessionCelebratedRef.current = true;
+    resetSessionState();
+    // El tiempo de estudio se mide desde que empezó ESTA sesión (no desde que se abrió el dock).
+    if (typeof rec.startedAt === "number") sessionStartRef.current = rec.startedAt;
+    // Solo una lección ya terminada no vuelve a celebrarse; una a medias sí, al terminarla.
+    sessionCelebratedRef.current = rec.finishedAt != null || rec.status === "completed";
     const rebuilt = generateContent(obj, obj, rec.courseName, rec.lectureName);
     const restored = rec.studyContent ? normalizeStudyContent(rec.studyContent, rebuilt) : rebuilt;
     setContent(restored);
@@ -1984,18 +2271,34 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // (por prompt) fijan el orden presentado; sin intentos, la pregunta de
     // arranque según el nivel declarado.
     const restoredConfidence = rec.confidence ?? null;
-    const canonicalQuestions = rec.questions
-      .map((a) => a.prompt)
-      .map((prompt) => (prompt ? restored.questions.findIndex((q) => q.q === prompt) : -1))
-      .filter((i) => i >= 0);
-    const restoredQueue = canonicalQuestions.length > 0
-      ? canonicalQuestions
-      : restoredConfidence
-        ? [pickStartQuestion(restoredConfidence, restored, new Set(Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : []))]
+    // Solo lo PRESENTADO y respondido: el historial guarda todas las preguntas en
+    // orden canónico (las no presentadas con respuesta vacía). Orden de la cola:
+    // la de arranque, luego la de consolidación (más básica) y el reto (más alta).
+    const startIdx = restoredConfidence
+      ? pickStartQuestion(restoredConfidence, restored, new Set(Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : []))
+      : -1;
+    const answeredIdx = rec.questions
+      .filter((a) => a.prompt && ((a.answer ?? "").trim() || a.rating || a.feedback))
+      .map((a) => restored.questions.findIndex((q) => q.q === a.prompt))
+      .filter((i, k, arr) => i >= 0 && arr.indexOf(i) === k);
+    const startD = startIdx >= 0 ? DIFF_ORDER.indexOf(restored.questions[startIdx].difficulty) : 0;
+    const diffOf = (i: number) => DIFF_ORDER.indexOf(restored.questions[i].difficulty);
+    const restoredChecked = new Set(Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : []);
+    const byLevel = answeredIdx.filter((i) => i !== startIdx).sort((x, y) => Number(diffOf(x) > startD) - Number(diffOf(y) > startD));
+    const restoredQueue = answeredIdx.length > 0
+      ? answeredIdx.includes(startIdx)
+        // Arranque, luego los pasos del plan y al final el reto (orderPresented).
+        ? orderPresented(restored, startIdx, [startIdx, ...byLevel], restoredChecked)
+        : byLevel
+      : startIdx >= 0
+        ? [startIdx]
         : [];
 
     const answers: Record<number, string> = {};
     const feedbacks: Record<number, FeedbackState> = {};
+    // Lo premiado y lo acertado a la primera es de ESTA lección: se reconstruye desde su historial.
+    qRewardedRef.current.clear();
+    firstTryCorrectRef.current.clear();
 
     restoredQueue.forEach((cqIdx, i) => {
       const cq = restored.questions[cqIdx];
@@ -2008,19 +2311,33 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           content: attempt.feedback ?? "",
           rating: (attempt.rating ?? "unknown") as AIRating,
         };
+        // Ya revisada: otro intento tras recargar no vuelve a dar XP ni cuenta
+        // como «a la primera»; y lo acertado a la primera se recuerda.
+        qRewardedRef.current.add(cq.q);
+        if (attempt.firstTryCorrect) firstTryCorrectRef.current.add(cq.q);
       }
     });
 
     setQuestionAnswers(answers);
     setQuestionFeedbacks(feedbacks);
     setQuestionQueue(restoredQueue);
-    setCurrentQIdx(Object.keys(feedbacks).length);
+    // La última presentada: si no se acertó, vuelve con su revisión y «¿Cómo sigues?».
+    setCurrentQIdx(Math.max(0, restoredQueue.length - 1));
+    // Más respondidas que el plan = la última fue el reto opcional.
+    setChallengeUsed(startIdx >= 0 && restoredQueue.length > checkPlanState(restored, restoredQueue, restoredChecked).planned);
+    setChallengeOpen(false);
+    setEvaluatedAnswers({});
 
     const checkedConceptIndexes = Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : [];
     setConceptsChecked(Object.fromEntries(checkedConceptIndexes.map((idx) => [idx, true])));
     setConceptsAcknowledged(Boolean(rec.conceptsAcknowledged));
     setRecallNotes(rec.recallNotes ?? "");
     if (rec.recallNotes || rec.confidence) setRecallRevealed(true);
+    // §5: las dudas de la sesión vuelven con ella (de ellas perdura la tarjeta).
+    setDoubts(sanitizeStoredDoubts(rec.doubts));
+    setOpenDoubtKey(null);
+    setLastExportGuids(Array.isArray(rec.exportedGuids) ? rec.exportedGuids : null);
+    setStudySession({ course: rec.courseName, lesson: rec.lectureName });
 
     if (rec.codeChallenge) {
       setAppAnswer(rec.codeChallenge.answer ?? "");
@@ -2034,7 +2351,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     }
 
     const hasCodeChallenge = Boolean(rec.codeChallenge);
-    if (hasCodeChallenge) { setAppAttempts(2); appRewardedRef.current = true; }
+    // La práctica (caso, código o explicación) se premia una vez por lección, también tras recargar.
+    appRewardedRef.current = hasCodeChallenge || rec.practiceStatus === "done" || rec.practiceStatus === "correct";
     setPracticeStatus(rec.practiceStatus ?? (hasCodeChallenge ? "done" : null));
     setQuestionsComplete(Boolean(rec.questionsDone));
     setQuestionsSkipped(Boolean(rec.questionsSkipped));
@@ -2042,7 +2360,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // Exportaciones previas restauran su estado sin completar la lección:
     // terminar es una acción explícita (§1.4).
     const hasAnkiExport = Boolean(rec.ankiCards && rec.ankiCards.length > 0);
-    if (hasAnkiExport) { setAnkiExported(true); setOralSkipped(true); }
+    if (hasAnkiExport) setAnkiExported(true);
     if (rec.obsidianExportedAt) setObsidianExportedAt(rec.obsidianExportedAt);
     // Flags de refuerzo/exclusión persistidos vuelven al contenido.
     if (hasAnkiExport && rec.ankiCards?.length) {
@@ -2053,7 +2371,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           ...prev,
           ankiCards: prev.ankiCards.map((c) => {
             const stored = byFront.get(c.front);
-            return stored ? { ...c, reinforce: stored.reinforce, excluded: stored.excluded } : c;
+            return stored ? { ...c, reinforce: stored.reinforce, excluded: stored.excluded, conceptRefs: c.conceptRefs?.length ? c.conceptRefs : stored.conceptRefs, isHtml: c.isHtml ?? stored.isHtml } : c;
           }),
         };
       });
@@ -2235,7 +2553,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     try {
       const { refined, isMock } = await refineCustomObjective(courseName, effectiveCourseDescription, sourceText);
       if (!refined.trim() || isMock) {
-        toast.warning("No se pudo refinar con IA", {
+        toast.warning("Kinema no pudo refinar tu objetivo", {
           description: describeProviderFailure("", {
             kind: getAiProviderConfig().kind,
             endpoint: getAiProviderConfig().baseUrl,
@@ -2255,24 +2573,43 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     }
   };
 
-  const handleReset = () => {
-    // §2: confirmación en el propio header (confirmingReset) — sin diálogos nativos.
-    setPhase("objective"); setContent(null); setConfidence(null);
+  // Estado de UNA sesión de estudio. Se limpia al empezar otra (generar, abrir
+  // otra lección o reiniciar): nada de la lección anterior se arrastra a la nueva.
+  const resetSessionState = () => {
+    setContent(null); setConfidence(null);
     setActiveSessionObjective(null);
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
     setConceptsAcknowledged(false);
-    setShowAppSolution(false); setShowAppHint(false); setAppAttempts(0); appRewardedRef.current = false; setQuestionAnswers({}); setQuestionFeedbacks({});
+    setShowAppSolution(false); setShowAppHint(false); appRewardedRef.current = false; setQuestionAnswers({}); setQuestionFeedbacks({});
     setCurrentQIdx(0); setQuestionsComplete(false); setQuestionsSkipped(false); setChallengeUsed(false);
-    setQuestionQueue([]); setPracticeStatus(null); setFinishedAt(null); setShowOralPractice(false);
+    setQuestionQueue([]); setPracticeStatus(null); setFinishedAt(null); setPracticeMode("exercise");
     setPendingLevelUp(null); setPendingUnlocked([]);
     firstTryCorrectRef.current.clear();
     setAnkiExported(false); setShowAnkiGuide(false); setShowHint(false);
-    setShowModelAnswer(false); setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setOralSkipped(false); setRecallRevealed(false); setRecallNotes("");
+    setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setRecallRevealed(false); setRecallNotes("");
+    setEvaluatedAnswers({}); setChallengeOpen(false); setAppEvaluated(""); setAppSolutionSeen(false); setOralEvaluated("");
+    setDoubts([]); setOpenDoubtKey(null); setLastExportGuids(null); setStudySession(null);
     qRewardedRef.current.clear(); conceptRewardedRef.current.clear();
     setApkgStatus("idle"); setApkgProgress("");
     setFocusStep(0); setFocusDir(1);
     sessionCelebratedRef.current = false;
     sessionStartRef.current = Date.now();
+    setSessionXp(0); setLevelPickerOpen(false); setShowCardPreview(false);
+    setObsidianStatus("idle"); setObsidianExportedAt(null); setObsidianHelpOpen(false);
+    setNextLessonStatus("idle");
+  };
+
+  // Abrir otra lección en Study (desde el historial o tras cambiar de video en Udemy).
+  const openLessonInStudy = () => {
+    resetSessionState();
+    rehydratedKeyRef.current = "";
+    setPhase("objective");
+  };
+
+  const handleReset = () => {
+    // §2: confirmación en el propio header (confirmingReset) — sin diálogos nativos.
+    setPhase("objective");
+    resetSessionState();
     // Mark the current lecture as already-handled so rehydration doesn't auto-reload it.
     // Switching to a different course/lecture produces a new key and rehydrates normally.
     rehydratedKeyRef.current = `${slugify(courseName)}::${slugify(lessonName)}`;
@@ -2304,12 +2641,14 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setQuestionsComplete(false);
     setQuestionsSkipped(false);
     setChallengeUsed(false);
+    setChallengeOpen(false);
+    setEvaluatedAnswers({});
     firstTryCorrectRef.current.clear();
     setQuestionAnswers({});
     setQuestionFeedbacks({});
+    setOpenDoubtKey(null);
     setShowHint(false);
     setConceptsAcknowledged(false);
-    setShowModelAnswer(false);
     setAppAnswer("");
     setAppFeedback(IDLE_FB);
     setShowAppSolution(false);
@@ -2339,7 +2678,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setQuestionAnswers({});
     setQuestionFeedbacks({});
     setShowHint(false);
-    setShowModelAnswer(false);
   };
 
   const conceptSelectionSignature = useMemo(
@@ -2358,12 +2696,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     return content ? content.questions.map((cq) => {
       const vi = queueQuestions.findIndex(vq => vq.q === cq.q);
       const f = vi === idx ? fb : vi >= 0 ? questionFeedbacks[vi] : undefined;
+      // Se persiste antes de applyEvalOutcome: el intento actual es el primero si aún no se premió.
+      const good = f?.rating === "correct" || f?.rating === "excellent";
+      const firstTryCorrect = vi === idx && !qRewardedRef.current.has(cq.q) ? good : firstTryCorrectRef.current.has(cq.q);
       return {
         prompt: cq.q,
         answer: vi >= 0 ? questionAnswers[vi] ?? "" : "",
         rating: f?.rating,
         feedback: f?.content,
         answeredAt: vi === idx ? Date.now() : undefined,
+        firstTryCorrect: firstTryCorrect || undefined,
       };
     }) : [];
   };
@@ -2384,6 +2726,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const userAns = questionAnswers[idx] || "";
     if (!userAns.trim()) return;
     const prevRating = questionFeedbacks[idx]?.rating;
+    setEvaluatedAnswers(p => ({ ...p, [idx]: userAns }));
     setQuestionFeedbacks(p => ({ ...p, [idx]: { status: "loading", content: "", rating: "unknown" } }));
     const q = queueQuestions[idx];
     const aiContext = getStudyAIContext(content);
@@ -2442,12 +2785,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       setSessionXp(prev => prev + gained);
     }
 
-    // §1.2: correcta a la primera en la pregunta inicial → paso completado (con
-    // «Un reto más» opcional). Cualquier pregunta de consolidación/reto
-    // (idx > 0) completa el paso con su resultado, sea cual sea.
-    const isFirstQuestion = idx === 0;
-    if ((isGoodNow && isFirstQuestion) || idx > 0) {
+    // §1.2/§1.7: acertar cierra la comprobación (y el reto, si era el reto). Si
+    // no, el estudiante elige en «¿Cómo sigues?»: mejorar su respuesta, pasar a
+    // otra pregunta o terminar — nunca se cierra sin que lo decida.
+    if (isGoodNow && (challengeOpen || !findNextPlanned(idx, true))) {
       setQuestionsComplete(true);
+      setChallengeOpen(false);
       persistQuestionsDone(false);
     }
 
@@ -2455,52 +2798,73 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setTimeout(() => scrollToBottom(), 120);
   };
 
-  // §1.2: consolidación — tras fallar, «Siguiente» trae una pregunta del nivel
-  // anterior; con esa (sea cual sea el resultado) el paso se completa (máx. 2).
+  // §1.2: el plan de Comprobar — una pregunta por idea que no marcaste en
+  // Recordar (+ una que sí marcaste, para confirmarla), con tope de fatiga.
+  // Su tamaño sale de la lección (nº de ideas) y de tus marcas (checkPlan.ts).
+  const checkedSet = useMemo(
+    () => new Set(Object.keys(conceptsChecked).filter(k => conceptsChecked[Number(k)]).map(Number)),
+    [conceptsChecked],
+  );
+  const planState = useMemo(
+    () => content ? checkPlanState(content, challengeUsed ? questionQueue.slice(0, -1) : questionQueue, checkedSet) : null,
+    [content, questionQueue, checkedSet, challengeUsed],
+  );
+  const planTotal = Math.max(1, planState?.total ?? 1);
+  /** Siguiente pregunta del plan tras la `idx` (solo desde la última presentada, nunca en el reto). */
+  const findNextPlanned = (idx: number, goodOverride?: boolean) => {
+    if (!content || challengeOpen || !planState) return undefined;
+    const planQueue = questionQueue.slice(0, planState.planned);
+    if (idx !== planQueue.length - 1) return undefined;
+    const fb = questionFeedbacks[idx];
+    const good = goodOverride ?? (fb?.status === "done" && (fb.rating === "correct" || fb.rating === "excellent"));
+    const lastD = DIFF_ORDER.indexOf(queueQuestions[idx]?.difficulty ?? confidence ?? "partial");
+    const target = Math.max(0, Math.min(DIFF_ORDER.length - 1, lastD + (good ? 1 : -1)));
+    return pickNextCheckQuestion(content, planQueue, checkedSet, target);
+  };
+
   const goNextQuestion = (idx: number) => {
     if (!content) return;
-    const current = queueQuestions[idx];
-    const used = new Set(questionQueue);
-    const currentDiff = DIFF_ORDER.indexOf(current?.difficulty ?? "partial");
-    const lowerDiff = DIFF_ORDER[Math.max(0, currentDiff - 1)];
-    const candidate = content.questions
-      .map((q, i) => ({ q, i }))
-      .filter(({ q, i }) => !used.has(i) && q.difficulty === lowerDiff)
-      .sort((a, b) => {
-        const unchecked = new Set(content.keyConcepts.map((_, i) => i).filter(i => !conceptsChecked[i]));
-        const aWeak = (a.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
-        const bWeak = (b.q.conceptRefs ?? []).some(r => unchecked.has(r)) ? 1 : 0;
-        return bWeak - aWeak;
-      })[0];
+    const candidate = findNextPlanned(idx);
     if (candidate) {
       setQuestionQueue(prev => [...prev, candidate.i]);
       setCurrentQIdx(idx + 1);
       setShowHint(false);
-      setShowModelAnswer(false);
     } else {
-      // Sin candidata (p. ej. en confused) → el paso se completa igual.
+      // Plan terminado (no quedan ideas sin preguntar) → el paso se completa.
       setQuestionsComplete(true);
       persistQuestionsDone(false);
     }
   };
 
-  // «Un reto más» (opcional): la pregunta del nivel siguiente, si existe.
-  const goChallengeQuestion = () => {
-    if (!content || challengeUsed) return;
+  // «Un reto más» (opcional, R7): solo tras acertar y si hay una pregunta de
+  // nivel MÁS ALTO que lo acertado (la del nivel siguiente).
+  const findChallenge = () => {
+    if (!content || challengeUsed) return undefined;
+    const correctIdx = queueQuestions
+      .map((q, i) => ({ q, fb: questionFeedbacks[i] }))
+      .filter(({ fb }) => fb?.status === "done" && (fb.rating === "correct" || fb.rating === "excellent"))
+      .map(({ q }) => DIFF_ORDER.indexOf(q.difficulty));
+    if (correctIdx.length === 0) return undefined;
+    const floor = Math.max(...correctIdx);
     const used = new Set(questionQueue);
-    const topDiff = DIFF_ORDER.length - 1;
-    const candidate = content.questions
-      .map((q, i) => ({ q, i }))
-      .filter(({ q, i }) => !used.has(i) && DIFF_ORDER.indexOf(q.difficulty) === topDiff)[0]
-      ?? content.questions.map((q, i) => ({ q, i })).filter(({ i }) => !used.has(i))[0];
-    if (candidate) {
-      setChallengeUsed(true);
-      setQuestionQueue(prev => [...prev, candidate.i]);
-      setCurrentQIdx(queueQuestions.length);
-      setShowHint(false);
-      setShowModelAnswer(false);
-    }
+    return content.questions
+      .map((q, i) => ({ q, i, d: DIFF_ORDER.indexOf(q.difficulty) }))
+      .filter(({ i, d }) => !used.has(i) && d > floor)
+      .sort((a, b) => a.d - b.d)[0];
   };
+
+  const goChallengeQuestion = () => {
+    const candidate = findChallenge();
+    if (!candidate) return;
+    setChallengeUsed(true);
+    setChallengeOpen(true);
+    setQuestionQueue(prev => [...prev, candidate.i]);
+    setCurrentQIdx(queueQuestions.length);
+    setShowHint(false);
+  };
+
+  // Dejar el reto: la comprobación ya estaba cerrada; el reto queda como intentado.
+  const closeChallenge = () => setChallengeOpen(false);
 
   const persistQuestionsDone = (skipped: boolean) => {
     historyService.upsertLecture({
@@ -2517,17 +2881,44 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setQuestionsComplete(true);
     persistQuestionsDone(false);
   };
+  // «Terminar aquí» antes de responder una pregunta del plan (la 2.ª en adelante):
+  // la que no respondiste sale de la cola (no cuenta ni como fallo ni en el repaso).
+  const finishBeforeAnswer = (i: number) => {
+    setQuestionQueue(prev => prev.slice(0, i));
+    setCurrentQIdx(Math.max(0, i - 1));
+    completeQuestions();
+  };
 
-  // «Saltar» (único camino del toast «Evaluación saltada»).
+  // «Saltar este paso» (único camino del toast «Comprobación saltada»).
   const handleSkipQuestions = () => {
     setQuestionsComplete(true);
     setQuestionsSkipped(true);
     persistQuestionsDone(true);
-    toast.message("Evaluación saltada", { icon: <FastForward className="text-violet-400" size={18} /> });
+    toast.message("Comprobación saltada", {
+      icon: <FastForward className="text-violet-400" size={18} />,
+      action: { label: "Deshacer", onClick: () => handleUndoSkipQuestions() },
+    });
+  };
+
+  // §1.7: saltar no es definitivo — se vuelve a la pregunta donde estabas.
+  const handleUndoSkipQuestions = () => {
+    setQuestionsComplete(false);
+    setQuestionsSkipped(false);
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      questionsDone: false,
+      questionsSkipped: false,
+      questionsComplete: false,
+      focusStep: 1,
+    }).catch(err => console.error("[history] upsert undo skip", err));
+    goToStep(1, true);
   };
 
   const handleEvalApp = async () => {
-    if (!content || !appAnswer.trim()) return;
+    // Vista la solución, el intento queda cerrado (un acierto después no sería propio).
+    if (!content || !appAnswer.trim() || appSolutionSeen) return;
+    setAppEvaluated(appAnswer);
     setAppFeedback({ status: "loading", content: "", rating: "unknown" });
 
     // Attempt streaming code review first
@@ -2538,6 +2929,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         setAppFeedback(prev => ({ status: "streaming", content: accumulated, rating: "unknown", isMock: prev.isMock }));
       },
       aiContext,
+      // El nivel que declaraste también calibra el «siguiente nivel» de la revisión (igual que sin streaming).
+      confidence ?? undefined,
     );
 
     // §2: la práctica y el código son lo mejor pagado; el intento cuenta.
@@ -2569,7 +2962,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setAppFeedback(fb);
       if (fb.status === "done") {
-        setAppAttempts(n => n + 1);
         markAttempted();
         const isGood = fallback.rating === "correct" || fallback.rating === "excellent";
         setPracticeStatus(prev => (prev === "correct" ? prev : isGood ? "correct" : "done"));
@@ -2580,7 +2972,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     }
 
     setAppFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
-    setAppAttempts(n => n + 1);
     markAttempted();
     const isGood = res.rating === "correct" || res.rating === "excellent";
     setPracticeStatus(prev => (prev === "correct" ? prev : isGood ? "correct" : "done"));
@@ -2589,7 +2980,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // §1.3: sin banner «¡Sesión completada!» — el cierre ocurre en Fijar.
   };
 
-  // §1.3: «Hacerlo después» — el estudiante decide; queda marcado como pendiente.
+  // §1.7: «Saltar este paso» en Aplicar — el estudiante decide; queda como pendiente.
   const handlePracticeLater = () => {
     setPracticeStatus(prev => prev ?? "later");
     historyService.upsertLecture({
@@ -2598,14 +2989,41 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       practiceStatus: "later",
       focusStep: 2,
     }).catch(err => console.error("[history] upsert practice later", err));
-    goToStep(3);
+    toast.message("Práctica pendiente", {
+      icon: <FastForward className="text-violet-400" size={18} />,
+      // Volver a Aplicar: la práctica sigue abierta y el resumen se actualiza al revisarla.
+      action: { label: "Volver", onClick: () => goToStep(2, true) },
+    });
+    // El estado aún no se ha aplicado: se fuerza el paso (el salto ya es explícito).
+    goToStep(3, true);
   };
 
+
+  // §1.7: explicarlo con tus palabras es otra forma de practicar — cuenta como práctica hecha.
+  // Una explicación bien valorada cuenta como práctica CORRECTA (transferencia
+  // demostrada): alimenta el resumen y no refuerza sus tarjetas en Anki.
+  const markOralPracticed = (rating?: AIRating) => {
+    // §2: explicarlo es la otra forma de practicar y se premia igual que el
+    // caso (una sola práctica premiada por lección, la primera evaluada).
+    if (!appRewardedRef.current) {
+      appRewardedRef.current = true;
+      let gained = recordXp("practice_attempted");
+      if (rating === "correct" || rating === "excellent") gained += recordXp("practice_correct");
+      setSessionXp(prev => prev + gained);
+    }
+    // También tras un salto («later»): volver y explicarlo la cuenta como hecha.
+    const next = rating === "correct" || rating === "excellent" ? "correct" : "done";
+    if (practiceStatus === "correct" || practiceStatus === next) return;
+    setPracticeStatus(next);
+    historyService.upsertLecture({ courseName, lectureName: lessonName, practiceStatus: next, focusStep: 2 })
+      .catch(err => console.error("[history] upsert oral practice", err));
+  };
 
   const handleEvaluateOral = async () => {
     if (!content?.interviewQ || !oralAnswer.trim() || oralFeedback.status === "loading" || oralFeedback.status === "streaming") return;
     const q = content.interviewQ;
     const aiContext = getStudyAIContext(content);
+    setOralEvaluated(oralAnswer);
     setOralFeedback({ status: "loading", content: "", rating: "unknown" });
     const res = await evaluateActiveAnswerStream(
       q.q, q.idealAnswer, oralAnswer, "aplicar",
@@ -2614,9 +3032,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     );
     if (res.success && res.content.trim()) {
       setOralFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
+      markOralPracticed(res.rating);
       return;
     }
     const fallback = await evaluateActiveAnswer(q.q, q.idealAnswer, oralAnswer, "aplicar", aiContext);
+    if (fallback.success) markOralPracticed(fallback.rating);
     setOralFeedback({ status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock });
   };
 
@@ -2625,9 +3045,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   // terminar es la acción explícita «Terminar lección» (§1.4).
   const persistObsidianExport = () => {
     if (!content) return;
-    const cards: StoredAnkiCard[] = content.ankiCards.map(c => ({
+    const cards: StoredAnkiCard[] = allCardsWithReinforce.map(c => ({
       id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
       conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
+      doubt: c.doubt, isHtml: c.isHtml,
     }));
     historyService.upsertLecture({
       courseName,
@@ -2649,6 +3070,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const cards: StoredAnkiCard[] = allCardsWithReinforce.map(c => ({
       id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
       conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
+      doubt: c.doubt, isHtml: c.isHtml,
     }));
     historyService.upsertLecture({
       courseName,
@@ -2679,15 +3101,24 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
       setApkgStatus("done");
       setAnkiExported(true);
+      setLastExportGuids(guids);
       markQa("apkg-done:" + deckName.slice(0, 60));
       // §3: el aviso de reexportación solo si el CONJUNTO de tarjetas cambió.
       try {
         const rec = await historyService.getLecture(slugify(courseName), slugify(lessonName));
         const prev = rec?.exportedGuids;
-        if (prev && (prev.length !== guids.length || prev.some((g, i) => g !== guids[i]))) {
+        const added = prev ? guids.filter(g => !prev.includes(g)).length : 0;
+        const removed = prev ? prev.filter(g => !guids.includes(g)).length : 0;
+        if (prev && removed > 0) {
           toast.info("Ya exportaste otra versión de esta lección", {
             description: "Anki conservará las anteriores. Si solo quieres las nuevas, borra el mazo de la lección antes de importar.",
             duration: 12000,
+          });
+        } else if (prev && added > 0) {
+          // GUID estables: Anki reconoce las ya importadas y solo suma las nuevas.
+          toast.info(added === 1 ? "1 tarjeta nueva en este mazo" : `${added} tarjetas nuevas en este mazo`, {
+            description: "Las que ya importaste no se duplican: Anki reconoce cada tarjeta y solo añade las nuevas.",
+            duration: 9000,
           });
         }
       } catch {}
@@ -2727,15 +3158,25 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     if (previewPayload) return previewPayload;
     const transcript = await requestStudyTranscript(22000);
     if (!transcript.ok || !transcript.transcriptText?.trim()) throw new Error(transcript.error || "No hay transcripción disponible.");
+    // Lo que ya está en tu mazo (de cualquier lección o curso del idioma) y sale
+    // en esta lección no se vuelve a pedir: las candidatas son todas nuevas.
+    const transcriptText = transcript.transcriptText;
+    const known = await knownVocabularyIn(vocabCfg.targetLang, transcriptText);
+    const knownWords = known.map(entry => entry.word).slice(0, 80);
     const response = await sendRuntimeMessage<{ ok?: boolean; payload?: unknown; error?: string }>({
-      type: "USG_GENERATE_VOCABULARY", transcriptText: transcript.transcriptText,
+      type: "USG_GENERATE_VOCABULARY", transcriptText: transcript.transcriptText, knownWords,
       course: courseName, lesson: lessonName, targetLang: vocabCfg.targetLangLabel,
-      baseLang: vocabCfg.baseLangLabel, minLevel: vocabCfg.minLevel, maxWords: 20,
+      // Candidatas según el volumen de la lección (6 corta … 20 densa); el
+      // estudiante exporta después hasta su máximo por lección.
+      baseLang: vocabCfg.baseLangLabel, minLevel: vocabCfg.minLevel, maxWords: vocabularyCandidateTarget(transcript.transcriptText),
     });
-    if (!response?.ok) throw new Error(response?.error || "La generación requiere la extensión y un motor de IA disponible. Puedes probar la demo sin exportar.");
-    const words = parseVocabularyPayload(response.payload).filter(word => vocabularyMatches(word.word, transcript.transcriptText ?? ""));
-    if (!words.length) throw new Error("La IA no devolvió palabras presentes en los subtítulos. Revisa el idioma objetivo y la transcripción.");
-    return { words, partial: Boolean(transcript.truncated || transcript.transcriptTruncated) };
+    if (!response?.ok) throw new Error(response?.error || "Para generar vocabulario, Kinema necesita la extensión y un proveedor de IA configurado. Puedes probar la demo sin exportar.");
+    const words = parseVocabularyPayload(response.payload).filter(word => vocabularyMatches(word.word, transcript.transcriptText ?? "", word.form));
+    // Sin nuevas pero con palabras que ya tienes: no es un error (la lección solo repasa).
+    if (!words.length && known.length === 0) throw new Error("Kinema no encontró palabras de los subtítulos con estos criterios. Revisa el idioma objetivo y la transcripción.");
+    // Las que ya tienes viajan aparte: no ocupan hueco en la lista, pero el chip
+    // del video las sigue mostrando (volver a verlas en contexto también fija).
+    return { words, known: known.slice(0, 40), partial: Boolean(transcript.truncated || transcript.transcriptTruncated) };
   };
 
   // ── Obsidian export ──────────────────────────────────────────────────────────
@@ -2747,6 +3188,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       .map((q, i) => ({ q, fb: questionFeedbacks[i] }))
       .filter(({ fb }) => fb?.status === "done" && (fb.rating === "partial" || fb.rating === "wrong"))
       .map(({ q }) => ({ q: q.q, answer: q.answer }));
+    // §5: cada respuesta de duda (con su respaldo literal) y las tarjetas guardadas.
+    const doubtNotes = doubts.flatMap(thread => thread.turns.map(turn => ({
+      q: turn.q, answer: turn.answer, quotes: turn.quotes, outside: turn.outside,
+    })));
+    // Las mismas tarjetas que el mazo (aceptadas: de duda, de refuerzo y de la lección).
+    const noteCards = allCardsWithReinforce.filter(c => !c.excluded).map(c => ({ front: c.front, back: c.back, type: c.type }));
+    const unrecalledIdeas = content.keyConcepts.filter((_, i) => !conceptsChecked[i]);
     return {
       courseName,
       lessonName,
@@ -2756,8 +3204,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       ankiDeck: conceptDeckPath(vocabCfg.rootDeck || "Kinema", courseName, lessonName),
       recallNotes: recallNotes.trim() || undefined,
       weakPoints: weakPoints.length > 0 ? weakPoints : undefined,
+      // Lo mismo que Anki refuerza: ideas no marcadas y la práctica que no salió.
+      unrecalledIdeas: unrecalledIdeas.length > 0 ? unrecalledIdeas : undefined,
+      practiceToRedo: practiceWeak || undefined,
+      doubts: doubtNotes.length > 0 ? doubtNotes : undefined,
       result: buildResultSummary(),
-      content: content as ObsidianSessionData["content"],
+      content: { ...content, ankiCards: noteCards } as ObsidianSessionData["content"],
     };
   };
 
@@ -2772,21 +3224,38 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       });
       return;
     }
-    // Guard de duplicados: obsidian://new sobre un archivo existente crea
-    // "nombre 1.md". Si ya se exportó esta sesión, avisar y dejar decidir.
+    // Ya exportada (en este vault y carpeta): obsidian://new crearía «nombre 1.md».
+    // Lo seguro es AÑADIR el repaso de hoy al final; reemplazar es la otra opción.
     // (Ref, no state: el guard debe ver las marcas aunque el closure sea viejo.)
-    const key = sessionExportKey(data.courseName, data.lessonName);
-    if (exportedNotesRef.current.includes(key)) {
+    if (isSessionExported(exportedNotesRef.current, obsidianCfg, data.courseName, data.lessonName)) {
       markQa("exportar-guard");
-      toast.warning("Esta sesión ya fue exportada a Obsidian", {
-        description: "Reemplazar nota pisa también lo que hayas escrito en esa nota. «Copiar» te da el markdown sin tocar nada.",
-        action: { label: "Reemplazar nota", onClick: () => doExportObsidian(data, false, { overwrite: true }) },
-        duration: 10000,
+      // Un solo aviso de Obsidian a la vez (mismo id): el nuevo reemplaza al anterior.
+      toast.warning("Esta lección ya tiene nota", {
+        id: OBSIDIAN_TOAST_ID,
+        description: "Añadir: suma lo de hoy al final, sin tocar tu nota. Reemplazar: la rehace y borra tus cambios.",
+        action: { label: "Añadir", onClick: () => doExportObsidianUpdate(data) },
+        cancel: { label: "Reemplazar", onClick: () => doExportObsidian(data, false, { overwrite: true }) },
+        duration: 12000,
         icon: <BookMarked className="text-amber-400" size={18} />,
       });
       return;
     }
     doExportObsidian(data, true);
+  };
+
+  // Nota ya exportada: el vault crece con un «Repaso · fecha» al final (append).
+  const doExportObsidianUpdate = (data: ObsidianSessionData) => {
+    try {
+      const result = exportSessionUpdateToObsidian(data, obsidianCfg);
+      setObsidianStatus("done");
+      setObsidianExportedAt(Date.now());
+      persistObsidianExport();
+      toast.success("Repaso añadido a la nota", { id: OBSIDIAN_TOAST_ID, description: "Al final de la nota de la lección; lo que escribiste sigue igual.", icon: <BookMarked className="text-violet-400" size={18} /> });
+      setTimeout(() => setObsidianStatus("idle"), 4000);
+    } catch (err) {
+      setObsidianStatus("error");
+      toast.error(err instanceof Error ? err.message : "No se pudo exportar a Obsidian.");
+    }
   };
 
   const doExportObsidian = async (data: ObsidianSessionData, markExported: boolean, options: { overwrite?: boolean } = {}) => {
@@ -2796,11 +3265,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const srt = obsidianCfg.includeRawSrt ? await fetchEnSrtForExport() : "";
       const result = exportSessionToObsidian(data, obsidianCfg, {
         createdMocs,
-        onMocCreated: (key) => {
-          const next = [...createdMocs, key];
-          setCreatedMocs(next);
-          void saveCreatedMocs(next);
-        },
         overwrite: options.overwrite,
       });
       setObsidianStatus("done");
@@ -2809,37 +3273,58 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       setObsidianExportedAt(Date.now());
       persistObsidianExport();
       celebrate({ type: "export_done", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "Exportado a Obsidian" });
-      toast.success("Exportado a Obsidian", {
-        description: result.mocPath
-          ? `Nota: ${result.notePath} · MOC: ${result.mocPath}`
-          : `Nota: ${result.notePath}`,
-        icon: <BookMarked className="text-violet-400" size={18} />,
-      });
+      // Chrome abre UN protocolo externo por clic: lo demás (índice del curso,
+      // subtítulos) se ofrece como acción propia, encadenada, cada una con su clic.
+      // Textos cortos: el aviso es estrecho y las rutas largas lo desbordaban.
+      const followUps: { label: string; pending: string; done: string; path: string; open: () => void }[] = [];
+      if (result.moc) {
+        const moc = result.moc;
+        followUps.push({
+          label: "Crear índice", pending: "Falta el índice del curso: un clic más.", done: "Índice del curso creado", path: moc.note.path,
+          open: () => {
+            openObsidianNote(obsidianCfg.vaultName.trim(), moc.note);
+            setCreatedMocs(prev => {
+              const next = [...new Set([...prev, moc.key])];
+              void saveCreatedMocs(next);
+              return next;
+            });
+          },
+        });
+      }
+      if (obsidianCfg.includeRawSrt && srt) {
+        const rawPath = buildRawSrtNotePath(data.courseName, data.lessonName, { platform: "udemy" });
+        followUps.push({
+          label: "Guardar subtítulos", pending: "Faltan los subtítulos (raw/): un clic más.", done: "Subtítulos guardados en raw/", path: rawPath,
+          open: () => openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
+            path: rawPath,
+            markdown: buildRawSrtNoteMarkdown(data.courseName, data.lessonName, srt, { platform: "udemy", sourceUrl: data.sourceUrl }),
+          })),
+        });
+      }
+      const folderOf = (path: string) => `${path.split("/").slice(0, -1).join("/")}/`;
+      const offer = (i: number, title: string, path: string) => {
+        const next = followUps[i];
+        toast.success(title, {
+          id: OBSIDIAN_TOAST_ID,
+          description: next ? next.pending : `En ${folderOf(path)}`,
+          icon: <BookMarked className="text-violet-400" size={18} />,
+          duration: next ? 12000 : 4000,
+          action: next ? { label: next.label, onClick: () => { next.open(); offer(i + 1, next.done, next.path); } } : undefined,
+        });
+      };
+      offer(0, "Nota creada en Obsidian", result.notePath);
       setTimeout(() => setObsidianStatus("idle"), 4000);
       if (markExported) {
-        const key = sessionExportKey(data.courseName, data.lessonName);
+        const key = sessionExportKey(obsidianCfg, data.courseName, data.lessonName);
         const next = [...new Set([...exportedNotesRef.current, key])];
         exportedNotesRef.current = next;
         setExportedNotes(next);
         void saveObsidianExportedNotes(next);
       }
 
-      // SRT crudo → raw/ (material inmutable para el destilado posterior).
-      // El SRT ya se pidió antes de la primera URI (C8).
-      if (obsidianCfg.includeRawSrt) {
-        if (!srt) {
-          toast.info("SRT crudo no disponible todavía — raw/ omitido en esta exportación.");
-        } else {
-          const rawPath = buildRawSrtNotePath(data.courseName, data.lessonName, { platform: "udemy" });
-          openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
-            path: rawPath,
-            markdown: buildRawSrtNoteMarkdown(data.courseName, data.lessonName, srt, {
-              platform: "udemy",
-              sourceUrl: data.sourceUrl,
-            }),
-          }));
-          toast.success("SRT crudo guardado en raw/", { description: rawPath });
-        }
+      // Subtítulos → raw/: se ofrecen arriba como acción propia (otro clic).
+      if (obsidianCfg.includeRawSrt && !srt) {
+        toast.info("Los subtítulos aún no están disponibles: esta vez no se guardan en raw/.");
       }
     } catch (err) {
       setObsidianStatus("error");
@@ -2927,22 +3412,35 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     (lastUsedObjectiveId || (selectedObj && selectedObj !== "custom"))
   );
   // §1.5: sin transcripción (esperando o sin subtítulos) el CTA no arranca en la extensión.
-  const transcriptBlocksCta = IS_EXTENSION && (transcriptState.status === "none" || transcriptState.status === "waiting");
+  const transcriptBlocksCta = IS_EXTENSION && (transcriptState.status === "none" || transcriptState.status === "waiting" || transcriptState.status === "unsupported");
 
   // ── Focus navigator helpers (flowVersion 2: 4 pasos) ─────────────────────
   const stepUnlocked = [
     true,                     // 0 Recordar
     confidence !== null,      // 1 Comprobar
     questionsComplete,        // 2 Aplicar
-    questionsComplete,        // 3 Fijar (Aplicar no bloquea: «Hacerlo después» cuenta)
+    questionsComplete && practiceStatus !== null, // 3 Fijar: práctica intentada o saltada (§1.7)
   ] as const;
 
-  const canGoNext = focusStep < 3 && stepUnlocked[focusStep + 1 as 0|1|2|3];
+  // §1.7: en Comprobar, lo mínimo es una respuesta revisada; «Siguiente» entonces
+  // termina la comprobación (lo mismo que «Terminar la comprobación»).
+  const anyAnswerReviewed = queueQuestions.some((_, i) => questionFeedbacks[i]?.status === "done");
+  const canGoNext = focusStep < 3 && (stepUnlocked[focusStep + 1 as 0|1|2|3] || (focusStep === 1 && anyAnswerReviewed));
+  const handleTopNext = () => {
+    if (focusStep === 0) { handleGoVerify(); return; }
+    if (focusStep === 1 && !questionsComplete) {
+      if (!anyAnswerReviewed) return;
+      completeQuestions();
+      goToStep(2, true);
+      return;
+    }
+    goToStep(focusStep + 1);
+  };
   const canGoPrev = focusStep > 0;
 
-  const goToStep = (target: number) => {
+  const goToStep = (target: number, force = false) => {
     if (target < 0 || target > 3) return;
-    if (!stepUnlocked[target as 0|1|2|3]) return;
+    if (!force && !stepUnlocked[target as 0|1|2|3]) return;
     // Reset scroll ANTES del re-render — evita que AnimatePresence empuje hacia abajo
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setFocusDir(target > focusStep ? 1 : -1);
@@ -2984,7 +3482,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     { label: STEP_META[0].short, done: confidence !== null, active: confidence === null },
     { label: STEP_META[1].short, done: questionsComplete, active: confidence !== null && !questionsComplete },
     { label: STEP_META[2].short, done: practiceStatus !== null, active: showApply && practiceStatus === null },
-    { label: STEP_META[3].short, done: finishedAt !== null, active: showApply },
+    { label: STEP_META[3].short, done: finishedAt !== null, active: showApply && practiceStatus !== null },
   ];
 
   // Un objetivo ELEGIDO por el estudiante cuenta aunque las plantillas del
@@ -3000,23 +3498,33 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   // ── §1.6: calibración honesta ─────────────────────────────────────────────
   // Demostrado = la dificultad MÁS ALTA respondida correcta a la primera.
   // Si ninguna, un nivel por debajo del declarado (mínimo «Confuso»).
+  // Sin respuestas evaluadas (p. ej. Comprobación saltada) no hay calibración:
+  // sin evidencia no se dice nada (regla de honestidad, R5).
   const calibration = useMemo(() => {
-    if (!content || !confidence || queueQuestions.length === 0) return null;
-    const firstTryCorrect = queueQuestions.filter((q) => firstTryCorrectRef.current.has(q.q));
-    const shownIdx = firstTryCorrect.length > 0
-      ? Math.max(...firstTryCorrect.map(q => DIFF_ORDER.indexOf(q.difficulty)))
-      : Math.max(0, DIFF_ORDER.indexOf(confidence) - 1);
-    const saidIdx = DIFF_ORDER.indexOf(confidence);
+    if (!content || !confidence || queueQuestions.length === 0 || questionsSkipped) return null;
+    if (!queueQuestions.some((_, i) => questionFeedbacks[i]?.status === "done")) return null;
     const label = (i: number) => CONFIDENCE.find(c => c.id === DIFF_ORDER[i])?.label ?? "";
+    const saidIdx = DIFF_ORDER.indexOf(confidence);
+    const said = label(saidIdx);
+    const firstTryCorrect = queueQuestions.filter((q) => firstTryCorrectRef.current.has(q.q));
+    if (firstTryCorrect.length === 0) {
+      // Con «Confuso» y sin acierto no hay nada que calibrar: el resumen ya lo dice.
+      if (saidIdx <= 0) return null;
+      return { said, shown: "", message: `Elegiste «${said}», pero no acertaste a la primera: repásalo en Anki.` };
+    }
+    const shownIdx = Math.max(...firstTryCorrect.map(q => DIFF_ORDER.indexOf(q.difficulty)));
+    const shown = label(shownIdx);
     const diff = shownIdx - saidIdx;
     const message = diff === 0
-      ? "Tu autoevaluación fue precisa."
+      ? saidIdx === 0
+        ? `Acertaste la pregunta básica: la próxima vez prueba con «${label(1)}».`
+        : `Elegiste «${said}» y tus respuestas lo confirman.`
       : diff < 0
-        ? "Te sentías más seguro de lo que mostraste; justo eso repasarás en Anki."
-        : "Sabes más de lo que creías; la próxima vez empieza un nivel más arriba.";
-    return { said: label(saidIdx), shown: label(shownIdx), message };
+        ? `Elegiste «${said}», pero tus respuestas quedaron en «${shown}».`
+        : `Sabes más de lo que creías: la próxima vez prueba con «${shown}».`;
+    return { said, shown, message };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, confidence, questionQueue, questionFeedbacks]);
+  }, [content, confidence, questionQueue, questionFeedbacks, questionsSkipped]);
 
   // ── §1.4: resumen de cierre con datos reales ─────────────────────────────
   const firstTryCount = queueQuestions.filter((q) => firstTryCorrectRef.current.has(q.q)).length;
@@ -3024,30 +3532,126 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const fb = questionFeedbacks[i];
     return fb?.status === "done" && (fb.rating === "correct" || fb.rating === "excellent");
   }).length - firstTryCount;
+  // R5: nunca «dominada» por defecto; lo saltado o pendiente se nombra tal cual.
+  // Los fallos no cambian el título: el resumen los muestra y van a Anki como refuerzo.
   const resultTitle = (() => {
-    const totalQ = queueQuestions.length;
-    const practiceOk = practiceStatus === "correct";
-    const practiceLater = practiceStatus === null || practiceStatus === "later";
-    if (totalQ > 0 && firstTryCount === totalQ && practiceOk) return "Lección dominada";
-    if (firstTryCount < totalQ || practiceLater) return "Lección completada · con puntos a reforzar";
+    const totalQ = queueQuestions.filter((_, i) => questionFeedbacks[i]?.status === "done").length;
+    const pending = questionsSkipped || practiceStatus === null || practiceStatus === "later";
+    if (pending) return "Lección con pasos pendientes";
+    if (totalQ > 0 && firstTryCount === totalQ && practiceStatus === "correct") return "Lección dominada";
     return "Lección completada";
   })();
 
+  // Solo lo usa la nota de Obsidian: las mismas cifras que la caja de Fijar
+  // (refuerzo calculado de las tres fases, no solo el guardado en el contenido).
   const buildResultSummary = (): import("../services/obsidianExport").StudyResultSummary => {
-    const selected = content?.ankiCards.filter(c => !c.excluded) ?? [];
+    const accepted = allCardsWithReinforce.filter(c => !c.excluded);
+    const selected = accepted.filter(c => !c.doubt);
     const reinforceCount = selected.filter(c => c.reinforce).length;
-    const destination: "anki" | "obsidian" | "none" = ankiExported ? "anki" : obsidianExportedAt ? "obsidian" : "none";
+    const doubtCount = accepted.filter(c => c.doubt).length;
+    // Si no fueron a Anki, viajan en esta misma nota (cuando la nota las incluye).
+    const destination: "anki" | "obsidian" | "none" = ankiExported ? "anki" : obsidianExportedAt || obsidianCfg.includeCards ? "obsidian" : "none";
     return {
       title: resultTitle,
       remembered: { count: conceptsMarkedCount, total: content?.keyConcepts.length ?? 0 },
       check: { firstTry: firstTryCount, improved: Math.max(0, improvedCount), skipped: questionsSkipped },
       practice: practiceStatus === "correct" ? "correct" : practiceStatus === "done" ? "done" : "later",
       calibration: calibration ? { said: calibration.said, shown: calibration.shown, message: calibration.message } : undefined,
-      cards: { total: selected.length, reinforce: reinforceCount, destination },
+      cards: { total: selected.length + doubtCount, reinforce: reinforceCount, destination, doubt: doubtCount || undefined },
     };
   };
 
+  // ── §5a: dudas sobre la lección ────────────────────────────────────────────
+  // Cada lección se estudia una vez y a donde se vuelve es a Anki: la duda
+  // aparece al intentar (recuerdo libre, feedback) y se resuelve en la misma
+  // sesión; lo que perdura es su tarjeta (docs/STUDY_FLOW_PEDAGOGY §5).
+  useEffect(() => {
+    let alive = true;
+    void prototypeDoubtDemoFor().then((demo) => { if (alive) setDoubtDemo(demo); });
+    return () => { alive = false; };
+  }, []);
+
+  // Solo con la sesión abierta, sin terminar y del vídeo que se está viendo: la
+  // respuesta se apoya en la transcripción del vídeo abierto y se guarda en SU lección.
+  // Tras «Ir a la siguiente lección»: en cuanto Udemy abre otra, Study la prepara.
+  useEffect(() => {
+    const from = pendingNextLessonRef.current;
+    if (from === null || !lessonName.trim() || slugify(lessonName) === slugify(from)) return;
+    pendingNextLessonRef.current = null;
+    openLessonInStudy();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonName]);
+
+  // La lección abierta en Udemy ya no es la de esta sesión (cambiaste de video).
+  const sessionElsewhere = phase === "result" && studySession !== null && lessonName.trim() !== ""
+    && (slugify(studySession.course) !== slugify(courseName) || slugify(studySession.lesson) !== slugify(lessonName));
+  const doubtsAvailable = phase === "result" && finishedAt === null && studySession !== null
+    && slugify(studySession.course) === slugify(courseName) && slugify(studySession.lesson) === slugify(lessonName);
+
+  const getDoubtTranscript = useCallback(async (): Promise<DoubtTranscript | null> => {
+    if (doubtDemo) return { text: doubtDemo.transcript, truncated: false };
+    const res = await requestStudyTranscript(DOUBT_TRANSCRIPT_CHARS);
+    const text = res.transcriptText ?? res.text ?? "";
+    return res.ok && text.trim() ? { text, truncated: Boolean(res.transcriptTruncated ?? res.truncated) } : null;
+  }, [doubtDemo]);
+
+  // Los hilos son la fuente de verdad: se guardan con la lección de la sesión
+  // (solo para sobrevivir a una recarga a mitad de la sesión).
+  const doubtsRef = useRef<LessonDoubtThread[]>(doubts);
+  doubtsRef.current = doubts;
+  const handleDoubtChange = (thread: LessonDoubtThread) => {
+    if (!studySession) return;
+    const next = upsertDoubtThread(doubtsRef.current, thread);
+    doubtsRef.current = next;
+    setDoubts(next);
+    historyService.upsertLecture({ courseName: studySession.course, lectureName: studySession.lesson, doubts: next })
+      .catch(err => console.error("[history] upsert doubts", err));
+  };
+
+  const savedDoubts = savedDoubtCount(doubts);
+  const doubtCtx = (kind: LessonDoubtKind, anchor: string, extra?: Partial<LessonDoubtContext>): LessonDoubtContext => ({
+    course: courseName,
+    lesson: lessonName,
+    objective: activeSessionObjective || getActiveObjectiveText(),
+    kind,
+    anchor,
+    keyConcepts: content?.keyConcepts,
+    ...extra,
+  });
+  const toggleDoubt = (ctx: LessonDoubtContext) => {
+    const key = doubtThreadId(ctx.kind, ctx.anchor);
+    setOpenDoubtKey(current => current === key ? null : key);
+  };
+  const isDoubtOpen = (ctx: LessonDoubtContext) => openDoubtKey === doubtThreadId(ctx.kind, ctx.anchor);
+  // Anclas: la pregunta (con lo que respondió y el feedback) y el desafío.
+  const questionDoubtCtx = (i: number) => doubtCtx("question", queueQuestions[i]?.q ?? "", {
+    studentAnswer: questionAnswers[i], feedback: questionFeedbacks[i]?.content,
+  });
+  const practiceDoubtCtx = () => doubtCtx("practice", content?.application.challenge ?? "", {
+    studentAnswer: appAnswer, feedback: appFeedback.content,
+  });
+  // El panel pertenece a un ancla de un paso: al cambiar de paso, de pregunta o
+  // de lección (o al cerrarse la sesión), se cierra.
+  useEffect(() => { setOpenDoubtKey(null); }, [focusStep, currentQIdx, courseName, lessonName, doubtsAvailable]);
+
+  // Tarjetas guardadas desde dudas, una por respuesta: derivadas de los hilos
+  // (no viven en content.ankiCards, que se normaliza y recorta al restaurar).
+  const doubtCards: AnkiCard[] = doubts.flatMap((thread): AnkiCard[] => thread.turns.flatMap((turn): AnkiCard[] => {
+    if (!turn.saved) return [];
+    const html = doubtCardHtml(turn.saved);
+    return [{
+      id: doubtCardId(thread, turn), type: "concepto", front: html.front, back: html.back, tags: [],
+      reinforce: true, doubt: true, isHtml: true,
+    }];
+  }));
+
+
   // ── §3: conceptos débiles → tarjetas de refuerzo (máx. 2 nuevas) ──────────
+  // Lo débil sale de las tres fases: ideas no marcadas (Recordar), preguntas
+  // falladas (Comprobar) y la práctica intentada sin acierto o con la solución
+  // vista (Aplicar → sus tarjetas de aplicación/código/entrevista van primero).
+  // Saltar la práctica no es evidencia de nada: no refuerza.
+  const practiceWeak = practiceStatus !== "correct" && (practiceStatus === "done" || appSolutionSeen);
   const reinforcePlan = useMemo(() => {
     if (!content) return [];
     const weak = new Set<number>();
@@ -3060,19 +3664,25 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     });
     const cards = content.ankiCards.map(c => ({
       ...c,
-      reinforce: (c.conceptRefs ?? []).some(r => weak.has(r)) || Boolean(c.reinforce),
+      reinforce: (c.conceptRefs ?? []).some(r => weak.has(r)) || (practiceWeak && isPracticeCard(c)) || Boolean(c.reinforce),
     }));
     const covered = new Set(cards.filter(c => c.reinforce).flatMap(c => c.conceptRefs ?? []));
     const uncoveredWeak = new Set([...weak].filter(i => !covered.has(i)));
     if (uncoveredWeak.size === 0) return cards;
-    let added = 0;
+    // Máx. 2 en TOTAL: las que ya pasaron al contenido (efecto de abajo) cuentan.
+    let added = cards.filter(c => c.id.startsWith("study-refuerzo-")).length;
     const extras: AnkiCard[] = [];
     for (const q of queueQuestions) {
       if (added >= 2) break;
       const hits = (q.conceptRefs ?? []).filter(r => uncoveredWeak.has(r));
       if (hits.length === 0) continue;
+      const qIdx = content.questions.findIndex(cq => cq.q === q.q);
+      const id = `study-refuerzo-q${qIdx}`;
+      // Id estable por pregunta (no por posición): con la cola creciendo
+      // (consolidación, reto) dos refuerzos distintos no pueden compartir id.
+      if (cards.some(c => c.id === id)) continue;
       extras.push({
-        id: `study-refuerzo-${added + 1}`,
+        id,
         type: "concepto",
         front: q.q,
         back: `<p><b>${escapeHtml(q.answer)}</b></p>`,
@@ -3086,18 +3696,23 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     }
     return [...extras, ...cards];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, conceptsChecked, queueQuestions, questionFeedbacks]);
+  }, [content, conceptsChecked, queueQuestions, questionFeedbacks, practiceWeak]);
 
   // El contenido exportable lleva los flags del plan de refuerzo.
   const exportCards: AnkiCard[] = content
     ? content.ankiCards.map((c) => reinforcePlan.find(p => p.id === c.id) ?? c)
     : [];
   const allCardsWithReinforce: AnkiCard[] = content
-    ? [...reinforcePlan.filter(p => !content.ankiCards.some(c => c.id === p.id)), ...exportCards]
+    ? [...doubtCards, ...reinforcePlan.filter(p => !content.ankiCards.some(c => c.id === p.id)), ...exportCards]
     : [];
 
   // §3: solo se exporta lo que el estudiante acepta — quitar/incluir por tarjeta.
+  // §5: una de duda está en el mazo o no — «Quitar» la saca (y libera su hueco).
   const handleToggleExcludeCard = (id: string) => {
+    for (const thread of doubts) {
+      const turn = thread.turns.find(x => x.saved && doubtCardId(thread, x) === id);
+      if (turn) { handleDoubtChange(updateDoubtTurn(thread, turn.at, null)); return; }
+    }
     setContent(prev => prev ? { ...prev, ankiCards: prev.ankiCards.map(c => c.id === id ? { ...c, excluded: !c.excluded } : c) } : prev);
   };
 
@@ -3110,11 +3725,64 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setContent(prev => prev ? { ...prev, ankiCards: [...missing, ...prev.ankiCards] } : prev);
   }, [reinforcePlan, content]);
 
+  // ── §5b: dudas frente al mazo ─────────────────────────────────────────────
+  // Mismo frente = mismo GUID en Anki = una nota pisaría a la otra: una duda no
+  // puede guardar una tarjeta que ya está en el mazo (de IA, de refuerzo o de duda).
+  const deckFrontKeys = new Set(allCardsWithReinforce.filter(c => !c.excluded).map(c => cardFrontKey(c.front)));
+  const isInDeck = (front: string) => deckFrontKeys.has(cardFrontKey(front));
+  const renderDoubtPanel = (ctx: LessonDoubtContext) => {
+    const key = doubtThreadId(ctx.kind, ctx.anchor);
+    if (!doubtsAvailable || openDoubtKey !== key) return null;
+    return (
+      <LessonDoubtPanel
+        key={key}
+        ctx={ctx}
+        thread={doubts.find(t => t.id === key) ?? null}
+        savedCount={savedDoubts}
+        isInDeck={isInDeck}
+        getTranscript={getDoubtTranscript}
+        demoAnswer={doubtDemo?.answerFor ?? null}
+        onChange={handleDoubtChange}
+        onClose={() => setOpenDoubtKey(null)}
+      />
+    );
+  };
+  // Última oportunidad (Fijar): respuestas con tarjeta propuesta que no se
+  // guardaron — sin repetir frentes ni los que ya están en el mazo.
+  const unsavedDoubtProposals = (() => {
+    const seen = new Set<string>();
+    return doubts.flatMap(thread => thread.turns
+      .filter(turn => turn.card && !turn.saved && !turn.outside)
+      .map(turn => ({ thread, turn })))
+      .filter(({ turn }) => {
+        const key = cardFrontKey(turn.card?.front ?? "");
+        if (!key || seen.has(key) || deckFrontKeys.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  })();
+  const addDoubtCardFromFijar = (thread: LessonDoubtThread, at: number) => {
+    const turn = thread.turns.find(x => x.at === at);
+    if (!turn?.card || savedDoubts >= MAX_DOUBT_CARDS || isInDeck(turn.card.front)) return;
+    const snapshot = snapshotDoubtCard(turn);
+    if (snapshot) handleDoubtChange(updateDoubtTurn(thread, at, snapshot));
+  };
+
   // ── §1.4: «Terminar lección» — siempre disponible, sin exportar ───────────
   const handleFinishLesson = () => {
     if (finishedAt) return;
     const now = Date.now();
     setFinishedAt(now);
+    // «Guardar automáticamente» en Obsidian: al terminar (la nota ya lleva todo)
+    // y dentro de este clic (Chrome exige un gesto para abrir Obsidian). Si la
+    // lección ya tenía nota, se le añade el repaso de hoy (no se pisa).
+    if (obsidianCfg.autoExport && obsidianCfg.vaultName.trim()) {
+      const data = getObsidianSessionData();
+      if (data) {
+        if (isSessionExported(exportedNotesRef.current, obsidianCfg, courseName, lessonName)) doExportObsidianUpdate(data);
+        else void doExportObsidian(data, true);
+      }
+    }
     const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
     historyService.upsertLecture({
       courseName,
@@ -3129,9 +3797,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       ankiCards: allCardsWithReinforce.map(c => ({
         id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
         conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
+        doubt: c.doubt, isHtml: c.isHtml,
       })),
       ankiCardsCount: allCardsWithReinforce.filter(c => !c.excluded).length,
-      exportedGuids: ankiExported || obsidianExportedAt ? guids : undefined,
+      // Lo realmente exportado (no lo añadido después, p. ej. una tarjeta de duda).
+      exportedGuids: lastExportGuids ?? (ankiExported || obsidianExportedAt ? guids : undefined),
     }).catch(err => console.error("[history] finish", err));
     // XP de cierre + la ÚNICA celebración grande, con nivel/logros dentro.
     if (!sessionCelebratedRef.current) {
@@ -3146,8 +3816,32 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         levelUp: pendingLevelUp,
         unlockedTitles: pendingUnlocked,
       });
-      setTimeout(() => scrollToBottom(), 300);
     }
+    // Sin saltar arriba: solo lo justo para que «Ir a la siguiente lección» (que aparece
+    // debajo de «Lección terminada») quede entero a la vista.
+    setTimeout(() => nextLessonRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
+  };
+
+  // «Ir a la siguiente lección»: pide a Udemy (content script) que pase de video; al
+  // cambiar la lección abierta, Study abre la nueva directamente (sin la tarjeta intermedia).
+  const handleGoNextLesson = () => {
+    if (nextLessonStatus === "going") return;
+    setNextLessonStatus("going");
+    pendingNextLessonRef.current = lessonName;
+    let settled = false;
+    const cleanup = contentBridge.onMessageFromContent((message: BridgeMessage) => {
+      if (message.type !== "NEXT_LECTURE_RESULT") return;
+      settled = true;
+      cleanup();
+      const ok = Boolean((message.payload as { ok?: boolean } | undefined)?.ok);
+      if (!ok) { pendingNextLessonRef.current = null; setNextLessonStatus("failed"); }
+    });
+    void contentBridge.sendToContent({ type: "GO_TO_NEXT_LECTURE" });
+    window.setTimeout(() => {
+      if (!settled) cleanup();
+      // Sin respuesta o sin cambio de lección: se dice, no se queda girando.
+      if (pendingNextLessonRef.current !== null) { pendingNextLessonRef.current = null; setNextLessonStatus("failed"); }
+    }, 8000);
   };
 
   // duplicate allStepsComplete effect removed — first useEffect above handles chord + scroll
@@ -3219,14 +3913,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     setCourseName(rec.courseName);
                     setLessonName(rec.lectureName);
                     setHistoryOpen(false);
-                    // Force re-trigger of rehydration even if same slug pair
-                    rehydratedKeyRef.current = "";
-                    // If we're not in objective phase, reset visible state first
-                    // then the useEffect will pick up the new lecture.
-                    if (phase !== "objective") {
-                      setPhase("objective");
-                      setContent(null);
-                    }
+                    // Estado limpio + rehidratación de la lección elegida (sin arrastrar la anterior).
+                    openLessonInStudy();
                   }}
                 />
               </div>
@@ -3269,7 +3957,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 Evaluaciones interactivas por lección y tarjetas inteligentes de retención con Anki.
               </p>
               <div className="relative flex flex-wrap gap-1.5 mt-3.5">
-                {([["steps", "4 pasos"], ["timer", "~4–10 min"], ["zap", "+XP por clase"]] as const).map(([ic, label]) => (
+                {([["steps", "4 pasos"], ["timer", "~5–15 min"], ["zap", "+XP por clase"]] as const).map(([ic, label]) => (
                   <span key={label} className="kx-hero-chip text-[10.5px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5">
                     <Icon name={ic} size={13} weight="duotone" />{label}
                   </span>
@@ -3314,14 +4002,14 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-[var(--usb-fg-hi)] text-[12px] leading-snug font-bold">
-                      Objetivos pendientes de IA real
+                      Objetivos de ejemplo
                     </p>
                     <p className="text-[var(--usb-fg-mid)] text-[11px] font-medium mt-0.5 leading-relaxed">
                       {humanizeObjectivesError(objectivesError)}
                     </p>
                     <button onClick={handleRegenerateObjectives}
                       className="kx-chip mt-2.5 h-8 px-3 rounded-full text-[11px] font-semibold flex items-center gap-1.5 transition-all">
-                      <Sparkles size={12}/>Regenerar con IA
+                      <Sparkles size={12}/>Generar de nuevo
                     </button>
                   </div>
                 </div>
@@ -3432,7 +4120,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             {humanizeObjectivesError(objectivesError)}
                           </p>
                           <p className="text-[var(--usb-fg-mid)] text-[10.5px] font-medium mt-0.5">
-                            Estos objetivos son plantillas heurísticas, no IA real.
+                            Son objetivos de ejemplo: Kinema no pudo generarlos para este curso.
                           </p>
                         </div>
                       </div>
@@ -3491,7 +4179,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         onClick={handleRefine} disabled={isRefining || !aiReady}
                         title={!aiReady ? aiBlockedMessage(aiState, aiEndpoint) : undefined}
                         className="kx-chip w-full h-10 rounded-2xl disabled:cursor-wait text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all">
-                        {isRefining ? <><Loader2 size={11} className="animate-spin"/>Refinando con IA…</> : <><Sparkles size={12}/>Refinar con IA</>}
+                        {isRefining ? <><Loader2 size={11} className="animate-spin"/>Refinando…</> : <><Sparkles size={12}/>Refinar con Kinema</>}
                       </motion.button>
                     )}
 
@@ -3522,7 +4210,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           ) : (
                             <button onClick={handleRefine} disabled={isRefining}
                               className="kx-chip flex-1 h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all"
-                              title="Pídele a la IA otra versión del mismo texto">
+                              title="Pide a Kinema otra versión del mismo texto">
                               {isRefining ? <><Loader2 size={11} className="animate-spin"/>Generando…</> : <><RotateCcw size={11}/>Otra variante</>}
                             </button>
                           )}
@@ -3556,7 +4244,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
                 className={fieldCls}/>
               <textarea value={courseDescription} onChange={e => setCourseDescription(e.target.value)}
-                placeholder="Descripción breve del curso (ayuda a la IA a generar mejores objetivos)"
+                placeholder="Descripción breve del curso (ayuda a Kinema a proponer mejores objetivos)"
                 className={`${textareaCls} h-[74px] custom-scrollbar-thin`}/>
             </div>
             ) : null}
@@ -3573,31 +4261,40 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               <div className="min-w-0">
                 <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">
                   {transcriptState.status === "ready"
-                    ? "Subtítulos listos"
+                    ? transcriptState.article ? "Texto de la lección listo" : "Subtítulos listos"
                     : transcriptState.status === "waiting"
                       ? "Esperando subtítulos"
                       : transcriptState.status === "none"
                         ? "Sin subtítulos en esta lección"
-                        : transcriptState.status === "preview"
-                          ? "Vista previa sin extensión"
-                          : "Comprobando subtítulos…"}
+                        : transcriptState.status === "unsupported"
+                          ? "Lección sin video ni texto"
+                          : transcriptState.status === "preview"
+                            ? "Vista previa sin extensión"
+                            : "Comprobando la lección…"}
                 </p>
-                <p className="text-[10.5px] text-[var(--usb-fg-lo)] font-medium">
+                <p className="text-[10.5px] text-[var(--usb-fg-mid)] font-medium">
                   {transcriptState.status === "waiting"
                     ? "Activa los subtítulos en inglés en el video"
                     : transcriptState.status === "ready"
-                      ? "Listos para analizar"
+                      ? "Listo para analizar"
                       : transcriptState.status === "none"
-                        ? "El estudio usará el curso como contexto"
-                        : transcriptState.status === "preview"
-                          ? "Se usará una sesión de ejemplo"
-                          : "Un momento…"}
+                        ? "Activa los subtítulos en inglés y vuelve a comprobar"
+                        : transcriptState.status === "unsupported"
+                          ? "Es un cuestionario o ejercicio: complétalo en Udemy"
+                          : transcriptState.status === "preview"
+                            ? "Se usará una sesión de ejemplo"
+                            : "Un momento…"}
                 </p>
               </div>
               {transcriptState.status === "ready" && transcriptState.cues ? (
                 <span className="kx-ok-pill text-[11px] font-bold tabular-nums ml-auto px-2.5 py-1 rounded-full">
-                  {transcriptState.cues} líneas
+                  {transcriptState.cues} {transcriptState.article ? "párrafos" : "líneas"}
                 </span>
+              ) : transcriptState.status === "none" ? (
+                <button type="button" onClick={() => { setTranscriptState({ status: "checking", cues: null }); setTranscriptRecheck(n => n + 1); }}
+                  className="kx-chip ml-auto shrink-0 h-7 px-2.5 rounded-full text-[10.5px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                  Volver a comprobar
+                </button>
               ) : null}
             </div>
 
@@ -3644,7 +4341,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             <button onClick={handleGenerate}
               disabled={!hasUsableObjective || !hasCourseContext || transcriptBlocksCta || !aiReady}
               className="kx-gen-cta w-full h-12 rounded-2xl disabled:cursor-not-allowed text-[12.5px] font-bold flex items-center justify-center gap-2 transition-all">
-              <Icon name="sparkles" size={17} weight="duotone"/>{returningMode ? "Empezar" : "Generar sesión de aprendizaje"} · ~4–10 min
+              <Icon name="sparkles" size={17} weight="duotone"/>{returningMode ? "Empezar" : "Generar sesión de aprendizaje"} · ~5–15 min
               <ArrowRight size={14}/>
             </button>
             {(!hasCourseContext || !hasUsableObjective || transcriptBlocksCta || !aiReady) && (
@@ -3655,6 +4352,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     ? "Elige o escribe un objetivo para empezar."
                     : !aiReady
                       ? aiBlockedMessage(aiState, aiEndpoint)
+                    : transcriptState.status === "unsupported"
+                      ? "Kinema estudia lecciones de video o de texto. Pasa a la siguiente lección cuando termines esta."
                       : "Sin transcripción todavía — activa los subtítulos en inglés o reintenta."}
               </p>
             )}
@@ -3729,7 +4428,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <BookOpen size={12} className="text-violet-400 shrink-0"/>
-                  <span className="text-[11px] font-semibold text-[var(--usb-fg-hi)] truncate">{lessonName}</span>
+                  <span className="text-[11px] font-semibold text-[var(--usb-fg-hi)] truncate">{studySession?.lesson ?? lessonName}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-2">
                   {sessionXp > 0 && (
@@ -3738,7 +4437,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       +{sessionXp} XP
                     </span>
                   )}
-                  {confirmingReset ? (
+                  {sessionElsewhere ? null : confirmingReset ? (
                     <span ref={confirmGroupRef} role="group" aria-label="Confirmar reinicio" className="inline-flex items-center gap-1.5">
                       <span className="text-[10px] font-medium text-[var(--usb-fg-mid)]">¿Borrar respuestas?</span>
                       <button
@@ -3794,16 +4493,36 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 </span>
               </div>
 
-              <ProgressStepper steps={steps} focus={focusStep}/>
+              {!sessionElsewhere && <ProgressStepper steps={steps} focus={focusStep}/>}
             </div>
 
             <div className="p-4 space-y-4">
 
+              {/* Cambiaste de video en Udemy: esta sesión es de otra lección. Se oculta (para
+                  no escribir en la lección equivocada) y se ofrece estudiar la que está abierta. */}
+              {sessionElsewhere ? (
+                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl p-4 space-y-3" data-lesson-changed style={{ "--kx-btn": "#6d4aff" } as React.CSSProperties}>
+                  <div className="flex items-start gap-3">
+                    <span className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 text-[var(--usb-accent-text)] border-[#6d4aff]/30 bg-[#6d4aff]/10" aria-hidden="true">
+                      <Icon name="compass" size={19} weight="duotone" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-bold leading-snug text-[var(--usb-fg-hi)]">Estás en otra lección</p>
+                      <p className="text-[11px] leading-relaxed text-[var(--usb-fg-mid)] mt-1">
+                        Ahora tienes abierta «{lessonName}». Tu sesión de «{studySession?.lesson}» quedó guardada en el historial.
+                      </p>
+                    </div>
+                  </div>
+                  <StepContinueButton label="Estudiar esta lección" onClick={openLessonInStudy} />
+                </div>
+              ) : (<>
+
               {/* ── Relevance bar ── */}
-              {focusStep === 0 && (
-              <div className="kx-card-flat flex items-center gap-2.5 rounded-xl px-3 py-2.5">
+              {/* Solo con estimación real (la plantilla local no inventa una cifra). */}
+              {focusStep === 0 && content.relevance.score >= 0 && (
+              <div className="kx-card-flat flex items-center gap-2.5 rounded-xl px-3 py-2.5" title={content.relevance.reason}>
                 <Icon name="target" size={15} weight="duotone" className="text-emerald-400 shrink-0" />
-                <span className="text-white/55 text-[10.5px] font-semibold shrink-0">Relevancia</span>
+                <span className="text-[var(--usb-fg-mid)] text-[10.5px] font-semibold shrink-0">Relevancia para tu objetivo</span>
                 <div className="h-1.5 flex-1 bg-white/6 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${content.relevance.score}%` }}
                     transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full"/>
@@ -3811,13 +4530,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 <span className="text-emerald-400 text-[11px] font-bold tabular-nums shrink-0">{content.relevance.score}%</span>
               </div>
               )}
-              {focusStep === 0 && content.relevance.score < 50 && (
+              {focusStep === 0 && content.relevance.score >= 0 && content.relevance.score < 50 && (
                 <div className="kx-card-flat flex items-center gap-2.5 rounded-xl px-3 py-2.5">
                   <p className="flex-1 text-[10.5px] text-[var(--usb-fg-mid)] leading-relaxed">
                     Esta lección aporta poco a tu objetivo: puedes ir directo a Comprobar.
                   </p>
                   {stepUnlocked[1] && (
-                    <button onClick={() => goToStep(1)} className="kx-chip shrink-0 h-7 px-2.5 rounded-full text-[10.5px] font-semibold">
+                    <button onClick={handleGoVerify} className="kx-chip shrink-0 h-7 px-2.5 rounded-full text-[10.5px] font-semibold">
                       Ir a Comprobar
                     </button>
                   )}
@@ -3830,16 +4549,17 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                   className={`kx-nav-btn flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoPrev ? "text-[var(--usb-fg-mid)] hover:bg-[var(--usb-bg-3)] cursor-pointer" : "text-[var(--usb-fg-lo)] opacity-50 cursor-not-allowed"}`}>
                   <ChevronLeft size={13} /> Anterior
                 </button>
-                <span className="kx-step-count text-[10px] font-bold tabular-nums px-2.5 py-1 rounded-full">{focusStep + 1} / 4</span>
-                <button onClick={() => goToStep(focusStep + 1)} disabled={!canGoNext}
-                  title={!canGoNext && focusStep < 3 ? "Completa este paso primero" : ""}
+                <button onClick={handleTopNext} disabled={!canGoNext}
+                  title={!canGoNext && focusStep < 3 ? (["Elige qué tan claro te quedó", "Revisa una respuesta o salta este paso", "Intenta la práctica o salta este paso"][focusStep] ?? "") : ""}
                   className={`kx-nav-btn flex items-center gap-1 pl-3 pr-2 py-1.5 rounded-full text-[10.5px] font-semibold transition-all ${canGoNext ? "kx-next cursor-pointer" : "text-[var(--usb-fg-lo)] opacity-50 cursor-not-allowed"}`}>
                   Siguiente <ChevronRight size={13} />
                 </button>
               </div>
 
               {/* ── FOCUS NAV: animated step ── */}
-              <AnimatePresence custom={focusDir} mode="wait">
+              {/* Al cambiar de paso se empieza arriba: también cuando la salida del paso
+                  anterior termina después del reinicio de scroll (p. ej. al llegar a Fijar). */}
+              <AnimatePresence custom={focusDir} mode="wait" onExitComplete={() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }}>
               <motion.div key={focusStep} custom={focusDir}
                 variants={{
                   enter:  (d: number) => ({ x: d >= 0 ? 56 : -56, opacity: 0, scale: 0.98 }),
@@ -3851,111 +4571,118 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
               <StepBanner step={focusStep} />
 
-              {/* ── Step 0: Confidence ── */}
-              {focusStep === 0 && (
-              <div className="space-y-3.5">
-                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-4">
-                  <StepHeader n={1} label="¿Qué tan claro te quedó el video?" subLabel={`paso 1 · ${STEP_META[0].short.toLowerCase()}`} status={confidence ? "done" : "active"}/>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {CONFIDENCE.map(c => {
-                      const isSelected = confidence === c.id;
-                      return (
-                        <motion.button
-                          key={c.id}
-                          onClick={() => handleConfidenceChange(c.id)}
-                          whileHover={{ y: -2 }}
-                          whileTap={{ scale: 0.98 }}
-                          className={`group relative flex flex-col p-3.5 rounded-2xl border text-left transition-all overflow-hidden ${
-                            isSelected
-                              ? `${c.bg} ${c.border} ring-1 ${c.ring} shadow-md`
-                              : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] hover:bg-[var(--usb-bg-2)]/70 hover:shadow-2xs"
-                          }`}>
-                          {/* Top indicator row: icono del set propio (sin emoji) */}
-                          <div className="flex items-center justify-between w-full mb-3">
-                            <span
-                              className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs transition-all group-hover:scale-110"
-                              style={{
-                                background: `color-mix(in srgb, ${c.color} ${isSelected ? "18%" : "8%"}, var(--usb-bg-3))`,
-                                borderColor: `color-mix(in srgb, ${c.color} ${isSelected ? "40%" : "20%"}, var(--usb-border))`,
-                                color: c.color,
-                              }}
-                            >
-                              <Icon name={c.icon} size={20} weight="duotone" />
-                            </span>
-                          </div>
-
-                          {/* Label & Description */}
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <p className={`text-[13px] leading-tight font-bold transition-colors ${isSelected ? c.label_c : "text-[var(--usb-fg-hi)]"}`}>
-                                {c.label}
-                              </p>
-                              {isSelected && (
-                                <CheckCircle2 size={13} className={`${c.label_c} shrink-0`} />
-                              )}
-                            </div>
-                            <p className="text-[11px] text-[var(--usb-fg-mid)] mt-1 font-medium leading-snug">
-                              {c.desc}
-                            </p>
-                          </div>
-                        </motion.button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Línea de coach neutra — una sola frase por nivel (§1.1) */}
-                  <AnimatePresence>
-                    {confidence && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -4, scale: 0.97 }}
-                        transition={{ type: "spring", stiffness: 380, damping: 28, delay: 0.15 }}
-                        className="mt-3.5 pt-3.5 border-t border-[var(--usb-border)] flex items-start gap-3 bg-[var(--usb-bg-2)]/50 p-3 rounded-xl"
-                      >
-                        <span className="shrink-0 mt-0.5 text-violet-400">
-                          <Icon name={COACH_LINE[confidence].icon} size={18} weight="duotone" />
-                        </span>
-                        <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{COACH_LINE[confidence].tip}</p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-              )}
-
-              {/* ── Paso 0 (Recordar): recuerdo libre + conceptos, tras elegir nivel ── */}
-              {focusStep === 0 && confidence && (() => {
+              {/* ── Paso 0 (Recordar): nivel → recuerdo libre → comparar con las ideas clave ── */}
+              {focusStep === 0 && (() => {
                 const checkedCount = Object.values(conceptsChecked).filter(Boolean).length;
                 const total = content.keyConcepts.length;
-                const isReady = checkedCount >= 2;
-                const isLocked = questionsComplete; // lock once questions are done
+                const isLocked = questionsComplete; // registrado al completar Comprobar
                 const recallOpen = recallRevealed || isLocked || checkedCount > 0 || conceptsAcknowledged;
+                const level = confidence ? CONFIDENCE.find(c => c.id === confidence) ?? null : null;
+                const showPicker = !level || levelPickerOpen;
                 return (
-                <div ref={conceptsRef} className="space-y-3.5">
-                  <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
-                    {/* Header with live counter */}
-                    <div className="flex items-center justify-between px-4 pt-4 pb-1">
-                      <StepHeader n={2} label="Lo que aprendiste" subLabel={isLocked ? "registrado" : recallOpen ? "marca los que ya tenías en mente" : "primero, recuerda"} status={isReady ? "done" : "active"}/>
-                      <motion.div
-                        key={checkedCount}
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        className={`shrink-0 ml-2 mb-3.5 px-2 py-0.5 rounded-full text-[10px] font-mono border transition-all ${
-                          isReady
-                            ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
-                            : "bg-white/5 border-[var(--usb-border)] text-white/30"
-                        }`}
+                <div className="space-y-3.5">
+                  {/* Nivel: un toque. Elegido, se pliega para que el recuerdo quede a la vista. */}
+                  {showPicker || !level ? (
+                    <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-4" data-level-picker>
+                      <StepHeader n={1} label="¿Qué tan claro te quedó la lección?" status={confidence ? "done" : "active"}/>
+                      <div className="grid grid-cols-2 gap-2.5">
+                      {CONFIDENCE.map(c => {
+                        const isSelected = confidence === c.id;
+                        return (
+                          <motion.button
+                            key={c.id}
+                            onClick={() => { setLevelPickerOpen(false); if (c.id !== confidence) handleConfidenceChange(c.id); }}
+                            whileHover={{ y: -2 }}
+                            whileTap={{ scale: 0.98 }}
+                            className={`group relative flex flex-col p-3.5 rounded-2xl border text-left transition-all overflow-hidden ${
+                              isSelected
+                                ? `${c.bg} ${c.border} ring-1 ${c.ring} shadow-md`
+                                : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] hover:bg-[var(--usb-bg-2)]/70 hover:shadow-2xs"
+                            }`}>
+                            {/* Top indicator row: icono del set propio (sin emoji) */}
+                            <div className="flex items-center justify-between w-full mb-3">
+                              <span
+                                className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs transition-all group-hover:scale-110"
+                                style={{
+                                  background: `color-mix(in srgb, ${c.color} ${isSelected ? "18%" : "8%"}, var(--usb-bg-3))`,
+                                  borderColor: `color-mix(in srgb, ${c.color} ${isSelected ? "40%" : "20%"}, var(--usb-border))`,
+                                  color: c.color,
+                                }}
+                              >
+                                <Icon name={c.icon} size={20} weight="duotone" />
+                              </span>
+                            </div>
+
+                            {/* Label & Description */}
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <p className={`text-[13px] leading-tight font-bold transition-colors ${isSelected ? c.label_c : "text-[var(--usb-fg-hi)]"}`}>
+                                  {c.label}
+                                </p>
+                                {isSelected && (
+                                  <CheckCircle2 size={13} className={`${c.label_c} shrink-0`} />
+                                )}
+                              </div>
+                              <p className="text-[11px] text-[var(--usb-fg-mid)] mt-1 font-medium leading-snug">
+                                {c.desc}
+                              </p>
+                            </div>
+                          </motion.button>
+                        );
+                      })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl px-3.5 py-3 flex items-center gap-3" data-level-summary>
+                      <span
+                        className="w-9 h-9 rounded-xl border flex items-center justify-center shrink-0"
+                        style={{
+                          background: `color-mix(in srgb, ${level.color} 14%, var(--usb-bg-3))`,
+                          borderColor: `color-mix(in srgb, ${level.color} 36%, var(--usb-border))`,
+                          color: level.color,
+                        }}
+                        aria-hidden="true"
                       >
-                        {checkedCount}/{total}
-                      </motion.div>
+                        <Icon name={level.icon} size={18} weight="duotone" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">Te quedó: {level.label}</p>
+                        <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug mt-0.5">{COACH_LINE[level.id].tip}</p>
+                      </div>
+                      {!isLocked && (
+                        <button
+                          type="button"
+                          onClick={() => setLevelPickerOpen(true)}
+                          className="h-7 px-2.5 rounded-lg border border-[var(--usb-border)] text-[10.5px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)] transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+                        >
+                          Cambiar
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Recuerdo libre y comparación con las ideas clave (R6: recuperar antes de re-estudiar) */}
+                  {confidence && (
+                  <div ref={conceptsRef} className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden" data-recall-card>
+                    <div className="flex items-center justify-between px-4 pt-4 pb-1">
+                      <StepHeader n={2} label={isLocked ? "Las ideas clave" : recallOpen ? "¿Cuáles recordaste?" : "¿Qué recuerdas de la lección?"} subLabel={isLocked ? "registrado" : recallOpen ? "compáralas con tu recuerdo" : "primero, sin mirar"} status={recallOpen ? "done" : "active"}/>
+                      {recallOpen && (
+                        <span
+                          className={`shrink-0 ml-2 mb-3.5 px-2 py-0.5 rounded-full text-[10px] font-mono border ${
+                            checkedCount > 0
+                              ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
+                              : "bg-[var(--usb-bg-2)] border-[var(--usb-border)] text-[var(--usb-fg-mid)]"
+                          }`}
+                          title={`${checkedCount} de ${total} ideas marcadas`}
+                        >
+                          {checkedCount}/{total}
+                        </span>
+                      )}
                     </div>
 
-                    {/* Brain-dump gate: recall first, then compare with the list */}
-                    {!recallOpen && (
+                    {!recallOpen ? (
                       <div className="px-4 pb-4 space-y-3">
-                        <p className="text-[var(--usb-fg-hi)] text-[12px] font-bold leading-snug">Antes de ver la lista, ¿qué recuerdas del video?</p>
-                        <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">Escribe 2 o 3 ideas con tus palabras. Recordar sin mirar es lo que más fija el aprendizaje.</p>
+                        <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">Escribe 2 o 3 ideas con tus palabras, sin mirar. Después las comparas con las ideas clave.</p>
                         <textarea
                           value={recallNotes}
                           onChange={(e) => setRecallNotes(e.target.value)}
@@ -3964,136 +4691,156 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           className={textareaCls}
                         />
                         <button onClick={() => setRecallRevealed(true)}
-                          className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]">
-                          {recallNotes.trim() ? "Comparar con los conceptos" : "Ver los conceptos"}<ArrowRight size={12}/>
+                          className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                          {recallNotes.trim() ? "Comparar con las ideas clave" : "Ver las ideas clave"}<ArrowRight size={12}/>
                         </button>
                       </div>
-                    )}
-
-                    {/* Concept list */}
-                    {recallOpen && (
-                    <div className="px-4 pb-3 space-y-2">
-                      {content.keyConcepts.map((c, i) => (
-                        <motion.button
-                          key={i}
-                          onClick={() => !isLocked && handleConceptToggle(i)}
-                          whileHover={isLocked ? {} : { x: 2 }}
-                          whileTap={isLocked ? {} : { scale: 0.98 }}
-                          className={`kx-row w-full flex items-start gap-2.5 text-left rounded-xl px-3 py-2.5 border transition-all group ${
-                            isLocked ? "cursor-default border-transparent" :
-                            conceptsChecked[i] ? "kx-row-on" : "border-[var(--usb-border)] hover:border-[var(--usb-border-mid)]"
-                          }`}
-                        >
-                          <div className={`mt-0.5 w-[18px] h-[18px] rounded-md border flex items-center justify-center shrink-0 transition-all ${
-                            conceptsChecked[i]
-                              ? "kx-check-on"
-                              : isLocked ? "border-[var(--usb-border)]" : "kx-check-off"
-                          }`}>
-                            <AnimatePresence mode="wait">
-                              {conceptsChecked[i] && (
-                                <motion.div key="c" initial={{ scale: 0, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 500, damping: 22 }}>
-                                  <Check size={10} strokeWidth={2.4}/>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
+                    ) : (
+                      <div className="px-4 pb-4 space-y-3">
+                        {recallNotes.trim() && (
+                          <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5" data-recall-notes>
+                            <p className="kx-slate mb-1">Tu recuerdo</p>
+                            <p className="text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">{recallNotes.trim()}</p>
                           </div>
-                          <p className={`text-[11.5px] leading-relaxed transition-all ${
-                            conceptsChecked[i] ? "text-white/85" : "text-white/65 group-hover:text-white/85"
-                          }`}>{c}</p>
-                        </motion.button>
-                      ))}
-                    </div>
-                    )}
-
-                    {/* "Verificar mi comprensión" CTA */}
-                    <AnimatePresence>
-                      {!isLocked && recallOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className={`mx-3 mb-3 rounded-xl overflow-hidden relative ${
-                            isReady
-                              ? "bg-emerald-500/8 border border-emerald-500/22"
-                              : "bg-violet-500/7 border border-violet-500/18"
-                          }`}>
-                            <div className="flex items-center gap-2.5 p-2.5 relative z-10">
-                              <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 0.6, delay: 0.2 }} className="text-[16px] shrink-0">
-                                <Icon name={isReady ? "checkCircle2" : checkedCount === 0 ? "compass" : "target"} size={20} weight="duotone" className={isReady ? "text-emerald-400" : "text-violet-400"} />
-                              </motion.span>
-                              <div className="flex-1 min-w-0">
-                                <p className={`${isReady ? "text-emerald-300/90" : "text-violet-300/90"} text-[11px]`} style={{ fontWeight: 600 }}>
-                                  {isReady ? "¡Base sólida!" : checkedCount === 0 ? "Empecemos desde lo esencial" : "Buen punto de partida"}
-                                </p>
-                                <p className="text-white/35 text-[10px]">
-                                  {isReady
-                                    ? "Confirma tu comprensión con preguntas reales."
-                                    : checkedCount === 0
-                                      ? "No marcar nada también calibra: iremos a lo más básico."
-                                      : "Usaremos lo no marcado para priorizar tus preguntas."}
-                                </p>
-                              </div>
-                            </div>
-                            {/* CTA inline — no más scroll para buscar el botón */}
-                            <button
-                              onClick={handleGoVerify}
-                              className={`relative z-10 w-full flex items-center justify-center gap-2 transition-colors py-3 text-white text-[12px] ${
-                                "kx-on-solid kx-cta"
-                              }`}
-                              style={{ fontWeight: 600 }}
-                            >
-                              Ponerme a prueba <ArrowRight size={11} />
-                            </button>
+                        )}
+                        {/* Qué significa marcar y qué provoca — sin premio implícito por marcarlo todo:
+                            lo NO marcado se refuerza en Anki (reinforcePlan). */}
+                        {isLocked ? (
+                          <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">
+                            Las ideas clave de la lección. Las marcadas son las que dijiste recordar.
+                          </p>
+                        ) : (
+                          <div className="space-y-1" data-recall-instructions>
+                            <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">
+                              Marca solo las que te vinieron a la mente sin mirar. Comprobar te pregunta por cada una que no marques (y confirma una de las que marques); las que no marques también se refuerzan en Anki.
+                              {doubtsAvailable ? " Si alguna no te quedó clara, pulsa «Duda»." : ""}
+                            </p>
                           </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
+                        )}
+                        <ul className="space-y-2" data-doubt-recall>
+                          {content.keyConcepts.map((c, i) => {
+                            const checked = Boolean(conceptsChecked[i]);
+                            const ctx = doubtCtx("concepts", c);
+                            const open = isDoubtOpen(ctx);
+                            return (
+                              <li key={i} className="space-y-2">
+                                <div className={`kx-row flex items-start rounded-xl border transition-all ${
+                                  checked ? "kx-row-on" : isLocked ? "border-transparent" : "border-[var(--usb-border)] hover:border-[var(--usb-border-mid)]"
+                                }`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleConceptToggle(i)}
+                                    disabled={isLocked}
+                                    aria-pressed={checked}
+                                    className={`flex-1 min-w-0 flex items-start gap-2.5 text-left px-3 py-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${isLocked ? "cursor-default" : ""}`}
+                                  >
+                                    <span className={`mt-0.5 w-[18px] h-[18px] rounded-md border flex items-center justify-center shrink-0 transition-all ${
+                                      checked ? "kx-check-on" : isLocked ? "border-[var(--usb-border)]" : "kx-check-off"
+                                    }`} aria-hidden="true">
+                                      {checked && <Check size={10} strokeWidth={2.4}/>}
+                                    </span>
+                                    <span className={`text-[11.5px] leading-relaxed ${checked ? "text-white/85" : "text-white/70"}`}>{c}</span>
+                                  </button>
+                                  {doubtsAvailable && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleDoubt(ctx)}
+                                      aria-expanded={open}
+                                      aria-label="Tengo una duda sobre esta idea"
+                                      title="Tengo una duda sobre esta idea"
+                                      data-doubt-trigger
+                                      className={`m-1.5 h-7 px-2 rounded-lg inline-flex items-center gap-1 shrink-0 border text-[10.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${
+                                        open
+                                          ? "text-violet-300 border-violet-500/40 bg-violet-500/10"
+                                          : "text-[var(--usb-fg-mid)] border-[var(--usb-border)] hover:text-violet-300 hover:border-violet-500/30"
+                                      }`}
+                                    >
+                                      <HelpCircle size={12} aria-hidden="true" />Duda
+                                    </button>
+                                  )}
+                                </div>
+                                {renderDoubtPanel(ctx)}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {!isLocked && (
+                          <StepContinueButton label="Ponerme a prueba" onClick={handleGoVerify} />
+                        )}
+                      </div>
+                    )}
                   </div>
-
-                  {/* Quick Win removido de aquí — aparece en "Practícalo" (paso 3) */}
+                  )}
                 </div>
                 );
               })()}
 
-              {/* ── Paso 1 (Comprobar): adaptativo, máximo 2 obligatorias ── */}
+              {/* ── Paso 1 (Comprobar): adaptativo, máximo 2 preguntas (+ reto opcional) ──
+                  Una regla en cada pregunta: escribes → «Revisar mi respuesta» → Kinema
+                  revisa → si no acertaste, «¿Cómo sigues?» con dos opciones explícitas. */}
               {focusStep === 1 && confidence && queueQuestions.length > 0 && (() => {
-                const doneCount = Object.values(questionFeedbacks).filter(f => f?.status === "done").length;
+                const cardOpen = !questionsComplete || challengeOpen;
                 return (
                 <div ref={questionsRef} className="space-y-3.5">
-                  {questionsComplete && (
-                    <p className="text-white/45 text-[11px] leading-relaxed px-1">Toca cada pregunta para revisar tu respuesta y el feedback de la IA.</p>
-                  )}
 
-                {/* Review mode — when questionsComplete, show the summary instead of the card */}
-                {questionsComplete && (
+                {/* §1.7: saltada no es definitiva — se puede responder ahora. */}
+                {questionsComplete && questionsSkipped && (
+                  <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl p-4 space-y-3" data-skipped-step="comprobar">
+                    <div className="flex items-start gap-2.5">
+                      <span className="w-8 h-8 rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-2)] flex items-center justify-center shrink-0 text-[var(--usb-fg-mid)]" aria-hidden="true">
+                        <FastForward size={14} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-snug">Saltaste la comprobación</p>
+                        <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-relaxed mt-0.5">
+                          En el resumen figura como saltada. Si fue sin querer, puedes responder ahora.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUndoSkipQuestions}
+                      className="w-full h-9 rounded-xl border border-[var(--usb-border-mid)] bg-[var(--usb-bg-3)] text-[11.5px] font-bold text-[var(--usb-fg-hi)] hover:border-[#6d4aff]/50 flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+                    >
+                      <RotateCcw size={12} aria-hidden="true" />Responder ahora
+                    </button>
+                    <StepContinueButton label="Continuar a Aplicar" onClick={() => goToStep(2)} />
+                  </div>
+                )}
+
+                {/* Cerrada: el repaso de lo respondido, con la respuesta esperada y el reto opcional. */}
+                {questionsComplete && !questionsSkipped && !challengeOpen && (
                   <VerifyDoneReview
                     questions={queueQuestions}
                     answers={questionAnswers}
                     feedbacks={questionFeedbacks}
                     onGoApply={() => goToStep(2)}
+                    onAskDoubt={doubtsAvailable ? (i) => toggleDoubt(questionDoubtCtx(i)) : undefined}
+                    isDoubtOpen={(i) => isDoubtOpen(questionDoubtCtx(i))}
+                    renderDoubt={(i) => renderDoubtPanel(questionDoubtCtx(i))}
+                    onChallenge={findChallenge() ? goChallengeQuestion : undefined}
                   />
                 )}
-                <div className={`kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden ${questionsComplete ? "hidden" : ""}`}>
-                    <div className="px-4 pt-4 pb-2.5 border-b border-[var(--usb-divider)]">
-                      <div className="flex items-center justify-between">
-                        <StepHeader n={3} label={STEP_META[1].title} subLabel={`paso 2 · ${STEP_META[1].short.toLowerCase()}`} status={questionsComplete ? "done" : "active"}/>
-                        <div className="flex items-center gap-1.5 shrink-0 ml-2 pb-4">
+
+                {cardOpen && (
+                <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
+                    <div className="px-4 pt-3.5 pb-3 border-b border-[var(--usb-divider)]">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[12px] font-bold text-[var(--usb-fg-hi)] leading-tight">
+                          {challengeOpen ? "Un reto más · opcional" : `Pregunta ${currentQIdx + 1} de ${planTotal}`}
+                        </p>
+                        <div className="flex items-center gap-1.5 shrink-0" aria-hidden="true">
                           {queueQuestions.map((_, i) => {
                               const fb = questionFeedbacks[i];
                               const isDone = fb?.status === "done";
-                              const isCurrent = i === currentQIdx && !questionsComplete;
+                              const isCurrent = i === currentQIdx;
                               const rating = fb?.rating;
                               const dotColor = isDone
                                 ? rating === "correct" || rating === "excellent"
                                   ? "bg-emerald-400"
                                   : rating === "partial"
                                     ? "bg-amber-400"
-                                    : rating === "wrong"
-                                      ? "bg-red-400"
-                                      : "bg-emerald-400"
+                                    : "bg-red-400"
                                 : isCurrent
                                   ? "bg-violet-400"
                                   : "bg-white/15";
@@ -4107,416 +4854,344 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             })}
                         </div>
                       </div>
-                      {/* Progress bar */}
-                      <div className="h-[2px] w-full bg-white/5 rounded-full overflow-hidden -mt-1">
-                        <motion.div
-                          className="h-full bg-violet-500 rounded-full"
-                          initial={{ width: 0 }}
-                          animate={{ width: questionsComplete ? "100%" : `${(doneCount / Math.max(queueQuestions.length, 1)) * 100}%` }}
-                          transition={{ duration: 0.5, ease: "easeOut" }}
-                        />
-                      </div>
+                      {/* Por qué esta pregunta: el plan sale de lo que marcaste en Recordar. */}
+                      {!challengeOpen && planState && (() => {
+                        const kind = planState.kinds[currentQIdx];
+                        const refs = queueQuestions[currentQIdx]?.conceptRefs ?? [];
+                        const why = kind === "spot"
+                          ? "Sobre una idea que sí marcaste: confirma que la recuerdas."
+                          : kind === "gap"
+                            ? "Sobre otra idea que no marcaste en Recordar."
+                            : refs.some(r => !checkedSet.has(r))
+                              ? "Sobre una idea que no marcaste, según lo claro que te quedó."
+                              : "Sobre una idea que marcaste, según lo claro que te quedó: confirma que la recuerdas.";
+                        const left = planState.uncovered.length;
+                        return (
+                          <p className="mt-1 text-[10.5px] leading-snug text-[var(--usb-fg-mid)]" data-plan-why>
+                            {why}
+                            {currentQIdx === 0 && left > 0 ? ` ${left === 1 ? "La otra idea que no marcaste va" : `Las otras ${left} ideas que no marcaste van`} directo a Anki como refuerzo, para no alargar.` : ""}
+                          </p>
+                        );
+                      })()}
                     </div>
 
                     <div className="p-4">
-                      {questionsComplete ? (
-                        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-4 space-y-2 relative">
-                          <p className="text-emerald-400 text-[13px] relative z-10 pt-3" style={{ fontWeight: 600 }}>
-                            {questionsSkipped
-                              ? "Comprobación saltada"
-                              : `${firstTryCount} de ${queueQuestions.length} a la primera${improvedCount > 0 ? ` · reforzaste ${improvedCount}` : ""}`}
-                          </p>
-                          <p className="text-white/40 text-[10px] relative z-10 pt-1">Continúa con la práctica.</p>
-                        </motion.div>
-                      ) : (
-                        <>
-                          {queueQuestions.map((q, i) => i !== currentQIdx ? null : (
+                          {queueQuestions.map((q, i) => {
+                            if (i !== currentQIdx) return null;
+                            const qfb = questionFeedbacks[i] || IDLE_FB;
+                            const reviewed = qfb.status === "done";
+                            const busy = qfb.status === "loading" || qfb.status === "streaming";
+                            const good = reviewed && (qfb.rating === "correct" || qfb.rating === "excellent");
+                            const answer = questionAnswers[i] ?? "";
+                            const changed = reviewed && answer !== (evaluatedAnswers[i] ?? answer);
+                            const needsWork = reviewed && !good;
+                            const isChallenge = challengeOpen && i === queueQuestions.length - 1;
+                            // Siguiente del plan (otra idea que no marcaste), si queda.
+                            const nextPlanned = reviewed && !busy ? findNextPlanned(i) : undefined;
+                            const focusAnswer = () => {
+                              const el = document.getElementById(`kx-answer-${i}`) as HTMLTextAreaElement | null;
+                              if (!el) return;
+                              el.scrollIntoView({ block: "center", behavior: "smooth" });
+                              el.focus();
+                              el.setSelectionRange(el.value.length, el.value.length);
+                            };
+                            const ratingBorder =
+                              reviewed && good ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
+                              : reviewed && qfb.rating === "partial" ? "border-amber-500/40 ring-1 ring-amber-500/20"
+                              : reviewed ? "border-rose-500/40 ring-1 ring-rose-500/20"
+                              : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20";
+                            return (
                             <motion.div
                               key={`q-${i}-${confidence}`}
                               initial={{ opacity: 0, x: 12, scale: 0.99 }}
                               animate={{ opacity: 1, x: 0, scale: 1 }}
                               transition={{ type: "spring", stiffness: 360, damping: 28 }}
                               className="space-y-3"
+                              data-question-card
                             >
-                              {/* Question header: number + bloom */}
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[var(--usb-fg-lo)] text-[10px] font-mono">{i+1} <span className="opacity-60">/</span> {queueQuestions.length}</span>
-                                  <span className={`text-[9px] px-1.5 py-0.5 rounded-md border ${BLOOM_STYLE(q.bloom)}`}>{q.bloom}</span>
-                                </div>
-                              </div>
-
-                              {/* Question text — prominent */}
-                              <p className="text-white/85 text-[12px] leading-relaxed whitespace-pre-line">{q.q}</p>
-
-                              {/* Hint — collapsible callout */}
-                              <button onClick={() => setShowHint(v => !v)}
-                                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
-                                  showHint
-                                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
-                                    : "bg-[var(--usb-bg-3)] border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
-                                }`}>
-                                <Sparkles size={12} className="shrink-0 text-amber-400" />
-                                <span className="text-[11px] font-semibold flex-1">{showHint ? "Ocultar pista" : "Ver pista de apoyo"}</span>
-                                <ChevronDown size={12} className={`shrink-0 transition-transform ${showHint ? "rotate-180" : ""}`} />
-                              </button>
-                              <AnimatePresence>
-                                {showHint && (
-                                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                                    <div className="bg-amber-500/8 border border-amber-500/25 rounded-2xl p-3 text-[11.5px] text-amber-200 leading-relaxed font-medium">
-                                      {q.hint}
-                                    </div>
-                                  </motion.div>
+                              {/* Qué tipo de pregunta es */}
+                              <div className="flex items-center gap-1.5">
+                                {isChallenge && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md border border-[var(--usb-border)] text-[var(--usb-fg-mid)]">
+                                    más difícil
+                                  </span>
                                 )}
-                              </AnimatePresence>
-
-                              {/* Answer textarea — reacts to rating */}
-                              {(() => {
-                                const qfb = questionFeedbacks[i];
-                                const ratingBorder =
-                                  qfb?.status === "done" && (qfb.rating === "correct" || qfb.rating === "excellent")
-                                    ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
-                                    : qfb?.status === "done" && qfb.rating === "partial"
-                                    ? "border-amber-500/40 ring-1 ring-amber-500/20"
-                                    : qfb?.status === "done" && qfb.rating === "wrong"
-                                    ? "border-rose-500/40 ring-1 ring-rose-500/20"
-                                    : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20";
-                                return (
-                                  <div className="relative">
-                                    <textarea value={questionAnswers[i] || ""}
-                                      onChange={e => setQuestionAnswers(p => ({ ...p, [i]: e.target.value }))}
-                                      placeholder="Escribe tu respuesta con tus propias palabras…"
-                                      className={`kx-field w-full h-[92px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-mid)] ${ratingBorder}`}/>
-                                    {(questionAnswers[i]?.length ?? 0) > 0 && (
-                                      <span className="absolute bottom-2.5 right-3 text-[10px] text-[var(--usb-fg-lo)] font-mono pointer-events-none">
-                                        {questionAnswers[i].length}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-
-                              {/* Action row */}
-                              <div className="flex items-center gap-2">
-                                <button onClick={() => handleEvalQuestion(i)}
-                                  disabled={!questionAnswers[i]?.trim() || questionFeedbacks[i]?.status === "loading"}
-                                  className={`flex items-center gap-1.5 text-[10px] font-semibold text-white px-3 py-1.5 rounded-lg transition-all ${
-                                    questionAnswers[i]?.trim()
-                                      ? "kx-on-solid kx-cta"
-                                      : "bg-white/8 opacity-40 cursor-not-allowed"
-                                  }`}>
-                                  {questionFeedbacks[i]?.status === "loading"
-                                    ? <><Loader2 size={10} className="animate-spin"/>Analizando…</>
-                                    : <><Send size={11}/>Evaluar</>}
-                                </button>
-
-                                {/* §1.2: Siguiente trae consolidación al fallar; tras completar, Continuar */}
-                                {questionFeedbacks[i]?.status === "done" && (() => {
-                                  if (questionsComplete) {
-                                    return (
-                                      <motion.button
-                                        initial={{ opacity: 0, scale: 0.9, x: -6 }}
-                                        animate={{ opacity: 1, scale: 1, x: 0 }}
-                                        transition={{ type: "spring", stiffness: 400, damping: 24, delay: 0.15 }}
-                                        onClick={() => goToStep(2)}
-                                        className="flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-lg transition-all ml-auto bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/30"
-                                      >
-                                        Continuar a Aplicar <ArrowRight size={9}/>
-                                      </motion.button>
-                                    );
-                                  }
-                                  return (
-                                    <motion.button
-                                      initial={{ opacity: 0, scale: 0.9, x: -6 }}
-                                      animate={{ opacity: 1, scale: 1, x: 0 }}
-                                      transition={{ type: "spring", stiffness: 400, damping: 24, delay: 0.15 }}
-                                      onClick={() => goNextQuestion(i)}
-                                      className="flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-lg transition-all ml-auto border border-violet-500/25 bg-violet-500/8 text-violet-300/80 hover:text-violet-200 hover:border-violet-500/40"
-                                    >
-                                      Siguiente <ArrowRight size={9}/>
-                                    </motion.button>
-                                  );
-                                })()}
+                                {/* Qué te pide (Bloom en palabras de tarea): «aplicar»/«recordar» se confundían con los pasos. */}
+                                <span className={`text-[9.5px] px-1.5 py-0.5 rounded-md border ${BLOOM_STYLE(q.bloom)}`}>{bloomTaskLabel(q.bloom)}</span>
                               </div>
 
-                              {/* §1.2: «Un reto más» — opcional, la del nivel siguiente */}
-                              {questionsComplete && questionFeedbacks[i]?.status === "done" && !challengeUsed && content.questions.length > questionQueue.length && (
-                                <button
-                                  onClick={goChallengeQuestion}
-                                  className="w-full text-[10.5px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] border border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
-                                >
-                                  <Zap size={10} />Un reto más (opcional)
+                              <p className="text-[var(--usb-fg-hi)] text-[12.5px] font-medium leading-relaxed whitespace-pre-line">{q.q}</p>
+
+                              {/* Ayuda: la pista no cuenta como intento */}
+                              <HelpToggle open={showHint} onToggle={() => setShowHint(v => !v)} label="Ver pista" openLabel="Ocultar pista">
+                                {q.hint}
+                              </HelpToggle>
+
+                              <div className="relative">
+                                <textarea id={`kx-answer-${i}`} value={answer}
+                                  onChange={e => setQuestionAnswers(p => ({ ...p, [i]: e.target.value }))}
+                                  aria-label="Tu respuesta"
+                                  placeholder="Escribe tu respuesta con tus propias palabras…"
+                                  className={`kx-field w-full h-[92px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed text-[var(--usb-fg)] placeholder:text-[var(--usb-fg-mid)] ${changed ? "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20" : ratingBorder}`}/>
+                              </div>
+
+                              {/* Antes de revisar (o revisando): una sola acción */}
+                              {(!reviewed || busy) && (
+                                <button onClick={() => handleEvalQuestion(i)}
+                                  disabled={!answer.trim() || busy}
+                                  className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                                  {busy
+                                    ? <><Loader2 size={12} className="animate-spin"/>Kinema está revisando…</>
+                                    : <><Send size={12}/>Revisar mi respuesta</>}
                                 </button>
                               )}
-
-                              {/* AI Feedback */}
-                              <AIFeedback
-                                fb={questionFeedbacks[i] || IDLE_FB}
-                                onRetry={() => handleEvalQuestion(i)}
-                                onShowHint={() => setShowHint(true)}
-                                onShowModel={() => setShowModelAnswer(true)}
-                                onClearAnswer={() => setQuestionAnswers(p => ({ ...p, [i]: "" }))}
-                              />
-
-                              {/* Model answer — collapsible */}
-                              {questionFeedbacks[i]?.status === "done" && (
-                                <>
-                                  <button onClick={() => setShowModelAnswer(v => !v)}
-                                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left transition-all ${
-                                      showModelAnswer
-                                        ? "bg-[var(--usb-bg-2)] border-[var(--usb-border-mid)] text-[var(--usb-fg-hi)]"
-                                        : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)]"
-                                    }`}>
-                                    <span className="text-[10px] flex-1">Respuesta modelo</span>
-                                    <ChevronDown size={9} className={`shrink-0 transition-transform text-[var(--usb-fg-lo)] ${showModelAnswer ? "rotate-180" : ""}`}/>
+                              {/* La salida temprana está siempre: de la 2.ª pregunta en adelante, también antes de responder. */}
+                              {i > 0 && !isChallenge && !reviewed && !busy && (
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-[10.5px] leading-snug text-[var(--usb-fg-mid)]">Si lo dejas aquí, lo que falta va a Anki como refuerzo.</p>
+                                  <button type="button" onClick={() => finishBeforeAnswer(i)} data-finish-early
+                                    className="shrink-0 text-[11px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/60 rounded">
+                                    Terminar aquí
                                   </button>
-                                  <AnimatePresence>
-                                    {showModelAnswer && (
-                                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                                        <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl px-3 py-2.5 text-[11px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-line">
-                                          {q.answer}
-                                        </div>
-                                      </motion.div>
-                                    )}
-                                  </AnimatePresence>
-                                </>
+                                </div>
                               )}
+
+                              <AIFeedback fb={qfb} stale={changed} />
+
+                              {/* §1.2/§1.7: tras cada revisión, un solo bloque con lo que se puede hacer.
+                                  Acertaste y queda plan → la siguiente idea. No acertaste → intentar de
+                                  nuevo o seguir. Siempre: la duda en la misma caja y «Terminar aquí». */}
+                              {reviewed && !busy && (needsWork || nextPlanned) && (
+                                <NextMoves
+                                  moves={[
+                                    ...(needsWork ? [changed
+                                      ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: () => handleEvalQuestion(i), disabled: !answer.trim() }
+                                      : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Edita tu respuesta con lo que faltó.", onClick: focusAnswer }] : []),
+                                    isChallenge
+                                      ? { id: "leave", icon: ArrowRight, label: "Dejar el reto", hint: "Vuelves al repaso de la comprobación.", onClick: closeChallenge }
+                                      : nextPlanned
+                                        ? { id: "next", icon: ArrowRight, primary: !needsWork, label: `Siguiente pregunta (${i + 2} de ${planTotal})`, hint: `${nextPlanned.kind === "spot" ? "Sobre una idea que sí marcaste, para confirmarla." : "Sobre otra idea que no marcaste en Recordar."}${needsWork ? " Lo que falló aquí va a Anki como refuerzo." : ""}`, onClick: () => goNextQuestion(i) }
+                                        : { id: "finish", icon: CheckCircle2, label: "Terminar y ver la respuesta esperada", onClick: completeQuestions },
+                                  ]}
+                                  help={doubtsAvailable ? <DoubtButton open={isDoubtOpen(questionDoubtCtx(i))} onClick={() => toggleDoubt(questionDoubtCtx(i))} /> : undefined}
+                                  exit={nextPlanned ? { label: "Terminar aquí", onClick: completeQuestions } : undefined}
+                                />
+                              )}
+                              {reviewed && renderDoubtPanel(questionDoubtCtx(i))}
                             </motion.div>
-                          ))}
-                          {/* Escape hatch — visible y con contraste AA (§1.2) */}
-                          {!questionsComplete && (
-                            <button onClick={handleSkipQuestions} className="mt-1 w-full text-[10px] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] border border-[var(--usb-border)] hover:border-[var(--usb-border-mid)] transition-colors py-1.5 rounded-lg flex items-center justify-center gap-1.5">
-                              <FastForward size={9}/>Saltar comprobación
-                            </button>
+                            );
+                          })}
+                          {/* §1.7: el mismo salto en cada paso que lo admite; tras revisar ya no se salta */}
+                          {!questionsComplete && !anyAnswerReviewed && (
+                            <div className="pt-3">
+                              <SkipStepButton onClick={handleSkipQuestions} title="Quedará como saltada en el resumen; puedes volver" />
+                            </div>
                           )}
-                        </>
-                      )}
                     </div>
                 </div>
+                )}
                 </div>
                 );
               })()}
 
               {/* ── Paso 2 (Aplicar): nunca bloquea ── */}
               {focusStep === 2 && (
-                showApply ? (
+                showApply ? (() => {
+                // §1.7: las dos formas de practicar se ven ANTES de cualquier salto.
+                const oralQ = content.interviewQ;
+                const mode: "exercise" | "explain" = oralQ ? practiceMode : "exercise";
+                const practiceDone = practiceStatus === "done" || practiceStatus === "correct";
+                return (
                 <div className="space-y-3.5">
                   <div ref={applyRef} className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
-                    <div className="px-4 pt-4 pb-2">
-                      <StepHeader
-                        n={4}
-                        label={content.application.isCode ? "Escribe código real" : "Aplica lo aprendido"}
-                        subLabel={`paso 3 · ${STEP_META[2].short.toLowerCase()}`}
-                        status={practiceStatus !== null ? "done" : "active"}
-                      />
-                    </div>
+                    <div className="pt-4" />
 
-                    {/* Setup context */}
+                    {/* Saltada no es definitiva: al volver, se dice y la práctica sigue abierta. */}
+                    {practiceStatus === "later" && (
+                      <div role="status" className="mx-4 mb-3 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 flex items-start gap-2" data-skipped-step="aplicar">
+                        <FastForward size={12} className="mt-0.5 shrink-0 text-[var(--usb-fg-mid)]" aria-hidden="true" />
+                        <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">
+                          Saltaste la práctica. Si fue sin querer, hazla ahora: el resumen se actualiza al revisarla.
+                        </p>
+                      </div>
+                    )}
+
+                    {oralQ && (
+                      <div className="px-4 pb-3 space-y-1.5" data-practice-modes>
+                        <p className="text-[11px] font-semibold leading-snug text-[var(--usb-fg-hi)]">Elige cómo practicar <span className="font-medium text-[var(--usb-fg-mid)]">· cualquiera de las dos vale</span></p>
+                        <div className="kx-seg" role="tablist" aria-label="Forma de practicar">
+                          {([
+                            { id: "exercise", label: content.application.isCode ? "Escribir código" : "Resolver el caso", sub: content.application.isCode ? "Desafío práctico" : "Ejercicio práctico" },
+                            { id: "explain", label: "Explicarlo", sub: oralPracticeMeta?.title ?? "Con tus palabras" },
+                          ] as const).map((opt) => {
+                            const on = mode === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                role="tab"
+                                aria-selected={on}
+                                onClick={() => setPracticeMode(opt.id)}
+                                className={`relative flex-1 min-w-0 flex flex-col items-center justify-center px-2 py-1.5 rounded-[9px] text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${on ? "kx-tab-on bg-[var(--kx-btn)] shadow-[0_3px_8px_-3px_var(--kx-btn)]" : "text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-3)]"}`}
+                              >
+                                {/* Fondo en el propio botón (no una píldora hermana): el contraste se mide y se ve igual. */}
+                                <span className="relative text-[11.5px] font-bold leading-tight truncate max-w-full">{opt.label}</span>
+                                <span className={`relative text-[10px] font-medium leading-tight mt-0.5 truncate max-w-full ${on ? "" : "text-[var(--usb-fg-mid)]"}`}>{opt.sub}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {mode === "exercise" && (() => {
+                      // Mismo patrón que Comprobar: escribir → revisar → «¿Cómo sigues?».
+                      const reviewed = appFeedback.status === "done";
+                      const busy = appFeedback.status === "loading" || appFeedback.status === "streaming";
+                      const good = reviewed && (appFeedback.rating === "correct" || appFeedback.rating === "excellent");
+                      const changed = reviewed && appAnswer !== (appEvaluated || appAnswer);
+                      // Ver la solución cierra los intentos: lo que salga después no sería tuyo.
+                      const closed = appSolutionSeen;
+                      const focusApp = () => {
+                        const el = document.getElementById("kx-app-answer") as HTMLTextAreaElement | null;
+                        if (!el) return;
+                        el.scrollIntoView({ block: "center", behavior: "smooth" });
+                        el.focus();
+                        el.setSelectionRange(el.value.length, el.value.length);
+                      };
+                      const openSolution = () => { setAppSolutionSeen(true); setShowAppSolution(true); };
+                      return (<>
                     <div className="mx-4 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
                       <span className="shrink-0"><Icon name="steps" size={14} /></span>
-                      <p className="text-white/50 text-[11px] leading-relaxed">{content.application.setup}</p>
+                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{content.application.setup}</p>
                     </div>
 
                     {content.application.isCode ? (
                       <pre className="mx-4 mb-3 bg-black/50 border border-[var(--usb-border)] rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
                     ) : (
-                      <div className="mx-4 mb-3 bg-black/35 border border-[var(--usb-border)] rounded-xl p-3 text-[11px] text-white/68 overflow-x-auto leading-relaxed shadow-inner whitespace-pre-wrap">{content.application.challenge}</div>
+                      <div className="mx-4 mb-3 bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 text-[11.5px] text-[var(--usb-fg-hi)] overflow-x-auto leading-relaxed whitespace-pre-wrap">{content.application.challenge}</div>
                     )}
 
-                    <div className="px-4 pb-4 space-y-3.5">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Icon name="edit3" size={14} weight="duotone" className="kx-step-eyebrow text-violet-400"/>
-                        <p className="text-[var(--usb-fg-lo)] text-[11px] font-medium">
-                          {content.application.isCode ? "Escribe tu implementación — la IA la revisará:" : "Escribe tu respuesta — la IA la revisará:"}
-                        </p>
-                      </div>
-                      <div className="relative">
-                        <textarea value={appAnswer} onChange={e => setAppAnswer(e.target.value)}
-                          placeholder={content.application.isCode ? "// Tu solución aquí…" : "Tu respuesta aquí…"}
-                          className={`kx-field w-full h-[100px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-[var(--usb-fg-mid)] ${
-                            content.application.isCode ? "font-mono text-emerald-400" : "text-[var(--usb-fg)]"
-                          } ${
-                            appFeedback.status === "done" && (appFeedback.rating === "correct" || appFeedback.rating === "excellent")
-                              ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
-                              : appFeedback.status === "done" && appFeedback.rating === "partial"
-                              ? "border-amber-500/40 ring-1 ring-amber-500/20"
-                              : appFeedback.status === "done" && appFeedback.rating === "wrong"
-                              ? "border-rose-500/40 ring-1 ring-rose-500/20"
-                              : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
-                          }`}/>
-                        {appAnswer.length > 0 && (
-                          <span className="absolute bottom-2.5 right-3 text-[10px] text-[var(--usb-fg-lo)] font-mono pointer-events-none">{appAnswer.length}</span>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={handleEvalApp} disabled={!appAnswer.trim() || appFeedback.status === "loading"}
-                          className={`flex items-center gap-1.5 text-[11px] font-semibold text-white px-3.5 py-2 rounded-xl transition-all ${
-                            appAnswer.trim()
-                              ? "kx-on-solid kx-cta shadow-sm hover:brightness-105"
-                              : "bg-white/8 opacity-40 cursor-not-allowed"
-                          }`}>
-                          {appFeedback.status === "loading" ? <><Loader2 size={12} className="animate-spin"/>Revisando…</> : <><Send size={12}/>Revisar con IA</>}
-                        </button>
-                        <button onClick={() => (showAppHint || showAppSolution || appFeedback.status === "done") ? setShowAppSolution(v => !v) : setShowAppHint(true)}
-                          className={`flex items-center gap-1.5 text-[11px] font-semibold border px-3 py-2 rounded-xl transition-all ${showAppSolution ? "bg-[var(--usb-bg-3)] border-violet-500/30 text-violet-300" : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"}`}>
-                          <ChevronDown size={11} className={`transition-transform ${showAppSolution ? "rotate-180" : ""}`}/>
-                          {showAppSolution ? "Ocultar solución" : (showAppHint || appFeedback.status === "done") ? "Ver solución" : "Pedir pista"}
-                        </button>
-                      </div>
-                      <AnimatePresence>
-                        {showAppHint && !showAppSolution && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <div className="bg-amber-500/6 border border-amber-500/20 rounded-xl p-2.5">
-                              <p className="text-[9px] uppercase tracking-wider text-amber-500 font-bold mb-1">Pista · por dónde empezar</p>
-                              <p className="text-[11px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">
-                                {(() => {
-                                  const first = content.application.solution.split(/\n|(?<=[.!?])\s/)[0].trim();
-                                  return first.length > 110 ? first.slice(0, 110).trimEnd() + "…" : first;
-                                })()}
-                              </p>
-                              <p className="text-[10px] text-[var(--usb-fg-lo)] mt-1.5">Intenta desde aquí; la solución completa aparece tras tu primer intento.</p>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                      <AIFeedback
-                        fb={appFeedback}
-                        onRetry={handleEvalApp}
-                        onClearAnswer={() => setAppAnswer("")}
-                        onShowModel={() => setShowAppSolution(true)}
-                      />
-                      <AnimatePresence>
-                        {showAppSolution && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <div className="bg-emerald-500/5 border border-emerald-500/12 rounded-xl overflow-hidden">
-                              <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-emerald-500/10">
-                                <span className="text-[9px] text-emerald-400/60 uppercase tracking-wider" style={{ fontWeight: 600 }}>Solución de referencia</span>
-                              </div>
-                              {content.application.isCode ? (
-                                <pre className="p-2.5 text-[10px] text-emerald-300/75 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap">{content.application.solution}</pre>
-                              ) : (
-                                <div className="p-2.5 text-[11px] text-white/62 overflow-x-auto leading-relaxed whitespace-pre-wrap">{content.application.solution}</div>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
-                      {/* Quick Win — Acción inmediata (aquí sí tiene sentido: ya practicaste, ahora aplícalo en el mundo real) */}
-                      {content.quickWin && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 6 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.15 }}
-                          className="relative overflow-hidden rounded-xl border border-amber-500/22 bg-amber-500/6"
-                        >
-                          <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5 border-b border-amber-500/10 relative z-10">
-                            <Zap size={10} className="text-amber-400 shrink-0" />
-                            <span className="text-amber-400/75 text-[9px] uppercase tracking-widest" style={{ fontWeight: 700 }}>Llévalo al mundo real · bonus</span>
-                            <span className="text-white/18 text-[9px] ml-auto">~2 min</span>
-                          </div>
-                          <div className="px-3 py-2.5 relative z-10">
-                            <p className="text-white/35 text-[9px] mb-1.5">Ya practicaste el concepto. Ahora aplícalo en un proyecto real.</p>
-                            <p className="text-white/60 text-[11px] leading-relaxed">{content.quickWin}</p>
-                          </div>
-                        </motion.div>
+                    <div className="px-4 space-y-3">
+                      {!closed && (
+                        <HelpToggle open={showAppHint} onToggle={() => setShowAppHint(v => !v)} label="Ver pista" openLabel="Ocultar pista">
+                          {(() => {
+                            const first = content.application.solution.split(/\n|(?<=[.!?])\s/)[0].trim();
+                            return `Por dónde empezar: ${first.length > 110 ? first.slice(0, 110).trimEnd() + "…" : first}`;
+                          })()}
+                        </HelpToggle>
                       )}
+                      <textarea id="kx-app-answer" value={appAnswer} onChange={e => setAppAnswer(e.target.value)}
+                        readOnly={closed}
+                        aria-label={content.application.isCode ? "Tu solución" : "Tu respuesta"}
+                        placeholder={content.application.isCode ? "// Escribe tu solución aquí…" : "Escribe tu respuesta aquí…"}
+                        className={`kx-field w-full h-[100px] text-[12px] rounded-xl bg-[var(--usb-bg-3)] border px-3 py-2.5 resize-none outline-none transition-all leading-relaxed shadow-inner placeholder:text-[var(--usb-fg-mid)] ${
+                          content.application.isCode ? "font-mono text-emerald-400" : "text-[var(--usb-fg)]"
+                        } ${
+                          changed ? "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
+                          : reviewed && good ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
+                          : reviewed && appFeedback.rating === "partial" ? "border-amber-500/40 ring-1 ring-amber-500/20"
+                          : reviewed ? "border-rose-500/40 ring-1 ring-rose-500/20"
+                          : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
+                        }`}/>
+                      {(!reviewed || busy) && (
+                        <button onClick={handleEvalApp} disabled={!appAnswer.trim() || busy}
+                          className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                          {busy ? <><Loader2 size={12} className="animate-spin"/>Kinema está revisando…</> : <><Send size={12}/>Revisar mi respuesta</>}
+                        </button>
+                      )}
+                      <AIFeedback fb={appFeedback} stale={changed} />
 
-                      {/* §1.3: Hacerlo después — el estudiante decide, nunca bloquea */}
-                      <AnimatePresence>
-                        {practiceStatus === null && (
-                          <motion.button
-                            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                            onClick={handlePracticeLater}
-                            className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-[var(--usb-border)] text-[10.5px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:border-[var(--usb-border-mid)] transition-all"
-                          >
-                            Hacerlo después <ArrowRight size={10}/>
-                          </motion.button>
+                      {/* Mismo bloque que en Comprobar: intentar de nuevo o ver la solución, y la duda al lado. */}
+                      {reviewed && !busy && !good && !closed && (
+                        <NextMoves
+                          moves={[
+                            changed
+                              ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: handleEvalApp, disabled: !appAnswer.trim() }
+                              : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Edita tu respuesta con lo que faltó.", onClick: focusApp },
+                            { id: "solution", icon: BookOpen, label: "Ver la solución", hint: "Después ya no podrás revisar otro intento.", onClick: openSolution },
+                          ]}
+                          help={doubtsAvailable ? <DoubtButton open={isDoubtOpen(practiceDoubtCtx())} onClick={() => toggleDoubt(practiceDoubtCtx())} /> : undefined}
+                        />
+                      )}
+                      {reviewed && !busy && (good || closed) && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <RevealButton open={showAppSolution} onClick={() => (showAppSolution ? setShowAppSolution(false) : openSolution())} label="Ver la solución" openLabel="Ocultar la solución" />
+                          {doubtsAvailable && <DoubtButton open={isDoubtOpen(practiceDoubtCtx())} onClick={() => toggleDoubt(practiceDoubtCtx())} />}
+                        </div>
+                      )}
+                      {closed && !good && (
+                        <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">Viste la solución, así que este intento queda cerrado.{content.ankiCards.some(c => !c.excluded && isPracticeCard(c)) ? " Sus tarjetas de aplicación irán primero en Anki, como refuerzo." : ""}</p>
+                      )}
+                      {showAppSolution && reviewed && (
+                        <ReferenceAnswer label="Solución" mono={content.application.isCode}>{content.application.solution}</ReferenceAnswer>
+                      )}
+                      {reviewed && renderDoubtPanel(practiceDoubtCtx())}
+                    </div>
+                    </>);
+                    })()}
+
+                    {/* Explicarlo — la otra forma de practicar (§1.7: cuenta como práctica hecha). */}
+                    {mode === "explain" && oralQ && (() => {
+                      const reviewed = oralFeedback.status === "done";
+                      const busy = oralFeedback.status === "loading" || oralFeedback.status === "streaming";
+                      const good = reviewed && (oralFeedback.rating === "correct" || oralFeedback.rating === "excellent");
+                      const changed = reviewed && oralAnswer !== (oralEvaluated || oralAnswer);
+                      const focusOral = () => {
+                        const el = document.getElementById("kx-oral-answer") as HTMLTextAreaElement | null;
+                        if (!el) return;
+                        el.scrollIntoView({ block: "center", behavior: "smooth" });
+                        el.focus();
+                        el.setSelectionRange(el.value.length, el.value.length);
+                      };
+                      return (
+                      <div className="px-4 space-y-3" data-practice-explain>
+                        <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-3">
+                          <p className="text-[var(--usb-fg-hi)] text-[12px] leading-relaxed font-medium">{oralQ.q}</p>
+                          <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-relaxed mt-1.5">Sin mirar la lección, como si se lo contaras a alguien. Kinema revisa si es clara y completa.</p>
+                        </div>
+                        <HelpToggle open={showInterviewAnswer} onToggle={() => setShowInterviewAnswer(v => !v)} label={oralPracticeMeta?.answerLabel ?? "Ver una buena estructura"} openLabel="Ocultar la estructura">
+                          {oralQ.idealAnswer}
+                        </HelpToggle>
+                        <textarea
+                          id="kx-oral-answer"
+                          value={oralAnswer}
+                          onChange={(e) => setOralAnswer(e.target.value)}
+                          aria-label="Tu explicación"
+                          placeholder="Escribe tu explicación con tus palabras…"
+                          rows={4}
+                          className={textareaCls}
+                        />
+                        {(!reviewed || busy) && (
+                          <button onClick={handleEvaluateOral} disabled={!oralAnswer.trim() || busy}
+                            className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                            {busy ? <><Loader2 size={12} className="animate-spin"/>Kinema está revisando…</> : <><Send size={12}/>Revisar mi explicación</>}
+                          </button>
                         )}
-                        {practiceStatus !== null && (
-                          <motion.button
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.4, type: "spring", stiffness: 380, damping: 26 }}
-                            onClick={() => goToStep(3)}
-                            className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl border text-[10px] transition-all ${
-                              practiceStatus === "correct"
-                                ? "kx-on-solid kx-cta border-transparent"
-                                : "border-white/10 text-white/40 hover:text-white/65 hover:border-white/20"
-                            }`}
-                          >
-                            {practiceStatus === "correct"
-                              ? <>Fíjalo en memoria <ArrowRight size={10}/></>
-                              : <>Continuar de todas formas <ArrowRight size={10}/></>
-                            }
-                          </motion.button>
+                        <AIFeedback fb={oralFeedback} stale={changed} />
+                        {reviewed && !busy && !good && (
+                          <NextMoves
+                            moves={[
+                              changed
+                                ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: handleEvaluateOral, disabled: !oralAnswer.trim() }
+                                : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Completa tu explicación con lo que faltó.", onClick: focusOral },
+                            ]}
+                          />
                         )}
-                      </AnimatePresence>
+                      </div>
+                      );
+                    })()}
+
+                    <div className="px-4 pt-3.5 pb-4 space-y-3.5">
+                      {/* §1.7: mismo salto y mismo avance que en el resto de pasos */}
+                      {practiceStatus === null
+                        ? <SkipStepButton onClick={handlePracticeLater} title="Quedará como pendiente en el resumen; puedes volver" />
+                        : <StepContinueButton label="Continuar a Fijar" onClick={() => goToStep(3)} />}
                     </div>
                   </div>
-
-                  {/* §1.3: práctica oral — plegada, opcional, 1 min, nunca bloquea */}
-                  {content.interviewQ && (
-                    <div className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden">
-                      <button onClick={() => setShowOralPractice(v => !v)} aria-expanded={showOralPractice}
-                        className="w-full flex items-center gap-2.5 px-4 py-3 text-left">
-                        <div className="w-8 h-8 rounded-xl bg-[#6d4aff]/15 border border-[#6d4aff]/30 flex items-center justify-center shrink-0">
-                          <Star size={14} className="text-[#6d4aff]"/>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[var(--usb-fg-hi)] text-[11.5px] font-bold leading-tight">¿Prefieres explicarlo con tus palabras?</p>
-                          <p className="text-[var(--usb-fg-lo)] text-[10px] font-medium">(opcional, 1 min) · {oralPracticeMeta.title}</p>
-                        </div>
-                        <ChevronDown size={14} className={`shrink-0 text-[var(--usb-fg-mid)] transition-transform ${showOralPractice ? "rotate-180" : ""}`}/>
-                      </button>
-                      <AnimatePresence initial={false}>
-                        {showOralPractice && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <div className="px-4 pb-4 pt-1 space-y-3.5">
-                              <p className="text-[var(--usb-fg)] text-[12px] leading-relaxed font-medium">{content.interviewQ.q}</p>
-                              <textarea
-                                value={oralAnswer}
-                                onChange={(e) => { setOralAnswer(e.target.value); if (oralFeedback.status === "done" || oralFeedback.status === "error") setOralFeedback(IDLE_FB); }}
-                                placeholder="Escribe aquí lo que dirías en voz alta…"
-                                rows={3}
-                                className={textareaCls}
-                              />
-                              {oralFeedback.status === "idle" && (
-                                <button onClick={handleEvaluateOral} disabled={!oralAnswer.trim()}
-                                  className="kx-on-solid kx-cta w-full h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed">
-                                  <Sparkles size={12}/>Evaluar mi respuesta
-                                </button>
-                              )}
-                              <AIFeedback fb={oralFeedback} onRetry={handleEvaluateOral} />
-                              {oralFeedback.status !== "done" && !oralSkipped && (
-                                <button onClick={() => setOralSkipped(true)} className="w-full text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors">
-                                  Omitir por ahora
-                                </button>
-                              )}
-                              <button onClick={() => setShowInterviewAnswer(v => !v)}
-                                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
-                                  showInterviewAnswer
-                                    ? "bg-[#6d4aff]/10 border-[#6d4aff]/30 text-[var(--usb-fg-hi)]"
-                                    : "border-[var(--usb-border)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)]"
-                                }`}>
-                                <span className="text-[11.5px] font-semibold flex-1">{oralPracticeMeta.answerLabel}</span>
-                                <ChevronDown size={14} className={`shrink-0 transition-transform text-[var(--usb-fg-mid)] ${showInterviewAnswer ? "rotate-180" : ""}`}/>
-                              </button>
-                              <AnimatePresence>
-                                {showInterviewAnswer && (
-                                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden -mt-1">
-                                    <div className="bg-[#6d4aff]/6 border border-[#6d4aff]/18 rounded-2xl p-3.5 text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed">{content.interviewQ.idealAnswer}</div>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )}
                 </div>
-                ) : (
+                );
+                })() : (
                   <div className="bg-[var(--usb-bg-3)] border border-[var(--usb-divider)] rounded-xl p-4 opacity-35">
                     <StepHeader
                       n={4}
@@ -4535,44 +5210,85 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               {/* ── Paso 3 (Fijar): resumen de cierre + tarjetas + Terminar (§1.4) ── */}
               {focusStep === 3 && (() => {
                 const selectedCards = allCardsWithReinforce.filter(c => !c.excluded);
-                const reinforceCount = selectedCards.filter(c => c.reinforce).length;
-                const totalQFinal = queueQuestions.length;
-                const elapsedMin = Math.max(1, Math.round(((finishedAt ?? Date.now()) - sessionStartRef.current) / 60000));
-                const destination = ankiExported ? "en Anki" : obsidianExportedAt ? "en Obsidian" : "sin exportar";
+                // §5: las de duda también son de refuerzo, pero se cuentan aparte (como en la nota).
+                const reinforceCount = selectedCards.filter(c => c.reinforce && !c.doubt).length;
+                const doubtCount = selectedCards.filter(c => c.doubt).length;
+                const cardsBreakdown = [
+                  reinforceCount > 0 ? `${reinforceCount} de refuerzo` : "",
+                  doubtCount > 0 ? `${doubtCount} de duda` : "",
+                ].filter(Boolean);
+                // Solo cuenta lo respondido (una pregunta abierta sin responder no suma ni resta).
+                const totalQFinal = queueQuestions.filter((_, i) => questionFeedbacks[i]?.status === "done").length;
+                // Minutos reales de ESTA sesión; si no son creíbles (p. ej. retomada días después), no se muestran.
+                const rawMin = Math.round(((finishedAt ?? Date.now()) - sessionStartRef.current) / 60000);
+                const elapsedMin = rawMin >= 0 && rawMin <= 180 ? Math.max(1, rawMin) : null;
                 return (
-              <div className="space-y-3.5">
-                {/* Resumen de cierre — una sola tarjeta con datos reales (§1.4) */}
+              <div className="space-y-3.5" style={{ "--kx-btn": "#6d4aff" } as React.CSSProperties}>
+                {/* Resumen de cierre — una tarjeta con datos reales (§1.4): un bloque por
+                    paso, con el mismo nombre y color que en la barra de pasos; lo saltado o
+                    pendiente lleva su botón para volver (§1.7). */}
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ type: "spring", stiffness: 340, damping: 28 }}
-                  className="kx-step-solid kx-on-solid rounded-2xl p-4 relative overflow-hidden"
+                  className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl p-4 space-y-3"
+                  data-lesson-summary
                 >
-                  <div className="flex items-center gap-3 relative z-10">
-                    <span className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.18)" }}><Icon name="flag" size={26} weight="duotone" /></span>
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0" aria-hidden="true"
+                      style={{ background: `color-mix(in srgb, ${STEP_META[3].hue} 12%, var(--usb-bg-3))`, borderColor: `color-mix(in srgb, ${STEP_META[3].hue} 30%, var(--usb-border))`, color: t(STEP_META[3].inkDark, STEP_META[3].inkLight) }}>
+                      <Icon name="flag" size={19} weight="duotone" />
+                    </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] leading-tight" style={{ fontWeight: 800 }}>{resultTitle}</p>
-                      <div className="flex items-center gap-3 mt-1 flex-wrap">
-                        <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{conceptsMarkedCount} de {content.keyConcepts.length} ideas (marcadas por ti)</span>
-                        {totalQFinal > 0 && <span className="text-[10.5px] font-semibold flex items-center gap-1"><Check size={9} strokeWidth={3}/>{questionsSkipped ? "saltada" : `${firstTryCount}/${totalQFinal} a la primera`}</span>}
-                        <span className="text-[10.5px] font-semibold opacity-80">práctica {practiceLabel}</span>
-                        <span className="text-[10.5px] font-semibold opacity-80">~{elapsedMin} min</span>
-                      </div>
+                      <p className="text-[14px] font-extrabold leading-tight text-[var(--usb-fg-hi)]">{resultTitle}</p>
+                      <p className="text-[10.5px] font-medium leading-tight mt-1 text-[var(--usb-fg-mid)]">
+                        {finishedAt !== null ? "Lección terminada" : "Tu resumen hasta ahora"}{elapsedMin !== null ? ` · ~${elapsedMin} min de estudio` : ""}
+                      </p>
                     </div>
                   </div>
-                  <div className="relative z-10 mt-2.5 pt-2.5 border-t border-white/15 space-y-1">
-                    <p className="text-[10.5px] font-semibold opacity-90">Tarjetas: {selectedCards.length}{reinforceCount > 0 ? ` (${reinforceCount} de refuerzo)` : ""} · {destination}</p>
-                    {calibration && (
-                      <p className="text-[10px] opacity-75 leading-relaxed">
-                        Dijiste «{calibration.said}», mostraste «{calibration.shown}» · {calibration.message}
-                      </p>
-                    )}
-                    <p className="text-[10px] opacity-75 leading-relaxed">
+                  <div className="grid grid-cols-3 gap-2" role="list">
+                    {([
+                      { id: "recordar", step: 0, value: `${conceptsMarkedCount}/${content.keyConcepts.length}`, caption: "ideas, según tú" },
+                      questionsSkipped
+                        ? { id: "comprobar", step: 1, value: "—", caption: "saltada", action: { label: "Responder", onClick: handleUndoSkipQuestions } }
+                        : { id: "comprobar", step: 1, value: `${firstTryCount}/${totalQFinal}`, caption: improvedCount > 0 ? `a la primera · ${improvedCount} corregida${improvedCount === 1 ? "" : "s"}` : "a la primera" },
+                      practiceStatus === "done" || practiceStatus === "correct"
+                        ? { id: "aplicar", step: 2, value: practiceStatus === "correct" ? "Bien" : "Hecha", caption: practiceStatus === "correct" ? "práctica correcta" : "práctica" }
+                        : { id: "aplicar", step: 2, value: "—", caption: "pendiente", action: { label: "Hacerla", onClick: () => goToStep(2, true) } },
+                    ] as { id: string; step: number; value: string; caption: string; action?: { label: string; onClick: () => void } }[]).map((tile) => {
+                      const m = STEP_META[tile.step];
+                      const ink = t(m.inkDark, m.inkLight);
+                      return (
+                        <div key={tile.id} role="listitem" data-summary-tile={tile.id}
+                          className="rounded-xl border px-2.5 py-2.5 flex flex-col min-w-0"
+                          style={{ background: `color-mix(in srgb, ${m.hue} 7%, var(--usb-bg-3))`, borderColor: `color-mix(in srgb, ${m.hue} 24%, var(--usb-border))` }}>
+                          <span className="text-[10px] font-bold leading-none" style={{ color: ink }}>{m.short}</span>
+                          <span className="text-[17px] font-extrabold leading-none mt-2 text-[var(--usb-fg-hi)] tabular-nums">{tile.value}</span>
+                          <span className="text-[10px] leading-snug mt-1 text-[var(--usb-fg-mid)]">{tile.caption}</span>
+                          {tile.action && (
+                            <button type="button" onClick={tile.action.onClick}
+                              className="mt-2 h-7 rounded-lg border text-[10.5px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+                              style={{ color: ink, borderColor: `color-mix(in srgb, ${m.hue} 45%, var(--usb-border))`, background: "var(--usb-bg-3)" }}>
+                              {tile.action.label}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {calibration && (
+                    <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]" data-calibration>{calibration.message}</p>
+                  )}
+                  <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5 flex items-start gap-2" data-next-step>
+                    <ArrowRight size={13} className="mt-0.5 shrink-0 text-[var(--usb-accent-text)]" aria-hidden="true" />
+                    <p className="text-[11px] leading-relaxed text-[var(--usb-fg)]">
+                      <span className="font-bold text-[var(--usb-fg-hi)]">Próximo paso: </span>
                       {ankiExported
-                        ? "Próximo paso: repasa en Anki mañana."
+                        ? "repasa en Anki mañana."
                         : obsidianExportedAt
-                          ? "Próximo paso: exporta a Anki para el repaso espaciado."
-                          : `Próximo paso: ${content.nextAction}`}
+                          ? "exporta también a Anki para repasar mañana."
+                          : "exporta las tarjetas a Anki y repásalas mañana."}
+                      {finishedAt !== null ? " Para seguir, pulsa «Ir a la siguiente lección» (abajo)." : ""}
                     </p>
                   </div>
                 </motion.div>
@@ -4580,20 +5296,62 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               {/* ── Fíjalo en memoria ── */}
               {confidence && (
                   <div ref={ankiRef} className="space-y-3">
-                    <div className="px-0.5">
-                      <p className="kx-slate">Fíjalo en memoria · exportar</p>
-                      <p className="text-[var(--usb-fg-mid)] text-[11.5px] leading-relaxed mt-1.5">
-                        {showApply ? "Anki programa el repaso justo antes de que olvides. Elige a dónde llevar esta lección." : "Disponible cuando completes la práctica."}
-                      </p>
-                    </div>
 
                     <ExportModule
                       icon={Package}
                       title="Tarjetas de la lección"
-                      subtitle={`${selectedCards.length} tarjetas${reinforceCount > 0 ? ` · ${reinforceCount} de refuerzo` : ""} · .apkg se importa con doble clic`}
+                      subtitle={`${selectedCards.length} tarjetas${cardsBreakdown.length > 0 ? ` · ${cardsBreakdown.join(" · ")}` : ""}`}
                       badge={ankiExported ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
                     >
-                      <div className="grid grid-cols-[1.4fr_1fr] gap-1.5">
+                      {/* Qué se convierte en tarjetas y por qué: datos reales de las tres fases. */}
+                      {(() => {
+                        const lessonCards = selectedCards.filter(c => !c.doubt);
+                        const n = content.keyConcepts.length;
+                        const withRefs = lessonCards.some(c => (c.conceptRefs ?? []).length > 0);
+                        const covered = n - conceptCoverage({ keyConcepts: content.keyConcepts, questions: content.questions, ankiCards: lessonCards }).ideasWithoutCard.length;
+                        const unmarked = content.keyConcepts.filter((_, i) => !conceptsChecked[i]).length;
+                        const failed = queueQuestions.filter((_, i) => questionFeedbacks[i]?.status === "done" && (questionFeedbacks[i]?.rating === "partial" || questionFeedbacks[i]?.rating === "wrong")).length;
+                        const reasons = [
+                          unmarked > 0 ? "las ideas que no marcaste" : "",
+                          failed > 0 ? "lo que fallaste en Comprobar" : "",
+                          // Solo si de verdad reforzó alguna tarjeta de aplicación/código/entrevista.
+                          practiceWeak && lessonCards.some(c => c.reinforce && isPracticeCard(c)) ? "la práctica que no salió" : "",
+                        ].filter(Boolean);
+                        const why = reasons.length > 1 ? `${reasons.slice(0, -1).join(", ")} y ${reasons[reasons.length - 1]}` : reasons[0];
+                        if (!withRefs && reinforceCount === 0) return null;
+                        return (
+                          <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]" data-cards-why>
+                            {withRefs ? (covered === n ? `Cubren las ${n} ideas clave de la lección.` : `Cubren ${covered} de las ${n} ideas clave de la lección.`) : ""}
+                            {reinforceCount > 0 && why ? `${withRefs ? " " : ""}Primero van ${reinforceCount === 1 ? "1 de refuerzo" : `${reinforceCount} de refuerzo`}: ${why}.` : ""}
+                          </p>
+                        );
+                      })()}
+                      {/* §5: última oportunidad, ANTES de exportar — la lección no se vuelve a abrir. */}
+                      {doubtsAvailable && savedDoubts < MAX_DOUBT_CARDS && unsavedDoubtProposals.length > 0 && (
+                        <div className="rounded-lg border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2.5 space-y-2" data-doubt-proposals>
+                          <div className="flex items-center gap-1.5">
+                            <HelpCircle size={12} className="text-violet-300 shrink-0" aria-hidden="true" />
+                            <p className="kx-slate flex-1">Dudas resueltas sin guardar</p>
+                            <span className="text-[10px] font-mono tabular-nums text-[var(--usb-fg-lo)]">{savedDoubts}/{MAX_DOUBT_CARDS}</span>
+                          </div>
+                          {unsavedDoubtProposals.slice(-3).map(({ thread, turn }) => (
+                            <div key={`${thread.id}-${turn.at}`} className="flex items-start gap-2.5">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{turn.card?.front}</p>
+                                <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug line-clamp-2">{turn.card?.back}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => addDoubtCardFromFijar(thread, turn.at)}
+                                className="h-7 px-2.5 rounded-md text-[10.5px] font-semibold border shrink-0 inline-flex items-center gap-1 transition-colors text-violet-300 border-violet-500/30 hover:border-violet-500/50 hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+                              >
+                                <Plus size={10} />Añadir al mazo
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1">
                         <button onClick={handleExportApkg} disabled={!showApply || apkgStatus === "loading"}
                           style={{ "--kx-btn": apkgStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
                           className={exportPrimaryBtnCls}>
@@ -4606,12 +5364,24 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                                 : <><Package size={12}/>Exportar .apkg</>}
                         </button>
                       </div>
+                      {(() => {
+                        // Tarjetas aceptadas que el último .apkg no llevaba (p. ej. una duda añadida después).
+                        const exported = lastExportGuids ? new Set(lastExportGuids) : null;
+                        const fresh = exported ? selectedCards.filter(c => !exported.has(stableAnkiGuid(courseName, lessonName, c))).length : 0;
+                        return fresh > 0 ? (
+                          <p role="status" className="flex items-start gap-1.5 text-[10.5px] leading-relaxed text-amber-300">
+                            <Info size={12} className="mt-px shrink-0" />
+                            {fresh === 1
+                              ? "1 tarjeta nueva desde tu última exportación: vuelve a exportar para llevarla a Anki."
+                              : `${fresh} tarjetas nuevas desde tu última exportación: vuelve a exportar para llevarlas a Anki.`}
+                          </p>
+                        ) : null;
+                      })()}
                       <div className="flex items-center gap-4">
                         <button onClick={() => setShowCardPreview(v => !v)} aria-expanded={showCardPreview}
                           className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
                           <ChevronDown size={14} className={`transition-transform ${showCardPreview ? "rotate-180" : ""}`}/>{showCardPreview ? "Ocultar tarjetas" : "Ver tarjetas"}
                         </button>
-                        <span className="text-[10px] text-[var(--usb-fg-lo)]">Quita las que no quieras: solo se exporta lo que aceptas</span>
                         <button onClick={() => setShowAnkiGuide(v => !v)} aria-expanded={showAnkiGuide}
                           className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
                           <Info size={13}/>{showAnkiGuide ? "Ocultar guía" : "Guía de importación"}
@@ -4620,6 +5390,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       <AnimatePresence initial={false}>
                         {showCardPreview && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                            <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)] mb-2">Solo se exporta lo que aceptas: «Quitar» saca la tarjeta del paquete.</p>
                             <AnkiFlipPreview cards={allCardsWithReinforce} onToggleExclude={handleToggleExcludeCard}/>
                           </motion.div>
                         )}
@@ -4645,7 +5416,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                               </div>
                               <div className="pt-2 border-t border-[var(--usb-divider)]" />
                               <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                                Doble clic en el archivo .apkg → Anki importa el mazo con su configuración. Si algo sale mal, vuelve a descargar el .apkg: las notas se actualizan por GUID, nunca se duplican.
+                                Doble clic en el archivo .apkg → Anki importa el mazo con su configuración. Si algo sale mal, vuelve a descargar el .apkg: Anki añade lo que falte y nunca duplica ni pisa lo que ya tienes (tampoco lo que editaste allí).
                               </p>
                             </div>
                           </motion.div>
@@ -4653,66 +5424,74 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       </AnimatePresence>
                     </ExportModule>
 
-                      <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)} />
+                      {/* Destinos al mismo nivel que las tarjetas de la lección, visibles sin plegar;
+                          el mazo de la lección va primero (regla 1: el vocabulario es secundario). */}
+                          <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)} />
 
-                      {/* ── Obsidian export ── */}
-                      <ExportModule
-                        icon={BookMarked}
-                        title="Obsidian"
-                        badge={exportedNotes.includes(sessionExportKey(courseName, lessonName)) ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
-                        subtitle={obsidianCfg.vaultName.trim()
-                          ? <>Vault «{obsidianCfg.vaultName}» · nota + MOC del curso</>
-                          : "Sin vault configurado"}
-                        configLabel="Ajustar"
-                        onToggleConfig={openObsidianSettings}
-                      >
-                          <>
-                            {!obsidianCfg.vaultName.trim() && (
-                              <button onClick={openObsidianSettings}
-                                className="w-full text-left rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] hover:bg-[var(--usb-bg-2)] px-3 py-2 text-[var(--usb-fg-mid)] text-[11.5px] font-medium leading-relaxed transition-colors shadow-2xs">
-                                Configura el nombre de tu vault para exportar con un clic →
-                              </button>
-                            )}
-                            <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-1.5">
-                              <button onClick={handleExportObsidian} disabled={!showApply}
-                                style={{ "--kx-btn": obsidianStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
-                                className={exportPrimaryBtnCls}>
-                                {obsidianStatus === "done"
-                                  ? <><CheckCircle2 size={12}/>Exportado</>
-                                  : <><BookMarked size={12}/>Exportar</>}
-                              </button>
-                              <button onClick={handleCopyObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
-                                <ClipboardCopy size={12}/>Copiar
-                              </button>
-                              <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
-                                <FileDown size={12}/>.md
-                              </button>
-                            </div>
-                            <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                              Crea la nota en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.sourcesFolder}/</span> y el MOC en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.mocsFolder}/</span>. Copiar y .md son respaldos manuales.
-                            </p>
-                            <button onClick={() => setObsidianHelpOpen(v => !v)}
-                              className="text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] flex items-center gap-1 transition-colors">
-                              <Info size={13}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
-                            </button>
-                            {obsidianHelpOpen && (
-                              <ol className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-2.5 space-y-1.5">
-                                {[
-                                  "Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
-                                  "Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir.",
-                                  "Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, y borra el bloqueo de obsidian.",
-                                  "Verifica el nombre con Probar vault (en Ajustar): Obsidian avisa si no existe.",
-                                  "Como respaldo siempre quedan Copiar (portapapeles) o .md (archivo).",
-                                ].map((s, i) => (
-                                  <li key={i} className="flex gap-2 text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                                    <span className="w-3.5 h-3.5 rounded-full bg-[#6d4aff]/15 text-[#6d4aff] text-[8px] flex items-center justify-center shrink-0 mt-px" style={{ fontWeight: 700 }}>{i + 1}</span>
-                                    <span>{s}</span>
-                                  </li>
-                                ))}
-                              </ol>
-                            )}
-                          </>
-                      </ExportModule>
+                          {/* ── Obsidian export ── */}
+                          <ExportModule
+                            icon={BookMarked}
+                            title="Obsidian"
+                            badge={isSessionExported(exportedNotes, obsidianCfg, courseName, lessonName) ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
+                            subtitle={obsidianCfg.vaultName.trim()
+                              ? <>Vault «{obsidianCfg.vaultName}» · nota de la lección</>
+                              : "Sin vault configurado"}
+                            configLabel="Ajustar"
+                            onToggleConfig={openObsidianSettings}
+                          >
+                              <>
+                                {/* Sin vault: una sola acción principal (conectarlo) y los respaldos manuales. */}
+                                {!obsidianCfg.vaultName.trim() && (
+                                  <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">Conecta tu vault y Kinema crea la nota de la lección con un clic.</p>
+                                )}
+                                <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-1.5">
+                                  {!obsidianCfg.vaultName.trim() ? (
+                                    <button onClick={openObsidianSettings} className={exportGhostBtnCls}>
+                                      <Settings2 size={12}/>Conectar vault
+                                    </button>
+                                  ) : (
+                                  <button onClick={handleExportObsidian} disabled={!showApply}
+                                    style={{ "--kx-btn": obsidianStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
+                                    className={exportPrimaryBtnCls}>
+                                    {obsidianStatus === "done"
+                                      ? <><CheckCircle2 size={12}/>Exportado</>
+                                      : <><BookMarked size={12}/>Exportar</>}
+                                  </button>
+                                  )}
+                                  <button onClick={handleCopyObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
+                                    <ClipboardCopy size={12}/>Copiar
+                                  </button>
+                                  <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
+                                    <FileDown size={12}/>.md
+                                  </button>
+                                </div>
+                                {obsidianCfg.vaultName.trim() && (<>
+                                <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
+                                  Crea la nota en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.sourcesFolder}/</span> (y, la primera vez de cada curso, su índice en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.mocsFolder}/</span>). Si ya existe, le añade un «Repaso» al final sin tocar lo que escribiste.{obsidianCfg.autoExport ? " Se guarda sola al terminar la lección." : ""} Copiar y .md son respaldos.
+                                </p>
+                                <button onClick={() => setObsidianHelpOpen(v => !v)}
+                                  className="text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] flex items-center gap-1 transition-colors">
+                                  <Info size={13}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
+                                </button>
+                                {obsidianHelpOpen && (
+                                  <ol className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-2.5 space-y-1.5">
+                                    {[
+                                      "Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
+                                      "Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir. Si Kinema dice que la lección ya tiene nota, elige «Reemplazar»: la primera no llegó a crearse.",
+                                      "Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, y borra el bloqueo de obsidian.",
+                                      "Verifica el nombre con Probar vault (en Ajustar): Obsidian avisa si no existe.",
+                                      "Como respaldo siempre quedan Copiar (portapapeles) o .md (archivo).",
+                                    ].map((s, i) => (
+                                      <li key={i} className="flex gap-2 text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
+                                        <span className="w-3.5 h-3.5 rounded-full bg-[#6d4aff]/15 text-[#6d4aff] text-[8px] flex items-center justify-center shrink-0 mt-px" style={{ fontWeight: 700 }}>{i + 1}</span>
+                                        <span>{s}</span>
+                                      </li>
+                                    ))}
+                                  </ol>
+                                )}
+                                </>)}
+                              </>
+                          </ExportModule>
 
                       {/* §1.4: Terminar lección — siempre disponible, con o sin exportar */}
                       <button
@@ -4728,11 +5507,35 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           ? <><CheckCircle2 size={14}/>Lección terminada</>
                           : <><Icon name="flag" size={14} weight="duotone"/>Terminar lección</>}
                       </button>
+                      {/* Terminada: el siguiente paso natural, justo debajo (Udemy pasa de video
+                          y Kinema abre la lección nueva en Study). */}
+                      <div ref={nextLessonRef} className="space-y-1.5 scroll-mb-4">
+                      {finishedAt !== null && (
+                        <div className="space-y-1.5" data-next-lesson>
+                          {/* Secundario: no compite con «Exportar .apkg» (el mazo de la lección es lo primero). */}
+                          <button
+                            type="button"
+                            onClick={handleGoNextLesson}
+                            disabled={nextLessonStatus === "going"}
+                            className="w-full h-10 rounded-xl border border-[var(--usb-border-mid)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-hi)] hover:border-[#6d4aff]/45 text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
+                          >
+                            {nextLessonStatus === "going"
+                              ? <><Loader2 size={13} className="animate-spin"/>Abriendo la siguiente lección…</>
+                              : <>Ir a la siguiente lección<ArrowRight size={13}/></>}
+                          </button>
+                          {nextLessonStatus === "failed" && (
+                            <p role="status" className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
+                              No encontré el botón «Siguiente» de Udemy. Abre la próxima lección desde el temario: Kinema te ofrecerá estudiarla.
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {!ankiExported && !obsidianExportedAt && finishedAt !== null && (
                         <p className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
-                          Sin exportar: la lección queda en «Tarjetas de contenido por descargar» del historial.
+                          Sin exportar: la lección queda en «Tarjetas por descargar» del historial.
                         </p>
                       )}
+                      </div>
                   </div>
               )}
               </div>
@@ -4740,6 +5543,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               })()}
               </motion.div>
               </AnimatePresence>
+              </>)}
 
               <div className="h-5"/>
             </div>

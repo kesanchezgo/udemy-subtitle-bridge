@@ -66,7 +66,7 @@ assert(md.includes('lesson_url: "https://www.udemy.com/'), 'lesson_url (C9); sou
 assert(!md.includes('source_url:'), 'C9: sin source_url duplicado');
 assert(md.includes('[[cursos/java-programming-bootcamp-spring-boot-rest-apis|'), 'enlace al MOC');
 assert(md.includes('## Ideas clave') && md.includes('- javac compila a bytecode'), 'ideas clave');
-assert(md.includes('## Preguntas de calibración') && md.includes('> [!question]-') && md.includes('**Respuesta:** Un .class'), 'C5: preguntas plegadas con respuesta dentro');
+assert(md.includes('## Preguntas para comprobarte') && md.includes('> [!question]-') && md.includes('**Respuesta:** Un .class'), 'C5: preguntas plegadas con respuesta dentro');
 assert(!/\d+\. \*\*[^*]+\*\*[\s\S]*?Respuesta:/.test(md), 'C5: respuestas ya NO a la vista en lista');
 
 assert(md.includes('- [ ] Ejecutar con -XX:+PrintCompilation'), 'next action como task');
@@ -75,8 +75,12 @@ assert(md.includes('¿Qué imprime `System.out.println(1+2)`?'), 'front con cód
 assert(md.includes('```java') && md.includes('System.out.println(1 + 2); // 3'), 'C6: código de bloque cercado con su lenguaje');
 {
 	// Los APERTURES de bloque (índices pares) deben declarar lenguaje; los
-	// cierres son ``` solos por naturaleza.
-	const fenceLines = md.split(String.fromCharCode(10)).filter((l) => l.startsWith('```'));
+	// cierres son ``` solos por naturaleza. Las tarjetas van dentro del callout
+	// plegado «Tarjetas de esta lección», así que cada línea viene citada
+	// («> ```»): se quita el prefijo antes de clasificar.
+	const fenceLines = md.split(String.fromCharCode(10))
+		.map((l) => l.replace(/^(?:>\s?)+/, ''))
+		.filter((l) => l.startsWith('```'));
 	const openers = fenceLines.filter((_f, i) => i % 2 === 0);
 	assert(openers.length > 0 && openers.every((f) => f.length > 3), 'C6: todo bloque cercado declara su lenguaje');
 }
@@ -126,7 +130,7 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 			{ q: '¿Qué compila el JIT y cuándo?', answer: 'Hot spots detectados en runtime, a nativo y cacheados.' },
 		],
 		result: {
-			title: 'Lección completada · con puntos a reforzar',
+			title: 'Lección completada',
 			remembered: { count: 1, total: 4 },
 			check: { firstTry: 0, improved: 1, skipped: false },
 			practice: 'later',
@@ -141,11 +145,12 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 	assert(md2.includes('> [!question]- ¿Qué compila el JIT y cuándo?'), 'pregunta débil como callout plegado');
 	assert(md2.includes('**Respuesta:** Hot spots'), 'respuesta correcta plegada dentro');
 	assert(md2.includes('## Resultado de la sesión'), 'sección de resultado presente');
-	assert(md2.includes('Recordaste 1 de 4 ideas'), 'resumen de ideas recordadas');
+	assert(md2.includes('Recordaste (según tú): 1 de 4 ideas'), 'resumen de ideas recordadas');
 	assert(md2.includes('Comprobación: 0 a la primera · 1 tras corregir'), 'línea de comprobación');
 	assert(md2.includes('Práctica: pendiente'), 'estado de práctica');
 	assert(md2.includes('Tarjetas: 6 (1 de refuerzo) · en Anki'), 'línea de tarjetas con destino');
-	assert(md2.includes('dijiste «Entendido», mostraste «Más o menos»'), 'línea de calibración');
+	// El mensaje de calibración ya nombra el nivel elegido y el demostrado (contrato del prototipo).
+	assert(md2.includes('> [!info] Calibración: Te sentías más seguro de lo que mostraste.'), 'línea de calibración');
 	// Sin datos nuevos, las secciones no aparecen (retrocompatible).
 	const md3 = buildSessionNoteMarkdown(session, cfg, { today: new Date(2026, 9, 31) });
 	assert(!md3.includes('Lo que recordé sin mirar') && !md3.includes('Puntos a reforzar') && !md3.includes('Resultado de la sesión'),

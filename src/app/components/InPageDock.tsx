@@ -587,7 +587,8 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                 {progressOpen && <ProgressPanel key="progress" onClose={() => setProgressOpen(false)} />}
               </AnimatePresence>
 
-              <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+              {/* relative: el Toaster (position:absolute por CSS) se ancla a esta zona del panel. */}
+              <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
                 <DockSheetHostContext.Provider value={sheetHost}>
                 <MotionConfig reducedMotion="user">
                   <Toaster

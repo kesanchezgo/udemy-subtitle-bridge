@@ -112,7 +112,32 @@ mazos demo (`scripts/qa-anki-samples.mjs`) muestran el diseño completo.
   involucramiento (crear contexto propio) mejora la retención léxica
   (involvement load: 10.1177/1362168808089922).
 - **Dedup por lema + GUID `idioma|lema`**: cada lema vive en UNA tarjeta;
-  re-exposiciones las gestiona el scheduler, no tarjetas duplicadas.
+  re-exposiciones las gestiona el scheduler, no tarjetas duplicadas. Cuatro capas:
+  1. **Antes de generar**: las palabras que ya tienes (de cualquier lección o
+     curso del mismo idioma) y aparecen en la lección se pasan al prompt como
+     «ya están en su mazo»: las candidatas son todas nuevas.
+  2. **En el panel**: si alguna llega igual, va al final como «Ya en tu mazo ·
+     ‹curso›» y no se puede marcar; al exportar se vuelve a leer el registro.
+  3. **En Anki**: mismo idioma + lema = mismo GUID, aunque venga de otro curso
+     o de otro equipo sin registro. Todas las notas de Kinema llevan una fecha
+     de modificación fija y antigua (`KINEMA_NOTE_MOD`): Anki solo actualiza al
+     reimportar si la del paquete es más nueva, así que **reimportar solo añade
+     lo que falta y nunca pisa la imagen, el audio ni lo que editaste en Anki**
+     (antes llevaban «ahora» y lo sobrescribían). Las plantillas sí se
+     actualizan, para que lleguen sus arreglos.
+  4. **En el video**: las que ya tienes y salen en la lección no ocupan hueco
+     en la lista, pero el chip las muestra como «En tu mazo» (volver a verlas
+     en contexto es repaso: la frecuencia de exposición predice la retención,
+     ver arriba). En pausa, el chip de Udemy permite «+ Mazo» con los mismos
+     estados que el panel (antes solo lo tenía el prototipo: en la extensión
+     real no se podía marcar desde el video aunque la app lo decía).
+- **Un mazo por idioma, un submazo por curso**: `Kinema::Vocabulary::English::‹curso›`.
+  La palabra vive en el submazo del curso donde la exportaste primero; estudia
+  el mazo del idioma para repasarlas todas juntas (límite diario del preset).
+- **Límites conocidos**: el registro de palabras exportadas es local (por
+  navegador); en otro equipo pueden volver a proponerse, pero Anki no las
+  duplica. Una palabra con otro sentido en otro curso no crea otra tarjeta: se
+  queda con el primero.
 - **15 nuevas/día** (preset): carga sostenible; el scheduling óptimo lo hace
   FSRS (ver §2), no el volumen diario.
 
@@ -157,7 +182,7 @@ mazos demo (`scripts/qa-anki-samples.mjs`) muestran el diseño completo.
 
 Note types con nombres propios (`Udemy Bridge …`) y presets «Kinema ·
 Cursos/Vocabulario» con IDs estables derivados de los nombres originales;
-árbol de mazos bajo una raíz configurable; GUIDs por contenido (reimportar actualiza,
+árbol de mazos bajo una raíz configurable; GUIDs por contenido (reimportar no duplica ni pisa,
 no duplica); csum SHA-1 estándar de Anki. Nada del usuario se toca (verificado
 en importaciones reales).
 
@@ -326,6 +351,13 @@ AND learning`.
 
 ## 7. Features pedagógicas del ecosistema
 
+**Tarjetas de duda (Study §5, `docs/STUDY_FLOW_PEDAGOGY.md`)**: una duda
+resuelta en la sesión puede guardarse como tarjeta `concepto` (diseño y
+evidencia de §1.1), de refuerzo y con origen `kinema::origen::duda`; máx. 2
+por lección y sin frentes repetidos. La duda se pregunta en Study tras
+intentar (R10–R12 de STUDY_FLOW, verificadas por DOI en Crossref; pendiente
+confirmarlas en Scopus según §0).
+
 **Badge de repasos (AnkiConnect)**: el dock consulta cuántas tarjetas de la
 lección actual tienen repaso pendiente hoy. No introduce un efecto nuevo:
 operacionaliza el espaciado ya evidenciado (Cepeda et al. 2006; Dunlosky et
@@ -341,4 +373,3 @@ bajo el subtítulo cuando su cue está activa. Base (Scopus 2026-09-29):
 - Anotaciones multimedia e incidencia incidental: 10.1007/s11251-007-9016-7.
 La re-exposición incidental en el momento temporal correcto (la cue donde la
 palabra aparece) combina la señal espacial con el contexto original.
-
