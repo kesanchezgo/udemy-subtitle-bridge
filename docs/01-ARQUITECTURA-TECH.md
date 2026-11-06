@@ -97,11 +97,11 @@ udemy-subtitle-bridge/
 │   │   │   ├── AppLogo.tsx            ← Logo SVG de la extensión
 │   │   │   ├── CelebrationOverlay.tsx ← Confeti para celebraciones
 │   │   │   └── figma/
-│   │   │       └── ImageWithFallback.tsx ← img con fallback
+│   │   │       └── ImageWithFallback.tsx ← img con fallback (solo en el prototipo)
 │   │   │
 │   │   ├── hooks/
 │   │   │   ├── usePersistedState.ts   ← Estado persistido en chromeStorage
-│   │   │   └── useHotkeys.ts          ← Atajos de teclado globales
+│   │   │   └── useHotkeys.ts          ← Alt+P del reproductor simulado (solo en el prototipo)
 │   │   │
 │   │   └── services/
 │   │       ├── localAI.ts       ← Traducción + evaluación IA con SSE streaming

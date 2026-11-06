@@ -15,6 +15,7 @@ import { ThemeProvider, useDockTheme } from "../contexts/ThemeContext";
 import { DockSheetHostContext } from "./DockSheet";
 import { SettingsSheet, VocabularyMountContext } from "./SettingsSheet";
 import { getAiProviderConfig, type AiProviderConfig } from "../services/ai-providers";
+import { aiBadgeStatus } from "../hooks/useAiHealth";
 import {
   DOCK_COLLAPSED_WIDTH,
   DOCK_DEFAULT_WIDTH,
@@ -139,19 +140,27 @@ function useStoredDockWidth(): [number | null, (width: number) => void] {
 function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageDockProps) {
   const [providerKind, setProviderKind] = useState<AiProviderConfig["kind"]>(() => getAiProviderConfig().kind);
   const [providerEndpoint, setProviderEndpoint] = useState<string>(() => getAiProviderConfig().baseUrl);
-  // El badge de IA refleja el sondeo REAL del proveedor (antes el estado
-  // 'conectada' venía hardcodeado y mentía).
+  // El badge de IA refleja el sondeo REAL del proveedor, también en la nube
+  // (antes con OpenAI/Claude/Gemini decía «nube» aunque no respondiera).
   const [aiOk, setAiOk] = useState<boolean | null>(null);
+  const [aiConfigured, setAiConfigured] = useState(true);
   useEffect(() => {
     const onChange = (e: Event) => {
       const cfg = (e as CustomEvent<AiProviderConfig>).detail;
       if (cfg?.kind) setProviderKind(cfg.kind);
       if (typeof cfg?.baseUrl === "string") setProviderEndpoint(cfg.baseUrl);
       setAiOk(null);
+      setAiConfigured(true);
     };
     const onHealth = (e: Event) => {
-      const detail = (e as CustomEvent<{ ok?: boolean }>).detail;
+      const detail = (e as CustomEvent<{ ok?: boolean; configured?: boolean }>).detail;
+      // El veredicto llega con la config vigente ya cargada (también si cambió
+      // por storage, sin evento): el nombre del motor se toma de ahí.
+      const cfg = getAiProviderConfig();
+      setProviderKind(cfg.kind);
+      setProviderEndpoint(cfg.baseUrl);
       if (typeof detail?.ok === "boolean") setAiOk(detail.ok);
+      if (typeof detail?.configured === "boolean") setAiConfigured(detail.configured);
     };
     window.addEventListener("usb:provider-changed", onChange);
     window.addEventListener("usb:ai-health", onHealth);
@@ -160,14 +169,8 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
       window.removeEventListener("usb:ai-health", onHealth);
     };
   }, []);
-  const aiConnected = aiOk === null ? localAiConnected : aiOk;
-  const cloudName = ({ openai: "OpenAI", anthropic: "Claude", gemini: "Gemini" } as Record<string, string>)[providerKind];
-  const localEndpoint = (providerEndpoint || "127.0.0.1:8010").replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  const aiStatus = cloudName
-    ? { name: cloudName, state: "nube", tone: "cloud" as const, title: `Proveedor activo: ${cloudName}` }
-    : aiConnected
-    ? { name: "IA local", state: "conectada", tone: "ok" as const, title: `Servidor de IA local conectado (${localEndpoint})` }
-    : { name: "IA local", state: "sin conexión", tone: "off" as const, title: `Servidor de IA local sin conexión (${localEndpoint})` };
+  const aiStatus = aiBadgeStatus({ kind: providerKind, ok: aiOk, configured: aiConfigured, endpoint: providerEndpoint, localConnected: localAiConnected });
+  const aiAvailable = aiStatus.tone !== "off";
 
   const textScale = useTextScale();
   // Scale the default and the bounds so a larger text size still fits.
@@ -477,9 +480,9 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
               </div>
 
               <div className="pb-4 flex items-center justify-center">
-                <span className={`relative flex h-2 w-2 ${aiConnected ? "" : "opacity-50"}`}>
+                <span className={`relative flex h-2 w-2 ${aiAvailable ? "" : "opacity-50"}`}>
                   <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                    aiConnected ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" : t("bg-white/20", "bg-black/8")
+                    aiAvailable ? "bg-emerald-400 shadow-[0_0_5px_#34d399]" : t("bg-white/20", "bg-black/8")
                   }`} />
                 </span>
               </div>

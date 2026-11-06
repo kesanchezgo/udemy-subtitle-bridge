@@ -1,5 +1,5 @@
 import { buildGeminiGenerateContentUrl, initGeminiKeys, markGeminiKeyCooldown, normalizeGeminiKeys, saveGeminiKeys, selectGeminiKeysForPurpose, setGeminiKeysSync, type GeminiPurpose } from './gemini-config';
-import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, normalizeAiProviderConfig, REASONING_OFF_FIELDS, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
+import { buildAnthropicBody, buildOpenAiCompatibleBody, buildProviderChatUrl, buildProviderHeaders, extractProviderText, getAiProviderConfig, initAiProviderConfig, normalizeAiProviderConfig, redactProviderUrl, REASONING_OFF_FIELDS, AI_PROVIDER_STORAGE_KEY, type AiProviderConfig } from './app/services/ai-providers';
 import {
 	buildObjectivesPrompt,
 	buildRefinePrompt,
@@ -302,7 +302,7 @@ async function checkProviderHealth(): Promise<ProviderHealth> {
 		candidates.push({ url: endpoint, headers: {} });
 	}
 
-	let result: ProviderHealth = { configured, ok: false, endpoint: candidates[0]?.url ?? '', status: 0, checkedAt: now };
+	let result: ProviderHealth = { configured, ok: false, endpoint: candidates[0] ? redactProviderUrl(candidates[0].url) : '', status: 0, checkedAt: now };
 	const failures: string[] = [];
 	for (const candidate of candidates) {
 		const controller = new AbortController();
@@ -315,13 +315,13 @@ async function checkProviderHealth(): Promise<ProviderHealth> {
 				signal: controller.signal,
 			});
 			if (response.ok) {
-				result = { configured, ok: true, endpoint: candidate.url, status: response.status, checkedAt: now };
+				result = { configured, ok: true, endpoint: redactProviderUrl(candidate.url), status: response.status, checkedAt: now };
 				break;
 			}
-			if (!result.endpoint) result = { configured, ok: false, endpoint: candidate.url, status: response.status, checkedAt: now };
+			if (!result.endpoint) result = { configured, ok: false, endpoint: redactProviderUrl(candidate.url), status: response.status, checkedAt: now };
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
-			if (failures.length < 3) failures.push(`${candidate.url}: ${msg.slice(0, 90)}`);
+			if (failures.length < 3) failures.push(`${redactProviderUrl(candidate.url)}: ${msg.slice(0, 90)}`);
 		} finally {
 			clearTimeout(timeout);
 		}
@@ -1928,7 +1928,7 @@ async function requestConfiguredProviderText(
 			: buildOpenAiCompatibleBody(messages, maxTokens, temperature, cfg.model, false, withExtra ? extra : undefined);
 
 	const requestUrl = buildProviderChatUrl(cfg, false);
-	console.info(`[USG][provider] kind=${cfg.kind} url=${requestUrl} model=${cfg.model}`);
+	console.info(`[USG][provider] kind=${cfg.kind} url=${redactProviderUrl(requestUrl)} model=${cfg.model}`);
 
 	let response: Response;
 	try {

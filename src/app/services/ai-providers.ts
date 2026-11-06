@@ -513,6 +513,22 @@ export interface OpenAiChatMessage {
  * refinado, traduccion y vocabulario hablaban de Gemini aunque el camino real
  * sea el proveedor configurado (local, OpenAI, Anthropic, Gemini...).
  */
+/**
+ * URL apta para mostrar o registrar: sin query ni fragmento. Gemini lleva la
+ * API key en `?key=`, y el endpoint del sondeo llegaba tal cual al dock
+ * («El proveedor no responde (...?key=...)»), al debug en storage y a la consola.
+ */
+export function redactProviderUrl(url: string): string {
+  const raw = String(url ?? '');
+  if (!raw) return '';
+  try {
+    const u = new URL(raw);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return raw.split(/[?#]/)[0];
+  }
+}
+
 export function describeProviderFailure(
   raw: string,
   opts: { kind?: string; endpoint?: string; model?: string } = {},

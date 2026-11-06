@@ -18,7 +18,7 @@ import { buildAnkiApkg, downloadApkg, PRISM_MEDIA_FILES } from "../services/anki
 import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
 import { cacheService } from "../services/cacheService";
 import { aiBlockedMessage, type AiState } from "../hooks/useAiHealth";
-import { describeProviderFailure, getAiProviderConfig } from "../services/ai-providers";
+import { AI_PROVIDER_STORAGE_KEY, describeProviderFailure, getAiProviderConfig } from "../services/ai-providers";
 import {
   DEFAULT_VOCAB_CONFIG, loadVocabConfig, parseVocabularyPayload, saveVocabConfig,
   type VocabConfig,
@@ -1974,17 +1974,25 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     return pre.promise;
   }, [apiKeys, courseName, effectiveCourseDescription, lessonName, preGenCacheKey, requestStudyTranscript, resolveGeminiKeysForStudy, sendRuntimeMessage]);
 
-  // Sondeo de disponibilidad: al montar, al cambiar la configuración y con
-  // reintento (5 s si no está lista, 30 s si lo está). Así el botón se habilita
-  // solo en cuanto la IA aparece, sin recargar.
+  // Sondeo de disponibilidad: al montar, al cambiar la configuración (evento o
+  // storage) y con reintento (5 s si no está lista, 30 s si lo está). Así el
+  // botón se habilita solo en cuanto la IA aparece, sin recargar. Una sola
+  // cadena viva: cada sondeo nuevo cancela el temporizador pendiente y descarta
+  // la respuesta de uno anterior que siga en vuelo.
   useEffect(() => {
     if (!IS_EXTENSION) { setAiState("lista"); return; }
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let run = 0;
     const probe = async () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      const id = ++run;
+      // Extensión recargada con la pestaña abierta: sin contexto no hay a quién
+      // preguntar; reintentar cada 5 s solo acumula errores.
+      if (!isExtensionRuntime()) { alive = false; return; }
       try {
         const res = await sendRuntimeMessage<{ ok?: boolean; configured?: boolean; endpoint?: string; status?: number }>({ type: "USG_PROVIDER_HEALTH" });
-        if (!alive) return;
+        if (!alive || id !== run) return;
         const healthy = Boolean(res?.ok);
         const configured = res?.configured !== false;
         setAiEndpoint(res?.endpoint ?? "");
@@ -1993,7 +2001,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         window.dispatchEvent(new CustomEvent("usb:ai-health", { detail: { ok: healthy, configured } }));
         timer = setTimeout(probe, healthy ? 30000 : 5000);
       } catch {
-        if (!alive) return;
+        if (!alive || id !== run) return;
         setAiState("sin-respuesta");
         window.dispatchEvent(new CustomEvent("usb:ai-health", { detail: { ok: false, configured: true } }));
         timer = setTimeout(probe, 5000);
@@ -2001,8 +2009,21 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     };
     void probe();
     const onConfig = () => { setAiState("comprobando"); void probe(); };
+    type StorageListener = (changes: Record<string, unknown>, area: string) => void;
+    const storageEvents = (globalThis as typeof globalThis & {
+      chrome?: { storage?: { onChanged?: { addListener: (cb: StorageListener) => void; removeListener: (cb: StorageListener) => void } } };
+    }).chrome?.storage?.onChanged;
+    const onStorage: StorageListener = (changes, area) => {
+      if (area === "local" && AI_PROVIDER_STORAGE_KEY in changes) onConfig();
+    };
     window.addEventListener("usb:provider-changed", onConfig);
-    return () => { alive = false; if (timer) clearTimeout(timer); window.removeEventListener("usb:provider-changed", onConfig); };
+    storageEvents?.addListener(onStorage);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("usb:provider-changed", onConfig);
+      storageEvents?.removeListener(onStorage);
+    };
   }, []);
 
   const aiReady = aiState === "lista";
@@ -2212,7 +2233,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       toast.message("¡Material de estudio listo!", {
         description: usedFallback
           ? "Kinema usó una plantilla local porque tu proveedor de IA no completó la generación."
-          : "Analizamos la lección y preparamos tu plan de dominio.",
+          : "Analizamos la lección y preparamos tu sesión de 4 pasos.",
         icon: <Rocket className="text-violet-400" size={18} />
       });
       scrollToBottom();

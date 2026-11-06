@@ -13,6 +13,9 @@
  *   E. Obsidian     — export con URIs y aviso de duplicado con su botón.
  *   F. Proveedor    — permiso de host cubierto vs. host sin permiso.
  *   G. Vocabulario  — pipeline y checkpoints del registro de lemas.
+ *   H. Glosario     — showGlossaryChip aceptado por el content script.
+ *   I. IA           — indicador honesto, la key nunca a la vista y sondeo sin
+ *                       cadenas acumuladas (requiere el puerto 8010 libre).
  *
  * Dos modos de ejecución:
  *
@@ -143,6 +146,12 @@ const qaAi = createHttpServer((req, res) => {
 	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 	res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
 	if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+	// Proveedor que rechaza la key (sección I): 401 como Gemini con key inválida.
+	if (req.url.includes('/qa-down/')) {
+		res.writeHead(401, { 'Content-Type': 'application/json' });
+		res.end(JSON.stringify({ error: { message: 'API key not valid (QA)' } }));
+		return;
+	}
 	// Sondeo de disponibilidad del dock: GET /v1/models
 	if (req.method === 'GET' && req.url.includes('/models')) {
 		res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1239,7 +1248,99 @@ if (REAL) {
 	await page.screenshot({ path: path.join(SHOTS, 'h-glosario.png') });
 }
 
-// ══ Cierre// ══ Cierre// ══ Cierre ════════════════════════════════════════════════════════════════════
+// ══ I. IA ═════════════════════════════════════════════════════════════════════
+section('I. IA — indicador honesto, key nunca a la vista y sondeo sin acumular');
+if (REAL) {
+	console.log('  · omitido en modo REAL (cambia la configuración del proveedor)');
+} else {
+	const QA_SECRET = 'qa-secreto-no-mostrar-7d1f';
+	const OPENAI_MOCK = { kind: 'openai', baseUrl: `http://127.0.0.1:${QA_PORT}/v1`, apiKey: 'qa-key', model: 'qa-model' };
+	// Escritura/lectura por el SW con timeout y reintento: el SW de MV3 puede
+	// reiniciarse a mitad (mismo patrón que el seed).
+	const viaSw = async (fn, arg) => {
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const svc = context.serviceWorkers().at(-1) ?? await context.waitForEvent('serviceworker', { timeout: 15000 }).catch(() => null);
+			if (!svc) break;
+			try {
+				return await Promise.race([svc.evaluate(fn, arg), new Promise((_, rej) => setTimeout(() => rej(new Error('sw timeout')), 15000))]);
+			} catch { await page.waitForTimeout(1200); }
+		}
+		return null;
+	};
+	const setProvider = async (cfg) => {
+		await viaSw((c) => new Promise((done) => chrome.storage.local.set({ usg_ai_provider_config: c }, () => done(true))), cfg);
+		// El SW invalida su caché al cambiar la config; este aviso fuerza un
+		// sondeo nuevo ya con la config nueva (sin esperar al de 30 s).
+		await page.waitForTimeout(600);
+		await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:provider-changed')));
+	};
+	const badge = () => page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const b = root?.querySelector('button[aria-label$="Abrir proveedor de IA"]');
+		return b ? { text: (b.textContent ?? '').trim(), title: b.getAttribute('title') ?? '' } : null;
+	});
+	const waitBadge = async (re, ms = 9000) => {
+		const t0 = Date.now();
+		let last = null;
+		while (Date.now() - t0 < ms) {
+			last = await badge();
+			if (last && re.test(last.text)) return last;
+			await page.waitForTimeout(250);
+		}
+		return last;
+	};
+
+	// I.1 Nube sin key: el indicador no puede decir «nube».
+	await setProvider({ kind: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKey: '', model: 'gemini-qa' });
+	const noKey = await waitBadge(/^Gemini · sin configurar$/);
+	check('Gemini sin API key: el indicador dice «Gemini · sin configurar»', /^Gemini · sin configurar$/.test(noKey?.text ?? ''), JSON.stringify(noKey));
+
+	// I.2 + I.3 Nube que rechaza la key (401 del mock). Con una IA local en 8010
+	// el SW la usa de reserva y el sondeo sale «lista»: hace falta 8010 libre.
+	const local8010 = await fetch('http://127.0.0.1:8010/health', { signal: AbortSignal.timeout(800) }).then(() => true, () => false);
+	const NAME_DOWN = 'Gemini que no responde: el indicador dice «Gemini · sin respuesta»';
+	const NAME_KEY = 'la API key no aparece ni en el dock ni en usg_provider_health_debug';
+	if (local8010) {
+		check(NAME_DOWN, false, '8010 ocupado: apaga la IA local para el clon');
+		check(NAME_KEY, false, '8010 ocupado: apaga la IA local para el clon');
+	} else {
+		await setProvider({ kind: 'gemini', baseUrl: `http://127.0.0.1:${QA_PORT}/qa-down/v1beta`, apiKey: QA_SECRET, model: 'gemini-qa' });
+		const down = await waitBadge(/^Gemini · sin respuesta$/);
+		check(NAME_DOWN, /^Gemini · sin respuesta$/.test(down?.text ?? ''), JSON.stringify(down));
+		const debug = await viaSw(() => new Promise((done) => chrome.storage.local.get(['usg_provider_health_debug'], (v) => done(v.usg_provider_health_debug ?? null))));
+		const debugText = JSON.stringify(debug ?? {});
+		const dockHtml = await page.evaluate(() => document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.innerHTML ?? '');
+		check(NAME_KEY,
+			Boolean(debug) && debug.ok === false
+				&& String(debug.endpoint).endsWith('/qa-down/v1beta/models')
+				&& !debugText.includes(QA_SECRET) && !debugText.includes('key=')
+				&& !dockHtml.includes(QA_SECRET),
+			debugText.slice(0, 220));
+	}
+
+	// I.4 Tres cambios seguidos no dejan cadenas vivas. Con el proveedor sano
+	// cada superficie (Study, Captions) sondea cada 30 s; con el fallo cada
+	// cambio sumaba una cadena. Cada sondeo emite usb:ai-health en window, que
+	// el mundo de la página también recibe: se cuentan durante 31 s.
+	await setProvider(OPENAI_MOCK);
+	const restored = await waitBadge(/^OpenAI · nube$/);
+	for (let i = 0; i < 3; i += 1) {
+		await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:provider-changed')));
+		await page.waitForTimeout(150);
+	}
+	await page.waitForTimeout(2500); // los sondeos inmediatos ya respondieron
+	await page.evaluate(() => {
+		window.__qaHealthEvents = 0;
+		window.addEventListener('usb:ai-health', () => { window.__qaHealthEvents += 1; });
+	});
+	await page.waitForTimeout(31000);
+	const periodic = await page.evaluate(() => window.__qaHealthEvents);
+	check('tras 3 cambios de proveedor no se acumulan sondeos (≤ 2 en 31 s: uno por superficie)',
+		/^OpenAI · nube$/.test(restored?.text ?? '') && periodic >= 1 && periodic <= 2,
+		`indicador: ${restored?.text ?? '—'} · sondeos: ${periodic}`);
+}
+
+// ══ Cierre ════════════════════════════════════════════════════════════════════
 section('Errores de consola');
 // El bloqueo de protocolos externos es esperado y es la prueba de que la URI se
 // emitió: sin Obsidian instalado, Chrome rechaza obsidian:// y lo registra.
