@@ -28,7 +28,7 @@ await browser.addCookies([
   { name: 'client_id', value: udemySecret('client_id'), domain: '.udemy.com', path: '/' },
   { name: 'ud_user_jwt', value: udemySecret('ud_user_jwt'), domain: '.udemy.com', path: '/' },
   { name: 'dj_session_id', value: udemySecret('dj_session_id'), domain: '.udemy.com', path: '/' },
-  { name: 'ud_cache_user', value: 'USUARIO_UDEMY_PURGADO', domain: '.udemy.com', path: '/' },
+  { name: 'ud_cache_user', value: udemySecret('ud_cache_user'), domain: '.udemy.com', path: '/' },
   { name: 'ud_cache_logged_in', value: '1', domain: '.udemy.com', path: '/' },
   { name: 'ud_cache_language', value: 'en', domain: '.udemy.com', path: '/' },
   { name: 'caption_language', value: 'en_US', domain: '.udemy.com', path: '/' },

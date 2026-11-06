@@ -9,6 +9,7 @@ Correcciones de la auditoría posterior a 1.6.0. Sin cambios en el flujo de estu
 - **Restos:** fuera `hooks/useHotkeys.ts` y `components/figma/ImageWithFallback.tsx`, que la extensión no usaba (siguen en el prototipo). El aviso de sesión lista ya no habla de «plan de dominio». El comentario de `useAiHealth` ya no atribuye consumidores que tienen su propio sondeo.
 - **Arnés:** `qa:full` pasa de 53/53 a **57/57** con la sección I: «Gemini · sin configurar», «Gemini · sin respuesta» (mock que responde 401), la key nunca en el dock ni en el debug, y tres cambios de proveedor seguidos sin sondeos acumulados (≤ 2 en 31 s). Requiere el puerto 8010 libre: con una IA local ahí, el service worker la usa de reserva. Nuevo `npm run qa:ai-health`, sin navegador: redacción de URLs, motivo del bloqueo e indicador en los 7 estados.
 - **Cierre:** puntos suspensivos «…» en los avisos de IA («Comprobando la IA…», «Reintentando…»), como en el resto de la interfaz. Documentación de la raíz al día: `INSTALAR.md` reescrita para Kinema y fuera `REPORTE-PRUEBA.md` (informe de prueba de la v1.0) y `.instructions.md` (instrucciones de agente que apuntaban a archivos que ya no existen).
+- **Scripts sin datos personales:** `live-probe.mjs` y `live-proof.mjs` leen `ud_cache_user` con `udemySecret` (de `.qa-udemy-cookies.json` o de `UDEMY_UD_CACHE_USER`), como las demás cookies, en vez de llevar el id de usuario de Udemy escrito en el código. El README ya no cita una ruta local e `INSTALAR.md` no fija el número de comprobaciones de `qa:full`.
 
 ## [1.6.0] — 2026-11-05
 

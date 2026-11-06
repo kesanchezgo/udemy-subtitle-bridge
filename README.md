@@ -153,7 +153,7 @@ see `docs/KINEMA-BRAND.md` for the identity rules).
 
 ## Companion: ANKI-IMAGE-SENTENCE
 
-The companion tool at `D:\Proyectos\OTROS\ANKI-IMAGE-SENTENCE` completes the
+The companion tool ANKI-IMAGE-SENTENCE (separate project) completes the
 vocabulary decks automatically (listen mode): AI-verified translations and
 bilingual definitions, generated images, and quality neural TTS
 (`word audio` / `sentence audio`, mp3 24 kHz 48 kbps, silence-trimmed) with

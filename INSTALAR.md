@@ -33,7 +33,7 @@ El indicador de la cabecera muestra el estado real del motor: «conectada» o «
 
 ## 4. Comprobar que funciona
 
-- `npm run qa:full`: el flujo completo contra un clon local de Udemy con IA simulada, sin cuenta ni IA real. Necesita el puerto 8010 libre y, la primera vez, `npx playwright install chromium`. Resultado esperado: «57/57 comprobaciones en verde».
+- `npm run qa:full`: el flujo completo contra un clon local de Udemy con IA simulada, sin cuenta ni IA real. Necesita el puerto 8010 libre y, la primera vez, `npx playwright install chromium`. Resultado esperado: «TODOS LOS FLUJOS OK», sin ninguna comprobación en rojo.
 - `npm run qa:ai-health`: textos y estados de la IA, sin navegador.
 
 En la consola de la pestaña (F12), los mensajes de Kinema empiezan por `[USG]`.

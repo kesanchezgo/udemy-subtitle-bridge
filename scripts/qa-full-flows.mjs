@@ -545,6 +545,23 @@ const waitClickInShadow = async (match, ms = 12000) => {
 	}
 	return false;
 };
+// La pila de sonner está plegada hasta que el puntero entra: el segundo aviso
+// queda recortado por el panel (124 px por debajo) y medirlo ahí no dice nada de
+// lo que ve el usuario. Se despliega con un movimiento REAL del ratón, como
+// haría cualquiera para leer los avisos, y se mide ya desplegado.
+const expandToasts = async () => {
+	const box = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		const ol = root?.querySelector('[data-sonner-toaster]');
+		if (!ol) return null;
+		const r = ol.getBoundingClientRect();
+		return { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) };
+	});
+	if (!box) return false;
+	await page.mouse.move(box.cx, box.cy);
+	await page.waitForTimeout(400);
+	return true;
+};
 const toastsInShadow = () => page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	return [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((t) => (t.textContent ?? '').trim());
@@ -631,6 +648,7 @@ if (await apkgBtn.count().catch(() => 0)) {
 	// el vídeo. Se mide el aviso real (redondeo de subpíxeles → tolerancia de 1 px
 	// en los bordes) y con la animación de entrada ya terminada.
 	await page.waitForTimeout(600);
+	await expandToasts(); // la pila plegada deja el segundo aviso fuera del panel
 	// La entrada del aviso es una animación: se mide cuando el rectángulo ya no
 	// cambia (dos lecturas iguales seguidas) para no medir un fotograma a medias.
 	const noticePlacement = await page.evaluate(async () => {
@@ -874,6 +892,7 @@ check('«Terminar lección» cierra sin exportar', /Lección terminada/.test(don
 await page.locator(`${OUTER} [data-sonner-toast] .kx-celebrate`).first()
 	.waitFor({ timeout: 5000 }).catch(() => {});
 await page.waitForTimeout(600);
+await expandToasts(); // misma pila de avisos, mismo despliegue
 // Igual que el aviso: la celebración también entra con animación, así que se
 // mide cuando su rectángulo se estabiliza.
 const celebration = await page.evaluate(async () => {
