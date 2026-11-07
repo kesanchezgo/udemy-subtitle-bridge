@@ -348,6 +348,102 @@ const markStep = (name) => {
 };
 const addAiWait = (step, ms) => { stepClock.aiByStep[step] = (stepClock.aiByStep[step] ?? 0) + ms; };
 
+// ── Medición de la sesión A→B ────────────────────────────────────────────────
+// SOLO mide: no cambia lo que el arnés marca, teclea ni en qué orden avanza.
+const runStats = { keyConcepts: null, questions: null, marked: null, planTotal: null, reviews: [], config: null, celebrationSecs: null };
+// El SW de MV3 se duerme y Playwright pierde su target: serviceWorkers() queda
+// vacío y waitForEvent no vuelve a dispararse (ya existía). Se DESPIERTA con una
+// acción del dock (los botones viven en el mundo aislado del content script, que
+// sí puede hablarle) y entonces se espera a que aparezca.
+const swForStats = async () => {
+	const attached = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	if (attached) return attached;
+	await page.evaluate((outer) => {
+		const root = document.querySelector(outer)?.shadowRoot;
+		const tab = [...(root?.querySelectorAll('button') ?? [])].find((b) => (b.textContent ?? '').trim() === 'Study');
+		tab?.click();
+	}, OUTER).catch(() => {});
+	return context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
+};
+// Registro persistido de ESTA lección (mismo patrón que el diagnóstico de fallo).
+const readCurrentRecord = async () => {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		const svc = await swForStats();
+		if (!svc) { await page.waitForTimeout(1200); continue; }
+		// La app guarda el registro por el SLUG del nombre de la lección (no por el
+		// id numérico de Udemy), así que se busca por nombre y, si no, por slug.
+		// El harness llama a la lección sin el prefijo de número («Demo: …») y el
+		// dock la guarda con él («26. Demo: …»): se normaliza (sin número, sin
+		// acentos, sin signos) y se acepta coincidencia exacta o contenida.
+		const rec = await svc.evaluate(({ title, id }) => new Promise((done) => {
+			const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+				.replace(/^\s*\d+[.)]\s*/, '').replace(/[^a-z0-9]+/g, '');
+			const want = norm(title);
+			chrome.storage.local.get(null, (all) => {
+				const recs = Object.entries(all || {})
+					.filter(([k]) => k.startsWith('usb_history_lecture::'))
+					.map(([k, v]) => ({ key: k, rec: v }))
+					.filter(({ rec }) => rec)
+					.map(({ key, rec }) => ({ key, rec, hit: (() => { const n = norm(rec.lectureName); return n && want && (n === want || n.includes(want) || want.includes(n)); })() }))
+					.filter(({ key, rec, hit }) => hit || String(rec.lectureId ?? '') === String(id));
+				recs.sort((x, y) => (y.rec?.updatedAt ?? 0) - (x.rec?.updatedAt ?? 0));
+				done(recs[0]?.rec ?? null);
+			});
+		}), { title: String(currentLesson.title ?? ''), id: String(currentLesson.id) }).catch(() => null);
+		if (rec) return rec;
+		await page.waitForTimeout(1500);
+	}
+	return null;
+};
+const readProviderConfig = async () => {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		const svc = await swForStats();
+		if (!svc) { await page.waitForTimeout(1200); continue; }
+		const cfg = await svc.evaluate(() => new Promise((done) => chrome.storage.local.get(['usg_ai_provider_config'], (r) => done(r?.usg_ai_provider_config ?? null)))).catch(() => null);
+		if (cfg) return cfg;
+		await page.waitForTimeout(1200);
+	}
+	return null;
+};
+// Lo que PINTA el dock ahora mismo: ideas marcadas, pregunta del plan y veredicto.
+const dockState = () => page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	if (!root) return null;
+	const planTxt = (root.textContent ?? '').match(/Pregunta (\d+) de (\d+)/);
+	const ta = root.querySelector('[data-question-card] textarea');
+	const cls = ta?.className ?? '';
+	const verdict = /border-emerald-500/.test(cls) ? 'correcta' : /border-amber-500/.test(cls) ? 'parcial' : /border-rose-500/.test(cls) ? 'incorrecta' : null;
+	return {
+		marked: root.querySelectorAll('[data-doubt-recall] [aria-pressed="true"]').length,
+		planPos: planTxt ? Number(planTxt[1]) : null,
+		planTotal: planTxt ? Number(planTxt[2]) : null,
+		verdict,
+		moves: [...root.querySelectorAll('[data-next-moves] [data-move]')].map((b) => b.getAttribute('data-move')),
+		verifyReview: Boolean(root.querySelector('[data-verify-review]')),
+	};
+});
+// Un «Revisar mi respuesta» cronometrado: clic → veredicto pintado (máx 240 s).
+const reviewOnce = async () => {
+	const t = Date.now();
+	if (!await clickUntil(/^Revisar mi respuesta$/, 10000)) { console.log('  [medición] no apareció «Revisar mi respuesta»'); return null; }
+	const deadline = Date.now() + 240000;
+	let st = null;
+	while (Date.now() < deadline) {
+		st = await dockState();
+		if (st?.verdict || st?.verifyReview) break;
+		await page.waitForTimeout(500);
+	}
+	if (st?.planTotal) runStats.planTotal = Math.max(runStats.planTotal ?? 0, st.planTotal);
+	const entry = {
+		secs: Math.round((Date.now() - t) / 1000),
+		verdict: st?.verdict ?? (st?.verifyReview ? 'cerrada' : null),
+		consolidation: Boolean(st?.moves?.includes('next')),
+	};
+	runStats.reviews.push(entry);
+	console.log(`  [medición] revisión ${runStats.reviews.length}: ${entry.secs}s · ${entry.verdict ?? 'sin veredicto'}${entry.consolidation ? ' · después, consolidación' : ''}`);
+	return entry;
+};
+
 // ── Usar la lección corta (la misma página ya está abierta) ──
 // Encontrar lección corta
 const lessons = await page.evaluate(async () => {
@@ -757,6 +853,9 @@ if (process.env.QA_PICK_CARD === '1') {
 	await page.waitForTimeout(800);
 }
 
+// Cronómetro del cierre (a nivel de módulo: lo usan las dos ramas del flujo).
+let tFinishClick = null;
+
 // Objetivo propio (QA_NO_OBJECTIVE=1 usa el objetivo activo por defecto, que es
 // el que emplea la pre-generación)
 if (process.env.QA_NO_OBJECTIVE !== '1' && process.env.QA_PICK_CARD !== '1') {
@@ -804,6 +903,17 @@ const tGen = Date.now() - t0;
 addAiWait('Recordar', tGen); // la generacion es espera de IA del primer paso
 console.log(`  generación: ${Math.round(tGen / 1000)}s`);
 
+// Medición: tamaño del mazo que la app persistió y config activa.
+{
+	const rec = await readCurrentRecord();
+	const sc = rec?.studyContent;
+	runStats.keyConcepts = Array.isArray(sc?.keyConcepts) ? sc.keyConcepts.length : null;
+	runStats.questions = Array.isArray(sc?.questions) ? sc.questions.length : null;
+	const cfg = await readProviderConfig();
+	if (cfg) runStats.config = { kind: cfg.kind, baseUrl: String(cfg.baseUrl ?? '').split(/[?#]/)[0], model: cfg.model };
+	console.log(`  [medición] ideas clave ${runStats.keyConcepts ?? '?'} · preguntas ${runStats.questions ?? '?'} · config ${runStats.config ? `${runStats.config.kind} ${runStats.config.baseUrl} ${runStats.config.model}` : '(sin leer)'}`);
+}
+
 // Nivel
 await dwellRead(20); // lee la pregunta de nivel
 await click(/^Más o menos/);
@@ -816,8 +926,16 @@ await page.waitForTimeout(600);
 // Pregunta (paso Comprobar)
 await dwellRead(45); // revisa los conceptos
 markStep('Comprobar');
+// Medición: ideas marcadas en Recordar justo antes de avanzar.
+runStats.marked = (await dockState())?.marked ?? null;
 await click(/Ponerme a prueba/);
 await page.waitForTimeout(1600);
+// Medición: el plan que anuncia el dock («Pregunta N de M»).
+{
+	const inVerify = await dockState();
+	if (inVerify?.planTotal) runStats.planTotal = inVerify.planTotal;
+	console.log(`  [medición] marcadas en Recordar ${runStats.marked ?? '?'} · plan «de ${runStats.planTotal ?? '?'}» (posición ${inVerify?.planPos ?? '?'})`);
+}
 
 // Responder (la tarjeta de pregunta monta con animación: esperar el textarea)
 await dwellRead(35); // lee la pregunta y piensa
@@ -851,7 +969,7 @@ if (process.env.QA_COLD_SW === '1') {
 }
 let tEvalWait = Date.now();
 pageConsoleBuf.push('=== click Revisar mi respuesta Q1 ===');
-await clickUntil(/^Revisar mi respuesta$/, 10000);
+await reviewOnce();
 
 // Esperar veredictos reales (marcadores [CORRECTO]/[PARCIAL]/[INCORRECTO] del
 // feedback) y avanzar pregunta a pregunta. El paginador del dock dice
@@ -913,7 +1031,7 @@ for (let i = 0; i < 12 && !ok; i++) {
 		pageConsoleBuf.push(`=== click Revisar mi respuesta Q${i + 2} ===`);
 		await dwellRead(90); // lee el feedback de la IA
 		if (!await typePaced('Escribe tu respuesta con tus propias palabras', 'Consolidación: javac produce bytecode y la JVM lo interpreta.')) break;
-		await clickUntil(/^Revisar mi respuesta$/, 10000);
+		await reviewOnce();
 		continue;
 	}
 	if (await click(/^Terminar y ver la respuesta esperada$|^Terminar aquí$/)) {
@@ -1035,7 +1153,7 @@ if (QA_FLOW === 'full') {
 		// en el localStorage de la página): se libera para poder observarla en
 		// una corrida de QA. Es estado del perfil de prueba, no del usuario.
 		await page.evaluate(() => { try { localStorage.removeItem('kinema-streak-shown'); } catch {} });
-	await clickUntil(/Terminar lección/, 20000);
+	if (await clickUntil(/Terminar lección/, 20000)) tFinishClick = Date.now();
 	tAplicar = Date.now() - tA;
 } else {
 	// MÍNIMO: práctica pendiente («Saltar este paso»).
@@ -1044,12 +1162,28 @@ if (QA_FLOW === 'full') {
 		// en el localStorage de la página): se libera para poder observarla en
 		// una corrida de QA. Es estado del perfil de prueba, no del usuario.
 		await page.evaluate(() => { try { localStorage.removeItem('kinema-streak-shown'); } catch {} });
-	await clickUntil(/Terminar lección/, 15000);
+	if (await clickUntil(/Terminar lección/, 15000)) tFinishClick = Date.now();
 }
 markStep('Fijar');
 const done = await waitFor(/Lección terminada/, 20000);
 const ms = Date.now() - t0;
 await page.screenshot({ path: path.join(SHOTS, `resultado-${QA_LESSON}-${QA_FLOW}.png`) });
+
+// Medición: segundos desde el clic en «Terminar lección» hasta que la
+// celebración existe como aviso (hasta 20 s), sin tocar el ratón.
+if (tFinishClick) {
+	let celebrated = false;
+	const deadline = tFinishClick + 20000;
+	while (Date.now() < deadline) {
+		celebrated = await page.evaluate((outer) => Boolean(document.querySelector(outer)?.shadowRoot?.querySelector('[data-sonner-toast] .kx-celebrate')), OUTER);
+		if (celebrated) break;
+		await page.waitForTimeout(250);
+	}
+	runStats.celebrationSecs = celebrated ? Math.round((Date.now() - tFinishClick) / 1000) : null;
+	console.log(`  [medición] celebración: ${celebrated ? runStats.celebrationSecs + 's desde «Terminar lección»' : 'no apareció en 20s'}`);
+} else {
+	console.log('  [medición] celebración: n/d (no se pulsó «Terminar lección»)');
+}
 
 // La celebración del cierre, en la página REAL: debe salir dentro de la pila de
 // avisos del panel (abajo), no en una capa propia sobre el vídeo.
@@ -1137,6 +1271,25 @@ console.log(`  ${QA_FLOW === 'full' ? 'COMPLETO' : 'mínimo'} · lección ${QA_L
 console.log(`  generación: ${fmt(tGen)} · comprobar: ${fmt(tComprobar)}${QA_FLOW === 'full' ? ` · aplicar: ${fmt(tAplicar)}` : ''}`);
 console.log(`  objetivo ${QA_FLOW === 'full' ? '≤ 12' : '≤ 4'} min: ${ms <= limit ? '✓ CUMPLE' : '✗ NO CUMPLE'}`);
 if (celebrationOk !== null) console.log(`  celebración dentro del panel: ${celebrationOk ? '✓' : '✗ FUERA DEL PANEL'}`);
+// La línea de la sesión A→B, tal cual se pidió.
+if (runStats.keyConcepts === null || runStats.questions === null || !runStats.config) {
+	// La lectura temprana puede caer con el SW ocupado: se reintenta al cierre.
+	const rec = await readCurrentRecord().catch(() => null);
+	const sc = rec?.studyContent;
+	if (runStats.keyConcepts === null && Array.isArray(sc?.keyConcepts)) runStats.keyConcepts = sc.keyConcepts.length;
+	if (runStats.questions === null && Array.isArray(sc?.questions)) runStats.questions = sc.questions.length;
+	if (!runStats.config) {
+		const cfg = await readProviderConfig().catch(() => null);
+		if (cfg) runStats.config = { kind: cfg.kind, baseUrl: String(cfg.baseUrl ?? '').split(/[?#]/)[0], model: cfg.model };
+	}
+}
+if (!runStats.planTotal) {
+	const last = await dockState().catch(() => null);
+	if (last?.planTotal) runStats.planTotal = last.planTotal;
+	if (!runStats.planTotal && Number.isFinite(runStats.questions)) runStats.planTotal = `${runStats.questions} (del registro)`;
+}
+const reviewsTxt = runStats.reviews.map((r) => `${r.secs}s ${r.verdict ?? '?'}`).join(', ');
+console.log(`  plan · ideas ${runStats.keyConcepts ?? '?'} · preguntas ${runStats.questions ?? '?'} · marcadas ${runStats.marked ?? '?'} · plan «de ${runStats.planTotal ?? '?'}» · revisiones [${reviewsTxt}] · modelo ${runStats.config?.model ?? '?'} · celebración ${runStats.celebrationSecs != null ? `${runStats.celebrationSecs} s` : 'n/d'}${/Lección terminada/.test(done) ? '' : ' · INCOMPLETA'}`);
 
 clearTimeout(watchdog);
 await context.close();

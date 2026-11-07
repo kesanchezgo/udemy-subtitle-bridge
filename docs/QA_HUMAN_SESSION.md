@@ -88,3 +88,49 @@ La espera es `max(0, generación − ventaja)`, con generación de 65-105 s (peo
 caso con escalada: ~150 s). Con la ventana de 3 min usada entera la espera
 desaparece; en el peor caso quedan 0-30 s. No hace falta adelantar el disparo
 para el caso típico.
+
+## Medición con el arnés instrumentado (5 corridas, sin persona)
+
+`scripts/qa-real-usage.mjs` mide la sesión y cierra cada corrida con una línea
+`plan · …`: tamaño del mazo persistido (`usb_history_lecture`), ideas marcadas
+al entrar a Comprobar, «Pregunta N de M» del plan, por cada «Revisar mi
+respuesta» los segundos hasta el veredicto pintado y si siguió consolidación,
+config activa, y celebración (clic en «Terminar lección» → toast). No cambia
+qué marca ni qué teclea el arnés.
+
+Proveedor: servidor local compatible con OpenAI en `127.0.0.1:6660/v1`, modelo
+gratuito del momento `deepseek-v4.1-flash:free`. Lección A «Demo: Declaring &
+Re-initializing Variables» (15 min), B «Demo: Exceptions & Exception Handling»
+(15 min).
+
+```
+A sin mazo #1 · plan · ideas 6 · preguntas 6 · marcadas 0 · plan «de 5» · revisiones [7s incorrecta, 7s incorrecta, 6s incorrecta, 6s incorrecta, 16s incorrecta] · modelo deepseek-v4.1-flash:free · celebración n/d · INCOMPLETA
+A sin mazo #2 · plan · ideas 6 · preguntas 7 · marcadas 0 · plan «de 5» · revisiones [9s incorrecta, 9s incorrecta, 7s incorrecta, 6s incorrecta, 6s incorrecta] · modelo deepseek-v4.1-flash:free · celebración n/d · INCOMPLETA
+A con mazo #1 · plan · ideas 6 · preguntas 7 · marcadas 0 · plan «de 5» · revisiones [193s incorrecta, 128s incorrecta, 70s incorrecta, 5s incorrecta, 8s incorrecta] · modelo deepseek-v4.1-flash:free · celebración n/d · INCOMPLETA
+A con mazo #2 · plan · ideas 6 · preguntas 6 · marcadas 0 · plan «de 5» · revisiones [8s incorrecta, 6s incorrecta, 8s incorrecta, 5s incorrecta, 6s incorrecta] · modelo deepseek-v4.1-flash:free · celebración n/d · INCOMPLETA
+B completa    · plan · ideas 7 · preguntas 7 · marcadas 0 · plan «de 5» · revisiones [157s incorrecta, 9s incorrecta, 6s incorrecta, 14s incorrecta, 12s incorrecta] · modelo deepseek-v4.1-flash:free · celebración 0 s
+```
+
+Lectura:
+
+- **El plan siempre queda «de 5»** aunque el mazo varíe por generación
+  (ideas 6-7, preguntas 6-7): manda `checkCap` = min(5, ideas, preguntas).
+  «Marcadas» fue 0 en las cinco (el arnés no marca ideas en Recordar).
+- **La espera del veredicto es del proveedor, no de la app**: 5-16 s en cuatro
+  corridas frente a 70-193 s en la de madrugada. Veredicto «incorrecta» en las
+  21 revisiones (el arnés teclea respuestas fijas); siempre siguió
+  consolidación tras la 1ª-4ª.
+- **Solo B llegó a «Terminar lección»** (el arnés mínimo se atasca unos 30 s en
+  los clics finales y queda INCOMPLETA — limitación del arnés, no del flujo):
+  objetivo ≤ 12 min ✓ (478 s) y la celebración salió a los 0 s, dentro del
+  panel.
+- **En flujo mínimo el mazo pre-generado no se consumió** aunque el arnés
+  buscara la ventana (espera tras «Empezar» ≈ 94 s, igual que sin mazo); en B
+  (flujo completo) sí se consumió (1 s). Dato sin decidir: no se cambió nada
+  del arnés ni de la app.
+- El proveedor gratuito falla de tres maneras: 503 «all keys locked», 429
+  «under heavy load», y 200 con texto («The model used its entire output
+  budget on reasoning…») o JSON truncado en los dos escalones. Un 401/403 es
+  el proxy pasando el rechazo de una key upstream vencida: la prueba de
+  conexión (GET /models) sigue en 200, por eso «Conexión correcta» y el aviso
+  del dock no se contradicen.

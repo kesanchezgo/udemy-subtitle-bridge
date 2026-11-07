@@ -1,3 +1,7 @@
+## [No liberado]
+
+- **Arnés:** `qa-real-usage` mide la sesión A→B y cierra cada corrida con una línea `plan · …`: tamaño del mazo persistido, ideas marcadas al entrar a Comprobar, «Pregunta N de M» del plan, por cada «Revisar mi respuesta» los segundos hasta el veredicto pintado y si siguió consolidación, la config activa (kind, endpoint sin query, modelo) y la celebración (clic en «Terminar lección» → toast, hasta 20 s). Solo lee: no cambia qué marca ni qué teclea el arnés. Resultados de las cinco corridas y su lectura en `docs/QA_HUMAN_SESSION.md`.
+
 ## [1.6.3] — 2026-11-06
 
 Corregir la API key ya no deja el indicador en «sin respuesta». Sin cambios en el flujo de estudio, los mazos ni Obsidian.
