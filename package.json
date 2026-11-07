@@ -1,5 +1,5 @@
 {
-  "version": "1.6.3",
+  "version": "1.7.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
@@ -17,7 +17,8 @@
     "qa:vocab:ai": "node scripts/qa-vocab-ai.mjs",
     "qa:full": "npm run build && node scripts/qa-full-flows.mjs",
     "qa:ai-health": "node scripts/qa-ai-health.mjs",
-    "qa:udemy:real": "node scripts/qa-udemy-real.mjs"
+    "qa:udemy:real": "node scripts/qa-udemy-real.mjs",
+    "qa:datacamp": "node scripts/qa-datacamp.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

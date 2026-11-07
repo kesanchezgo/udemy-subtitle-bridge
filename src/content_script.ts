@@ -7,6 +7,17 @@ import { THEME_CSS } from './app/styles/sepia-overrides';
 import { InPageDock } from './app/components/InPageDock';
 import { onMessageFromSidebar, sendToSidebar } from './app/services/contentBridge';
 import { collectArticleText, getLectureKind, goToNextLecture } from './app/services/udemyLecture';
+import {
+	fetchDataCampCourseOutline,
+	getDataCampCourseSlug,
+	getDataCampLectureTitleFromMeta,
+	getDataCampProjectorKey,
+	goToNextDataCampExercise,
+	isDataCampCampusPage,
+	isDataCampProjectorFrame,
+	resolveDataCampSubtitles
+} from './app/services/datacampLecture';
+import type { DataCampVideoMeta, DataCampVttLanguage } from './app/services/datacampLecture';
 import { initAiProviderConfig } from './app/services/ai-providers';
 import { vocabularyMatches } from './shared/vocabMatch';
 import { toast } from 'sonner';
@@ -129,6 +140,23 @@ let capturedEnVtt: string | null = null;
 let capturedCues: CapturedCue[] = [];
 let importedEsCues: CapturedCue[] = [];
 
+// ── Estado del sitio DataCamp ────────────────────────────────────────────────
+// El vídeo vive en un iframe (projector.datacamp.com): su hora llega por
+// postMessage del relé de ese marco y su rectángulo también, para anclar el
+// overlay al vídeo real dentro del iframe. Todo lo demás (cues, traducción,
+// dock) reutiliza el mismo estado que Udemy.
+let dcLectureKey: string | null = null;
+let dcVideoTime: number | undefined = undefined;
+let dcVideoDuration: number | undefined = undefined;
+let dcVideoRect: { left: number; top: number; width: number; height: number } | null = null;
+let dcMeta: DataCampVideoMeta | null = null;
+let dcLang: DataCampVttLanguage | null = null;
+let dcCourseTitle: string | null = null;
+let dcCourseDescription: string | null = null;
+let dcCourseSlugCache: string | null = null;
+let dcSubtitlesSeededKey: string | null = null;
+let dcSeedInFlight = false;
+
 // Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
 // el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
 type GlossaryEntry = { word: string; form?: string; phonetic: string; monolingual: string; selected?: boolean; exported?: boolean; needsUpdate?: boolean };
@@ -216,11 +244,19 @@ function cleanupStaleDockHosts() {
 }
 
 function getLectureKey() {
+	// DataCamp: la key estable del vídeo es la projector_key del iframe (la URL
+	// solo lleva ?ex=N, que cambia de número al reordenar el capítulo).
+	if (isDataCampCampusPage()) {
+		return dcLectureKey ?? getDataCampProjectorKey();
+	}
 	const match = window.location.pathname.match(/lecture\/(\d+)/);
 	return match ? match[1] : null;
 }
 
 function getCourseSlug() {
+	if (isDataCampCampusPage()) {
+		return getDataCampCourseSlug();
+	}
 	const match = window.location.pathname.match(/\/course\/([^/]+)/);
 	return match ? match[1] : null;
 }
@@ -256,6 +292,13 @@ function readTextFromSelector(selector: string) {
 }
 
 function getCourseTitle() {
+	// DataCamp: el outline (traído async) primero; el slug capitalizado como
+	// respaldo (document.title es «<lección> | <marca>», no el curso).
+	if (isDataCampCampusPage()) {
+		if (dcCourseTitle) return dcCourseTitle;
+		const dcSlug = getDataCampCourseSlug();
+		return dcSlug ? dcSlug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
+	}
 	const selectors = [
 		'[data-purpose="course-title"]',
 		'.curriculum-item-view--course-title--s5jCa',
@@ -331,6 +374,10 @@ function readMetaDescription(): string {
 }
 
 function getCourseDescription(): string {
+	// DataCamp: la descripción del outline (async); si aún no llegó, vacío.
+	if (isDataCampCampusPage()) {
+		return dcCourseDescription ?? '';
+	}
 	const tagline = readMetaDescription();
 	if (tagline) return tagline;
 
@@ -378,6 +425,14 @@ function getCourseAIContext(): string {
 }
 
 function getLectureTitle() {
+	// DataCamp: el título del deck del projector (llega async); el texto antes
+	// de « | » de document.title como respaldo inmediato.
+	if (isDataCampCampusPage()) {
+		const fromMeta = getDataCampLectureTitleFromMeta(dcMeta);
+		if (fromMeta) return fromMeta;
+		const beforeBar = document.title.split('|')[0]?.trim();
+		return beforeBar && !isBadMetadataText(beforeBar) ? beforeBar : null;
+	}
 	const selectors = [
 		'li[aria-current="true"] [data-purpose="item-title"]',
 		'[data-purpose="curriculum-item-view-title"]',
@@ -618,6 +673,11 @@ function refreshCapturedCuesFromVideo() {
 }
 
 function getCurrentVideoTime(): number | undefined {
+	// DataCamp: la hora viene del relé del marco del projector (el vídeo no está
+	// en este documento).
+	if (isDataCampCampusPage()) {
+		return dcVideoTime;
+	}
 	const video = document.querySelector('video');
 	// Do NOT use `instanceof HTMLVideoElement`: a content script runs in an
 	// isolated world, so DOM nodes are instances of the page's constructors, not
@@ -633,6 +693,9 @@ function getCurrentVideoTime(): number | undefined {
 }
 
 function getCurrentVideoDuration(): number | undefined {
+	if (isDataCampCampusPage()) {
+		return dcVideoDuration;
+	}
 	const video = document.querySelector('video');
 	// Duck-type por el mismo motivo que getCurrentVideoTime (mundos aislados).
 	if (video && typeof (video as HTMLVideoElement).duration === 'number') {
@@ -1094,6 +1157,15 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 // ── Overlay rendering (unchanged) ──
 
 function findVideoContainer() {
+	// DataCamp: el ancla del overlay es el IFRAME del projector (el vídeo vive
+	// dentro; el rect fino llega por el relé).
+	if (isDataCampCampusPage()) {
+		const iframe = document.querySelector('iframe[src*="projector.datacamp.com"]') as HTMLIFrameElement | null;
+		if (iframe && typeof iframe.getBoundingClientRect === 'function') {
+			return iframe as unknown as HTMLElement;
+		}
+		return null;
+	}
 	const selectors = [
 		'[data-purpose="video-player"]',
 		'.video-player--container--',
@@ -1311,6 +1383,18 @@ function getRenderedVideoRect(video: HTMLVideoElement): DOMRect {
 }
 
 function findOverlayAnchorRect(preferredContainer?: HTMLElement | null): DOMRect | null {
+	// DataCamp: rect del <video> DENTRO del iframe (lo manda el relé) sumado al
+	// origen del iframe en la página; sin relé aún, el rect del iframe entero.
+	if (isDataCampCampusPage()) {
+		const anchorHost = preferredContainer ?? findVideoContainer();
+		if (!anchorHost) return null;
+		const outer = anchorHost.getBoundingClientRect();
+		if (outer.width <= 40 || outer.height <= 40) return null;
+		if (dcVideoRect && dcVideoRect.width > 40 && dcVideoRect.height > 40) {
+			return new DOMRect(outer.left + dcVideoRect.left, outer.top + dcVideoRect.top, dcVideoRect.width, dcVideoRect.height);
+		}
+		return outer;
+	}
 	const video = document.querySelector('video');
 	// Duck-typed: a content-script `instanceof HTMLVideoElement` check fails for
 	// page-owned nodes in an isolated world.
@@ -2363,7 +2447,160 @@ function sendLectureContextUpdate() {
 	}).catch(() => undefined);
 }
 
+// ── Runtime DataCamp ──────────────────────────────────────────────────────────
+
+/**
+ * Hora y rect del vídeo desde el marco del projector. Ese marco retransmite
+ * por postMessage (misma extensión, dos marcos); aquí solo se consume. El
+ * escaneo de cues existente es por muestreo (250 ms), así que con actualizar
+ * el estado basta.
+ */
+function handleDataCampFrameMessage(event: MessageEvent) {
+	if (event.origin !== 'https://projector.datacamp.com') return;
+	const data = event.data as {
+		source?: string;
+		type?: string;
+		currentTime?: number;
+		duration?: number;
+		rect?: { left: number; top: number; width: number; height: number };
+	} | null;
+	if (!data || data.source !== 'kinema-dc-frame' || data.type !== 'video-state') return;
+	if (typeof data.currentTime === 'number' && Number.isFinite(data.currentTime)) {
+		dcVideoTime = data.currentTime;
+	}
+	if (typeof data.duration === 'number' && Number.isFinite(data.duration) && data.duration > 0) {
+		dcVideoDuration = data.duration;
+	}
+	if (data.rect && data.rect.width > 40 && data.rect.height > 40) {
+		dcVideoRect = data.rect;
+	}
+}
+
+/**
+ * Relé del marco del projector: manda hora, duración y rect del vídeo al marco
+ * superior, donde viven el overlay y el dock. Aquí no hay dock ni overlay: el
+ * app no se monta dentro del reproductor.
+ */
+function startDataCampFrameRelay() {
+	const sendState = () => {
+		const video = document.querySelector('video') as HTMLVideoElement | null;
+		if (!video || typeof video.currentTime !== 'number' || !Number.isFinite(video.currentTime)) return;
+		const rect = video.getBoundingClientRect();
+		try {
+			window.top?.postMessage({
+				source: 'kinema-dc-frame',
+				type: 'video-state',
+				currentTime: video.currentTime,
+				duration: video.duration,
+				paused: video.paused,
+				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+			}, '*');
+		} catch { /* el marco superior puede no estar listo aún */ }
+	};
+	window.addEventListener('message', (event: MessageEvent) => {
+		const data = event.data as { source?: string; type?: string } | null;
+		if (data?.source === 'kinema-dc-top' && data.type === 'ping') sendState();
+	});
+	sendState();
+	setInterval(sendState, 250);
+}
+
+/** Outline del curso (título/descripción) para el contexto del dock, por slug. */
+async function seedDataCampCourseOutline() {
+	const slug = getDataCampCourseSlug();
+	if (!slug) return;
+	if (dcCourseTitle && dcCourseSlugCache === slug) return;
+	dcCourseSlugCache = slug;
+	const outline = await fetchDataCampCourseOutline(slug);
+	if (outline?.title) dcCourseTitle = outline.title;
+	if (outline?.description) dcCourseDescription = normalizeCourseText(outline.description, 700);
+	sendLectureContextUpdate();
+}
+
+/**
+ * Siembra el VTT oficial de DataCamp en el MISMO estado que ya usa el pipeline
+ * de Udemy (capturedEnVtt/capturedCues → traducción, caché, estudio). Si la
+ * pista ya está en español se siembra también como ES cues: el overlay la
+ * muestra sin gastar IA.
+ */
+async function seedDataCampSubtitles(key: string) {
+	if (dcSubtitlesSeededKey === key || dcSeedInFlight) return;
+	dcSeedInFlight = true;
+	try {
+		const resolved = await resolveDataCampSubtitles(key);
+		// El runtime pudo haberse reiniciado mientras llegaba la respuesta.
+		if (dcLectureKey !== key) return;
+		dcSubtitlesSeededKey = key;
+		if (!resolved) return;
+		dcMeta = resolved.meta;
+		dcLang = resolved.lang;
+		capturedEnVtt = resolved.vtt;
+		parseVttIntoCues(resolved.vtt);
+		if (resolved.lang === 'es') {
+			importedEsCues = parseTimedTextIntoCues(resolved.vtt);
+			ensureOverlayVisibleForImportedCues();
+		}
+		scanForSubtitleChanges();
+		sendLectureContextUpdate();
+	} finally {
+		dcSeedInFlight = false;
+	}
+}
+
+/**
+ * Equivalente a syncUdemyRuntimeForUrl para DataCamp. La señal de «zona de
+ * vídeo» es el iframe del projector: en ejercicios de código/chat/prueba no
+ * existe y aquí no se monta nada. El poll de 1 s lo reevalúa (el iframe
+ * aparece DESPUÉS de que la URL cambie).
+ */
+function syncDataCampRuntime() {
+	const key = getDataCampProjectorKey();
+	if (!key) {
+		if (dcLectureKey) {
+			dcLectureKey = null;
+			dcMeta = null;
+			dcLang = null;
+			dcVideoTime = undefined;
+			dcVideoDuration = undefined;
+			dcVideoRect = null;
+			activeLectureKey = null;
+			resetRuntimeState();
+			destroyInPageDock();
+			destroyOverlay();
+			stopObserver();
+		}
+		return;
+	}
+
+	if (dcLectureKey !== key) {
+		dcLectureKey = key;
+		dcMeta = null;
+		dcLang = null;
+		dcVideoTime = undefined;
+		dcVideoDuration = undefined;
+		dcVideoRect = null;
+		dcSubtitlesSeededKey = null;
+		activeLectureKey = key;
+		resetRuntimeState();
+		void seedDataCampSubtitles(key);
+		void seedDataCampCourseOutline();
+		window.setTimeout(sendLectureContextUpdate, 1500);
+	}
+
+	initInPageDock();
+	if (!overlayEl) {
+		const container = findVideoContainer();
+		createOverlay(container || document.body || document.documentElement as HTMLElement);
+	}
+	startObserver();
+	scanForSubtitleChanges();
+}
+
 function syncUdemyRuntimeForUrl() {
+	if (isDataCampCampusPage()) {
+		syncDataCampRuntime();
+		return;
+	}
 	if (isUdemyLecturePage()) {
 		const nextLectureKey = getLectureKey();
 		if (activeLectureKey !== nextLectureKey) {
@@ -3374,6 +3611,14 @@ function watchUrlChanges() {
 		if (currentUrl !== lastUrl) {
 			lastUrl = currentUrl;
 			syncUdemyRuntimeForUrl();
+			return;
+		}
+		// DataCamp: el iframe del projector aparece DESPUÉS de que la URL cambió
+		// (la SPA monta el reproductor tarde), y desaparece en ejercicios que no
+		// son vídeo. El sync es idempotente, así que en ese sitio se reevalúa
+		// cada tick aunque la URL siga igual; Udemy mantiene su comportamiento.
+		if (isDataCampCampusPage()) {
+			syncUdemyRuntimeForUrl();
 		}
 	}, 1000);
 }
@@ -3401,7 +3646,20 @@ function keepServiceWorkerAlive() {
 // ── Bootstrap ──
 
 function bootstrap() {
-	injectNetworkBridge();
+	// Marco del projector de DataCamp: solo el relé de hora/rect del vídeo.
+	// Sin dock, sin overlay, sin puentes del dock (el app no se monta aquí).
+	if (isDataCampProjectorFrame()) {
+		startDataCampFrameRelay();
+		return;
+	}
+	// DataCamp: el VTT no pasa por la red de la página superior (se pide
+	// directo a la API pública del projector), así que el puente de red no
+	// hace falta; en Udemy sigue siendo la vía de captura.
+	if (!isDataCampCampusPage()) {
+		injectNetworkBridge();
+	} else {
+		window.addEventListener('message', handleDataCampFrameMessage as EventListener);
+	}
 	window.addEventListener('usb:dock→cs', handleDockBridgeEvent as EventListener);
 	syncUdemyRuntimeForUrl();
 	setupChromeMessageHandler();
@@ -3424,7 +3682,10 @@ function bootstrap() {
 		}
 
 		if (message.type === 'GO_TO_NEXT_LECTURE') {
-			void sendToSidebar({ type: 'NEXT_LECTURE_RESULT', payload: { ok: goToNextLecture() } }).catch(() => undefined);
+			// DataCamp: el botón de la SPA es [aria-label="Ir al siguiente
+			// ejercicio"]; en Udemy se queda la navegación de siempre.
+			const ok = isDataCampCampusPage() ? goToNextDataCampExercise() : goToNextLecture();
+			void sendToSidebar({ type: 'NEXT_LECTURE_RESULT', payload: { ok } }).catch(() => undefined);
 			return;
 		}
 
