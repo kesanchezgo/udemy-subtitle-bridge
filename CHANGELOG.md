@@ -19,6 +19,7 @@ DataCamp entra como segundo sitio. Cambia código de la extensión, por eso sube
 
 ## [No liberado]
 
+- **Arnés:** `qa:datacamp:flow` recorre el FLUJO COMPLETO de estudio sobre DataCamp real con IA mock determinista (sin gastar el proveedor): generación a partir del transcript de DataCamp (3.388 chars), Recordar con marcado de ideas, Comprobar con revisiones y plan «de 3» (checkCap), Aplicar con el reto del estudio, Fijar con «Tarjetas de la lección» y «Terminar lección», celebración incluida, y el registro del historial persistido como completado con ideas, preguntas, 3 tarjetas Anki y los nombres reales de curso/lección de DataCamp. El lector de storage filtra el service worker PROPIO de DataCamp (`gsstm.datacamp.com`, sin API `chrome`) que aparecía en `context.serviceWorkers()` y hacía fallar la lectura.
 - **Arnés:** `qa-real-usage` mide la sesión A→B y cierra cada corrida con una línea `plan · …`: tamaño del mazo persistido, ideas marcadas al entrar a Comprobar, «Pregunta N de M» del plan, por cada «Revisar mi respuesta» los segundos hasta el veredicto pintado y si siguió consolidación, la config activa (kind, endpoint sin query, modelo) y la celebración (clic en «Terminar lección» → toast, hasta 20 s). Solo lee: no cambia qué marca ni qué teclea el arnés. Resultados de las cinco corridas y su lectura en `docs/QA_HUMAN_SESSION.md`.
 
 ## [1.6.3] — 2026-11-06
