@@ -244,9 +244,19 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
     dispatchToDock("DOCK_COLLAPSE");
   }, []);
 
-  const handleResizeStart = useCallback((event: React.MouseEvent) => {
+  const handleResizeStart = useCallback((event: React.PointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    // Captura del puntero: al AMPLIAR el dock el arrastre cruza el contenido de
+    // la página y, sobre un iframe (el reproductor de DataCamp), los mousemove
+    // del documento se pierden y el resize se congela en el ancho reducido. Con
+    // la captura, todos los pointer events llegan al asa pase el puntero por
+    // donde pase (la captura se suelta sola en pointerup/cancel).
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      /* sin captura: queda el comportamiento por document (mouse events) */
+    }
     userResized.current = true;
     setIsResizing(true);
     resizeStartX.current = event.clientX;
@@ -258,7 +268,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
       return;
     }
 
-    const handleMove = (event: MouseEvent) => {
+    const handleMove = (event: PointerEvent) => {
       const delta = resizeStartX.current - event.clientX;
       const nextWidth = Math.max(minWidth, Math.min(maxWidth, resizeStartW.current + delta));
       scheduleWidthUpdate(nextWidth);
@@ -282,12 +292,16 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
       setStoredWidth(Math.round(latestWidth.current / textScale));
     };
 
-    document.addEventListener("mousemove", handleMove);
-    document.addEventListener("mouseup", handleUp);
+    // Pointer events (no mouse): con la captura activa burbujean hasta document
+    // aunque el puntero pase sobre el iframe del reproductor.
+    document.addEventListener("pointermove", handleMove);
+    document.addEventListener("pointerup", handleUp);
+    document.addEventListener("pointercancel", handleUp);
 
     return () => {
-      document.removeEventListener("mousemove", handleMove);
-      document.removeEventListener("mouseup", handleUp);
+      document.removeEventListener("pointermove", handleMove);
+      document.removeEventListener("pointerup", handleUp);
+      document.removeEventListener("pointercancel", handleUp);
       if (resizePublishFrame.current !== null) {
         cancelAnimationFrame(resizePublishFrame.current);
         resizePublishFrame.current = null;
@@ -415,7 +429,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
             animate={{ width: DOCK_RESIZE_HANDLE_WIDTH, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.15 }}
-            onMouseDown={handleResizeStart}
+            onPointerDown={handleResizeStart}
             style={{ backgroundColor: isSepia ? "#ffffff" : "#121214" }}
             title="Arrastrar para redimensionar"
             className={`h-full shrink-0 cursor-col-resize flex flex-col items-center justify-center gap-[3px] z-20 group/resize relative transition-colors duration-150 overflow-hidden ${

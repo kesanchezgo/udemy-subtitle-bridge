@@ -333,6 +333,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
 
   // ── Overlay visual settings (persisted) ──────────────────────────────────
   const [showOverlay, setShowOverlay]       = usePersistedState("overlay_show", true);
+  // DataCamp doblado al español: anula el push del overlay en runtime (NO se
+  // persiste, para no cambiar el ajuste del usuario en otros sitios).
+  const [dubbedOverlayOff, setDubbedOverlayOff] = useState(false);
+  const overlayShowEffective = showOverlay && !dubbedOverlayOff;
   const [fontSize, setFontSize]             = usePersistedState<number[]>("overlay_font_size", [24]);
   const [opacity, setOpacity]               = usePersistedState<number[]>("overlay_opacity", [85]);
   const [syncOffset, setSyncOffset]         = usePersistedState<number[]>("overlay_sync_offset", [0]);
@@ -401,8 +405,15 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       courseDescription?: unknown;
       courseContext?: unknown;
       lectureTitle?: unknown;
+      siteDubbedEs?: unknown;
     } | undefined;
     const lectureKey = typeof context?.lectureKey === "string" ? context.lectureKey : null;
+
+    // DataCamp con doblaje al español: el audio ya está en el idioma del
+    // usuario y los subtítulos no aportan nada. Se apaga el push efectivo del
+    // overlay mientras dure la lección doblada, sin tocar el ajuste global
+    // (persistido) del usuario: en Udemy sigue siendo el que él dejó.
+    setDubbedOverlayOff(context?.siteDubbedEs === true);
 
     if (lectureKey && lectureKey !== activeLectureKeyRef.current) {
       activeLectureKeyRef.current = lectureKey;
@@ -644,10 +655,10 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         // lee el content script dejan de coincidir, tsc lo detecta (así no
         // vuelve a pasar lo del glosario, que se mandaba con otro nombre).
         payload: ({
-          show: showOverlay,
-          visible: showOverlay,
-          enabled: showOverlay,
-          showOverlay,
+          show: overlayShowEffective,
+          visible: overlayShowEffective,
+          enabled: overlayShowEffective,
+          showOverlay: overlayShowEffective,
           fontSize: fontSize[0],
           opacity: opacity[0],
           position,
@@ -670,7 +681,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     }, 280);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOverlay, fontSize, opacity, position, textColor, shadowStrength, syncOffset, showGlossaryChip, hasCustomPos, customPosX, customPosY]);
+  }, [overlayShowEffective, fontSize, opacity, position, textColor, shadowStrength, syncOffset, showGlossaryChip, hasCustomPos, customPosX, customPosY]);
 
   // ── Auto-translate toggle sync ────────────────────────────────────────────
   // Only fire on the toggle itself; live-overlay pushes are handled below.

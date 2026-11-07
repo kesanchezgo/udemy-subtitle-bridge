@@ -156,6 +156,8 @@ let dcCourseDescription: string | null = null;
 let dcCourseSlugCache: string | null = null;
 let dcSubtitlesSeededKey: string | null = null;
 let dcSeedInFlight = false;
+/** El vídeo ya está doblado al español: los subtítulos no aportan nada. */
+let dcDubbedEs = false;
 
 // Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
 // el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
@@ -1756,6 +1758,13 @@ function adjustUdemyLayout(width: number, collapsed: boolean, liveResize = false
 		host.style.background = '#0d0e0f';
 	}
 
+	// DataCamp: el contenido vive en <main> — se le da un margen derecho igual
+	// al ancho del dock y el dock queda AL LADO, no encima.
+	if (isDataCampCampusPage()) {
+		adjustDataCampLayout(effectiveWidth, liveResize);
+		return;
+	}
+
 	for (const target of getUdemyLayoutTargets()) {
 		clearDockLayoutStyles(target);
 	}
@@ -2246,6 +2255,35 @@ function resetUdemyLayout() {
 	for (const target of getUdemyLayoutTargets()) {
 		clearDockLayoutStyles(target);
 	}
+	resetDataCampLayout();
+}
+
+// ── Layout de DataCamp: el dock vive DENTRO de la página, no encima ──────────
+// Udemy estrecha su columna de contenido; en DataCamp el contenedor de la
+// lección es <main>, así que el mismo ajuste se hace con un margen derecho
+// igual al ancho del dock. Al destruirse el dock, el margen vuelve a 0.
+let dcLayoutMain: HTMLElement | null = null;
+
+function adjustDataCampLayout(effectiveWidth: number, liveResize = false) {
+	const main = document.querySelector('main');
+	if (!main || typeof (main as HTMLElement).style === 'undefined') return;
+	const el = main as HTMLElement;
+	if (dcLayoutMain && dcLayoutMain !== el) resetDataCampLayout();
+	dcLayoutMain = el;
+	el.setAttribute(USB_LAYOUT_ATTR, '1');
+	el.style.marginRight = `${effectiveWidth}px`;
+	el.style.transition = liveResize
+		? 'none'
+		: 'margin-right 0.3s cubic-bezier(0.4,0,0.2,1)';
+}
+
+function resetDataCampLayout() {
+	if (dcLayoutMain && dcLayoutMain.isConnected) {
+		dcLayoutMain.style.marginRight = '';
+		dcLayoutMain.style.transition = '';
+		dcLayoutMain.removeAttribute(USB_LAYOUT_ATTR);
+	}
+	dcLayoutMain = null;
 }
 
 function destroyInPageDock() {
@@ -2393,6 +2431,10 @@ function buildLectureContextPayload() {
 		lectureTitle: getLectureTitle(),
 		cueCount: bestCueCount,
 		hasEnglish: bestCueCount > 0,
+		// DataCamp con doblaje: el dock apaga su push del overlay (el audio ya
+		// está en español) y puede decirle al usuario el motivo.
+		siteDubbedEs: dcDubbedEs && dcLang === 'es',
+		overlayEnabled: currentConfig.visible && currentConfig.enabled,
 		source: capturedEnVtt && validCueCount >= validCollectedLineCount && validCueCount > 0
 			? 'network-vtt'
 			: validCueCount >= validCollectedLineCount && validCueCount > 0
@@ -2537,8 +2579,15 @@ async function seedDataCampSubtitles(key: string) {
 		capturedEnVtt = resolved.vtt;
 		parseVttIntoCues(resolved.vtt);
 		if (resolved.lang === 'es') {
-			importedEsCues = parseTimedTextIntoCues(resolved.vtt);
-			ensureOverlayVisibleForImportedCues();
+			// Doblaje oficial al español: el audio ya está en el idioma del
+			// usuario, así que el overlay sale DESACTIVADO (encenderlo no aporta
+			// nada y tapa el vídeo). El VTT queda sembrado para el transcript del
+			// estudio y para quien lo encienda a mano.
+			dcDubbedEs = true;
+			currentConfig = { ...currentConfig, visible: false, enabled: false };
+			applyOverlayStyle();
+		} else {
+			dcDubbedEs = false;
 		}
 		scanForSubtitleChanges();
 		sendLectureContextUpdate();
@@ -2560,6 +2609,7 @@ function syncDataCampRuntime() {
 			dcLectureKey = null;
 			dcMeta = null;
 			dcLang = null;
+			dcDubbedEs = false;
 			dcVideoTime = undefined;
 			dcVideoDuration = undefined;
 			dcVideoRect = null;
@@ -2576,6 +2626,7 @@ function syncDataCampRuntime() {
 		dcLectureKey = key;
 		dcMeta = null;
 		dcLang = null;
+		dcDubbedEs = false;
 		dcVideoTime = undefined;
 		dcVideoDuration = undefined;
 		dcVideoRect = null;
@@ -3442,13 +3493,15 @@ function setupChromeMessageHandler() {
 						overlayPosition: currentConfig.position,
 						overlayTextColor: currentConfig.tone
 					},
-					reason: capturedEnVtt
-						? `VTT capturado de red (${validCueCount} cues válidos)`
-						: validCueCount >= validCollectedLineCount && validCueCount > 0
-							? `${validCueCount} cues de textTracks`
-							: validCollectedLineCount > 0
-								? `${validCollectedLineCount} líneas capturadas del DOM`
-								: 'Esperando subtítulos...'
+					reason: dcDubbedEs && dcLang === 'es'
+						? 'El vídeo ya está doblado al español: subtítulos desactivados.'
+						: capturedEnVtt
+							? `VTT capturado de red (${validCueCount} cues válidos)`
+							: validCueCount >= validCollectedLineCount && validCueCount > 0
+								? `${validCueCount} cues de textTracks`
+								: validCollectedLineCount > 0
+									? `${validCollectedLineCount} líneas capturadas del DOM`
+									: 'Esperando subtítulos...'
 				}
 			});
 			return false;

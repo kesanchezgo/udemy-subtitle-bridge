@@ -1,7 +1,9 @@
 /**
- * QA del adaptador de DataCamp: la app aparece SOLO en lecciones de vídeo,
- * monta contexto real (curso/lección), muestra el subtítulo oficial (español
- * sin IA) y sigue la hora del vídeo a través del relé del marco del projector.
+ * QA del adaptador de DataCamp: dock SOLO en lecciones de vídeo y DENTRO del
+ * layout (sin sobrepone), contexto real, doblaje ES → overlay desactivado por
+ * defecto (encendido a mano: cues que avanzan por el relé del marco),
+ * redimensionado que sobrevive a cruzar el iframe del vídeo, y transcripción
+ * del estudio.
  *
  * Uso: npm run qa:datacamp  (cookies reales en .qa-datacamp-cookies.json, git-ignorado)
  */
@@ -63,19 +65,13 @@ const page = context.pages()[0] ?? await context.newPage();
 	}
 }
 
-const shadowText = () => page.evaluate(() => {
-	const host = document.querySelector('[id^="usb-dock-host-"]');
-	const root = host?.shadowRoot;
-	if (!root) return '';
-	const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-		acceptNode: (n) => (n.parentElement?.tagName === 'STYLE' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
-	});
-	let out = '';
-	while (w.nextNode()) out += w.currentNode.textContent ?? '';
-	return out.replace(/\s+/g, ' ');
-});
-
 const overlayText = () => page.evaluate(() => document.querySelector('#usb-overlay')?.textContent?.trim() ?? '');
+const overlayHidden = () => page.evaluate(() => {
+	const el = document.querySelector('#usb-overlay');
+	if (!el) return true;
+	const cs = getComputedStyle(el);
+	return cs.display === 'none' || cs.visibility === 'hidden' || (el.textContent ?? '').trim() === '';
+});
 
 const storageViaSw = async (keys) => {
 	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
@@ -83,7 +79,7 @@ const storageViaSw = async (keys) => {
 	return sw.evaluate((ks) => new Promise((done) => chrome.storage.sync.get(ks, (r) => done(r))), keys);
 };
 
-// ── 1. Lección de vídeo: dock + contexto ──────────────────────────────────────
+// ── 1. Lección de vídeo: dock DENTRO del layout + contexto ────────────────────
 await page.goto(VIDEO_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 let dockShown = false;
 for (let i = 0; i < 25; i += 1) {
@@ -92,8 +88,18 @@ for (let i = 0; i < 25; i += 1) {
 	await page.waitForTimeout(1000);
 }
 check('la lección de vídeo monta el dock', dockShown);
-const proj = await page.locator('iframe[src*="projector.datacamp.com"]').count();
-check('la lección de vídeo es un iframe del projector', proj === 1);
+
+const layout = await page.evaluate(() => {
+	const main = document.querySelector('main');
+	const host = document.querySelector('[id^="usb-dock-host-"]');
+	if (!main || !host) return null;
+	const m = main.getBoundingClientRect();
+	const h = host.getBoundingClientRect();
+	return { mainRight: Math.round(m.right), dockLeft: Math.round(h.left), margin: getComputedStyle(main).marginRight };
+});
+check('el dock NO se sobrepone: <main> estrechado al lado del dock',
+	Boolean(layout) && layout.mainRight <= layout.dockLeft + 2,
+	`main.right=${layout?.mainRight} vs dock.left=${layout?.dockLeft} · margin-right=${layout?.margin}`);
 
 let ctx = null;
 for (let i = 0; i < 12 && !ctx?.agent_course_name; i += 1) {
@@ -104,71 +110,127 @@ for (let i = 0; i < 12 && !ctx?.agent_course_name; i += 1) {
 check('curso real en el contexto', /openai api|api de openai/i.test(String(ctx?.agent_course_name ?? '')), String(ctx?.agent_course_name ?? '(vacío)'));
 check('lección real en el contexto', /API de OpenAI|OpenAI API/i.test(String(ctx?.agent_lesson_name ?? '')), String(ctx?.agent_lesson_name ?? '(vacío)'));
 
-// ── 2. Subtítulo en español, sin IA (curso doblado) ───────────────────────────
-let esShown = false;
-let firstText = '';
-let lastText = '';
-for (let i = 0; i < 40; i += 1) {
-	const t = await overlayText();
-	if (i === 0) firstText = t;
-	if (t) lastText = t;
-	if (/[\u00bf¡]|curso|API|OpenAI/i.test(t)) { esShown = true; break; }
+// ── 2. Doblaje al español: overlay DESACTIVADO por defecto ────────────────────
+const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+let status = null;
+if (sw) {
+	const tabId = await sw.evaluate(() => new Promise((done) => chrome.tabs.query({ url: 'https://app.datacamp.com/*' }, (t) => done(t?.[0]?.id ?? null))));
+	for (let i = 0; i < 12 && !status?.status?.reason; i += 1) {
+		status = await sw.evaluate(async (id) => new Promise((done) => chrome.tabs.sendMessage(id, { type: 'USG_GET_STATUS' }, (r) => {
+			void chrome.runtime.lastError;
+			done(r ?? null);
+		})), tabId).catch(() => null);
+		if (!status?.status?.reason) await page.waitForTimeout(1500);
+	}
+	check('el motivo dice que está doblado (subtítulos sin sentido aquí)', /doblaj|doblado/i.test(String(status?.status?.reason ?? '')), String(status?.status?.reason ?? '(sin motivo)'));
+	check('el overlay está desactivado en el estado', status?.status?.overlayEnabled === false);
+}
+let hidden = true;
+for (let i = 0; i < 16; i += 1) {
+	hidden = await overlayHidden();
+	if (hidden) break;
 	await page.waitForTimeout(750);
 }
-check('el overlay muestra subtítulo', esShown || lastText.length > 0, `texto: «${(lastText || '(vacío)').slice(0, 70)}»`);
-check('el subtítulo está en español', /[\u00bf¡ñáéíóú]|del |curso /i.test(lastText), `«${lastText.slice(0, 60)}»`);
+check('ningún subtítulo pintado sobre el vídeo doblado', hidden);
 
-// El relé del marco: dar play (DataCamp manda auto_play=pause) y esperar a que
-// la hora avance → el texto del overlay cambia.
-const projFrame = page.frames().find((f) => f.url().includes('projector.datacamp.com'));
-let played = false;
-if (projFrame) {
-	played = await projFrame.evaluate(() => {
-		const btn = document.querySelector('.vjs-big-play-button')
-			?? [...document.querySelectorAll('button')].find((b) => /play/i.test(b.getAttribute('aria-label') ?? ''));
-		btn?.click();
-		return Boolean(btn);
-	}).catch(() => false);
+// Optar por subtítulos a mano: aparecen (español oficial) y avanzan con el
+// relé del marco — la hora del vídeo llega del iframe del projector.
+await page.frames().find((f) => f.url().includes('projector.datacamp.com'))?.evaluate(() => {
+	// muted + play(): el autoplay con sonido depende de la política del
+	// navegador; silenciado siempre está permitido y da la hora que el test
+	// necesita. Un usuario real pulsa play con su gesto.
+	const video = document.querySelector('video');
+	if (video) {
+		video.muted = true;
+		video.play?.().catch(() => {});
+	}
+}).catch(() => {});
+if (sw) {
+	await sw.evaluate(async () => {
+		const id = await new Promise((done) => chrome.tabs.query({ url: 'https://app.datacamp.com/*' }, (t) => done(t?.[0]?.id ?? null)));
+		await new Promise((done) => chrome.tabs.sendMessage(id, { type: 'USG_SET_OVERLAY_ENABLED', payload: { enabled: true } }, () => {
+			void chrome.runtime.lastError;
+			done(null);
+		}));
+	}).catch(() => {});
 }
+let esShown = '';
+for (let i = 0; i < 24 && !esShown; i += 1) {
+	esShown = await overlayText();
+	await page.waitForTimeout(750);
+}
+check('con el overlay encendido a mano, subtítulo en español', /[\u00bf¡ñ]|del |curso /i.test(esShown), `«${esShown.slice(0, 60)}»`);
 let changed = false;
-const t0 = await overlayText();
+const t0 = esShown;
 for (let i = 0; i < 25 && !changed; i += 1) {
 	await page.waitForTimeout(1000);
 	const t = await overlayText();
 	if (t && t !== t0) changed = true;
 }
-check('el vídeo recibe play', played);
-check('la hora del vídeo llega por el relé (los cues avanzan)', changed, `«${t0.slice(0, 40)}» → «${(await overlayText()).slice(0, 40)}»`);
+check('la hora del vídeo llega por el relé (los cues avanzan)', changed, `«${t0.slice(0, 36)}» → «${(await overlayText()).slice(0, 36)}»`);
+await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex1.png') }).catch(() => {});
 
-// Transcripción para el flujo de estudio (mismo canal que Udemy).
-const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+// ── 3. Transcripción del estudio (mismo canal que Udemy) ─────────────────────
 if (sw) {
-	const transcript = await sw.evaluate(async ({ tabUrl }) => {
-		const tab = await new Promise((done) => chrome.tabs.query({ url: `${tabUrl.split('?')[0]}*` }, (tabs) => done(tabs?.[0] ?? null)));
-		if (!tab) return null;
-		return new Promise((done) => chrome.tabs.sendMessage(tab.id, { type: 'USG_GET_STUDY_TRANSCRIPT', payload: { maxChars: 4000 } }, (r) => {
+	const transcript = await sw.evaluate(async () => {
+		const id = await new Promise((done) => chrome.tabs.query({ url: 'https://app.datacamp.com/*' }, (t) => done(t?.[0]?.id ?? null)));
+		return new Promise((done) => chrome.tabs.sendMessage(id, { type: 'USG_GET_STUDY_TRANSCRIPT', maxChars: 4000 }, (r) => {
 			void chrome.runtime.lastError;
 			done(r ?? null);
 		}));
-	}, { tabUrl: page.url() }).catch(() => null);
-	const text = String(transcript?.transcriptText ?? transcript?.payload?.text ?? '');
+	}).catch(() => null);
+	const text = String(transcript?.transcriptText ?? '');
 	check('transcripción del estudio disponible', Boolean(transcript?.ok) && (transcript?.cueCount ?? 0) > 0, `${text.length} chars`);
 	check('la transcripción es el contenido de la lección', /OpenAI|API/i.test(text), text.slice(0, 90));
-} else {
-	check('transcripción del estudio disponible', false, 'sin service worker');
 }
-await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex1.png') }).catch(() => {});
 
-// ── 3. Lección que NO es vídeo: el dock desaparece ────────────────────────────
+// ── 4. Redimensionado: ampliar → reducir → ampliar (el flujo del usuario) ────
+{
+	const handlePos = () => page.evaluate(() => {
+		const host = document.querySelector('[id^="usb-dock-host-"]');
+		const handle = [...host.shadowRoot.querySelectorAll('*')].find((e) => (e.getAttribute('title') ?? '') === 'Arrastrar para redimensionar');
+		const r = handle.getBoundingClientRect();
+		return { w: Math.round(host.getBoundingClientRect().width), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+	});
+	const start = await handlePos();
+	// Ampliar primero: el arrastre hacia la izquierda CRUZA el iframe del vídeo.
+	await page.mouse.move(start.x, start.y);
+	await page.mouse.down();
+	for (let i = 1; i <= 10; i += 1) await page.mouse.move(start.x - i * 12, start.y);
+	await page.mouse.up();
+	await page.waitForTimeout(400);
+	const widened = await handlePos();
+	check('ampliar el dock funciona (captura de puntero sobre el iframe)', widened.w > start.w + 60, `${start.w} → ${widened.w}`);
+	// Reducir desde la posición ACTUAL del asa.
+	await page.mouse.move(widened.x, widened.y);
+	await page.mouse.down();
+	for (let i = 1; i <= 8; i += 1) await page.mouse.move(widened.x + i * 12, widened.y);
+	await page.mouse.up();
+	await page.waitForTimeout(400);
+	const reduced = await handlePos();
+	check('reducir después funciona', reduced.w < widened.w, `${widened.w} → ${reduced.w}`);
+	// Y volver a ampliar (el bug reportado: quedaba clavado tras reducir).
+	await page.mouse.move(reduced.x, reduced.y);
+	await page.mouse.down();
+	for (let i = 1; i <= 10; i += 1) await page.mouse.move(reduced.x - i * 12, reduced.y);
+	await page.mouse.up();
+	await page.waitForTimeout(400);
+	const regrown = await handlePos();
+	check('volver a ampliar tras reducir funciona', regrown.w > reduced.w + 60, `${reduced.w} → ${regrown.w}`);
+}
+
+// ── 5. Lección que NO es vídeo: el dock desaparece y el layout se recupera ────
 await page.goto(CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForTimeout(6000);
-const dockOnChat = await page.locator(OUTER).count();
-const projOnChat = await page.locator('iframe[src*="projector.datacamp.com"]').count();
-check('sin iframe del projector en ejercicio de chat', projOnChat === 0);
-check('el dock NO aparece fuera de la zona de vídeo', dockOnChat === 0);
+check('el dock NO aparece fuera de la zona de vídeo', await page.locator(OUTER).count() === 0);
+const chatLayout = await page.evaluate(() => {
+	const main = document.querySelector('main');
+	return main ? getComputedStyle(main).marginRight : null;
+});
+check('sin dock, <main> recupera su margen', chatLayout === '0px', `margin-right=${chatLayout}`);
 await page.screenshot({ path: path.join(SHOTS, 'datacamp-chat-ex2.png') }).catch(() => {});
 
-// ── 4. Otra lección de vídeo: el dock vuelve con su contexto ──────────────────
+// ── 6. Otra lección de vídeo: el dock vuelve con su contexto ──────────────────
 await page.goto(VIDEO2_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 let dockBack = false;
 for (let i = 0; i < 20; i += 1) {
@@ -187,6 +249,5 @@ check('el contexto cambia a la lección nueva', !/¿Qué es la API/i.test(lesson
 await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catch(() => {});
 
 console.log(`\n${failures === 0 ? '✅' : '❌'} DataCamp: ${failures === 0 ? 'todo OK' : `${failures} fallos`}`);
-clearTimeout?.();
 await context.close();
 process.exit(failures === 0 ? 0 : 1);

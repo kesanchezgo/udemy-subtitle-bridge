@@ -1,3 +1,12 @@
+## [1.7.1] — 2026-11-07
+
+Tres correcciones del soporte de DataCamp reportadas en la primera prueba. Cambia código de la extensión, por eso sube la versión.
+
+- **El dock vive DENTRO de la página, no encima.** En DataCamp el dock era `fixed` sobre el contenido: ahora el ajuste de layout de Udemy tiene su equivalente — `<main>` de la lección recibe un margen derecho igual al ancho del dock (con transición), el contenido se estrecha y el dock queda AL LADO. Al destruirse el dock (ejercicio sin vídeo), el margen vuelve a 0. Verificado: `main.right ≤ dock.left` con dock abierto y `margin-right: 0px` sin él.
+- **Redimensionado: ampliar vuelve a funcionar tras reducir.** El asa escuchaba `mousemove` en `document`: al ampliar, el arrastre cruza el contenido y, sobre el iframe del reproductor, esos eventos se pierden y el ancho quedaba clavado en el valor reducido. Ahora el asa usa Pointer Events con **captura de puntero** (`setPointerCapture`): todos los eventos llegan al asa pase el puntero por donde pase (la captura se suelta sola en pointerup/cancel). En Udemy el mismo ciclo ampliar→reducir→ampliar funciona igual.
+- **Curso doblado al español: el overlay sale DESACTIVADO.** La detección de idioma (del contenido del VTT) ahora decide: si el audio ya está en español, los subtítulos no aportan nada — el overlay arranca apagado y el motivo en el estado lo dice («El vídeo ya está doblado al español: subtítulos desactivados»). El push de configuración del dock al montar ya no lo re-enciende por encima: el contexto de lección lleva `siteDubbedEs` y el sidebar anula el push efectivo en runtime sin tocar el ajuste global persistido (en Udemy queda el que el usuario dejó). Quien quiera los subtítulos igualmente, los enciende y funcionan (cues en español por el relé del marco). El VTT sigue sembrado para el transcript del estudio.
+- **Arnés:** `qa:datacamp` pasa a **18/18** con los tres casos nuevos (layout sin solape, ciclo ampliar/reducir/ampliar con arrastre real sobre el iframe, doblaje con overlay apagado + opt-in manual). `qa:full` sigue **59/59**.
+
 ## [1.7.0] — 2026-11-07
 
 DataCamp entra como segundo sitio. Cambia código de la extensión, por eso sube la versión.
