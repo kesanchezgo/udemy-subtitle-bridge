@@ -469,6 +469,29 @@ function looksHtml(v: string): boolean {
   return /<(div\s+class="(concept-box|tip-box|warning-box|interview-box)"|p\b|b\b|em\b|code\b|pre\b|ul\b|ol\b|li\b|table\b|tr\b|th\b|td\b|blockquote\b|details\b|summary\b)/i.test(String(v));
 }
 
+
+/** Garantía: si el objetivo pide entrevistas y el modelo omitió su tarjeta, se
+ *  añade UNA con el contenido de la propia sesión (interviewQ) — sin inventar
+ *  nada y sin duplicar si ya existe. El prompt la exige; esto la asegura. */
+function ensureInterviewCard(content: StudyContent, objective: string): StudyContent {
+  const { isInterview } = getOralPracticeMeta(content, objective);
+  if (!isInterview) return content;
+  if (content.ankiCards.some((c) => c.type === 'entrevista')) return content;
+  const q = content.interviewQ?.q?.trim();
+  const ideal = content.interviewQ?.idealAnswer?.trim();
+  if (!q || !ideal) return content;
+  const card: AnkiCard = {
+    id: `card-${String(content.ankiCards.length + 1).padStart(3, '0')}`,
+    type: 'entrevista',
+    front: q,
+    back: `<div class="interview-box"><div class="label">Entrevista</div><p>${escapeHtml(ideal)}</p></div>`,
+    tags: [],
+    conceptRefs: [],
+    isHtml: true,
+  };
+  return { ...content, ankiCards: [...content.ankiCards, card] };
+}
+
 function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyContent {
   const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const relevance = (raw.relevance && typeof raw.relevance === "object" ? raw.relevance : {}) as Record<string, unknown>;
@@ -582,11 +605,12 @@ function pickStartQuestion(conf: ConfidenceLevel, cnt: StudyContent, checked: Se
 
 function getOralPracticeMeta(content: StudyContent, objective: string) {
   const text = `${objective} ${content.interviewQ?.q ?? ""}`.toLowerCase();
-  const isInterview = /\b(entrevista|interview|technical interview|hiring|recruiter|rrhh)\b/.test(text);
+  const isInterview = /\b(entrevist\w*|interview\w*|hiring|recruit\w*|rrhh)\b/.test(text);
   const isProfessional = /\b(profesional|trabajo|laboral|senior|ingeniero|empresa|producci[oó]n|cliente)\b/.test(text);
 
   if (isInterview) {
     return {
+      isInterview,
       title: "Como en una entrevista",
       subtitle: "Responde como en una entrevista",
       answerLabel: "Ver una buena estructura",
@@ -595,6 +619,7 @@ function getOralPracticeMeta(content: StudyContent, objective: string) {
 
   if (isProfessional) {
     return {
+      isInterview,
       title: "Como en el trabajo",
       subtitle: "Explícalo como en el trabajo",
       answerLabel: "Ver una buena estructura",
@@ -602,6 +627,7 @@ function getOralPracticeMeta(content: StudyContent, objective: string) {
   }
 
   return {
+    isInterview,
     title: "Con tus palabras",
     subtitle: "Explícalo con tus palabras",
     answerLabel: "Ver una buena estructura",
@@ -1227,7 +1253,7 @@ function generateContent(objectiveId: string, custom: string, course: string, le
     },
     // Entrevista solo si el objetivo lo pide (misma regla que el prompt de la IA).
     interviewQ: {
-      q: /\b(entrevista|interview)\b/i.test(goal)
+      q: /\b(entrevist\w*|interview\w*|hiring|recruit\w*|rrhh)\b/i.test(goal)
         ? `En una entrevista te piden explicar «${topic}» en un minuto. ¿Qué dirías? Cubre qué es, para qué sirve y un ejemplo.`
         : `Explícale «${topic}» en un minuto a alguien que no lo conoce. Cubre qué es, para qué sirve y un ejemplo.`,
       idealAnswer: `1) Qué es y qué problema resuelve. 2) Cómo funciona en una frase. 3) Un ejemplo real. 4) Un límite o trade-off.`,
@@ -2211,7 +2237,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           }
         }
         if (prePayload && validateStudyPayload(prePayload).length === 0) {
-          newContent = normalizeStudyContent(prePayload, fallbackContent);
+          newContent = ensureInterviewCard(normalizeStudyContent(prePayload, fallbackContent), sessionObjective);
           await cacheService.del(preKey).catch(() => undefined);
           preGenRef.current = { status: "idle", lectureKey: "", objectiveText: "", objectiveId: null, promise: null, lastAttemptAt: 0 };
           console.info("[USG][study][client] mazo pre-generado consumido (sin espera)");
@@ -2244,7 +2270,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             console.warn("[USG][study][client] invalid learning panel payload:", payloadIssues, aiResult.payload);
             generationError = `Gemini respondió, pero faltan campos requeridos en la sesión: ${payloadIssues.slice(0, 5).join(", ")}.`;
           } else {
-          newContent = normalizeStudyContent(aiResult.payload, fallbackContent);
+          newContent = ensureInterviewCard(normalizeStudyContent(aiResult.payload, fallbackContent), sessionObjective);
           }
         } else if (aiResult?.error) {
           generationError = aiResult.error;

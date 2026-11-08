@@ -1,3 +1,12 @@
+## [1.9.2] — 2026-11-09
+
+Reporte de producción: con un objetivo que pide «aprobar entrevistas», las sesiones salían sin tarjeta de entrevista. Causa raíz encontrada (plural) y garantía añadida. Cambia código de la extensión, por eso sube la versión.
+
+- **CAUSA RAÍZ: la detección de entrevista no reconocía el PLURAL.** La regex pedía palabra exacta (`\bentrevista\b`) y «entrevista**s**» no matchea — con el objetivo del usuario («…aprobar entrevistas de AI Engineer…») la sesión nunca entraba en modo entrevista: ni el rótulo oral «Como en una entrevista», ni la garantía de tarjeta. Ahora cubre inflexiones (`entrevist\w*`, `interview\w*`, `hiring`, `recruit\w*`, `rrhh`) en las dos apariciones.
+- **La tarjeta de entrevista se EXIGE cuando el objetivo la pide** (antes el prompt solo la permitía: «máximo 1… nunca para rellenar cantidad», así que el modelo la puso en una lección y la omitió en otras): regla nueva en el prompt — si el objetivo menciona entrevistas/puesto/trabajo, la sesión DEBE incluir exactamente 1 tarjeta `type="entrevista"`, ADEMÁS del rango recomendado y con contenido de la transcripción.
+- **Garantía determinista** (`ensureInterviewCard`): si el objetivo pide entrevistas y el modelo omitió la tarjeta, se añade UNA construida con el contenido de la propia sesión (`interviewQ`) dentro del callout `interview-box` — sin inventar nada y sin duplicar si ya existe. Se aplica al contenido generado y al pre-generado.
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp` **28/28**, `qa:datacamp:flow` y `test-obsidian-export` en verde.
+
 ## [1.9.1] — 2026-11-08
 
 El escalón muerto fuera: la generación va directa a lo que funciona. Cambia código de la extensión, por eso sube la versión.
