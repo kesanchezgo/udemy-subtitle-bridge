@@ -462,6 +462,13 @@ function validateStudyPayload(payload: unknown): string[] {
   return issues;
 }
 
+// HTML de confianza que el propio prompt autoriza en front/back: si el
+// modelo lo mandó sin la marca isHtml, se repara — la preview, Anki y la
+// re-exportación desde Historial pintan estructuras, no etiquetas crudas.
+function looksHtml(v: string): boolean {
+  return /<(div\s+class="(concept-box|tip-box|warning-box|interview-box)"|p|b|em|code|pre|ul|ol|li|table|tr|th|td|blockquote|details|summary)/i.test(String(v));
+}
+
 function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyContent {
   const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const relevance = (raw.relevance && typeof raw.relevance === "object" ? raw.relevance : {}) as Record<string, unknown>;
@@ -518,7 +525,7 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
           // Sniff: si el modelo mandó las estructuras de bloque que el propio
           // prompt autoriza (callouts, listas, tablas), es HTML aunque no lo
           // marcara — sin esto, la preview y Anki pintan las etiquetas crudas.
-          ...((card.isHtml === true || /<div\s+class="(concept-box|tip-box|warning-box|interview-box)"|<(ul|ol|table|blockquote|details|pre)/i.test(asText(card.back)) || /<div\s+class="(concept-box|tip-box|warning-box|interview-box)"|<(ul|ol|table|blockquote|details|pre)/i.test(asText(card.front))) ? { isHtml: true } : {}),
+          ...((card.isHtml === true || looksHtml(asText(card.back)) || looksHtml(asText(card.front))) ? { isHtml: true } : {}),
         };
       })
     : [];
@@ -1121,12 +1128,16 @@ async function exportApkgFile(
   dcTrackSlug?: string | null,
 ): Promise<string> {
   const root = rootDeck.trim() || "Kinema";
+  // HTML de confianza que el propio prompt autoriza en front/back: si el
+  // modelo lo mandó sin la marca isHtml, se repara aquí — la preview, Anki y
+  // la re-exportación desde Historial pintan estructuras, no etiquetas crudas.
+
   const lessonUrl = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
   const selected = cards.filter((c) => !c.excluded);
   const spec = buildConceptSpec(
     selected.map((c) => ({
-      front: c.isHtml ? c.front : cardTextToHtml(c.front),
-      back: c.isHtml ? c.back : cardTextToHtml(c.back),
+      front: (c.isHtml || looksHtml(c.front)) ? c.front : cardTextToHtml(c.front),
+      back: (c.isHtml || looksHtml(c.back)) ? c.back : cardTextToHtml(c.back),
       // GUID probado: hash de curso|lección|front — reimportar ACTUALIZA en vez de duplicar.
       guid: stableAnkiGuid(course, lesson, c),
       type: c.type,

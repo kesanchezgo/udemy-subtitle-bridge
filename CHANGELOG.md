@@ -1,3 +1,11 @@
+## [1.8.9] — 2026-11-08
+
+Corrección de alcance del 1.8.7: NO era solo la tarjeta de entrevista — TODAS las tarjetas con HTML del modelo (tablas, listas, callouts) sufrían lo mismo, y la re-exportación desde Historial tampoco se reparaba. Cambia código de la extensión, por eso sube la versión.
+
+- **Reparación en el EXPORT, no solo en la generación**: `exportApkgFile` detecta ahora las estructuras de bloque de la lista blanca del prompt (`div` callouts, `p/b/em/code/pre`, listas, tablas, blockquote, details/summary) en front/back y las trata como HTML aunque la tarjeta se haya guardado sin la marca — así se reparan TAMBIÉN las lecciones exportadas con builds anteriores y re-exportadas desde el Historial.
+- **Sniff de generación ampliado** a la misma lista blanca completa (antes solo callouts + listas/tablas).
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp` y `qa:datacamp:flow` en verde.
+
 ## [1.8.8] — 2026-11-08
 
 Reporte de producción: el objetivo refinado se perdía al cambiar de lección o recargar. Cambia código de la extensión, por eso sube la versión.
