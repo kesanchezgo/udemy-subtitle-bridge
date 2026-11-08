@@ -58,8 +58,11 @@ export function formatOriginalSrtBlocks(blocks: SrtBlock[]) {
  */
 export function keyConceptRange(transcriptText: string, cueCount?: number): { min: number; max: number } {
 	const target = estimateAnkiCardTarget(transcriptText, cueCount);
-	if (target.max <= 4) return { min: 2, max: 3 };
-	if (target.max <= 5) return { min: 3, max: 4 };
+	// Invariante: 1 tarjeta por idea como mínimo (ideas máx ≤ tarjetas máx).
+	// En lecciones cortas (hasta ~5 min) las ideas se quedan en 3-4: bajar el
+	// presupuesto de tarjetas NO reduce lo que la sesión analiza.
+	if (target.max <= 3) return { min: 2, max: 3 };
+	if (target.max <= 4) return { min: 3, max: 4 };
 	if (target.max <= 6) return { min: 4, max: 5 };
 	return { min: 5, max: 7 };
 }
@@ -72,11 +75,13 @@ export function keyConceptRange(transcriptText: string, cueCount?: number): { mi
 export function estimateAnkiCardTarget(transcriptText: string, cueCount?: number) {
 	const chars = transcriptText.trim().length;
 	const cues = typeof cueCount === 'number' && Number.isFinite(cueCount) ? cueCount : 0;
-	// Escalón mínimo: una lección de 2 minutos (~150-250 palabras) no justifica
-	// 4-5 tarjetas (una cada 30 s de contenido): 2-3 de alta calidad es lo honesto.
-	if (chars < 1500 || cues > 0 && cues < 30) return { min: 2, max: 3, label: 'leccion muy corta' };
-	if (chars < 2500 || cues > 0 && cues < 35) return { min: 3, max: 4, label: 'leccion corta o liviana' };
-	if (chars < 6000 || cues > 0 && cues < 90) return { min: 4, max: 5, label: 'leccion breve con pocos conceptos' };
+	// Umbrales calibrados con lecciones reales (≈850 chars y ≈11 cues por minuto
+	// en los vídeos de DataCamp): hasta ~2,5 min → 2-3 tarjetas; hasta ~5 min →
+	// 3-4; después escala. Las IDEAS clave de esas lecciones siguen siendo 3-4
+	// (ver keyConceptRange): se recorta la tarjeta de relleno, no la cobertura.
+	if (chars < 2200 || cues > 0 && cues < 27) return { min: 2, max: 3, label: 'leccion muy corta' };
+	if (chars < 4300 || cues > 0 && cues < 55) return { min: 3, max: 4, label: 'leccion corta' };
+	if (chars < 8000 || cues > 0 && cues < 110) return { min: 4, max: 5, label: 'leccion breve con pocos conceptos' };
 	if (chars < 12000 || cues > 0 && cues < 180) return { min: 5, max: 6, label: 'leccion normal' };
 	return { min: 6, max: 8, label: 'leccion larga o densa' };
 }

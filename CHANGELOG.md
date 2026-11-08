@@ -1,3 +1,11 @@
+## [1.9.7] — 2026-11-09
+
+Umbrales de tarjetas calibrados con datos reales: hasta 5 minutos, 3-4 tarjetas SIN perder cobertura. Cambia código de la extensión, por eso sube la versión.
+
+- **Calibración con lecciones reales** (≈850 chars y ≈11 cues por minuto en los vídeos de DataCamp): `≤ 2,5 min → 2-3 tarjetas` · `≤ 5 min → 3-4` · después escala (≤ 8.000 chars → 4-5, ≤ 12.000 → 5-6, más → 6-8). Una lección de 3:28 que antes pedía 5 tarjetas (extremo del rango 4-5) ahora apunta a 3-4.
+- **La cobertura NO baja**: en las lecciones cortas las ideas clave siguen siendo 3-4 (antes 2-3 solo en el tramo mínimo); lo que se recorta es la tarjeta de relleno, no lo que la sesión analiza. Invariante verificado en toda la escalera: `ideas máx ≤ tarjetas máx` (una tarjeta por idea) y la entrevista cuenta dentro del rango.
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp`, `qa:datacamp:flow` y `test-obsidian-export` en verde.
+
 ## [1.9.6] — 2026-11-09
 
 Clics de Obsidian reducidos y duplicación semántica medida con el mazo real. Cambia código de la extensión, por eso sube la versión.
