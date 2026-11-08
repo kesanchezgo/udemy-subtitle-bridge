@@ -1,3 +1,11 @@
+## [1.8.7] — 2026-11-08
+
+Primer uso real en producción destapó el bug de la tarjeta de entrevista, y entran los tags de plataforma. Cambia código de la extensión, por eso sube la versión.
+
+- **La tarjeta de entrevista ya no muestra HTML crudo.** El modelo mandó el back con el callout `interview-box` autorizado por el propio prompt pero SIN `isHtml: true`, y la normalización lo respetaba tal cual: la preview del dock pintaba las etiquetas y Anki habría recibido el HTML escapado. Ahora la normalización detecta las estructuras de bloque que el prompt autoriza (callouts, listas, tablas, blockquotes, details, pre) y las marca como HTML de confianza. Las tarjetas ya exportadas se reparan solas al re-exportar (el GUID no cambia: actualiza, no duplica).
+- **Tag de plataforma en las tarjetas**: `kinema/platform::datacamp|udemy` junto a `kinema::track::…` — filtrar por origen sin fragmentar el árbol de mazos (la estructura `<Root>::Courses::<Curso>::<Lección>` no cambia).
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp` y `qa:datacamp:flow` en verde.
+
 ## [1.8.6] — 2026-11-07
 
 «Otra variante» del objetivo refinado era decorativa: reenviaba la MISMA petición (mismo prompt, temperatura 0.4, sin memoria) y el modelo repetía el resultado; además el prompt anclaba el objetivo a la marca del curso («…la API OpenAI…») ignorando el alcance que el estudiante pidió («no solo openai»). Cambia código de la extensión, por eso sube la versión.

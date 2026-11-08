@@ -515,7 +515,10 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
           // marcado/fallado ni la cobertura de Fijar veían las tarjetas de la IA.
           conceptRefs: normalizeConceptRefs(card.conceptRefs ?? card.concepts, [], keyConcepts.length),
           // Las de refuerzo creadas en Study traen HTML de confianza (al restaurar).
-          ...(card.isHtml === true ? { isHtml: true } : {}),
+          // Sniff: si el modelo mandó las estructuras de bloque que el propio
+          // prompt autoriza (callouts, listas, tablas), es HTML aunque no lo
+          // marcara — sin esto, la preview y Anki pintan las etiquetas crudas.
+          ...((card.isHtml === true || /<div\s+class="(concept-box|tip-box|warning-box|interview-box)"|<(ul|ol|table|blockquote|details|pre)/i.test(asText(card.back)) || /<div\s+class="(concept-box|tip-box|warning-box|interview-box)"|<(ul|ol|table|blockquote|details|pre)/i.test(asText(card.front))) ? { isHtml: true } : {}),
         };
       })
     : [];
@@ -1136,6 +1139,11 @@ async function exportApkgFile(
       tags: [
         ...kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.doubt ? "duda" : c.reinforce ? "study" : undefined }),
         ...(dcTrackSlug ? [`kinema::track::${dcTrackSlug}`] : []),
+        // Plataforma como tag (nunca como mazo): filtrable sin fragmentar el árbol.
+        ...(() => {
+          const platform = typeof window !== "undefined" && window.location.hostname.includes("datacamp") ? "datacamp" : "udemy";
+          return [`kinema/platform::${platform}`];
+        })(),
       ],
     })),
     course,
