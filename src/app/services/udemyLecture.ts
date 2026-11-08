@@ -52,6 +52,10 @@ export function findArticleElement(doc: Document = document): HTMLElement | null
 /** «video» | «article» (texto) | «other» (cuestionario, ejercicio, práctica…). */
 export function getLectureKind(doc: Document = document): 'video' | 'article' | 'other' {
 	if (doc.querySelector('video')) return 'video';
+	// DataCamp: el vídeo vive en el iframe del projector, no en este documento —
+	// sin esto, una lección de vídeo se clasificaba como «other» y el dock decía
+	// «es un cuestionario o ejercicio».
+	if (doc.querySelector('iframe[src*="projector.datacamp.com"]')) return 'video';
 	return findArticleElement(doc) ? 'article' : 'other';
 }
 

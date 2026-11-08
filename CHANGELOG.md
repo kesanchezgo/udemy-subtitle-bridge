@@ -1,3 +1,12 @@
+## [1.9.4] — 2026-11-09
+
+Producción: la lección «Resumir y editar texto» (capítulo 2) salía como «Lección sin video ni texto — es un cuestionario o ejercicio». Dos causas encontradas y corregidas. Cambia código de la extensión, por eso sube la versión.
+
+- **El VTT nativo no siempre viene en `subtitle_vtt_link`.** En varias lecciones del capítulo 2 ese campo llegó `null` y la lista de subtítulos solo traía la entrada del doblaje («Spanish»); el adaptador buscaba únicamente la etiqueta «English» y devolvía null → cero subtítulos sembrados, transcript vacío y el dock diciendo «es un cuestionario». Ahora la selección es por preferencia robusta: nativo → español (doblaje) → inglés → primera entrada. Verificado en vivo: `cueCount 0 → 51`, transcript OK.
+- **`getLectureKind` no reconocía el vídeo de DataCamp**: el vídeo vive en el iframe del projector, así que una lección de vídeo se clasificaba como `'other'` (cuestionario/ejercicio) — etiqueta equivocada y mensaje equivocado. Ahora el iframe del projector cuenta como lección de vídeo.
+- **Arnés**: la comprobación del redimensionado reintenta una vez el arrastre (la intermitencia ocasional era del propio arnés al recolocarse el asa, no del producto).
+- `qa:full` **59/59**, `qa:datacamp` y `qa:datacamp:flow`, `test-obsidian-export` y `qa:ai-health` en verde. Prototipo (.mock) al día.
+
 ## [1.9.3] — 2026-11-09
 
 Auditoría completa de coincidencia de texto (plural/singular, mayúsculas, acentos) tras el fallo del plural. Cambia código de la extensión, por eso sube la versión.

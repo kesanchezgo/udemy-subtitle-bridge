@@ -104,7 +104,16 @@ export function detectVttLanguage(vtt: string): DataCampVttLanguage {
 export async function resolveDataCampSubtitles(key: string): Promise<{ meta: DataCampVideoMeta; vtt: string; lang: DataCampVttLanguage } | null> {
 	const meta = await fetchDataCampVideoMeta(key);
 	if (!meta) return null;
-	const link = meta.subtitle_vtt_link ?? meta.subtitles?.find((t) => t.language === 'English')?.link ?? null;
+	// El VTT nativo va en subtitle_vtt_link, pero NO siempre viene: en varias
+	// lecciones del capítulo 2 llegó null y la lista solo trae la entrada del
+	// doblaje («Spanish») — buscar únicamente «English» dejaba la lección sin
+	// subtítulos. Preferencia: nativo → español (doblaje) → inglés → primera.
+	const list = meta.subtitles ?? [];
+	const link = meta.subtitle_vtt_link
+		?? list.find((s) => /spanish|espa[nñ]ol/i.test(s.language))?.link
+		?? list.find((s) => /english|ingl[eé]s/i.test(s.language))?.link
+		?? list[0]?.link
+		?? null;
 	if (!link) return null;
 	const vtt = await fetchText(link);
 	if (!vtt || !vtt.includes('-->')) return null;

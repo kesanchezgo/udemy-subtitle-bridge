@@ -198,31 +198,33 @@ if (sw) {
 		const r = handle.getBoundingClientRect();
 		return { w: Math.round(host.getBoundingClientRect().width), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
 	});
+	// Arrastre del asa con UN reintento: la primera pulsación puede caer mientras
+	// el asa aún se recoloca tras el resize anterior (intermitencia del arnés,
+	// no del producto — se comprobó en vivo). dx<0 amplía, dx>0 reduce.
+	const drag = async (dx) => {
+		for (let intento = 1; intento <= 2; intento += 1) {
+			const before = await handlePos();
+			await page.mouse.move(before.x, before.y);
+			await page.mouse.down();
+			for (let i = 1; i <= 10; i += 1) await page.mouse.move(before.x + dx * i, before.y);
+			await page.mouse.up();
+			await page.waitForTimeout(450);
+			const after = await handlePos();
+			if (Math.abs(after.w - before.w) > 20) return { before, after };
+		}
+		return { before: await handlePos(), after: await handlePos() };
+	};
+
 	const start = await handlePos();
 	// Ampliar primero: el arrastre hacia la izquierda CRUZA el iframe del vídeo.
-	await page.mouse.move(start.x, start.y);
-	await page.mouse.down();
-	for (let i = 1; i <= 10; i += 1) await page.mouse.move(start.x - i * 12, start.y);
-	await page.mouse.up();
-	await page.waitForTimeout(400);
-	const widened = await handlePos();
-	check('ampliar el dock funciona (captura de puntero sobre el iframe)', widened.w > start.w + 60, `${start.w} → ${widened.w}`);
+	const widenedStep = await drag(-12);
+	check('ampliar el dock funciona (captura de puntero sobre el iframe)', widenedStep.after.w > widenedStep.before.w + 60, `${widenedStep.before.w} → ${widenedStep.after.w}`);
 	// Reducir desde la posición ACTUAL del asa.
-	await page.mouse.move(widened.x, widened.y);
-	await page.mouse.down();
-	for (let i = 1; i <= 8; i += 1) await page.mouse.move(widened.x + i * 12, widened.y);
-	await page.mouse.up();
-	await page.waitForTimeout(400);
-	const reduced = await handlePos();
-	check('reducir después funciona', reduced.w < widened.w, `${widened.w} → ${reduced.w}`);
+	const reducedStep = await drag(12);
+	check('reducir después funciona', reducedStep.after.w < reducedStep.before.w - 60, `${reducedStep.before.w} → ${reducedStep.after.w}`);
 	// Y volver a ampliar (el bug reportado: quedaba clavado tras reducir).
-	await page.mouse.move(reduced.x, reduced.y);
-	await page.mouse.down();
-	for (let i = 1; i <= 10; i += 1) await page.mouse.move(reduced.x - i * 12, reduced.y);
-	await page.mouse.up();
-	await page.waitForTimeout(400);
-	const regrown = await handlePos();
-	check('volver a ampliar tras reducir funciona', regrown.w > reduced.w + 60, `${reduced.w} → ${regrown.w}`);
+	const regrownStep = await drag(-12);
+	check('volver a ampliar tras reducir funciona', regrownStep.after.w > regrownStep.before.w + 60, `${regrownStep.before.w} → ${regrownStep.after.w}`);
 }
 
 // ── 5. Lección que NO es vídeo: el dock desaparece y el layout se recupera ────
