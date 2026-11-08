@@ -268,43 +268,52 @@ await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catc
 			if (!tracks) await page.waitForTimeout(1500);
 		}
 		check('el curso expone sus programas (tracks del outline)', Array.isArray(tracks) && tracks.length >= 3, `${tracks?.length ?? 0} tracks`);
-		// CERO CLIC: sin elección manual, el content script AUTO-DETECTA el
-		// programa (el track inscrito y activo según DataCamp).
+		// AMBIGÜEDAD RESPETADA: la cuenta de QA está inscrita en DOS programas
+		// que contienen este curso (y DataCamp no marca ninguno como activo) —
+		// adivinar «el de más progreso» elegiría developing-ai-applications y no
+		// el que el usuario sigue. Con más de un candidato, el programa queda sin
+		// elegir y decide el usuario en el selector.
+		const enrolled = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context ?? null))));
+		let programAuto = enrolled?.program ?? null;
+		await page.waitForTimeout(2500);
+		const ctxNow = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context ?? null))));
+		programAuto = ctxNow?.program ?? null;
+		check('con varios programas inscritos NO adivina (decide el usuario)', programAuto === null && ctxNow?.activeSlug === null, `program=${programAuto?.slug ?? 'null'} activeSlug=${ctxNow?.activeSlug ?? 'null'}`);
+		// Elección del usuario (lo que haría con el selector): su programa real.
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'associate-ai-engineer-for-developers' }, () => done(null))));
 		let program = null;
 		for (let i = 0; i < 12 && !program; i += 1) {
 			program = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
-			if (!program) await page.waitForTimeout(1500);
+			if (program?.slug !== 'associate-ai-engineer-for-developers') { program = null; await page.waitForTimeout(1500); }
 		}
 		check('el programa elegido trae sus 10 cursos en orden', program?.courses?.length === 10, `${program?.courses?.length ?? 0} cursos`);
 		check('nuestro curso es el primero del programa', program?.courses?.[0]?.title?.includes('OpenAI') === true, program?.courses?.[0]?.title ?? '?');
 		check('el progreso lo da DataCamp (userTrack)', typeof program?.completionRate === 'number', `completionRate=${program?.completionRate}`);
 		check('siguiente curso sugerido con deep-link', Boolean(program?.nextCourse?.slug), program?.nextCourse?.title ?? 'sin sugerencia');
-		check('el programa fue AUTODETECTADO (sin elección manual)', program?.slug === 'associate-ai-engineer-for-developers', program?.slug ?? '(ninguno)');
-		// Override manual: elegir OTRO track del curso cambia el programa al vivo.
+		// Override manual a OTRO track del curso: cambia al vivo.
 		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'openai-fundamentals' }, () => done(null))));
 		let program2 = null;
 		for (let i = 0; i < 12 && !program2; i += 1) {
 			program2 = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
 			if (program2?.slug !== 'openai-fundamentals') { program2 = null; await page.waitForTimeout(1500); }
 		}
-		check('la elección manual del usuario gana sobre la autodetección', program2?.slug === 'openai-fundamentals', program2?.slug ?? '(sin cambio)');
-		// Volver a la autodetección (elección borrada = el usuario «no eligió»).
-		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.remove(['dc_active_track'], () => done(null))));
-		let program3 = null;
-		for (let i = 0; i < 12 && !program3; i += 1) {
-			program3 = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
-			if (program3?.slug !== 'associate-ai-engineer-for-developers') { program3 = null; await page.waitForTimeout(1500); }
-		}
-		check('sin elección manual, vuelve la autodetección', program3?.slug === 'associate-ai-engineer-for-developers', program3?.slug ?? '(sin cambio)');
+		check('la elección manual del usuario gana', program2?.slug === 'openai-fundamentals', program2?.slug ?? '(sin cambio)');
 		// Multi-programa: una preferencia de OTRO programa (que no contiene a
-		// este curso) NO envenena — este curso resuelve por su autodetección.
+		// este curso) NO envenena — este curso cae a la autodetección (que aquí
+		// no elige por ambigüedad) y borra la elección deja el estado limpio.
 		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'associate-data-analyst-in-sql' }, () => done(null))));
 		let program4 = null;
-		for (let i = 0; i < 12 && !program4; i += 1) {
-			program4 = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
-			if (program4?.slug !== 'associate-ai-engineer-for-developers') { program4 = null; await page.waitForTimeout(1500); }
+		for (let i = 0; i < 8 && program4 === null; i += 1) {
+			const c = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context ?? null))));
+			if (c?.activeSlug === null) { program4 = c?.program ?? null; break; }
+			await page.waitForTimeout(1500);
 		}
-		check('una preferencia ajena al curso NO envenena su mapeo', program4?.slug === 'associate-ai-engineer-for-developers', program4?.slug ?? '(envenenado/vacío)');
+		check('una preferencia ajena al curso NO envenena su mapeo', program4 === null, `program=${program4?.slug ?? 'null'}`);
+		// La UI del dock necesita un programa activo: se restaura la elección del
+		// usuario (el perfil se limpia AL FINAL, tras comprobar la UI).
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'associate-ai-engineer-for-developers' }, () => done(null))));
+		await page.waitForTimeout(2500);
+
 		// El dock pinta el programa en Datos del curso (Study → editar). Si el
 		// Study tab muestra «Estás en otra lección» (sesión guardada de otra
 		// lección), primero se abre la lección actual.
@@ -325,6 +334,8 @@ await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catc
 		});
 		check('el dock muestra el selector de programa', /Associate AI Engineer for Developers/.test(dockTxt) && /Sin programa/.test(dockTxt), dockTxt.slice(0, 260));
 		check('el dock muestra el progreso del programa', /Programa:.*· curso \d+ de 10/.test(dockTxt), (dockTxt.match(/Programa:[^·]*·[^.]*curso \d+ de 10/) ?? ['?'])[0].slice(0, 80));
+		// Perfil limpio al terminar (la basura de QA no debe quedar en el perfil).
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.remove(['dc_active_track'], () => done(null))));
 	}
 }
 

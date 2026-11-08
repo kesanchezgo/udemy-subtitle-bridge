@@ -1,3 +1,11 @@
+## [1.9.8] — 2026-11-09
+
+Dos hallazgos de producción: la exportación NO se triplica (medido) y la autodetección del programa era demasiado rígida ante cuentas con varios programas. Cambia código de la extensión, por eso sube la versión.
+
+- **Un gesto = una orden de guardado (medido, no supuesto)**: el arnés del flujo mide ahora, en un navegador real y con tu cadena exacta, que «Exportar .apkg» dispara **UNA** descarga, que la exportación a Obsidian abre **UNA** URI `obsidian://`, que hay un aviso de Obsidian a la vez y que cerrar la lección / ir a la siguiente **no** lanza guardados extra. Resultado: verde. Los «3 guardados» percibidos son los 3 pasos legítimos (nota / índice / MOC), un clic cada uno porque Chrome permite un protocolo externo por gesto — y desde 1.9.6 el índice y el MOC solo se ofrecen una vez por curso/programa, no cada lección.
+- **La autodetección del programa ya no adivina con ambigüedad**: DataCamp dejó de marcar `active` en los tracks del usuario (los cuatro llegan `active=false`) y su cuenta tiene **DOS programas inscritos** que contienen el curso (associate 10,2 %, developing-ai-applications 12,75 %). El criterio anterior exigía `enrolled && active` → no encontraba nada; uno de «más progreso» habría elegido el programa equivocado. Ahora: con UN solo candidato se autodetecta; con varios, **decide el usuario** en el selector (una vez, y persiste). Trazas nuevas del adaptador (`[USG][program] …`) para saber siempre qué devolvió cada track.
+- **Arnés**: el bloque de programa se reescribe para la conducta honesta (ambigüedad respetada + elección del usuario + preferencia ajena que no envenena) y deja el perfil limpio al terminar; la comprobación del índice/MOC en el flujo queda como regresión permanente. `qa:full` **59/59**, `qa:datacamp` **28/28**, `qa:datacamp:flow` y `test-obsidian-export` verdes.
+
 ## [1.9.7] — 2026-11-09
 
 Umbrales de tarjetas calibrados con datos reales: hasta 5 minutos, 3-4 tarjetas SIN perder cobertura. Cambia código de la extensión, por eso sube la versión.

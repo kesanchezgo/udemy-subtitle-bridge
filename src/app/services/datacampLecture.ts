@@ -210,6 +210,7 @@ export async function fetchDataCampUserTrackState(trackSlug: string): Promise<{ 
 		const response = await fetch(`https://learn-hub-api.datacamp.com/tracks/user-track-v2/${encodeURIComponent(trackSlug)}`, { credentials: 'include' });
 		if (!response.ok) return null;
 		const track = (await response.json()) as LearnHubTrack;
+		console.info(`[USG][program] estado ${trackSlug}: enrolled=${track.userTrack?.enrolled} active=${track.userTrack?.active}`);
 		return {
 			enrolled: typeof track.userTrack?.enrolled === 'boolean' ? track.userTrack.enrolled : null,
 			active: typeof track.userTrack?.active === 'boolean' ? track.userTrack.active : null,
@@ -227,10 +228,19 @@ export async function fetchDataCampUserTrackState(trackSlug: string): Promise<{ 
  */
 export async function detectDataCampActiveTrack(tracks: DataCampTrackRef[]): Promise<DataCampTrackRef | null> {
 	const states = await Promise.all(tracks.map(async (t) => ({ track: t, state: await fetchDataCampUserTrackState(t.slug) })));
-	const enrolled = states.filter(({ state }) => state?.enrolled === true && state?.active === true);
-	if (enrolled.length === 0) return null;
-	enrolled.sort((a, b) => (b.state?.completionRate ?? 0) - (a.state?.completionRate ?? 0));
-	return enrolled[0].track;
+	// Preferencia: inscrito Y activo. Si DataCamp no marca ninguno como activo
+	// (su flag cambia y a veces llega false), se aceptan los inscritos.
+	let eligible = states.filter(({ state }) => state?.enrolled === true && state?.active === true);
+	if (eligible.length === 0) eligible = states.filter(({ state }) => state?.enrolled === true);
+	// AMBIGÜEDAD = decisión del usuario: con dos programas inscritos que
+	// contienen el curso, adivinar «el de más progreso» puede elegir el que no
+	// sigue. Solo se autodetecta cuando hay UN candidato; si no, el selector
+	// del dock pide la elección (una vez, y persiste).
+	if (eligible.length !== 1) {
+		console.info(`[USG][program] autodetección: ${eligible.length} candidatos → decide el usuario`);
+		return null;
+	}
+	return eligible[0].track;
 }
 
 /**
@@ -244,9 +254,16 @@ export async function fetchDataCampProgram(
 ): Promise<DataCampProgram | null> {
 	try {
 		const response = await fetch(`https://learn-hub-api.datacamp.com/tracks/user-track-v2/${encodeURIComponent(trackSlug)}`, { credentials: 'include' });
-		if (!response.ok) return null;
+		if (!response.ok) {
+			console.warn(`[USG][program] track ${trackSlug}: HTTP ${response.status}`);
+			return null;
+		}
 		const track = (await response.json()) as LearnHubTrack;
-		if (!track || !Array.isArray(track.courseIds)) return null;
+		if (!track || !Array.isArray(track.courseIds)) {
+			console.warn(`[USG][program] track ${trackSlug}: sin courseIds (` + JSON.stringify(track).slice(0, 120) + ')');
+			return null;
+		}
+		console.info(`[USG][program] track ${trackSlug}: ${track.courseIds.length} cursos`);
 
 		// Cache de títulos por id: 10 cursos son 10 peticiones; el payload no
 		// cambia entre lecciones, así que se piden una vez al día.
