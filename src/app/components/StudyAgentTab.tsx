@@ -1653,6 +1653,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const isDataCampSite = typeof window !== "undefined" && window.location.hostname.includes("datacamp");
   const dcCtxRaw = useDcProgramContext();
   const dcCtx = isDataCampSite ? dcCtxRaw : null;
+  // Contexto del programa para la IA (objetivos y sesión): la posición real
+  // del curso dentro del programa y la descripción del programa. En Udemy
+  // queda undefined y los prompts no mencionan ningún programa.
+  const dcProgramMeta = dcCtx?.program && dcCtx.activeSlug ? {
+    title: dcCtx.program.title,
+    position: dcCtx.courseId ? (dcCtx.program.courses.findIndex(c => c.id === dcCtx.courseId) + 1) || undefined : undefined,
+    total: dcCtx.program.courses.length || undefined,
+    description: dcCtx.program.description || undefined,
+  } : undefined;
+  const aiPlatform = isDataCampSite ? "datacamp" : "udemy";
   const openObsidianSettings = () => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "obsidian" } }));
   const [obsidianHelpOpen, setObsidianHelpOpen]   = useState(false);
   const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
@@ -1987,6 +1997,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           courseDescription: effectiveCourseDescription,
           lessonName,
           objective: objective.text,
+          platform: aiPlatform,
+          program: dcProgramMeta,
         });
         // Condición 2: si el objetivo cambió mientras generaba, se descarta —
         // mismo criterio que el vocabulario al cambiar de lección. Se lee el
@@ -2200,6 +2212,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           courseDescription: effectiveCourseDescription,
           lessonName,
           objective: sessionObjective,
+          platform: aiPlatform,
+          program: dcProgramMeta,
         });
         if (aiResult?.ok && aiResult.payload) {
           const payloadIssues = validateStudyPayload(aiResult.payload);
@@ -2535,7 +2549,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       objectivesForRef.current = courseId;
       setObjectivesLoading(true);
       try {
-        const entry = await objectivesService.getOrGenerate(courseName, effectiveCourseDescription);
+        const entry = await objectivesService.getOrGenerate(courseName, effectiveCourseDescription, { platform: aiPlatform, program: dcProgramMeta });
         // Always surface the objectives, including the deterministic offline
         // fallback, so the Study tab renders instead of staying empty.
         setDynamicObjectives(entry.objectives.length ? entry.objectives : null);
@@ -2570,7 +2584,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     if (objectivesLoading) return;
     setObjectivesLoading(true);
     try {
-      const entry = await objectivesService.regenerate(courseName, effectiveCourseDescription);
+      const entry = await objectivesService.regenerate(courseName, effectiveCourseDescription, { platform: aiPlatform, program: dcProgramMeta });
       setDynamicObjectives(entry.isMock ? null : entry.objectives);
       setObjectivesMock(entry.isMock);
       setObjectivesError(entry.isMock ? (entry.error ?? null) : null);

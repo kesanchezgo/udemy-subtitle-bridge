@@ -1,3 +1,12 @@
+## [1.8.4] — 2026-11-07
+
+El programa entra en la capa de IA: objetivos y sesión de estudio ya consideran la ruta de aprendizaje. Además, los prompts dejan de decir «Udemy» en cualquier plataforma. Cambia código de la extensión, por eso sube la versión.
+
+- **Los prompts reciben el programa.** La generación de sesión (`buildStudyPrompt`) y la de objetivos (`buildObjectivesPrompt`) reciben `PROGRAMA: <título> — curso N de M` + `DESCRIPCIÓN DEL PROGRAMA`, con su regla pedagógica: el programa marca la dirección de aprendizaje (en objetivos, al menos 2 de los 4 deben encajar con esa ruta) y la transcripción sigue siendo la fuente de verdad. La posición es la real del curso dentro del programa.
+- **Plataforma honesta en los prompts.** Las personas de los prompts decían «estudiantes de Udemy» / «cursos online de Udemy» también al estudiar DataCamp; ahora son neutras y viaja `PLATAFORMA: datacamp|udemy` con el mensaje (la nota de sesión ya citaba la plataforma desde 1.8.0).
+- **Cadena completa**: dock (memo con posición real y descripción) → mensajes (`platform` + `program`) → background (validación de forma) → prompts; y la ruta de objetivos vía `objectivesService` → `localAI` → background. Opcional de punta a punta: en Udemy nada de esto viaja y los prompts no mencionan programa.
+- **Prototipo (.mock) al día** (prompts, localAI, objectivesService, StudyAgentTab); `qa:datacamp` **28/28**, `qa:full` **59/59**, `qa:datacamp:flow` en verde.
+
 ## [1.8.3] — 2026-11-07
 
 El programa deja de ser una elección: se AUTODETECTA. Cambia código de la extensión, por eso sube la versión.

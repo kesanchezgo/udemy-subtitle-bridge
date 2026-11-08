@@ -595,8 +595,23 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 	if (type === 'USG_GENERATE_COURSE_OBJECTIVES') {
 		const courseName = String((message as { courseName?: unknown }).courseName || '');
 		const description = String((message as { description?: unknown }).description || '');
+		const aiCtx = {
+			platform: typeof (message as { platform?: unknown }).platform === 'string' ? String((message as { platform?: unknown }).platform) : undefined,
+			program: ((): StudyMetadata['program'] => {
+				const raw = (message as { program?: unknown }).program;
+				if (!raw || typeof raw !== 'object') return undefined;
+				const r = raw as { title?: unknown; position?: unknown; total?: unknown; description?: unknown };
+				if (typeof r.title !== 'string' || !r.title.trim()) return undefined;
+				return {
+					title: r.title,
+					position: typeof r.position === 'number' ? r.position : undefined,
+					total: typeof r.total === 'number' ? r.total : undefined,
+					description: typeof r.description === 'string' ? r.description : undefined,
+				};
+			})()
+		};
 
-		generateObjectivesViaGemini(courseName, description)
+		generateObjectivesViaGemini(courseName, description, aiCtx)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 
@@ -679,6 +694,8 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			objective?: unknown;
 			cueCount?: unknown;
 			transcriptTruncated?: unknown;
+			platform?: unknown;
+			program?: unknown;
 		};
 		const metadata = {
 			lectureKey: String(message.lectureKey || ''),
@@ -689,7 +706,20 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			lessonName: String(studyMessage.lessonName || ''),
 			objective: String(studyMessage.objective || ''),
 			cueCount: typeof studyMessage.cueCount === 'number' ? studyMessage.cueCount : undefined,
-			transcriptTruncated: Boolean(studyMessage.transcriptTruncated)
+			transcriptTruncated: Boolean(studyMessage.transcriptTruncated),
+			platform: typeof studyMessage.platform === 'string' ? studyMessage.platform : undefined,
+			program: ((): StudyMetadata['program'] => {
+				const raw = (studyMessage as { program?: unknown }).program;
+				if (!raw || typeof raw !== 'object') return undefined;
+				const r = raw as { title?: unknown; position?: unknown; total?: unknown; description?: unknown };
+				if (typeof r.title !== 'string' || !r.title.trim()) return undefined;
+				return {
+					title: r.title,
+					position: typeof r.position === 'number' ? r.position : undefined,
+					total: typeof r.total === 'number' ? r.total : undefined,
+					description: typeof r.description === 'string' ? r.description : undefined,
+				};
+			})()
 		};
 
 		keySync
@@ -2012,9 +2042,10 @@ function broadcastRetryNotice(purpose: GeminiPurpose, notice: { round: number; t
 
 async function generateObjectivesViaGemini(
 	courseName: string,
-	description: string
+	description: string,
+	options: { platform?: string; program?: StudyMetadata['program'] } = {}
 ): Promise<{ objectives: GeneratedObjective[]; isMock: boolean; source: 'local' | 'gemini' | 'mock'; error?: string; rawResponse?: string }> {
-	const prompt = buildObjectivesPrompt(courseName, description);
+	const prompt = buildObjectivesPrompt(courseName, description, options);
 
 	console.groupCollapsed('[USG][objectives] generate', { courseName, description: description.slice(0, 80) + (description.length > 80 ? '…' : '') });
 	if (import.meta.env.DEV) console.log('[USG][objectives] prompt sent (first 400 chars):', prompt.slice(0, 400));

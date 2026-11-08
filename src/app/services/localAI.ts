@@ -1392,6 +1392,7 @@ export interface GenerateObjectivesResult {
 export async function generateCourseObjectives(
   courseName: string,
   description: string,
+  aiCtx?: { platform?: string; program?: { title: string; position?: number; total?: number; description?: string } },
 ): Promise<GenerateObjectivesResult> {
   // Try background first (uses local AI 8010 → Gemini key chain with smart distribution)
   const bgResult = await sendToBackground<{
@@ -1404,6 +1405,8 @@ export async function generateCourseObjectives(
     type: "USG_GENERATE_COURSE_OBJECTIVES",
     courseName,
     description,
+    platform: aiCtx?.platform,
+    program: aiCtx?.program,
     purpose: "objectives", // hint for key-distribution
   });
 

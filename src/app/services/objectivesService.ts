@@ -79,7 +79,7 @@ export const objectivesService = {
    * Returns cached objectives if present, otherwise generates via AI and caches.
    * Description is used by the AI; cache key is the course slug only.
    */
-  async getOrGenerate(courseName: string, description: string): Promise<ObjectivesCacheEntry> {
+  async getOrGenerate(courseName: string, description: string, aiCtx?: { platform?: string; program?: { title: string; position?: number; total?: number; description?: string } }): Promise<ObjectivesCacheEntry> {
     const existing = await this.get(courseName);
     if (existing && !existing.isMock) return existing;
     // A cached mock keeps serving for the cooldown window instead of triggering
@@ -87,13 +87,13 @@ export const objectivesService = {
     if (existing?.isMock && Date.now() - existing.generatedAt < MOCK_RETRY_COOLDOWN_MS) {
       return existing;
     }
-    return this.regenerate(courseName, description);
+    return this.regenerate(courseName, description, aiCtx);
   },
 
   /** Force a fresh AI call and overwrite the cache. */
-  async regenerate(courseName: string, description: string): Promise<ObjectivesCacheEntry> {
+  async regenerate(courseName: string, description: string, aiCtx?: { platform?: string; program?: { title: string; position?: number; total?: number; description?: string } }): Promise<ObjectivesCacheEntry> {
     const courseId = slugify(courseName);
-    const { objectives, isMock, source, error } = await generateCourseObjectives(courseName, description);
+    const { objectives, isMock, source, error } = await generateCourseObjectives(courseName, description, aiCtx);
     const entry: ObjectivesCacheEntry = {
       courseId,
       courseName,

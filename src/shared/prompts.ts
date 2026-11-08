@@ -17,6 +17,18 @@ export type SrtBlock = {
 	text: string;
 };
 
+/**
+ * Contexto del programa (career track) para los prompts de IA: el programa
+ * marca la dirección de aprendizaje; el curso actual es un paso de esa ruta.
+ * Opcional — Udemy no tiene programa.
+ */
+export type AiProgramContext = {
+	title: string;
+	position?: number;
+	total?: number;
+	description?: string;
+};
+
 export type StudyMetadata = {
 	lectureKey: string;
 	courseSlug: string;
@@ -27,6 +39,8 @@ export type StudyMetadata = {
 	objective?: string;
 	cueCount?: number;
 	transcriptTruncated?: boolean;
+	platform?: string;
+	program?: AiProgramContext;
 };
 
 export function formatOriginalSrtBlocks(blocks: SrtBlock[]) {
@@ -79,7 +93,7 @@ export function bloomTaskLabel(bloom: string): string {
 
 export function buildSrtTranslationPrompt(blocks: SrtBlock[]): string {
 	return [
-		'Actúa como traductor experto para cursos online de Udemy.',
+		'Actúa como traductor experto para cursos online.',
 		'Traduce este SRT de inglés a español latino neutro.',
 		'',
 		'REGLAS OBLIGATORIAS:',
@@ -107,10 +121,20 @@ export function buildSrtTranslationPrompt(blocks: SrtBlock[]): string {
 	].join('\n');
 }
 
-export function buildObjectivesPrompt(courseName: string, description: string): string {
+export function buildObjectivesPrompt(
+	courseName: string,
+	description: string,
+	options: { platform?: string; program?: AiProgramContext } = {},
+): string {
+	const program = options.program;
 	return [
-		'Eres un asesor pedagógico para estudiantes de Udemy.',
+		'Eres un asesor pedagógico para estudiantes de cursos online.',
 		'Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.',
+		...(options.platform ? [`PLATAFORMA: ${options.platform}`] : []),
+		...(program ? [
+			`PROGRAMA: ${program.title}${program.position && program.total ? ` — curso ${program.position} de ${program.total}` : ''}`,
+			...(program.description ? [`DESCRIPCIÓN DEL PROGRAMA: ${program.description}`] : []),
+		] : []),
 		'',
 		'FORMATO DE SALIDA (CRÍTICO):',
 		'- Responde EXCLUSIVAMENTE con un array JSON válido.',
@@ -138,6 +162,7 @@ export function buildObjectivesPrompt(courseName: string, description: string): 
 		'- NO fuerces entrevista, certificación o proyecto si el curso no lo justifica.',
 		'- Si el curso no es técnico o no es de código, adapta los objetivos al dominio real del curso.',
 		'- Usa solo los datos proporcionados. No inventes detalles externos del curso.',
+		...(program ? ['- Al menos 2 de los 4 objetivos deben encajar con la dirección del PROGRAMA al que pertenece el curso.'] : []),
 		'- Personalízalos al curso específico, no genérico.',
 		'',
 		`Curso: ${courseName}`,
@@ -149,7 +174,7 @@ export function buildObjectivesPrompt(courseName: string, description: string): 
 
 export function buildRefinePrompt(courseName: string, description: string, rawGoal: string): string {
 	return [
-		'Eres un coach pedagógico para estudiantes de Udemy.',
+		'Eres un coach pedagógico para estudiantes de cursos online.',
 		'Convierte el objetivo libre del estudiante en un objetivo de aprendizaje personalizado y de alta calidad.',
 		'Debe mantener la intención original del estudiante y adaptarse al curso real.',
 		'',
@@ -183,15 +208,21 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 	const cardTarget = estimateAnkiCardTarget(transcriptText, metadata.cueCount);
 	const ideas = keyConceptRange(transcriptText, metadata.cueCount);
 	return [
-		'Eres un diseñador instruccional experto para cursos online de Udemy.',
+		'Eres un diseñador instruccional experto para cursos online.',
 		'Genera una sesión de estudio adaptada al curso, la lección actual y el objetivo del estudiante.',
 		'No asumas que el curso es de programación. Si es técnico, usa su lenguaje/framework real; si no lo es, crea ejercicios prácticos del dominio correspondiente.',
-		'Usa esta prioridad pedagogica: 1) la transcripción es la fuente de verdad; 2) el objetivo del estudiante define el ángulo, dificultad y distribución; 3) el curso/descripción solo aporta contexto; 4) no inventes contenido para satisfacer el objetivo.',
+		'Usa esta prioridad pedagogica: 1) la transcripción es la fuente de verdad; 2) el objetivo del estudiante define el ángulo, dificultad y distribución; 3) el curso/descripción y el programa aportan contexto; 4) no inventes contenido para satisfacer el objetivo.',
 		'',
-		`CURSO: ${metadata.courseName || metadata.courseSlug || 'Curso Udemy'}`,
+		`CURSO: ${metadata.courseName || metadata.courseSlug || 'Curso online'}`,
 		`DESCRIPCIÓN DEL CURSO: ${metadata.courseDescription || '(sin descripción)'}`,
 		`LECCIÓN: ${metadata.lessonName || metadata.lectureId || 'Desconocida'}`,
 		`OBJETIVO DEL ESTUDIANTE: ${metadata.objective || 'Dominar la lección y aplicarla correctamente'}`,
+		...(metadata.platform ? [`PLATAFORMA: ${metadata.platform}`] : []),
+		...(metadata.program ? [
+			`PROGRAMA: ${metadata.program.title}${metadata.program.position && metadata.program.total ? ` — curso ${metadata.program.position} de ${metadata.program.total}` : ''}`,
+			...(metadata.program.description ? [`DESCRIPCIÓN DEL PROGRAMA: ${metadata.program.description}`] : []),
+			'El programa marca la dirección de aprendizaje del estudiante: objetivos, preguntas y ejercicios deben encajar con esa ruta; el curso actual es un paso de ella.',
+		] : []),
 		`DENSIDAD DE LA LECCIÓN: ${cardTarget.label}; transcripción ${transcriptText.length} caracteres; cues ${metadata.cueCount ?? 'desconocidos'}; truncada: ${metadata.transcriptTruncated ? 'sí' : 'no'}`,
 		`IDEAS CLAVE ESPERABLES: ${ideas.min}-${ideas.max}`,
 		`CANTIDAD RECOMENDADA DE ANKI: ${cardTarget.min}-${cardTarget.max} tarjetas`,
@@ -403,10 +434,10 @@ export interface VocabularyOptions {
  */
 export function buildVocabularyPrompt(transcriptText: string, options: VocabularyOptions): string {
 	return [
-		`Eres un creador experto de tarjetas de vocabulario para aprender ${options.targetLang} con el método de repetición espaciada, especializado en reutilizar contenido real de cursos online de Udemy.`,
+		`Eres un creador experto de tarjetas de vocabulario para aprender ${options.targetLang} con el método de repetición espaciada, especializado en reutilizar contenido real de cursos online.`,
 		`El estudiante tiene ${options.baseLang} como lengua base y quiere aprovechar el contenido del curso para ampliar su vocabulario de ${options.targetLang}.`,
 		'',
-		`CURSO: ${options.course || 'Curso Udemy'}`,
+		`CURSO: ${options.course || 'Curso online'}`,
 		`LECCIÓN: ${options.lesson || 'Desconocida'}`,
 		`NIVEL MÍNIMO (CEFR, incluido): ${options.minLevel}`,
 		`MÁXIMO DE PALABRAS: ${options.maxWords}`,
