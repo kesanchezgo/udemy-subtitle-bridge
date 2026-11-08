@@ -580,7 +580,20 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
         : fallback.interviewQ,
     nextAction: asText(raw.nextAction, fallback.nextAction),
     // Sin duplicados: mismo frente = misma nota en Anki (una pisaría a la otra).
-    ankiCards: cards.length >= 3 ? cards.filter((c, i, arr) => arr.findIndex(o => cardFrontKey(o.front) === cardFrontKey(c.front)) === i) : fallback.ankiCards,
+    // Red de seguridad: dos tarjetas con el MISMO frente normalizado se
+    // fusionan en una (el prompt ya pide no duplicar ideas; esto lo garantiza).
+    ankiCards: (() => {
+      const withUniqueFronts = cards.filter((c, i, arr) => arr.findIndex((o) => cardFrontKey(o.front) === cardFrontKey(c.front)) === i);
+      const seen = new Set<string>();
+      const noRepeat = withUniqueFronts.filter((c) => {
+        const key = String(c.front || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return noRepeat.length >= 3 ? noRepeat : (noRepeat.length > 0 ? noRepeat : fallback.ankiCards);
+    })(),
   };
 }
 
@@ -3453,7 +3466,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           open: () => openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
             path: programPath,
             markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder, mocsFolder: obsidianCfg.mocsFolder }),
-          })),
+          }, { overwrite: true })),
         });
       }
       if (obsidianCfg.includeRawSrt && srt) {

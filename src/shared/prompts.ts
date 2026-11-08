@@ -72,6 +72,9 @@ export function keyConceptRange(transcriptText: string, cueCount?: number): { mi
 export function estimateAnkiCardTarget(transcriptText: string, cueCount?: number) {
 	const chars = transcriptText.trim().length;
 	const cues = typeof cueCount === 'number' && Number.isFinite(cueCount) ? cueCount : 0;
+	// Escalón mínimo: una lección de 2 minutos (~150-250 palabras) no justifica
+	// 4-5 tarjetas (una cada 30 s de contenido): 2-3 de alta calidad es lo honesto.
+	if (chars < 1500 || cues > 0 && cues < 30) return { min: 2, max: 3, label: 'leccion muy corta' };
 	if (chars < 2500 || cues > 0 && cues < 35) return { min: 3, max: 4, label: 'leccion corta o liviana' };
 	if (chars < 6000 || cues > 0 && cues < 90) return { min: 4, max: 5, label: 'leccion breve con pocos conceptos' };
 	if (chars < 12000 || cues > 0 && cues < 180) return { min: 5, max: 6, label: 'leccion normal' };
@@ -287,6 +290,7 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- Usa el objetivo para decidir el enfoque de preguntas y tarjetas. Ejemplo: si el objetivo es entrevista, favorece explicación oral, comparaciones, trade-offs y preguntas tipo entrevista, PERO solo cuando se justifiquen desde la transcripción.',
 		`- Genera entre ${cardTarget.min} y ${cardTarget.max} tarjetas Anki útiles y específicas de la lección. No rellenes por cantidad: una lección corta debe tener pocas tarjetas de alta calidad; una lección densa puede tener más.`,
 		'- Cada tarjeta Anki debe ser atómica: una sola idea evaluable por tarjeta. Evita duplicados, preguntas vagas y respuestas enciclopédicas.',
+		'- No repitas la MISMA idea en dos tarjetas desde ángulos distintos (p. ej. «qué controla X» y «qué implica X»): si dos tarjetas comparten concepto, FUSÍONALAS en una sola atómica.',
 		'',
 		'PRINCIPIOS DE REPETICIÓN ESPACIADA (estas tarjetas van a Anki):',
 		'- Autocontenido: cada tarjeta debe entenderse FUERA de contexto; incluye el mínimo necesario para saber de qué habla (nombre de la clase, función o concepto).',
@@ -304,7 +308,7 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- type="comparacion" → A3 (info mínima): el FRONT pregunta por UNA dimensión discriminante («¿Cuándo compila el JIT frente al AOT y qué gana cada uno?»). El back abre con 1-2 líneas que responden esa dimensión; la tabla queda como apoyo con 3 filas como máximo.',
 		'- type="proceso" → A3 (info mínima): 4 pasos como máximo. Si el proceso tiene más, el front pregunta por el paso que falta o el que sigue («Después de X, ¿qué paso sigue y por qué?»). La secuencia completa en el back SOLO si tiene ≤4 pasos.',
 		'- type="entrevista" → MÁXIMO 1 por lección. Back con <div class="interview-box"> que abra con <div class="label">Entrevista</div> y estructure la respuesta en 3-4 puntos.',
-		'- Si el OBJETIVO DEL ESTUDIANTE menciona entrevistas, preparación de un puesto o conseguir trabajo (entrevista/interview/job/puesto/hiring), la sesión DEBE incluir EXACTAMENTE 1 tarjeta type="entrevista": va ADEMÁS del rango recomendado de tarjetas (no lo consume) y su contenido sale de la transcripción, no de temas externos.',
+		'- Si el OBJETIVO DEL ESTUDIANTE menciona entrevistas, preparación de un puesto o conseguir trabajo (entrevista/interview/job/puesto/hiring), la sesión DEBE incluir EXACTAMENTE 1 tarjeta type="entrevista": CUENTA dentro del rango recomendado en lecciones cortas (2-4: usa el extremo superior para ella, no infla el total) y puede ir ADEMÁS del rango solo en lecciones de 5 o más. Su contenido sale de la transcripción, no de temas externos.',
 		'- Añade "summary" al JSON: 3-5 frases que sinteticen la lección CON TUS PALABRAS, en español (síntesis generativa). No repitas las keyConcepts literalmente.',
 		'- Añade "conceptTerms": 2-5 nombres canónicos en singular, tal como se usan en el curso (p. ej. "bytecode", "JIT"). Serán conceptos enlazables entre cursos.',
 		...(TIMED_TRANSCRIPT ? ['- Cada ankiCard lleva además "t": "mm:ss" — el minuto EXACTO marcado en la transcripción temporizada. Si no hay marca cerca, omítelo.'] : []),

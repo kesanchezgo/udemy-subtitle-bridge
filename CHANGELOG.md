@@ -1,3 +1,14 @@
+## [1.9.5] — 2026-11-09
+
+Escalado de tarjetas auditado con el mazo REAL del usuario (26 tarjetas vía AnkiConnect) y con su vault (D:\Obsidian\Dev Courses). Cambia código de la extensión, por eso sube la versión.
+
+- **Lo auditado y ya correcto (sin cambios)**: las 26 tarjetas tienen tags completos (`kinema/platform::datacamp`, `kinema::track::…`, curso, lección, tipo, temas), TODOS los reversos son HTML bien formado (sin escapes), **cero duplicados exactos entre lecciones** y las notas de Obsidian llevan `platform`, `programa`, `programa_slug`, `programas` (todos los tracks), `concepts` y el mazo real — el MOC del curso está bien formado.
+- **Escalón para lecciones muy cortas**: una lección de 2 min (~150-250 palabras) generaba 3-4 tarjetas (+entrevista = 4-5, una cada 30 s). Ahora hay un escalón propio (`< 1.500 chars o < 30 cues → 2-3 tarjetas`): 2 min → **3 tarjetas totales**.
+- **La tarjeta de entrevista CUENTA dentro del rango en lecciones cortas** (usa el extremo superior; ya no infla el total) y solo va además del rango en lecciones de 5 o más.
+- **Anti-duplicación de la misma idea**: regla nueva en el prompt (fusionar dos tarjetas que comparten concepto en vez de reformularlas) + red de seguridad determinista en la normalización (dos frentes idénticos tras normalizar → se fusionan). En una lección real aparecieron dos tarjetas sobre `temperature` y dos sobre `max_completion_tokens` desde ángulos distintos — esta regla apunta a eso.
+- **MOC del programa con `overwrite`**: si el fichero ya existe (p. ej. el stub vacío que crea Obsidian al abrir el enlace sin resolver) se REESCRIBE en vez de crear «… 1.md».
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp`, `qa:datacamp:flow` y `test-obsidian-export` en verde.
+
 ## [1.9.4] — 2026-11-09
 
 Producción: la lección «Resumir y editar texto» (capítulo 2) salía como «Lección sin video ni texto — es un cuestionario o ejercicio». Dos causas encontradas y corregidas. Cambia código de la extensión, por eso sube la versión.
