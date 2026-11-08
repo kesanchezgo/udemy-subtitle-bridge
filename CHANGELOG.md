@@ -1,3 +1,13 @@
+## [1.9.3] — 2026-11-09
+
+Auditoría completa de coincidencia de texto (plural/singular, mayúsculas, acentos) tras el fallo del plural. Cambia código de la extensión, por eso sube la versión.
+
+- **Clase del plural cerrada en TODOS los detectores de intención**: `isProfessional` sufría el mismo bug que `isInterview` (no matcheaba «clientes», «empresas», «ingenieros», «trabajos»); ahora usa inflexiones (`client\w*`, `empres\w*`, …).
+- **Acentos resueltos en las dos direcciones**: el texto se normaliza con NFD y se le quitan los diacríticos antes de comparar — «profesión», «producción», «ENTREVISTA» y «entrevistas» matchean igual que sus formas sin acento, sin importar mayúsculas (el texto ya se pasa a minúsculas).
+- **`HTTP 400` en el clasificador de errores del proveedor** ahora es insensible a mayúsculas (antes solo veía la forma exacta en mayúsculas).
+- **Auditado y ya correcto** (verificado, sin cambios): normalización de `difficulty`, `type` de tarjeta y `bloom` (todas comparan en minúsculas), el clasificador de errores de generación (pasa el mensaje a minúsculas), el filtro de títulos de la página, el emparejamiento de vocabulario y la detección de idioma del VTT.
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp`, `qa:datacamp:flow`, `test-obsidian-export` y `qa:ai-health` en verde.
+
 ## [1.9.2] — 2026-11-09
 
 Reporte de producción: con un objetivo que pide «aprobar entrevistas», las sesiones salían sin tarjeta de entrevista. Causa raíz encontrada (plural) y garantía añadida. Cambia código de la extensión, por eso sube la versión.

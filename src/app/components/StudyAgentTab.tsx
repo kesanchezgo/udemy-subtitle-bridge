@@ -604,9 +604,15 @@ function pickStartQuestion(conf: ConfidenceLevel, cnt: StudyContent, checked: Se
 }
 
 function getOralPracticeMeta(content: StudyContent, objective: string) {
-  const text = `${objective} ${content.interviewQ?.q ?? ""}`.toLowerCase();
+  // Texto normalizado para comparar: minúsculas + SIN acentos (NFD), y los
+  // patrones toleran plurales/inflexiones (\w*) — «entrevistas», «profesión»,
+  // «empresas» y «clientes» tienen que matchear igual que el singular.
+  const text = `${objective} ${content.interviewQ?.q ?? ""}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
   const isInterview = /\b(entrevist\w*|interview\w*|hiring|recruit\w*|rrhh)\b/.test(text);
-  const isProfessional = /\b(profesional|trabajo|laboral|senior|ingeniero|empresa|producci[oó]n|cliente)\b/.test(text);
+  const isProfessional = /\b(profesion\w*|trabaj\w*|laboral\w*|senior\w*|ingenier\w*|empres\w*|produccion\w*|client\w*)\b/.test(text);
 
   if (isInterview) {
     return {

@@ -439,7 +439,7 @@ async function streamConfiguredProvider(
       // Un servidor estricto puede rechazar los campos anti-reasoning (HTTP
       // 400): reintenta una vez sin ellos antes de propagar el fallo.
       const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
-      if (extra && /\bHTTP 400\b/.test(msg)) {
+      if (extra && /\bHTTP 400\b/i.test(msg)) {
         buffer = '';
         await pump(undefined);
       } else {
