@@ -1,3 +1,10 @@
+## [1.8.8] — 2026-11-08
+
+Reporte de producción: el objetivo refinado se perdía al cambiar de lección o recargar. Cambia código de la extensión, por eso sube la versión.
+
+- **El objetivo refinado ahora se persiste** (`agent_refined_obj` / `agent_refined_from` por storage, el mismo canal que el objetivo personalizado): sobrevive recargas y cambios de lección, y solo se vacía con el descarte (X). Tras «Usar como mi texto» sigue coherente (el texto usado = el refinado).
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp`, `qa:datacamp:flow` y `test-obsidian-export` en verde.
+
 ## [1.8.7] — 2026-11-08
 
 Primer uso real en producción destapó el bug de la tarjeta de entrevista, y entran los tags de plataforma. Cambia código de la extensión, por eso sube la versión.

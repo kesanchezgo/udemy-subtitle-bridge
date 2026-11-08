@@ -1489,8 +1489,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   });
   const [selectedObj, setSelectedObj] = usePersistedState<string>("agent_selected_obj", IS_EXTENSION ? "" : "spring-interview");
   const [customObj, setCustomObj]     = usePersistedState<string>("agent_custom_obj", "");
-  const [refinedObj, setRefinedObj]   = useState("");
-  const [refinedFromText, setRefinedFromText] = useState("");
+  // Persistidos: el refinado sobrevive recargas y cambios de lección (mismo
+  // patrón que agent_custom_obj). Se vacían solo con el descarte (X).
+  const [refinedObj, setRefinedObj]       = usePersistedState<string>("agent_refined_obj", "");
+  const [refinedFromText, setRefinedFromText] = usePersistedState<string>("agent_refined_from", "");
   const [isRefining, setIsRefining]   = useState(false);
   /** Variantes ya mostradas del texto actual (máx 5): «Otra variante» las excluye. */
   const refineHistoryRef = useRef<string[]>([]);
