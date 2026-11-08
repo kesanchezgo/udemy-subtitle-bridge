@@ -59,9 +59,12 @@ const page = context.pages()[0] ?? await context.newPage();
 	const sw0 = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 	if (sw0) {
 		await sw0.evaluate(() => new Promise((done) => chrome.storage.sync.remove(
-			['agent_course_name', 'agent_lesson_name', 'agent_lesson_autofill_key', 'agent_lesson_autofill_value'],
+			['agent_course_name', 'agent_lesson_name', 'agent_lesson_autofill_key', 'agent_lesson_autofill_value', 'dc_active_track', 'dc_program_context'],
 			() => done(null),
 		)));
+		await sw0.evaluate(() => new Promise((done) => chrome.storage.local.get(null, (all) => {
+			chrome.storage.local.remove(Object.keys(all ?? {}).filter((k) => k.startsWith('dc_auto_track::') || k.startsWith('dc_program_cache::')), () => done(null));
+		})));
 		// Ancho del dock a su valor por defecto: si una corrida anterior lo dejó
 		// en el máximo (720), el ciclo de resize no tendría margen para ampliar.
 		await sw0.evaluate(() => new Promise((done) => chrome.storage.local.remove(['dock_width'], () => done(null))));
@@ -263,9 +266,8 @@ await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catc
 			if (!tracks) await page.waitForTimeout(1500);
 		}
 		check('el curso expone sus programas (tracks del outline)', Array.isArray(tracks) && tracks.length >= 3, `${tracks?.length ?? 0} tracks`);
-		// Elegir «Associate AI Engineer for Developers» (como haría el usuario
-		// con el selector del dock): el content script trae el programa entero.
-		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'associate-ai-engineer-for-developers' }, () => done(null))));
+		// CERO CLIC: sin elección manual, el content script AUTO-DETECTA el
+		// programa (el track inscrito y activo según DataCamp).
 		let program = null;
 		for (let i = 0; i < 12 && !program; i += 1) {
 			program = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
@@ -275,6 +277,23 @@ await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catc
 		check('nuestro curso es el primero del programa', program?.courses?.[0]?.title?.includes('OpenAI') === true, program?.courses?.[0]?.title ?? '?');
 		check('el progreso lo da DataCamp (userTrack)', typeof program?.completionRate === 'number', `completionRate=${program?.completionRate}`);
 		check('siguiente curso sugerido con deep-link', Boolean(program?.nextCourse?.slug), program?.nextCourse?.title ?? 'sin sugerencia');
+		check('el programa fue AUTODETECTADO (sin elección manual)', program?.slug === 'associate-ai-engineer-for-developers', program?.slug ?? '(ninguno)');
+		// Override manual: elegir OTRO track del curso cambia el programa al vivo.
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'openai-fundamentals' }, () => done(null))));
+		let program2 = null;
+		for (let i = 0; i < 12 && !program2; i += 1) {
+			program2 = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
+			if (program2?.slug !== 'openai-fundamentals') { program2 = null; await page.waitForTimeout(1500); }
+		}
+		check('la elección manual del usuario gana sobre la autodetección', program2?.slug === 'openai-fundamentals', program2?.slug ?? '(sin cambio)');
+		// Volver a la autodetección (elección borrada = el usuario «no eligió»).
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.remove(['dc_active_track'], () => done(null))));
+		let program3 = null;
+		for (let i = 0; i < 12 && !program3; i += 1) {
+			program3 = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
+			if (program3?.slug !== 'associate-ai-engineer-for-developers') { program3 = null; await page.waitForTimeout(1500); }
+		}
+		check('sin elección manual, vuelve la autodetección', program3?.slug === 'associate-ai-engineer-for-developers', program3?.slug ?? '(sin cambio)');
 		// El dock pinta el programa en Datos del curso (Study → editar). Si el
 		// Study tab muestra «Estás en otra lección» (sesión guardada de otra
 		// lección), primero se abre la lección actual.

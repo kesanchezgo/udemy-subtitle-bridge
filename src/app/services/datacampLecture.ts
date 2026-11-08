@@ -195,6 +195,35 @@ type LearnHubTrack = {
 	userContent?: Array<{ completed?: boolean; content?: { id?: number; contentType?: string } }> | null;
 };
 
+/** Estado del usuario en UN track (barato: es la misma API del programa). */
+export async function fetchDataCampUserTrackState(trackSlug: string): Promise<{ enrolled: boolean | null; active: boolean | null; completionRate: number | null } | null> {
+	try {
+		const response = await fetch(`https://learn-hub-api.datacamp.com/tracks/user-track-v2/${encodeURIComponent(trackSlug)}`, { credentials: 'include' });
+		if (!response.ok) return null;
+		const track = (await response.json()) as LearnHubTrack;
+		return {
+			enrolled: typeof track.userTrack?.enrolled === 'boolean' ? track.userTrack.enrolled : null,
+			active: typeof track.userTrack?.active === 'boolean' ? track.userTrack.active : null,
+			completionRate: typeof track.userTrack?.completionRate === 'number' ? track.userTrack.completionRate : null,
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * El programa del curso SIN preguntarle al usuario: de los tracks del curso,
+ * el que DataCamp marca como inscrito y activo (a más progreso, si hubiera
+ * varios). null si ninguno cumple — y entonces sí toca al selector.
+ */
+export async function detectDataCampActiveTrack(tracks: DataCampTrackRef[]): Promise<DataCampTrackRef | null> {
+	const states = await Promise.all(tracks.map(async (t) => ({ track: t, state: await fetchDataCampUserTrackState(t.slug) })));
+	const enrolled = states.filter(({ state }) => state?.enrolled === true && state?.active === true);
+	if (enrolled.length === 0) return null;
+	enrolled.sort((a, b) => (b.state?.completionRate ?? 0) - (a.state?.completionRate ?? 0));
+	return enrolled[0].track;
+}
+
 /**
  * El programa completo para el estudio: cursos en orden con su título (la API
  * del track solo da ids; los títulos se resuelven por id y se cachean 24 h en
