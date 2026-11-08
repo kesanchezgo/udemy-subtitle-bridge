@@ -1,3 +1,10 @@
+## [1.8.3] — 2026-11-07
+
+El programa deja de ser una elección: se AUTODETECTA. Cambia código de la extensión, por eso sube la versión.
+
+- **Cero clics.** Al abrir una lección de DataCamp, el content script pregunta a la API del track por CADA candidato del curso y auto-elige el que DataCamp marca como **inscrito y activo** (a más progreso si hubiera varios). La API de «mis tracks» está muerta (404 también para la propia SPA), así que la autodetección usa el estado por track que ya conocíamos. Cacheado 24 h por curso.
+- **La elección manual siempre gana**: si el usuario elige un track (o «Sin programa») en el selector, esa decisión manda y no se pisa; borrando la elección vuelve la autodetección. Verificado en `qa:datacamp` (**27/27**): autodetección correcta, override manual a otro track y regreso a la autodetección.
+
 ## [1.8.2] — 2026-11-07
 
 Paridad completa del programa entre sitios: la re-exportación desde el Historial ya lleva el tag del programa. Cambia código de la extensión, por eso sube la versión.
