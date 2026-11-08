@@ -140,16 +140,156 @@ export function goToNextDataCampExercise(doc: Document = document): boolean {
 	return false;
 }
 
+// ── Programa (career track) ───────────────────────────────────────────────────
+// Un curso de DataCamp pertenece a VARIOS tracks a la vez (el outline trae
+// `tracks[]`), así que el programa es CONTEXTO — nunca unidad de generación:
+// Anki lo lleva como tag y Obsidian como un MOC propio, sin duplicar nada.
+
+export type DataCampTrackRef = { slug: string; title: string };
+
+export type DataCampProgramCourse = {
+	id: number;
+	title: string;
+	slug: string;
+	position: number;
+	/** Lo dice el propio DataCamp (userContent); null si no se pudo casar. */
+	done: boolean | null;
+};
+
+export type DataCampProgram = {
+	slug: string;
+	title: string;
+	description: string;
+	timeNeeded: string;
+	completionRate: number | null;
+	enrolled: boolean | null;
+	courses: DataCampProgramCourse[];
+	/** El curso que se está estudiando, según DataCamp. */
+	currentCourseDone: boolean | null;
+	/** Primer curso posterior al actual que DataCamp no marca completado. */
+	nextCourse: { title: string; slug: string } | null;
+};
+
+type TrackOutline = { path?: string; title_with_subtitle?: string };
+
+/** Los tracks del curso, desde el outline ya descargado (coste cero). */
+export function parseDataCampTracks(outline: { tracks?: TrackOutline[] } | null): DataCampTrackRef[] {
+	return (outline?.tracks ?? [])
+		.map((t) => ({
+			slug: (t.path ?? '').replace(/^\/tracks\//, '').replace(/\/+$/, ''),
+			title: (t.title_with_subtitle ?? '').trim(),
+		}))
+		.filter((t) => t.slug && t.title);
+}
+
+type LearnHubTrack = {
+	title?: string;
+	subtitle?: string;
+	description?: string;
+	slug?: string;
+	timeNeeded?: string;
+	courseCount?: number;
+	courseIds?: number[];
+	content?: Array<{ contentId?: number; contentType?: string; position?: number; optional?: boolean }>;
+	userTrack?: { active?: boolean; completionRate?: number; enrolled?: boolean } | null;
+	userContent?: Array<{ completed?: boolean; content?: { id?: number; contentType?: string } }> | null;
+};
+
+/**
+ * El programa completo para el estudio: cursos en orden con su título (la API
+ * del track solo da ids; los títulos se resuelven por id y se cachean 24 h en
+ * storage.local) y el estado que DataCamp tiene del usuario.
+ */
+export async function fetchDataCampProgram(
+	trackSlug: string,
+	currentCourseId: number | null,
+): Promise<DataCampProgram | null> {
+	try {
+		const response = await fetch(`https://learn-hub-api.datacamp.com/tracks/user-track-v2/${encodeURIComponent(trackSlug)}`, { credentials: 'include' });
+		if (!response.ok) return null;
+		const track = (await response.json()) as LearnHubTrack;
+		if (!track || !Array.isArray(track.courseIds)) return null;
+
+		// Cache de títulos por id: 10 cursos son 10 peticiones; el payload no
+		// cambia entre lecciones, así que se piden una vez al día.
+		const cacheKey = `dc_program_cache::${trackSlug}`;
+		let titles: Record<string, { title: string; slug: string }> = {};
+		try {
+			const stored = await new Promise<Record<string, unknown>>((done) => {
+				const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };
+				chromeApi.chrome?.storage?.local?.get([cacheKey], (r) => done(r ?? {}));
+			});
+			const cached = stored[cacheKey] as { at?: number; titles?: Record<string, { title: string; slug: string }> } | undefined;
+			if (cached && typeof cached.at === 'number' && Date.now() - cached.at < 86400000 && cached.titles) {
+				titles = cached.titles;
+			}
+		} catch { /* sin storage: se resuelve en vivo */ }
+
+		const missing = track.courseIds.filter((id) => !titles[String(id)]);
+		const resolved = await Promise.all(missing.map(async (id) => {
+			try {
+				const r = await fetch(`https://campus-api.datacamp.com/api/courses/${id}`, { credentials: 'include' });
+				if (!r.ok) return null;
+				const c = (await r.json()) as { title?: string; slug?: string };
+				return c?.title && c?.slug ? { id: String(id), title: c.title, slug: c.slug } : null;
+			} catch { return null; }
+		}));
+		for (const r of resolved) if (r) titles[r.id] = { title: r.title, slug: r.slug };
+		try {
+			const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } } };
+			chromeApi.chrome?.storage?.local?.set({ [cacheKey]: { at: Date.now(), titles } });
+		} catch { /* sin storage */ }
+
+		// Estado por curso (userContent va en el mismo orden que content, con
+		// projects intercalados: se casa por id y, si el payload no trae id, por
+		// posición entre los cursos).
+		const doneById = new Map<string, boolean>();
+		const courseContent = (track.content ?? []).filter((c) => c.contentType === 'course');
+		(track.userContent ?? []).forEach((u, index) => {
+			const id = u.content?.id ?? courseContent[index]?.contentId;
+			if (id !== undefined) doneById.set(String(id), Boolean(u.completed));
+		});
+
+		const courses: DataCampProgramCourse[] = track.courseIds.map((id, index) => ({
+			id,
+			title: titles[String(id)]?.title ?? `Curso ${id}`,
+			slug: titles[String(id)]?.slug ?? String(id),
+			position: (track.content ?? []).find((c) => c.contentId === id)?.position ?? index,
+			done: doneById.get(String(id)) ?? null,
+		}));
+
+		const current = currentCourseId !== null ? courses.find((c) => c.id === currentCourseId) ?? null : null;
+		const currentIndex = current ? courses.indexOf(current) : -1;
+		const nextCourse = currentIndex >= 0
+			? courses.slice(currentIndex + 1).find((c) => c.done !== true) ?? null
+			: null;
+
+		return {
+			slug: track.slug ?? trackSlug,
+			title: track.title ?? trackSlug,
+			description: track.description ?? '',
+			timeNeeded: track.timeNeeded ?? '',
+			completionRate: typeof track.userTrack?.completionRate === 'number' ? track.userTrack.completionRate : null,
+			enrolled: typeof track.userTrack?.enrolled === 'boolean' ? track.userTrack.enrolled : null,
+			courses,
+			currentCourseDone: current ? current.done : null,
+			nextCourse: nextCourse ? { title: nextCourse.title, slug: nextCourse.slug } : null,
+		};
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Título y descripción del curso desde la API del outline. El slug de la URL
  * responde aunque la sesión no tenga el curso; con credenciales trae más.
  */
-export async function fetchDataCampCourseOutline(slug: string): Promise<{ title?: string; description?: string } | null> {
+export async function fetchDataCampCourseOutline(slug: string): Promise<{ title?: string; description?: string; raw?: unknown } | null> {
 	try {
 		const response = await fetch(`https://campus-api.datacamp.com/api/courses/${encodeURIComponent(slug)}`, { credentials: 'include' });
 		if (!response.ok) return null;
 		const data = (await response.json()) as { title?: string; short_description?: string; description?: string };
-		return { title: data.title, description: data.short_description ?? data.description };
+		return { title: data.title, description: data.short_description ?? data.description, raw: data };
 	} catch {
 		return null;
 	}

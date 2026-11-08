@@ -6,6 +6,8 @@ import {
 	buildSessionNoteMarkdown,
 	buildCourseMocPath,
 	buildCourseMocMarkdown,
+	buildProgramMocPath,
+	buildProgramMocMarkdown,
 	buildRawSrtNotePath,
 	buildRawSrtNoteMarkdown,
 	buildScaffoldNotes,
@@ -155,6 +157,39 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 	const md3 = buildSessionNoteMarkdown(session, cfg, { today: new Date(2026, 9, 31) });
 	assert(!md3.includes('Lo que recordé sin mirar') && !md3.includes('Puntos a reforzar') && !md3.includes('Resultado de la sesión'),
 		'las secciones nuevas no aparecen sin datos');
+}
+
+// ── Programa (career track): frontmatter de sesión + MOC del programa ──────
+{
+	const program = {
+		title: 'Associate AI Engineer for Developers',
+		slug: 'associate-ai-engineer-for-developers',
+		description: 'Aprende a integrar IA en aplicaciones.',
+		timeNeeded: '29hrs',
+		completionRate: 0.003,
+		enrolled: true,
+		courses: [
+			{ title: 'Trabajar con la API de OpenAI', slug: 'working-with-the-openai-api', position: 0, done: false },
+			{ title: 'Ingeniería de prompts con la API de OpenAI', slug: 'prompt-engineering-with-the-openai-api', position: 1, done: null },
+			{ title: 'Trabajar con Hugging Face', slug: 'working-with-hugging-face', position: 2, done: true },
+		],
+	};
+	const pPath = buildProgramMocPath(cfg, program.title, program.slug);
+	assert(pPath === 'cursos/moc-associate-ai-engineer-for-developers.md', 'ruta del MOC del programa estable');
+	const pMd = buildProgramMocMarkdown(program, { today: new Date(2026, 10, 7), sourcesFolder: 'wiki/fuentes' });
+	assert(pMd.includes('type: programa') && pMd.includes('programa_slug: associate-ai-engineer-for-developers'), 'frontmatter del MOC con type y programa_slug');
+	assert(pMd.includes('Progreso en la plataforma: **0%**'), 'porcentaje de progreso DataCamp presente');
+	assert(pMd.includes('| 1 | [[trabajar-con-la-api-de-openai|Trabajar con la API de OpenAI]] | ⬜ pendiente |'), 'curso 1 pendiente con enlace');
+	assert(pMd.includes('✅ completado'), 'curso completado marcado');
+	assert(pMd.includes('— sin dato'), 'curso sin dato de estado');
+	assert(pMd.includes('WHERE programa_slug = "associate-ai-engineer-for-developers"'), 'Dataview filtra por programa_slug');
+	const sessionWithProgram = { ...session, program: { title: program.title, slug: program.slug } };
+	const mdP = buildSessionNoteMarkdown(sessionWithProgram, cfg, { today: new Date(2026, 10, 7) });
+	assert(mdP.includes('programa: "Associate AI Engineer for Developers"'), 'frontmatter programa en la nota de sesión');
+	assert(mdP.includes('programa_slug: associate-ai-engineer-for-developers'), 'frontmatter programa_slug en la nota de sesión');
+	assert(mdP.includes('[[cursos/moc-associate-ai-engineer-for-developers|Associate AI Engineer for Developers]]'), 'enlace al MOC del programa');
+	const mdNoP = buildSessionNoteMarkdown(session, cfg, { today: new Date(2026, 10, 7) });
+	assert(!mdNoP.includes('programa:') && !mdNoP.includes('programa_slug'), 'sin programa, nada de programa en la nota');
 }
 
 console.log(process.exitCode ? '\nHAY FALLOS' : '\nTODO OK');

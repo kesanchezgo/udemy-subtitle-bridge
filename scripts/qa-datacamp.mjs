@@ -62,6 +62,9 @@ const page = context.pages()[0] ?? await context.newPage();
 			['agent_course_name', 'agent_lesson_name', 'agent_lesson_autofill_key', 'agent_lesson_autofill_value'],
 			() => done(null),
 		)));
+		// Ancho del dock a su valor por defecto: si una corrida anterior lo dejó
+		// en el máximo (720), el ciclo de resize no tendría margen para ampliar.
+		await sw0.evaluate(() => new Promise((done) => chrome.storage.local.remove(['dock_width'], () => done(null))));
 	}
 }
 
@@ -247,6 +250,69 @@ for (let i = 0; i < 10; i += 1) {
 }
 check('el contexto cambia a la lección nueva', !/¿Qué es la API/i.test(lesson2) && lesson2.length > 0, lesson2.slice(0, 60));
 await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catch(() => {});
+
+// ── 7. Programa (career track): contexto, elección y datos ────────────────────
+{
+	const sw = context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+	if (!sw) {
+		check('programa: contexto disponible', false, 'sin service worker');
+	} else {
+		let tracks = null;
+		for (let i = 0; i < 10 && !tracks; i += 1) {
+			tracks = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.tracks ?? null))));
+			if (!tracks) await page.waitForTimeout(1500);
+		}
+		check('el curso expone sus programas (tracks del outline)', Array.isArray(tracks) && tracks.length >= 3, `${tracks?.length ?? 0} tracks`);
+		// Elegir «Associate AI Engineer for Developers» (como haría el usuario
+		// con el selector del dock): el content script trae el programa entero.
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'associate-ai-engineer-for-developers' }, () => done(null))));
+		let program = null;
+		for (let i = 0; i < 12 && !program; i += 1) {
+			program = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
+			if (!program) await page.waitForTimeout(1500);
+		}
+		check('el programa elegido trae sus 10 cursos en orden', program?.courses?.length === 10, `${program?.courses?.length ?? 0} cursos`);
+		check('nuestro curso es el primero del programa', program?.courses?.[0]?.title?.includes('OpenAI') === true, program?.courses?.[0]?.title ?? '?');
+		check('el progreso lo da DataCamp (userTrack)', typeof program?.completionRate === 'number', `completionRate=${program?.completionRate}`);
+		check('siguiente curso sugerido con deep-link', Boolean(program?.nextCourse?.slug), program?.nextCourse?.title ?? 'sin sugerencia');
+		// El dock pinta el programa en Datos del curso (Study → editar). Si el
+		// Study tab muestra «Estás en otra lección» (sesión guardada de otra
+		// lección), primero se abre la lección actual.
+		await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+		await page.waitForTimeout(1200);
+		await waitClickInShadowSafe(page, /Estudiar esta lección/);
+		await waitClickInShadowSafe(page, /Editar curso o lección/);
+		await page.waitForTimeout(800);
+		const dockTxt = await page.evaluate(() => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			if (!root) return '';
+			const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+				acceptNode: (n) => (n.parentElement?.tagName === 'STYLE' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+			});
+			let o = '';
+			while (w.nextNode()) o += w.currentNode.textContent ?? '';
+			return o.replace(/\s+/g, ' ');
+		});
+		check('el dock muestra el selector de programa', /Associate AI Engineer for Developers/.test(dockTxt) && /Sin programa/.test(dockTxt), dockTxt.slice(0, 260));
+		check('el dock muestra el progreso del programa', /Programa:.*· curso \d+ de 10/.test(dockTxt), (dockTxt.match(/Programa:[^·]*·[^.]*curso \d+ de 10/) ?? ['?'])[0].slice(0, 80));
+	}
+}
+
+async function waitClickInShadowSafe(page, match, ms = 8000) {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		const ok = await page.evaluate((m) => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			const btn = [...root.querySelectorAll('button')].find((b) => new RegExp(m).test((b.textContent ?? '').trim()) && !b.disabled);
+			if (!btn) return false;
+			btn.click();
+			return true;
+		}, match.source);
+		if (ok) return true;
+		await page.waitForTimeout(400);
+	}
+	return false;
+}
 
 console.log(`\n${failures === 0 ? '✅' : '❌'} DataCamp: ${failures === 0 ? 'todo OK' : `${failures} fallos`}`);
 await context.close();

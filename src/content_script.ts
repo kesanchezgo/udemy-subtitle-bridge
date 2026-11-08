@@ -9,15 +9,17 @@ import { onMessageFromSidebar, sendToSidebar } from './app/services/contentBridg
 import { collectArticleText, getLectureKind, goToNextLecture } from './app/services/udemyLecture';
 import {
 	fetchDataCampCourseOutline,
+	fetchDataCampProgram,
 	getDataCampCourseSlug,
 	getDataCampLectureTitleFromMeta,
 	getDataCampProjectorKey,
 	goToNextDataCampExercise,
 	isDataCampCampusPage,
 	isDataCampProjectorFrame,
+	parseDataCampTracks,
 	resolveDataCampSubtitles
 } from './app/services/datacampLecture';
-import type { DataCampVideoMeta, DataCampVttLanguage } from './app/services/datacampLecture';
+import type { DataCampProgram, DataCampTrackRef, DataCampVideoMeta, DataCampVttLanguage } from './app/services/datacampLecture';
 import { initAiProviderConfig } from './app/services/ai-providers';
 import { vocabularyMatches } from './shared/vocabMatch';
 import { toast } from 'sonner';
@@ -158,6 +160,12 @@ let dcSubtitlesSeededKey: string | null = null;
 let dcSeedInFlight = false;
 /** El vídeo ya está doblado al español: los subtítulos no aportan nada. */
 let dcDubbedEs = false;
+// Programa (career track): tracks del curso, el elegido por el usuario y sus
+// datos completos. El dock lo lee por storage (dc_program_context).
+let dcTracks: DataCampTrackRef[] | null = null;
+let dcProgram: DataCampProgram | null = null;
+let dcActiveTrackSlug: string | null = null;
+let dcCourseId: number | null = null;
 
 // Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
 // el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
@@ -2556,7 +2564,49 @@ async function seedDataCampCourseOutline() {
 	const outline = await fetchDataCampCourseOutline(slug);
 	if (outline?.title) dcCourseTitle = outline.title;
 	if (outline?.description) dcCourseDescription = normalizeCourseText(outline.description, 700);
+	// Programa (career track): el outline trae los tracks del curso gratis. El
+	// programa activo es una ELECCIÓN del usuario (un curso está en varios).
+	if (outline?.raw) {
+		dcTracks = parseDataCampTracks(outline.raw as { tracks?: Array<{ path?: string; title_with_subtitle?: string }> });
+		dcCourseId = typeof (outline.raw as { id?: number }).id === 'number' ? (outline.raw as { id: number }).id : null;
+	}
+	await refreshDataCampProgram();
 	sendLectureContextUpdate();
+}
+
+/**
+ * Programa activo → datos completos (títulos, orden, progreso DataCamp) y
+ * sync para el dock. Sin track elegido no se gasta ninguna petición.
+ */
+export async function refreshDataCampProgram() {
+	dcProgram = null;
+	const active = dcActiveTrackSlug ?? await new Promise<string | null>((done) => {
+		const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };
+		chromeApi.chrome?.storage?.sync?.get(['dc_active_track'], (r) => done(typeof r?.dc_active_track === 'string' ? r.dc_active_track : null));
+	});
+	dcActiveTrackSlug = active;
+	const eligible = active && (!dcTracks || dcTracks.some((t) => t.slug === active));
+	if (!active || !eligible) {
+		writeDataCampProgramContext();
+		return;
+	}
+	dcProgram = await fetchDataCampProgram(active, dcCourseId);
+	writeDataCampProgramContext();
+}
+
+/** El dock lee el programa por storage (el mismo canal que course/lesson). */
+function writeDataCampProgramContext() {
+	try {
+		const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } } };
+		chromeApi.chrome?.storage?.sync?.set({
+			dc_program_context: {
+				tracks: dcTracks,
+				activeSlug: dcActiveTrackSlug,
+				program: dcProgram,
+				courseId: dcCourseId,
+			},
+		});
+	} catch { /* sin storage: el dock no muestra programa */ }
 }
 
 /**
@@ -3712,6 +3762,14 @@ function bootstrap() {
 		injectNetworkBridge();
 	} else {
 		window.addEventListener('message', handleDataCampFrameMessage as EventListener);
+		// El programa activo lo elige el dock escribiendo dc_active_track:
+		// al cambiar, se re-trae el programa y el dock se actualiza por storage.
+		try {
+			const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { onChanged?: { addListener?: (cb: (changes: Record<string, unknown>, area: string) => void) => void } } } };
+			chromeApi.chrome?.storage?.onChanged?.addListener?.((changes, area) => {
+				if (area === 'sync' && 'dc_active_track' in changes) void refreshDataCampProgram();
+			});
+		} catch { /* sin storage.onChanged: el selector no actualiza en vivo */ }
 	}
 	window.addEventListener('usb:dock→cs', handleDockBridgeEvent as EventListener);
 	syncUdemyRuntimeForUrl();

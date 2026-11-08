@@ -71,7 +71,7 @@ import {
   openObsidianNote, sessionExportKey, isSessionExported, exportSessionUpdateToObsidian,
   DEFAULT_OBSIDIAN_EXPORT_CONFIG, exportSessionToObsidian, loadCreatedMocs,
   loadObsidianExportConfig, loadObsidianExportedNotes, openObsidianUri,
-  buildObsidianNewUri,
+  buildObsidianNewUri, buildProgramMocMarkdown, buildProgramMocPath,
   saveCreatedMocs, saveObsidianExportConfig, saveObsidianExportedNotes,
   slugifyVault,
   type ObsidianExportConfig, type ObsidianSessionData,
@@ -1063,6 +1063,40 @@ function detectTranscriptLang(text: string): "en" | "es" | null {
   return e > s ? "en" : "es";
 }
 
+// ── Programa (career track) ───────────────────────────────────────────────────
+// El content script del sitio escribe dc_program_context por storage (tracks
+// del curso, el elegido por el usuario y sus datos). El dock solo lo lee: en
+// Udemy no existe y todo lo de programa deja de renderizarse.
+type DcProgramCourse = { id: number; title: string; slug: string; position: number; done: boolean | null };
+type DcProgram = {
+  slug: string; title: string; description: string; timeNeeded: string;
+  completionRate: number | null; enrolled: boolean | null;
+  courses: DcProgramCourse[];
+  currentCourseDone: boolean | null;
+  nextCourse: { title: string; slug: string } | null;
+};
+type DcProgramContext = {
+  tracks: { slug: string; title: string }[] | null;
+  activeSlug: string | null;
+  program: DcProgram | null;
+  courseId: number | null;
+};
+
+function useDcProgramContext(): DcProgramContext | null {
+  const [ctx, setCtx] = useState<DcProgramContext | null>(null);
+  useEffect(() => {
+    let alive = true;
+    chromeStorage.get(["dc_program_context"]).then((data) => {
+      if (alive) setCtx((data.dc_program_context as DcProgramContext) ?? null);
+    }).catch(() => { /* sin storage (preview): sin programa */ });
+    const off = chromeStorage.onChange((changes) => {
+      if ("dc_program_context" in changes && alive) setCtx((changes.dc_program_context as DcProgramContext) ?? null);
+    });
+    return () => { alive = false; off(); };
+  }, []);
+  return ctx;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -1081,6 +1115,7 @@ async function exportApkgFile(
   lesson: string,
   rootDeck: string,
   onProgress?: (msg: string) => void,
+  dcTrackSlug?: string | null,
 ): Promise<string> {
   const root = rootDeck.trim() || "Kinema";
   const lessonUrl = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
@@ -1095,7 +1130,13 @@ async function exportApkgFile(
       // §3: las de refuerzo se ordenan primero dentro de buildConceptSpec.
       reinforce: c.reinforce,
       // §5: las de duda también son de refuerzo, con su propio origen.
-      tags: kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.doubt ? "duda" : c.reinforce ? "study" : undefined }),
+      // Programa activo: tag kinema::track::<slug> en TODAS las tarjetas —
+      // en Anki una tarjeta vive en un mazo, así que el programa va por tag
+      // (un curso puede estar en varios programas sin duplicar nada).
+      tags: [
+        ...kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.doubt ? "duda" : c.reinforce ? "study" : undefined }),
+        ...(dcTrackSlug ? [`kinema::track::${dcTrackSlug}`] : []),
+      ],
     })),
     course,
     lesson,
@@ -1606,6 +1647,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
   // Obsidian export
   const [obsidianCfg, setObsidianCfg]             = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
+  // Programa (career track) del sitio — null en Udemy o sin elección.
+  const dcCtx = useDcProgramContext();
   const openObsidianSettings = () => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "obsidian" } }));
   const [obsidianHelpOpen, setObsidianHelpOpen]   = useState(false);
   const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
@@ -3118,7 +3161,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const deckName = await exportApkgFile(allCardsWithReinforce, courseName, lessonName, vocabCfg.rootDeck, (msg) => {
         setApkgProgress(msg);
         markQa("apkg-progress:" + msg.slice(0, 40));
-      });
+      }, dcCtx?.activeSlug);
       const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
       setApkgStatus("done");
       setAnkiExported(true);
@@ -3221,7 +3264,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       lessonName,
       objective: getActiveObjectiveText() || undefined,
       sourceUrl: typeof window !== "undefined" ? window.location.href : undefined,
-      platform: "udemy",
+      // Plataforma real de la lección (raw/ y frontmatter la citan).
+      platform: typeof window !== "undefined" && window.location.hostname.includes("datacamp") ? "datacamp" : "udemy",
+      // Programa elegido (solo DataCamp con track activo): frontmatter + MOC.
+      program: dcCtx?.activeSlug && dcCtx.program ? { title: dcCtx.program.title, slug: dcCtx.program.slug } : undefined,
       ankiDeck: conceptDeckPath(vocabCfg.rootDeck || "Kinema", courseName, lessonName),
       recallNotes: recallNotes.trim() || undefined,
       weakPoints: weakPoints.length > 0 ? weakPoints : undefined,
@@ -3310,6 +3356,19 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               return next;
             });
           },
+        });
+      }
+      // MOC del programa (career track): índice de los cursos en orden + las
+      // sesiones estudiadas (Dataview por programa_slug). Solo con programa.
+      if (dcCtx?.program && dcCtx.activeSlug) {
+        const program = dcCtx.program;
+        const programPath = buildProgramMocPath(obsidianCfg, program.title, program.slug);
+        followUps.push({
+          label: "MOC del programa", pending: "Falta el MOC del programa: un clic más.", done: "MOC del programa creado", path: programPath,
+          open: () => openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
+            path: programPath,
+            markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder }),
+          })),
         });
       }
       if (obsidianCfg.includeRawSrt && srt) {
@@ -4264,6 +4323,30 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                 className={fieldCls}/>
               <input value={lessonName} onChange={e => setLessonName(e.target.value)} placeholder="Nombre del video/clase actual"
                 className={fieldCls}/>
+              {/* Programa (career track): solo existe en sitios con programas
+                  (DataCamp). La elección viaja por storage y el content script
+                  trae los datos; el flujo de estudio no cambia. */}
+              {dcCtx?.tracks?.length ? (
+                <div className="space-y-1.5">
+                  <select value={dcCtx.activeSlug ?? ""} onChange={e => { void chromeStorage.set({ dc_active_track: e.target.value || null }); }}
+                    className={fieldCls} aria-label="Programa al que pertenece este curso">
+                    <option value="">Sin programa (solo este curso)</option>
+                    {dcCtx.tracks.map(t => <option key={t.slug} value={t.slug}>{t.title}</option>)}
+                  </select>
+                  {dcCtx.program ? (() => {
+                    const p = dcCtx.program;
+                    const idx = p.courses.findIndex(c => c.id === dcCtx.courseId);
+                    const pct = p.completionRate !== null ? Math.round(p.completionRate * 100) : null;
+                    return (
+                      <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)] px-1">
+                        Programa: <span className="font-semibold text-[var(--usb-fg-hi)]">{p.title}</span>
+                        {idx >= 0 ? ` · curso ${idx + 1} de ${p.courses.length}` : ""}
+                        {pct !== null ? ` · ${pct}% del programa` : ""}
+                      </p>
+                    );
+                  })() : null}
+                </div>
+              ) : null}
               <textarea value={courseDescription} onChange={e => setCourseDescription(e.target.value)}
                 placeholder="Descripción breve del curso (ayuda a Kinema a proponer mejores objetivos)"
                 className={`${textareaCls} h-[74px] custom-scrollbar-thin`}/>
@@ -5515,6 +5598,15 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           </ExportModule>
 
                       {/* §1.4: Terminar lección — siempre disponible, con o sin exportar */}
+                      {/* Programa terminado según la propia plataforma: el siguiente
+                          curso del programa, con deep-link (solo DataCamp + track). */}
+                      {dcCtx?.program?.currentCourseDone === true && dcCtx.program.nextCourse ? (
+                        <a href={`https://app.datacamp.com/es/campus/courses/${dcCtx.program.nextCourse.slug}`}
+                          target="_blank" rel="noreferrer"
+                          className="w-full h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1.5 border border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-3)] transition-colors">
+                          Siguiente curso del programa: {dcCtx.program.nextCourse.title}
+                        </a>
+                      ) : null}
                       <button
                         onClick={handleFinishLesson}
                         disabled={finishedAt !== null}

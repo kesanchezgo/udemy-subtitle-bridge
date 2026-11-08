@@ -98,6 +98,12 @@ export interface ObsidianSessionData {
 	doubts?: { q: string; answer: string; quotes: string[]; outside: boolean; t?: string }[];
 	/** Resumen de cierre del flujo (§1.4) para la nota. */
 	result?: StudyResultSummary;
+	/**
+	 * Programa (career track) al que pertenece el curso, si el usuario eligió
+	 * uno: frontmatter `programa`/`programa_slug` y enlace al MOC del programa.
+	 * Opcional — Udemy no tiene programa y DataCamp solo cuando se eligió.
+	 */
+	program?: { title: string; slug: string };
 	content: {
 		relevance: { score: number; reason: string };
 		keyConcepts: string[];
@@ -349,6 +355,10 @@ export function buildSessionNoteMarkdown(
 	if (hasRel) lines.push(`relevance_score: ${relScore}`);
 	if (data.sourceUrl) lines.push(`lesson_url: ${yamlEscape(data.sourceUrl)}`);
 	if (data.ankiDeck) lines.push(`anki_deck: ${yamlEscape(data.ankiDeck)}`);
+	// Programa (career track): el MOC del programa filtra sus sesiones por
+	// `programa_slug` con Dataview; sin programa, ninguna línea extra.
+	if (data.program?.title) lines.push(`programa: ${yamlEscape(data.program.title)}`);
+	if (data.program?.slug) lines.push(`programa_slug: ${data.program.slug}`);
 	// F2-2: concepts en el frontmatter (grafo entre cursos).
 	const conceptTermsFront = (c as { conceptTerms?: string[] }).conceptTerms ?? [];
 	if (conceptTermsFront.length > 0) lines.push(`concepts: [${conceptTermsFront.map((x) => slugifyVault(x)).join(', ')}]`);
@@ -359,6 +369,11 @@ export function buildSessionNoteMarkdown(
 	lines.push(`# ${data.lessonName}`);
 	lines.push('');
 	lines.push(`Curso: [[${config.mocsFolder}/${course}|${data.courseName}]]`);
+	// Enlace al MOC del programa (el fichero se crea con «MOC del programa»;
+	// el enlace sin resolver es intencionado hasta que exista).
+	if (data.program?.title && data.program?.slug) {
+		lines.push(`Programa: [[${config.mocsFolder}/moc-${data.program.slug}|${data.program.title}]]`);
+	}
 	if (data.objective) lines.push(`Objetivo: ${data.objective}`);
 	lines.push('');
 	// C4: el Resumen es la síntesis generativa del prompt (con palabras
@@ -611,6 +626,79 @@ export function buildCourseMocMarkdown(
 	lines.push('## Conceptos del curso');
 	lines.push('');
 	lines.push('- (destilado supervisado: enlazar aquí [[wiki/conceptos/...]])');
+	lines.push('');
+	return lines.join('\n');
+}
+
+export function buildProgramMocPath(config: ObsidianExportConfig, programTitle: string, programSlug: string): string {
+	const folder = config.mocsFolder.replace(/^\/+|\/+$/g, '') || DEFAULT_OBSIDIAN_EXPORT_CONFIG.mocsFolder;
+	return `${folder}/moc-${slugifyVault(programSlug)}.md`;
+}
+
+/** Lo mínimo que el MOC necesita del programa (estructural: sin importar el adaptador del sitio). */
+export interface ObsidianProgramData {
+	title: string;
+	slug: string;
+	description?: string;
+	timeNeeded?: string;
+	completionRate?: number | null;
+	enrolled?: boolean | null;
+	courses: Array<{ title: string; slug: string; position: number; done: boolean | null }>;
+	platform?: string;
+}
+
+/**
+ * MOC del programa (career track): los cursos EN ORDEN con su estado según la
+ * propia plataforma, y las sesiones estudiadas (Dataview por `programa_slug`).
+ * Un curso puede estar en varios programas: por eso el programa es una nota
+ * índice, no carpetas ni mazos — nada se mueve ni se duplica.
+ */
+export function buildProgramMocMarkdown(
+	program: ObsidianProgramData,
+	options: { today?: Date; sourcesFolder?: string } = {},
+): string {
+	const sourcesFolderPlaceholder = (options.sourcesFolder || '').replace(/^\/+|\/+$/g, '') || 'wiki/fuentes';
+	const platform = slugifyVault(program.platform || 'datacamp', 24);
+	const lines: string[] = [];
+	lines.push('---');
+	lines.push(`title: ${yamlEscape(program.title)}`);
+	lines.push(`date: ${todayIso(options.today)}`);
+	lines.push('type: programa');
+	lines.push(`platform: ${platform}`);
+	lines.push(`programa_slug: ${program.slug}`);
+	lines.push('status: en-progreso');
+	lines.push(`tags: [programa, ${platform}, ${slugifyVault(program.slug)}]`);
+	lines.push('---');
+	lines.push('');
+	lines.push(`# ${program.title}`);
+	lines.push('');
+	if (program.description) lines.push(program.description, '');
+	const pct = typeof program.completionRate === 'number' ? Math.round(program.completionRate * 100) : null;
+	const meta: string[] = [];
+	if (program.timeNeeded) meta.push(`Tiempo estimado: **${program.timeNeeded}**`);
+	if (pct !== null) meta.push(`Progreso en la plataforma: **${pct}%**`);
+	if (program.enrolled !== null) meta.push(program.enrolled ? 'Inscrito' : 'No inscrito');
+	if (meta.length > 0) lines.push(`> [!info] ${meta.join(' · ')}`, '');
+	lines.push('## Cursos (en orden)');
+	lines.push('');
+	lines.push('| # | Curso | Estado |');
+	lines.push('|---|---|---|');
+	program.courses.forEach((c, index) => {
+		const state = c.done === true ? '✅ completado' : c.done === false ? '⬜ pendiente' : '— sin dato';
+		lines.push(`| ${index + 1} | [[${slugifyVault(c.title)}|${c.title}]] | ${state} |`);
+	});
+	lines.push('');
+	lines.push('## Sesiones estudiadas con Kinema');
+	lines.push('');
+	lines.push('```dataview');
+	lines.push('TABLE lesson AS "Lección", course AS "Curso", date AS "Fecha"');
+	lines.push(`FROM "${sourcesFolderPlaceholder}"`);
+	lines.push(`WHERE programa_slug = "${program.slug}"`);
+	lines.push('SORT date DESC');
+	lines.push('```');
+	lines.push('');
+	lines.push('> [!tip] Las sesiones llevan `programa_slug: ' + program.slug + '` en el frontmatter');
+	lines.push('> cuando el programa está elegido en el dock.');
 	lines.push('');
 	return lines.join('\n');
 }

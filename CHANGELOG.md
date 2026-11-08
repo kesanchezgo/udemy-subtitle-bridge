@@ -1,3 +1,15 @@
+## [1.8.0] — 2026-11-07
+
+Los programas (career tracks) de DataCamp entran como CONTEXTO: la generación sigue curso por curso y nada se duplica. Cambia código de la extensión, por eso sube la versión.
+
+- **El curso sabe a qué programas pertenece.** El outline que el adaptador ya descarga trae `tracks[]` — un curso puede estar en VARIOS programas a la vez (el de la prueba: 4). Por eso el programa es contexto, nunca unidad de estructura: los mazos por programa duplicarían tarjetas (en Anki una tarjeta vive en UN mazo) y las carpetas por programa obligarían a copiar las notas. Udemy no tiene programa: sin `dc_program_context` nada de esto existe.
+- **Selector de programa en el dock.** En «Datos del curso» aparece «Programa: …» con los tracks del curso y «Sin programa (solo este curso)»; la elección (`dc_active_track`) viaja por storage y el content script trae el programa completo de la API del track (`learn-hub-api…/user-track-v2/<slug>`): cursos en orden con títulos resueltos por id (caché 24 h), tiempo estimado y el progreso que la propia plataforma tiene del usuario. Debajo, «Programa: … · curso N de M · X% del programa».
+- **Anki: el programa va por TAG, no por mazo.** Con programa elegido, todas las tarjetas de la lección llevan `kinema::track::<slug>` — filtrable en Anki, multi-programa sin duplicación y sin tocar el árbol `<Root>::Courses::<Curso>::<Lección>`.
+- **Obsidian: frontmatter + MOC del programa.** La nota de la lección lleva `programa`/`programa_slug` y enlaza al MOC; la exportación encadena un clic más —«MOC del programa»— que crea `cursos/moc-<slug>.md` con los cursos EN ORDEN (enlace al MOC de cada curso, estado según DataCamp: ✅/⬜/—), tiempo estimado, progreso y una consulta Dataview que lista las sesiones estudiadas (`WHERE programa_slug = "…"`). Enlace sin resolver intencionado hasta crear los MOC de curso.
+- **Siguiente curso del programa.** En Fijar, si DataCamp marca el curso actual como completado y hay programa, aparece «Siguiente curso del programa: …» con deep-link a la primera lección (el track da el orden). La nota de sesión además cita la plataforma real (`platform: datacamp`) en raw/ y frontmatter.
+- **Prototipo (.mock) al día**: mismos cambios en `StudyAgentTab.tsx` (la UI de programa queda gated por storage y no se renderiza allí sin datos) y `obsidianExport.ts` (builders nuevos).
+- **Arnés:** `qa:datacamp` pasa a **24/24** con el bloque de programa (tracks del outline, elección del track, 10 cursos en orden con el nuestro primero, progreso DataCamp, sugerencia del siguiente curso y el selector pintado en el dock). `qa:full` sigue **59/59** (Udemy sin programa: ni selector ni fila), `qa:datacamp:flow` en verde, y `test-obsidian-export` suma 11 aserciones de programa (frontmatter, ruta estable del MOC, tabla en orden y Dataview).
+
 ## [1.7.1] — 2026-11-07
 
 Tres correcciones del soporte de DataCamp reportadas en la primera prueba. Cambia código de la extensión, por eso sube la versión.
