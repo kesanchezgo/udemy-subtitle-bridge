@@ -294,6 +294,15 @@ await page.screenshot({ path: path.join(SHOTS, 'datacamp-video-ex4.png') }).catc
 			if (program3?.slug !== 'associate-ai-engineer-for-developers') { program3 = null; await page.waitForTimeout(1500); }
 		}
 		check('sin elección manual, vuelve la autodetección', program3?.slug === 'associate-ai-engineer-for-developers', program3?.slug ?? '(sin cambio)');
+		// Multi-programa: una preferencia de OTRO programa (que no contiene a
+		// este curso) NO envenena — este curso resuelve por su autodetección.
+		await sw.evaluate(() => new Promise((done) => chrome.storage.sync.set({ dc_active_track: 'associate-data-analyst-in-sql' }, () => done(null))));
+		let program4 = null;
+		for (let i = 0; i < 12 && !program4; i += 1) {
+			program4 = await sw.evaluate(() => new Promise((done) => chrome.storage.sync.get(['dc_program_context'], (r) => done(r?.dc_program_context?.program ?? null))));
+			if (program4?.slug !== 'associate-ai-engineer-for-developers') { program4 = null; await page.waitForTimeout(1500); }
+		}
+		check('una preferencia ajena al curso NO envenena su mapeo', program4?.slug === 'associate-ai-engineer-for-developers', program4?.slug ?? '(envenenado/vacío)');
 		// El dock pinta el programa en Datos del curso (Study → editar). Si el
 		// Study tab muestra «Estás en otra lección» (sesión guardada de otra
 		// lección), primero se abre la lección actual.

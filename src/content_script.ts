@@ -2577,47 +2577,57 @@ async function seedDataCampCourseOutline() {
 
 /**
  * Programa activo → datos completos (títulos, orden, progreso DataCamp) y
- * sync para el dock. Sin elección manual del usuario se AUTO-DETECTA: de los
- * tracks del curso, el que DataCamp marca inscrito y activo. Una elección
- * manual (incluso «Sin programa») siempre gana sobre la autodetección.
+ * sync para el dock. RESOLUCIÓN POR CURSO (un curso puede estar en varios
+ * programas y el usuario puede seguir varios):
+ *   1. Preferencia manual («Sin programa» incluida) — SOLO si el curso
+ *      actual pertenece a ese track; si no, no envenena a este curso.
+ *   2. Autodetección: el track del curso donde DataCamp marca inscrito y
+ *      activo (cacheada 24 h por curso).
+ *   3. Sin programa si nada aplica.
  */
 async function refreshDataCampProgram() {
 	dcProgram = null;
+	const courseTracks = dcTracks ?? [];
+	const contains = (slug: string) => courseTracks.some((tr) => tr.slug === slug);
+
+	// 1) Preferencia manual: SOLO aplica a cursos que pertenecen a ese track
+	//    (si no, se cae a la autodetección de ESTE curso y no envenena).
+	let active: string | null = null;
 	const stored = await new Promise<string | null | undefined>((done) => {
 		const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };
 		chromeApi.chrome?.storage?.sync?.get(['dc_active_track'], (r) => done(r?.dc_active_track as string | null | undefined));
 	});
-	// undefined = nunca eligió (autodetección); '' = eligió «Sin programa» y esa
-	// decisión manual SIEMPRE gana sobre la autodetección.
-	let active = typeof stored === 'string' ? stored : null;
-	if (stored === undefined || stored === null) {
-		active = null;
-		if (dcTracks && dcTracks.length > 0) {
-			// Cache del autodetectado por curso: evita repetir las peticiones en
-			// cada lección del mismo curso.
-			const cacheKey = `dc_auto_track::${getDataCampCourseSlug() ?? 'curso'}`;
-			const cached = await new Promise<string | null>((done) => {
-				const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };
-				chromeApi.chrome?.storage?.local?.get([cacheKey], (r) => {
-					const entry = r?.[cacheKey] as { at?: number; slug?: string } | undefined;
-					done(entry && typeof entry.at === 'number' && Date.now() - entry.at < 86400000 && typeof entry.slug === 'string' ? entry.slug : null);
-				});
+	if (typeof stored === 'string') {
+		// '' = eligió «Sin programa» (apagón global, respetado siempre).
+		active = stored === '' || contains(stored) ? stored : null;
+	}
+
+	// 2) Autodetección por curso: inscrito y activo según DataCamp, cacheada
+	//    24 h por curso (evita repetir las peticiones en cada lección).
+	if (!active && courseTracks.length > 0) {
+		const cacheKey = `dc_auto_track::${getDataCampCourseSlug() ?? 'curso'}`;
+		const cached = await new Promise<string | null>((done) => {
+			const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };
+			chromeApi.chrome?.storage?.local?.get([cacheKey], (r) => {
+				const entry = r?.[cacheKey] as { at?: number; slug?: string } | undefined;
+				done(entry && typeof entry.at === 'number' && Date.now() - entry.at < 86400000 && typeof entry.slug === 'string' ? entry.slug : null);
 			});
-			if (cached && dcTracks.some((t) => t.slug === cached)) {
-				active = cached;
-			} else {
-				const detected = await detectDataCampActiveTrack(dcTracks);
-				active = detected?.slug ?? null;
-				try {
-					const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } } };
-					chromeApi.chrome?.storage?.local?.set({ [cacheKey]: { at: Date.now(), slug: active } });
-				} catch { /* sin storage: se detecta de nuevo */ }
-			}
+		});
+		if (cached && contains(cached)) {
+			active = cached;
+		} else {
+			const detected = await detectDataCampActiveTrack(courseTracks);
+			active = detected?.slug ?? null;
+			try {
+				const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } } };
+				chromeApi.chrome?.storage?.local?.set({ [cacheKey]: { at: Date.now(), slug: active } });
+			} catch { /* sin storage: se detecta de nuevo */ }
 		}
 	}
+
+	// 3) Nada aplicó: sin programa para este curso (el dock muestra el selector).
 	dcActiveTrackSlug = active;
-	const eligible = active && (!dcTracks || dcTracks.some((t) => t.slug === active));
-	if (!active || !eligible) {
+	if (!active) {
 		writeDataCampProgramContext();
 		return;
 	}

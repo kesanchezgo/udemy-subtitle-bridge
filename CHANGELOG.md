@@ -1,3 +1,11 @@
+## [1.8.5] — 2026-11-07
+
+Auditoría del mapeo multi-programa: un curso en VARIOS programas ya se mapea bien en todo. Cambia código de la extensión, por eso sube la versión.
+
+- **La preferencia manual ya no envenena otros cursos.** La elección era global: elegir el programa A y abrir un curso que NO pertenece a A dejaba el programa vacío aunque DataCamp marcara inscrito y activo en otro track del curso. Ahora la resolución es POR CURSO: la preferencia manual aplica solo a los cursos que pertenecen a ese track («Sin programa» sigue siendo el apagón global), y cualquier otro curso resuelve por su propia autodetección. Verificado con un slug ajeno al curso: el mapeo no se altera.
+- **Las sesiones se mapean a TODOS los programas del curso.** Un curso en 4 programas se estudia una vez, pero pertenece a las 4 rutas: la nota de la lección lleva ahora `programas: [slug1, slug2, …]` (además de `programa`/`programa_slug` activos) y el MOC del programa encuentra sus sesiones con `WHERE contains(programas, "…") OR programa_slug = "…"` — estudiar el mismo curso desde otro programa no lo saca de los MOCs anteriores.
+- **Arnés:** `qa:datacamp` **28/28** con el caso de envenenamiento; `qa:full` **59/59**; `test-obsidian-export` con aserciones de la lista `programas` y del Dataview nuevo. Prototipo (.mock) al día.
+
 ## [1.8.4] — 2026-11-07
 
 El programa entra en la capa de IA: objetivos y sesión de estudio ya consideran la ruta de aprendizaje. Además, los prompts dejan de decir «Udemy» en cualquier plataforma. Cambia código de la extensión, por eso sube la versión.

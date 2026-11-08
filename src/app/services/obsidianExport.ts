@@ -104,6 +104,12 @@ export interface ObsidianSessionData {
 	 * Opcional — Udemy no tiene programa y DataCamp solo cuando se eligió.
 	 */
 	program?: { title: string; slug: string };
+	/**
+	 * TODOS los programas a los que pertenece el curso (slugs): la sesión se
+	 * mapea a cada uno, así el MOC de CUALQUIER programa del curso la encuentra
+	 * con Dataview — un curso puede estar en varios programas a la vez.
+	 */
+	programs?: string[];
 	content: {
 		relevance: { score: number; reason: string };
 		keyConcepts: string[];
@@ -359,6 +365,7 @@ export function buildSessionNoteMarkdown(
 	// `programa_slug` con Dataview; sin programa, ninguna línea extra.
 	if (data.program?.title) lines.push(`programa: ${yamlEscape(data.program.title)}`);
 	if (data.program?.slug) lines.push(`programa_slug: ${data.program.slug}`);
+	if (data.programs && data.programs.length > 0) lines.push(`programas: [${data.programs.map((s) => slugifyVault(s)).join(', ')}]`);
 	// F2-2: concepts en el frontmatter (grafo entre cursos).
 	const conceptTermsFront = (c as { conceptTerms?: string[] }).conceptTerms ?? [];
 	if (conceptTermsFront.length > 0) lines.push(`concepts: [${conceptTermsFront.map((x) => slugifyVault(x)).join(', ')}]`);
@@ -695,7 +702,7 @@ export function buildProgramMocMarkdown(
 	lines.push('```dataview');
 	lines.push('TABLE lesson AS "Lección", course AS "Curso", date AS "Fecha"');
 	lines.push(`FROM "${sourcesFolderPlaceholder}"`);
-	lines.push(`WHERE programa_slug = "${program.slug}"`);
+	lines.push(`WHERE contains(programas, "${program.slug}") OR programa_slug = "${program.slug}"`);
 	lines.push('SORT date DESC');
 	lines.push('```');
 	lines.push('');

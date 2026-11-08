@@ -3286,6 +3286,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       platform: typeof window !== "undefined" && window.location.hostname.includes("datacamp") ? "datacamp" : "udemy",
       // Programa elegido (solo DataCamp con track activo): frontmatter + MOC.
       program: dcCtx?.activeSlug && dcCtx.program ? { title: dcCtx.program.title, slug: dcCtx.program.slug } : undefined,
+      // TODOS los programas del curso: la sesión se mapea a cada uno (un curso
+      // puede estar en varios programas a la vez).
+      programs: dcCtx?.tracks?.map(tr => tr.slug),
       ankiDeck: conceptDeckPath(vocabCfg.rootDeck || "Kinema", courseName, lessonName),
       recallNotes: recallNotes.trim() || undefined,
       weakPoints: weakPoints.length > 0 ? weakPoints : undefined,

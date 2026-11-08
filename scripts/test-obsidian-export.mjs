@@ -182,12 +182,18 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 	assert(pMd.includes('| 1 | [[cursos/trabajar-con-la-api-de-openai|Trabajar con la API de OpenAI]] | ⬜ pendiente |'), 'curso 1 pendiente con enlace');
 	assert(pMd.includes('✅ completado'), 'curso completado marcado');
 	assert(pMd.includes('— sin dato'), 'curso sin dato de estado');
-	assert(pMd.includes('WHERE programa_slug = "associate-ai-engineer-for-developers"'), 'Dataview filtra por programa_slug');
-	const sessionWithProgram = { ...session, program: { title: program.title, slug: program.slug } };
+	assert(pMd.includes('WHERE contains(programas, "associate-ai-engineer-for-developers") OR programa_slug = "associate-ai-engineer-for-developers"'), 'Dataview filtra por lista de programas y slug activo');
+	const sessionWithProgram = {
+		...session,
+		program: { title: program.title, slug: program.slug },
+		programs: ['associate-ai-engineer-for-developers', 'openai-fundamentals', 'developing-ai-applications'],
+	};
 	const mdP = buildSessionNoteMarkdown(sessionWithProgram, cfg, { today: new Date(2026, 10, 7) });
 	assert(mdP.includes('programa: "Associate AI Engineer for Developers"'), 'frontmatter programa en la nota de sesión');
 	assert(mdP.includes('programa_slug: associate-ai-engineer-for-developers'), 'frontmatter programa_slug en la nota de sesión');
+	assert(mdP.includes('programas: [associate-ai-engineer-for-developers, openai-fundamentals, developing-ai-applications]'), 'frontmatter programas con TODOS los programas del curso');
 	assert(mdP.includes('[[cursos/moc-associate-ai-engineer-for-developers|Associate AI Engineer for Developers]]'), 'enlace al MOC del programa');
+	assert(pMd.includes('WHERE contains(programas, "associate-ai-engineer-for-developers") OR programa_slug = "associate-ai-engineer-for-developers"'), 'Dataview encuentra la sesión desde cualquier programa del curso');
 	const mdNoP = buildSessionNoteMarkdown(session, cfg, { today: new Date(2026, 10, 7) });
 	assert(!mdNoP.includes('programa:') && !mdNoP.includes('programa_slug'), 'sin programa, nada de programa en la nota');
 }
