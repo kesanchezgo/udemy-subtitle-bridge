@@ -1484,6 +1484,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [refinedObj, setRefinedObj]   = useState("");
   const [refinedFromText, setRefinedFromText] = useState("");
   const [isRefining, setIsRefining]   = useState(false);
+  /** Variantes ya mostradas del texto actual (máx 5): «Otra variante» las excluye. */
+  const refineHistoryRef = useRef<string[]>([]);
   const [courseName, setCourseName]   = usePersistedState<string>("agent_course_name", IS_EXTENSION ? "" : "Java In-Depth: Become a Complete Java Engineer!");
   const [lessonName, setLessonName]   = usePersistedState<string>("agent_lesson_name", IS_EXTENSION ? "" : "What is Java & JVM?");
   const [courseDescription, setCourseDescription] = usePersistedState<string>("agent_course_description", "");
@@ -2632,8 +2634,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     if (!customObj.trim()) return;
     setIsRefining(true);
     const sourceText = customObj;
+    // «Otra variante»: recordar lo ya mostrado para ESTE texto y pedir un
+    // ángulo distinto; al cambiar el texto, la memoria se reinicia.
+    const sameSource = refinedFromText === sourceText;
+    const previousVariants = sameSource ? refineHistoryRef.current : [];
     try {
-      const { refined, isMock } = await refineCustomObjective(courseName, effectiveCourseDescription, sourceText);
+      const { refined, isMock } = await refineCustomObjective(courseName, effectiveCourseDescription, sourceText, {
+        platform: aiPlatform,
+        program: dcProgramMeta,
+        previousVariants,
+      });
       if (!refined.trim() || isMock) {
         toast.warning("Kinema no pudo refinar tu objetivo", {
           description: describeProviderFailure("", {
@@ -2647,6 +2657,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
       setRefinedObj(refined);
       setRefinedFromText(sourceText);
+      refineHistoryRef.current = [...previousVariants, refined].slice(-5);
     } catch (err) {
       console.error("[objectives] refine failed", err);
       toast.error("No se pudo refinar el objetivo");

@@ -622,8 +622,28 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		const courseName = String((message as { courseName?: unknown }).courseName || '');
 		const description = String((message as { description?: unknown }).description || '');
 		const rawGoal = String((message as { rawGoal?: unknown }).rawGoal || '');
+		const rawMsg = message as { platform?: unknown; program?: unknown; previousVariants?: unknown };
+		const previousVariants = Array.isArray(rawMsg.previousVariants)
+			? rawMsg.previousVariants.map(String).filter((v) => v.trim()).slice(0, 6)
+			: [];
+		const program = ((): StudyMetadata['program'] => {
+			const raw = rawMsg.program;
+			if (!raw || typeof raw !== 'object') return undefined;
+			const r = raw as { title?: unknown; position?: unknown; total?: unknown; description?: unknown };
+			if (typeof r.title !== 'string' || !r.title.trim()) return undefined;
+			return {
+				title: r.title,
+				position: typeof r.position === 'number' ? r.position : undefined,
+				total: typeof r.total === 'number' ? r.total : undefined,
+				description: typeof r.description === 'string' ? r.description : undefined,
+			};
+		})();
 
-		refineObjectiveViaGemini(courseName, description, rawGoal)
+		refineObjectiveViaGemini(courseName, description, rawGoal, {
+			platform: typeof rawMsg.platform === 'string' ? rawMsg.platform : undefined,
+			program,
+			previousVariants,
+		})
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 
@@ -2148,16 +2168,19 @@ async function generateObjectivesViaGemini(
 async function refineObjectiveViaGemini(
 	courseName: string,
 	description: string,
-	rawGoal: string
+	rawGoal: string,
+	options: { platform?: string; program?: StudyMetadata['program']; previousVariants?: string[] } = {}
 ): Promise<{ refined: string; isMock: boolean; source: 'local' | 'gemini' | 'mock'; error?: string }> {
 	if (!rawGoal.trim()) return { refined: '', isMock: false, source: 'mock' };
 
-	const prompt = buildRefinePrompt(courseName, description, rawGoal);
+	const prompt = buildRefinePrompt(courseName, description, rawGoal, options);
+	// Variantes: más temperatura para no repetir el mismo ángulo.
+	const temperature = (options.previousVariants?.length ?? 0) > 0 ? 0.75 : 0.4;
 
 	// Try Local AI first
 	try {
 		if (await checkLocalAiHealth()) {
-			const text = await requestLocalText(prompt, 0.4, 200);
+			const text = await requestLocalText(prompt, temperature, 200);
 			const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
 			if (cleaned) return { refined: cleaned, isMock: false, source: 'local' };
 		}
@@ -2168,7 +2191,7 @@ async function refineObjectiveViaGemini(
 	// Try the user-configured provider (OpenAI-compatible / Anthropic).
 	let providerError: unknown = null;
 	try {
-		const text = await requestConfiguredProviderText(prompt, 0.4, 200);
+		const text = await requestConfiguredProviderText(prompt, temperature, 200);
 		const cleaned = text.replace(/^["']|["']$/g, '').trim().slice(0, 120);
 		if (cleaned) return { refined: cleaned, isMock: false, source: 'local' };
 	} catch (err) {
@@ -2181,7 +2204,7 @@ async function refineObjectiveViaGemini(
 	try {
 		await initGeminiKeys();
 		if (getGeminiApiKeys().length > 0) {
-			const text = await requestGeminiText(prompt, 0.4, 200, 'refine', (notice) => {
+			const text = await requestGeminiText(prompt, temperature, 200, 'refine', (notice) => {
 				console.warn(`[USG][refine] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
 				broadcastRetryNotice('refine', notice);
 			});

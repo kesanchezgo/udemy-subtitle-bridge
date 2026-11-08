@@ -172,7 +172,20 @@ export function buildObjectivesPrompt(
 	].join('\n');
 }
 
-export function buildRefinePrompt(courseName: string, description: string, rawGoal: string): string {
+export type RefineOptions = {
+	platform?: string;
+	program?: AiProgramContext;
+	/** Variantes YA mostradas para este mismo texto: no repetir ni reformular. */
+	previousVariants?: string[];
+};
+
+export function buildRefinePrompt(
+	courseName: string,
+	description: string,
+	rawGoal: string,
+	options: RefineOptions = {},
+): string {
+	const previous = (options.previousVariants ?? []).filter((v) => v.trim());
 	return [
 		'Eres un coach pedagógico para estudiantes de cursos online.',
 		'Convierte el objetivo libre del estudiante en un objetivo de aprendizaje personalizado y de alta calidad.',
@@ -182,9 +195,22 @@ export function buildRefinePrompt(courseName: string, description: string, rawGo
 		'- Resultado observable: que el estudiante pueda notar si avanzó.',
 		'- Acción concreta: aprender, aplicar, crear, aprobar, explicar, resolver, mejorar, practicar, etc.',
 		'- Contexto del curso: usa el nombre y descripción; no inventes datos externos.',
+		'- EL TEXTO DEL ESTUDIANTE MANDA sobre el curso: si pide un alcance más amplio (p. ej. «no solo X, también Y»), la variante debe cubrir ese alcance completo; NO lo centres en X solo porque el curso se llame así.',
 		'- No fuerces entrevista, certificación, proyecto o código si no encaja con el objetivo o el curso.',
 		'- Si el objetivo ya es concreto y de alta calidad, devuélvelo pulido en redacción sin traicionar su intención.',
 		'- Tono motivador, profesional y específico; evita frases genéricas tipo "aprender el curso".',
+		...(options.platform ? [`PLATAFORMA: ${options.platform}`] : []),
+		...(options.program ? [
+			`PROGRAMA: ${options.program.title}${options.program.position && options.program.total ? ` — curso ${options.program.position} de ${options.program.total}` : ''}`,
+			...(options.program.description ? [`DESCRIPCIÓN DEL PROGRAMA: ${options.program.description}`] : []),
+			'- El objetivo debe encajar con la dirección del PROGRAMA al que pertenece el curso.',
+		] : []),
+		...(previous.length > 0 ? [
+			'',
+			'VARIANTES YA MOSTRADAS (PROHIBIDO repetirlas o reformularlas mínimamente):',
+			...previous.map((v) => `- "${v}"`),
+			'- Da una variante con un ÁNGULO claramente DISTINTO de las anteriores (otro énfasis: aplicaciones prácticas, fundamentos, entrevistas, integraciones, proyectos, arquitectura, evaluación…).',
+		] : []),
 		'',
 		'FORMATO:',
 		'- Devuelve SOLO una frase.',

@@ -1473,6 +1473,7 @@ export async function refineCustomObjective(
   courseName: string,
   description: string,
   rawGoal: string,
+  aiCtx?: { platform?: string; program?: { title: string; position?: number; total?: number; description?: string }; previousVariants?: string[] },
 ): Promise<{ refined: string; isMock: boolean }> {
   if (!rawGoal.trim()) return { refined: "", isMock: false };
 
@@ -1486,6 +1487,9 @@ export async function refineCustomObjective(
     courseName,
     description,
     rawGoal,
+    platform: aiCtx?.platform,
+    program: aiCtx?.program,
+    previousVariants: aiCtx?.previousVariants,
     purpose: "objectives",
   });
 

@@ -1,3 +1,12 @@
+## [1.8.6] — 2026-11-07
+
+«Otra variante» del objetivo refinado era decorativa: reenviaba la MISMA petición (mismo prompt, temperatura 0.4, sin memoria) y el modelo repetía el resultado; además el prompt anclaba el objetivo a la marca del curso («…la API OpenAI…») ignorando el alcance que el estudiante pidió («no solo openai»). Cambia código de la extensión, por eso sube la versión.
+
+- **Memoria de variantes**: el dock recuerda hasta 5 variantes ya mostradas del MISMO texto y las envía como «PROHIBIDO repetirlas o reformularlas mínimamente — da un ÁNGULO claramente distinto (aplicaciones, fundamentos, entrevistas, integraciones, proyectos…)»; al editar el texto, la memoria se reinicia. Con variantes en juego la temperatura sube a 0.75 (primera pasada: 0.4).
+- **Anti-anclaje**: regla nueva en el prompt — «EL TEXTO DEL ESTUDIANTE MANDA sobre el curso»: si pide un alcance más amplio («no solo X, también Y»), la variante cubre el alcance completo y no se centra en X solo porque el curso se llame así.
+- **El refinado ahora conoce el programa** (título, posición, descripción) y la plataforma: el objetivo encaja con la ruta (AI Engineering es más amplio que un solo proveedor).
+- **Prototipo (.mock) al día** (prompts, background, localAI, StudyAgentTab); `qa:full` **59/59**, `qa:datacamp` y `qa:datacamp:flow` en verde.
+
 ## [1.8.5] — 2026-11-07
 
 Auditoría del mapeo multi-programa: un curso en VARIOS programas ya se mapea bien en todo. Cambia código de la extensión, por eso sube la versión.
