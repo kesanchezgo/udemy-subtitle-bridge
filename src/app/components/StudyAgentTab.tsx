@@ -466,7 +466,7 @@ function validateStudyPayload(payload: unknown): string[] {
 // modelo lo mandó sin la marca isHtml, se repara — la preview, Anki y la
 // re-exportación desde Historial pintan estructuras, no etiquetas crudas.
 function looksHtml(v: string): boolean {
-  return /<(div\s+class="(concept-box|tip-box|warning-box|interview-box)"|p|b|em|code|pre|ul|ol|li|table|tr|th|td|blockquote|details|summary)/i.test(String(v));
+  return /<(div\s+class="(concept-box|tip-box|warning-box|interview-box)"|p\b|b\b|em\b|code\b|pre\b|ul\b|ol\b|li\b|table\b|tr\b|th\b|td\b|blockquote\b|details\b|summary\b)/i.test(String(v));
 }
 
 function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyContent {

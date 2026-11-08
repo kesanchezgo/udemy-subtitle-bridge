@@ -1,3 +1,12 @@
+## [1.8.10] — 2026-11-08
+
+Auditoría de calidad de la nota de Obsidian sobre la exportación real del usuario: dos defectos de contenido encontrados y corregidos. Cambia código de la extensión, por eso sube la versión.
+
+- **El callout de entrevista perdía su contenido en la nota.** El conversor usaba un regex lazy que cortaba en el PRIMER `</div>` — el del `<div class="label">` anidado — y la lista completa de la respuesta (Definición/Flujo/Cierre) desaparecía, dejando solo la palabra «Entrevista». Ahora el conversor recorre con balance de `<div>/</div>`, usa el texto del label interno como etiqueta y conserva listas y negritas.
+- **«Estructura ideal» se duplicaba.** La IA a veces ya escribe «Estructura ideal: …» y el builder anteponía la etiqueta otra vez. Ahora se detecta y el texto pasa tal cual.
+- **Tests**: el fixture de la nota incluye el callout anidado real (label + lista) y el caso de la etiqueta duplicada — ambos en `test-obsidian-export`.
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp` y `qa:datacamp:flow` en verde.
+
 ## [1.8.9] — 2026-11-08
 
 Corrección de alcance del 1.8.7: NO era solo la tarjeta de entrevista — TODAS las tarjetas con HTML del modelo (tablas, listas, callouts) sufrían lo mismo, y la re-exportación desde Historial tampoco se reparaba. Cambia código de la extensión, por eso sube la versión.

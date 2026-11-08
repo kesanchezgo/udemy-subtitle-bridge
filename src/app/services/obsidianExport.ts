@@ -263,15 +263,47 @@ export function htmlToMarkdown(html: string): string {
 		while ((li = liRe.exec(body)) !== null) out.push(`- ${inlineToMarkdown(li[1]).trim()}`);
 		return `\n${out.join('\n')}\n`;
 	});
-	// 4. Callouts del prompt → citas con etiqueta.
-	s = s.replace(/<div class="(concept-box|tip-box|warning-box|interview-box)"[^>]*>([\s\S]*?)<\/div>/gi,
-		(_m, kind: string, body: string) => {
-			const label = kind === 'concept-box' ? 'Concepto' : kind === 'tip-box' ? 'Tip'
-				: kind === 'warning-box' ? 'Ojo' : 'Entrevista';
-			const inner = inlineToMarkdown(body).trim();
-			return `\n> [!${kind === 'warning-box' ? 'warning' : 'info'}] ${label}\n> ${inner.split('\n').join('\n> ')}\n`;
-		});
-	// 5. Resto de bloques e inline.
+	// 4. Callouts del prompt → citas con etiqueta. Los callouts anidan un
+	//    <div class="label"> y pueden contener listas/tablas: un regex lazy
+	//    cortaría en el PRIMER </div> y perdería el contenido — se recorre con
+	//    balance de <div>/</div>.
+	{
+		const calloutRe = /<div class="(concept-box|tip-box|warning-box|interview-box)"[^>]*>/gi;
+		const callouts: Array<{ kind: string; start: number; bodyStart: number; end: number }> = [];
+		let cm: RegExpExecArray | null;
+		while ((cm = calloutRe.exec(s)) !== null) {
+			let depth = 1;
+			let i = cm.index + cm[0].length;
+			while (i < s.length && depth > 0) {
+				const nextOpen = s.indexOf('<div', i);
+				const nextClose = s.indexOf('</div>', i);
+				if (nextClose === -1) { i = s.length; depth = 0; break; }
+				if (nextOpen !== -1 && nextOpen < nextClose) { depth += 1; i = nextOpen + 4; }
+				else { depth -= 1; i = nextClose + 6; }
+			}
+			callouts.push({ kind: cm[1], start: cm.index, bodyStart: cm.index + cm[0].length, end: Math.min(i, s.length) });
+			calloutRe.lastIndex = Math.min(i, s.length);
+		}
+		if (callouts.length > 0) {
+			let out = '';
+			let last = 0;
+			for (const c of callouts) {
+				out += s.slice(last, c.start);
+				const rawBody = s.slice(c.bodyStart, Math.max(c.bodyStart, c.end - 6));
+				const labelMatch = rawBody.match(/<div class="label"[^>]*>([\s\S]*?)<\/div>/i);
+				const label = (labelMatch ? decodeEntities(labelMatch[1]).replace(/<[^>]+>/g, '').trim() : '')
+					|| (c.kind === 'concept-box' ? 'Concepto' : c.kind === 'tip-box' ? 'Tip' : c.kind === 'warning-box' ? 'Ojo' : 'Entrevista');
+				const bodyClean = rawBody.replace(/<div class="label"[^>]*>[\s\S]*?<\/div>/i, '');
+				const inner = inlineToMarkdown(bodyClean).trim();
+				out += `\n> [!${c.kind === 'warning-box' ? 'warning' : 'info'}] ${label}\n> ${inner.split('\n').join('\n> ')}\n`;
+				last = c.end;
+			}
+			out += s.slice(last);
+			s = out;
+		}
+	}
+
+// 5. Resto de bloques e inline.
 	s = s.replace(/<p[^>]*>/gi, '\n').replace(/<\/(p|div|h[1-6])[^>]*>/gi, '\n')
 		.replace(/<br\s*\/?>/gi, '\n')
 		.replace(/<(b|strong)[^>]*>([\s\S]*?)<\/(b|strong)>/gi, '**$2**')
@@ -442,7 +474,11 @@ export function buildSessionNoteMarkdown(
 		lines.push('');
 		// C5: la estructura ideal va plegada — primero responde en voz alta.
 		lines.push(`> [!question]- ${c.interviewQ.q}`);
-		if (c.interviewQ.idealAnswer) lines.push(`> **Estructura ideal:** ${c.interviewQ.idealAnswer}`);
+		if (c.interviewQ.idealAnswer) {
+			// La IA a veces ya escribe «Estructura ideal: …»: no duplicar la etiqueta.
+			const ideal = c.interviewQ.idealAnswer;
+			lines.push(/^\s*(\*\*\s*)?estructura ideal\b/i.test(ideal) ? `> ${ideal}` : `> **Estructura ideal:** ${ideal}`);
+		}
 		lines.push('');
 	}
 	if (c.application?.setup || c.application?.challenge) {

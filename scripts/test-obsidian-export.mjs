@@ -198,4 +198,26 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 	assert(!mdNoP.includes('programa:') && !mdNoP.includes('programa_slug'), 'sin programa, nada de programa en la nota');
 }
 
+// ── Calidad de exportación: callout anidado y etiqueta no duplicada ─────────
+{
+	// Callout interview-box con label + lista anidada: el CONTENIDO sobrevive
+	// (antes el regex lazy cortaba en el primer </div> y dejaba solo «Entrevista»).
+	const backHtml = "<div class='interview-box'><div class='label'>Entrevista</div><ul><li><b>Definición:</b> interfaz programática.</li><li><b>Flujo:</b> solicitud con modelo, datos y parámetros.</li></ul></div>";
+	const sessionCallout = {
+		...session,
+		content: { ...session.content, ankiCards: [{ front: '¿Cómo explicarías en una entrevista qué es la API de OpenAI?', back: backHtml, type: 'entrevista' }] },
+	};
+	const mdCallout = buildSessionNoteMarkdown(sessionCallout, cfg, { today: new Date(2026, 10, 8) });
+	assert(mdCallout.includes('interfaz programática'), 'el contenido de la lista del callout sobrevive');
+	assert(mdCallout.includes('solicitud con modelo, datos y parámetros'), 'cada ítem de la lista sobrevive');
+	// «Estructura ideal» no se duplica cuando la IA ya lo escribió.
+	const dupSession = {
+		...session,
+		content: { ...session.content, interviewQ: { q: 'q', idealAnswer: 'Estructura ideal: 1) Qué es. 2) Para qué sirve. 3) Ejemplo.' } },
+	};
+	const mdDup = buildSessionNoteMarkdown(dupSession, cfg, { today: new Date(2026, 10, 8) });
+	assert(!mdDup.includes('**Estructura ideal:** Estructura ideal:'), 'no se duplica la etiqueta «Estructura ideal»');
+	assert(mdDup.includes('> Estructura ideal: 1) Qué es.'), 'el texto de la IA pasa tal cual');
+}
+
 console.log(process.exitCode ? '\nHAY FALLOS' : '\nTODO OK');
