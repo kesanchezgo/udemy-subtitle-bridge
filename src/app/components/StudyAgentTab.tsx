@@ -1647,8 +1647,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
   // Obsidian export
   const [obsidianCfg, setObsidianCfg]             = useState<ObsidianExportConfig>(DEFAULT_OBSIDIAN_EXPORT_CONFIG);
-  // Programa (career track) del sitio — null en Udemy o sin elección.
-  const dcCtx = useDcProgramContext();
+  // Programa (career track) del sitio — null en Udemy o sin elección. El gate
+  // es por SITIO, no solo por storage: si el usuario usa ambos, el contexto
+  // guardado de DataCamp no debe aparecer ni colar tags en Udemy.
+  const isDataCampSite = typeof window !== "undefined" && window.location.hostname.includes("datacamp");
+  const dcCtxRaw = useDcProgramContext();
+  const dcCtx = isDataCampSite ? dcCtxRaw : null;
   const openObsidianSettings = () => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "obsidian" } }));
   const [obsidianHelpOpen, setObsidianHelpOpen]   = useState(false);
   const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
@@ -3367,7 +3371,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           label: "MOC del programa", pending: "Falta el MOC del programa: un clic más.", done: "MOC del programa creado", path: programPath,
           open: () => openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
             path: programPath,
-            markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder }),
+            markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder, mocsFolder: obsidianCfg.mocsFolder }),
           })),
         });
       }

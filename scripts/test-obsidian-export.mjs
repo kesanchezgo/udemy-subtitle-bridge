@@ -176,10 +176,10 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 	};
 	const pPath = buildProgramMocPath(cfg, program.title, program.slug);
 	assert(pPath === 'cursos/moc-associate-ai-engineer-for-developers.md', 'ruta del MOC del programa estable');
-	const pMd = buildProgramMocMarkdown(program, { today: new Date(2026, 10, 7), sourcesFolder: 'wiki/fuentes' });
+	const pMd = buildProgramMocMarkdown(program, { today: new Date(2026, 10, 7), sourcesFolder: 'wiki/fuentes', mocsFolder: 'cursos' });
 	assert(pMd.includes('type: programa') && pMd.includes('programa_slug: associate-ai-engineer-for-developers'), 'frontmatter del MOC con type y programa_slug');
 	assert(pMd.includes('Progreso en la plataforma: **0%**'), 'porcentaje de progreso DataCamp presente');
-	assert(pMd.includes('| 1 | [[trabajar-con-la-api-de-openai|Trabajar con la API de OpenAI]] | ⬜ pendiente |'), 'curso 1 pendiente con enlace');
+	assert(pMd.includes('| 1 | [[cursos/trabajar-con-la-api-de-openai|Trabajar con la API de OpenAI]] | ⬜ pendiente |'), 'curso 1 pendiente con enlace');
 	assert(pMd.includes('✅ completado'), 'curso completado marcado');
 	assert(pMd.includes('— sin dato'), 'curso sin dato de estado');
 	assert(pMd.includes('WHERE programa_slug = "associate-ai-engineer-for-developers"'), 'Dataview filtra por programa_slug');

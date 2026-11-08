@@ -1,3 +1,12 @@
+## [1.8.1] — 2026-11-07
+
+Auditoría de la integración del programa: tres fallos encontrados y corregidos antes de usarlo en serio. Cambia código de la extensión, por eso sube la versión.
+
+- **El contexto de programa ya no se cuela en Udemy.** `dc_program_context` vive en storage.sync y sobrevive a los sitios: al abrir un curso de Udemy después de uno de DataCamp, el selector de programa aparecía y las tarjetas de UDEMY llevaban el tag `kinema::track::…` de DataCamp. Ahora el gate es por SITIO (`hostname`), no solo por la existencia del storage — en Udemy el programa no existe aunque quede contexto guardado.
+- **Los enlaces de curso del MOC del programa respetan la carpeta de MOCs.** Enlazaban a la raíz del vault; ahora usan `mocsFolder` como el MOC de curso (`[[cursos/<curso>|…]]`), con la carpeta configurada por el usuario.
+- **El estado ✅/⬜ del MOC ya no se desalinea con proyectos intercalados.** `userContent` se alineaba por índice contra los SOLO cursos mientras la lista completa intercala proyectos opcionales; ahora se alinea contra la lista completa y se descarta lo que no es curso (el id, si viene, manda).
+- **Prototipo (.mock) al día** con el gate por sitio; `qa:datacamp` **24/24**, `qa:full` **59/59**, `qa:datacamp:flow` y `test-obsidian-export` en verde.
+
 ## [1.8.0] — 2026-11-07
 
 Los programas (career tracks) de DataCamp entran como CONTEXTO: la generación sigue curso por curso y nada se duplica. Cambia código de la extensión, por eso sube la versión.

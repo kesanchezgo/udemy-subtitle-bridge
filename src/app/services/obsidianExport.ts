@@ -655,9 +655,10 @@ export interface ObsidianProgramData {
  */
 export function buildProgramMocMarkdown(
 	program: ObsidianProgramData,
-	options: { today?: Date; sourcesFolder?: string } = {},
+	options: { today?: Date; sourcesFolder?: string; mocsFolder?: string } = {},
 ): string {
 	const sourcesFolderPlaceholder = (options.sourcesFolder || '').replace(/^\/+|\/+$/g, '') || 'wiki/fuentes';
+	const mocsFolderPlaceholder = (options.mocsFolder || '').replace(/^\/+|\/+$/g, '') || DEFAULT_OBSIDIAN_EXPORT_CONFIG.mocsFolder;
 	const platform = slugifyVault(program.platform || 'datacamp', 24);
 	const lines: string[] = [];
 	lines.push('---');
@@ -685,7 +686,8 @@ export function buildProgramMocMarkdown(
 	lines.push('|---|---|---|');
 	program.courses.forEach((c, index) => {
 		const state = c.done === true ? '✅ completado' : c.done === false ? '⬜ pendiente' : '— sin dato';
-		lines.push(`| ${index + 1} | [[${slugifyVault(c.title)}|${c.title}]] | ${state} |`);
+		// Mismo convenio que el MOC de curso: el enlace vive en la carpeta de MOCs.
+		lines.push(`| ${index + 1} | [[${mocsFolderPlaceholder}/${slugifyVault(c.title)}|${c.title}]] | ${state} |`);
 	});
 	lines.push('');
 	lines.push('## Sesiones estudiadas con Kinema');

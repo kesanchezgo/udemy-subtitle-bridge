@@ -2578,7 +2578,7 @@ async function seedDataCampCourseOutline() {
  * Programa activo → datos completos (títulos, orden, progreso DataCamp) y
  * sync para el dock. Sin track elegido no se gasta ninguna petición.
  */
-export async function refreshDataCampProgram() {
+async function refreshDataCampProgram() {
 	dcProgram = null;
 	const active = dcActiveTrackSlug ?? await new Promise<string | null>((done) => {
 		const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };

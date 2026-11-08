@@ -240,13 +240,15 @@ export async function fetchDataCampProgram(
 			chromeApi.chrome?.storage?.local?.set({ [cacheKey]: { at: Date.now(), titles } });
 		} catch { /* sin storage */ }
 
-		// Estado por curso (userContent va en el mismo orden que content, con
-		// projects intercalados: se casa por id y, si el payload no trae id, por
-		// posición entre los cursos).
+		// Estado por curso: userContent va alineado con content (que también
+		// incluye los proyectos opcionales) — se casan por índice COMPLETO y se
+		// descartan los que no son curso; el id, si viene, manda.
 		const doneById = new Map<string, boolean>();
-		const courseContent = (track.content ?? []).filter((c) => c.contentType === 'course');
+		const fullContent = track.content ?? [];
 		(track.userContent ?? []).forEach((u, index) => {
-			const id = u.content?.id ?? courseContent[index]?.contentId;
+			const item = fullContent[index];
+			if (!item || item.contentType !== 'course') return;
+			const id = u.content?.id ?? item.contentId;
 			if (id !== undefined) doneById.set(String(id), Boolean(u.completed));
 		});
 
