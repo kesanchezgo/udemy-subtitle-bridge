@@ -3444,8 +3444,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const followUps: { label: string; pending: string; done: string; path: string; open: () => void }[] = [];
       if (result.moc) {
         const moc = result.moc;
+        const mocExists = createdMocs.includes(moc.key);
         followUps.push({
-          label: "Crear índice", pending: "Falta el índice del curso: un clic más.", done: "Índice del curso creado", path: moc.note.path,
+          label: mocExists ? "Actualizar índice" : "Crear índice",
+          pending: mocExists ? "Actualizar el índice del curso: un clic más." : "Falta el índice del curso: un clic más.",
+          done: "Índice del curso creado", path: moc.note.path,
           open: () => {
             openObsidianNote(obsidianCfg.vaultName.trim(), moc.note);
             setCreatedMocs(prev => {
@@ -3461,12 +3464,23 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       if (dcCtx?.program && dcCtx.activeSlug) {
         const program = dcCtx.program;
         const programPath = buildProgramMocPath(obsidianCfg, program.title, program.slug);
+        const programKey = `program::${program.slug}`;
+        const programExists = createdMocs.includes(programKey);
         followUps.push({
-          label: "MOC del programa", pending: "Falta el MOC del programa: un clic más.", done: "MOC del programa creado", path: programPath,
-          open: () => openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
-            path: programPath,
-            markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder, mocsFolder: obsidianCfg.mocsFolder }),
-          }, { overwrite: true })),
+          label: programExists ? "Actualizar MOC del programa" : "MOC del programa",
+          pending: programExists ? "Actualizar el MOC del programa: un clic más." : "Falta el MOC del programa: un clic más.",
+          done: "MOC del programa creado", path: programPath,
+          open: () => {
+            openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
+              path: programPath,
+              markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder, mocsFolder: obsidianCfg.mocsFolder }),
+            }, { overwrite: true }));
+            setCreatedMocs(prev => {
+              const next = [...new Set([...prev, programKey])];
+              void saveCreatedMocs(next);
+              return next;
+            });
+          },
         });
       }
       if (obsidianCfg.includeRawSrt && srt) {

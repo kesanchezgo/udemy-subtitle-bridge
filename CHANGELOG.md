@@ -1,3 +1,11 @@
+## [1.9.6] — 2026-11-09
+
+Clics de Obsidian reducidos y duplicación semántica medida con el mazo real. Cambia código de la extensión, por eso sube la versión.
+
+- **Los MOCs se registran como creados**: el índice del curso y el MOC del programa ya no se ofrecen igual cada lección — la etiqueta cambia a «Actualizar índice» / «Actualizar MOC del programa» cuando ya existen (con `overwrite`, sin «… 1.md»). El registro vive en `obsidian_created_mocs`, el mismo que ya usaba el índice.
+- **Duplicación semántica MEDIDA, no supuesta**: sobre las 26 tarjetas reales, la similitud de contenido (Jaccard sin términos de dominio) da **0 pares ≥ 40%**; los dos pares que yo había señalado como sospechosos miden **10%** (temperature) y **23%** (max_completion_tokens) — son preguntas de ángulos distintos (aplicar vs definir), no duplicados. Umbral alguno que los cazara marcaría también tarjetas legítimas (el ruido de fondo entre tarjetas distintas del mismo curso está en ese rango). Decisión de experto: no se añade filtro léxico; el dedupe exacto (1.9.5) + la regla del prompt bastan, y cada tarjeta tiene su interruptor de exclusión en el dock.
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp`, `qa:datacamp:flow` y `test-obsidian-export` en verde.
+
 ## [1.9.5] — 2026-11-09
 
 Escalado de tarjetas auditado con el mazo REAL del usuario (26 tarjetas vía AnkiConnect) y con su vault (D:\Obsidian\Dev Courses). Cambia código de la extensión, por eso sube la versión.
