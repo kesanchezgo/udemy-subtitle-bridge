@@ -1,3 +1,11 @@
+## [1.9.1] — 2026-11-08
+
+El escalón muerto fuera: la generación va directa a lo que funciona. Cambia código de la extensión, por eso sube la versión.
+
+- **Un solo escalón de generación**: 16.384 tokens sin razonamiento (18-21 s, JSON completo). El escalón «8.192 con razonamiento» se eliminó — gastó el presupuesto en pensar y volvió sin JSON el 100% de las veces (60-90 s perdidos por intento), que es justo el fallo que bloqueó la producción. El presupuesto de 16.384 se mantiene a propósito: es 2× el tamaño real de la respuesta (protege de respuestas desbocadas y del gasto de cuota), y el reintento único cubre los errores transitorios del pool.
+- **Prototipo (.mock) alineado** (quedó con el orden viejo del escalonado en la sincronización anterior).
+- **Arnés:** `qa:full` **59/59**, `qa:datacamp` **28/28**, `qa:datacamp:flow` en verde. `dist/` construida y verificada: la build contiene `maxTokens:16384, reasoningOff:true` como configuración única.
+
 ## [1.9.0] — 2026-11-08
 
 El escalón de generación se ordena por EVIDENCIA de producción, no por diseño original. Cambia código de la extensión, por eso sube la versión.

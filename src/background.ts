@@ -1577,9 +1577,12 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 		// entire output budget on reasoning…», ~60-90 s perdidos). La config que
 		// funciona SIEMPRE (18-21 s, JSON completo) va PRIMERO: 16384 sin
 		// razonamiento. El 8192 con razonamiento queda de respaldo.
+		// UN solo escalón, por evidencia: 16384 sin razonamiento produce el JSON
+		// completo en 18-21 s (2× el tamaño real de la respuesta). El escalón
+		// «8192 con razonamiento» se eliminó: gastó el presupuesto en pensar y
+		// volvió sin JSON el 100% de las veces (60-90 s perdidos por intento).
 		const ladder = [
 			{ maxTokens: 16384, reasoningOff: true },
-			{ maxTokens: 8192, reasoningOff: false },
 		];
 		for (const step of ladder) {
 			const stepLabel = `escalón ${step.maxTokens} (${step.reasoningOff ? 'sin razonamiento' : 'con razonamiento'})`;
