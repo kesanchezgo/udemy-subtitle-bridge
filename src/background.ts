@@ -1571,14 +1571,15 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 	const rungLog: string[] = [];
 	try {
 		if (import.meta.env.DEV) console.log('[USG][study] trying configured provider…');
-		// Escalona el presupuesto como la ruta Gemini: con modelos reasoning el
-		// razonamiento comparte max_tokens y puede dejar el JSON truncado o el
-		// contenido vacío. Si el primer intento no da JSON, el segundo va con
-		// 16384 y razonamiento desactivado: un peldaño intermedio de 16384 CON
-		// razonamiento es el más lento y el que menos desatasca el caso.
+		// Orden por EVIDENCIA de producción (telemetría de escalones + sonda con
+		// el payload real): con modelos reasoning de 8192 tokens el presupuesto
+		// se agota EN el razonamiento y vuelve sin JSON («The model used its
+		// entire output budget on reasoning…», ~60-90 s perdidos). La config que
+		// funciona SIEMPRE (18-21 s, JSON completo) va PRIMERO: 16384 sin
+		// razonamiento. El 8192 con razonamiento queda de respaldo.
 		const ladder = [
-			{ maxTokens: 8192, reasoningOff: false },
 			{ maxTokens: 16384, reasoningOff: true },
+			{ maxTokens: 8192, reasoningOff: false },
 		];
 		for (const step of ladder) {
 			const stepLabel = `escalón ${step.maxTokens} (${step.reasoningOff ? 'sin razonamiento' : 'con razonamiento'})`;
@@ -1628,13 +1629,17 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 				void recordStudyGenerationStep(stepKey);
 				return { payload: parsed, raw: cleaned };
 			}
+			const budgetNotice = /used its entire output budget/i.test(text);
 			const truncated = looksTruncatedJsonResponse(text);
-			rungLog.push(`${stepLabel}: ${text.length} B · ${truncated ? 'JSON truncado (el razonamiento agotó max_tokens)' : 'JSON no válido'}`);
-			console.warn(`[USG][study] ${stepLabel}: JSON ${truncated ? 'truncado' : 'no válido'} (${text.length} B).`);
-			if (text && !truncated) break; // reintentar no ayuda
-			providerAttemptError = text
-				? 'el JSON llegó truncado (el razonamiento agotó max_tokens)'
-				: 'el contenido llegó vacío (el razonamiento agotó max_tokens)';
+			const reason = budgetNotice
+				? 'el modelo agotó el presupuesto EN el razonamiento y no devolvió respuesta'
+				: truncated ? 'JSON truncado' : 'JSON no válido';
+			rungLog.push(`${stepLabel}: ${text.length} B · ${reason}`);
+			console.warn(`[USG][study] ${stepLabel}: ${reason} (${text.length} B).`);
+			if (text && !truncated && !budgetNotice) break; // reintentar no ayuda
+			providerAttemptError = budgetNotice
+				? 'el modelo agotó el presupuesto en razonamiento y no devolvió respuesta'
+				: text ? 'el JSON llegó truncado (se agotó max_tokens)' : 'el contenido llegó vacío';
 		}
 		if (!providerAttemptError) providerAttemptError = rungLog.join(' · ') || 'la respuesta no fue un JSON válido';
 	} catch (providerError) {

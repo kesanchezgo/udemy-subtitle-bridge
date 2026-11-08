@@ -1,3 +1,12 @@
+## [1.9.0] — 2026-11-08
+
+El escalón de generación se ordena por EVIDENCIA de producción, no por diseño original. Cambia código de la extensión, por eso sube la versión.
+
+- **Generación: primero lo que funciona.** La telemetría de escalones y la sonda con el payload real lo demostraron una y otra vez: con modelos reasoning de 8.192 tokens el presupuesto se agota EN el razonamiento y la respuesta vuelve sin JSON (aviso «The model used its entire output budget on reasoning…», 60-90 s perdidos por intento — el cuerpo de ~33 KB del 200 del proxy es mayormente la traza de razonamiento, no contenido). El orden invierte: **16.384 SIN razonamiento primero** (18-21 s, JSON completo en todas las corridas) y el 8.192 con razonamiento queda de respaldo. Resultado para el estudiante: generación ~5× más rápida y la clase de fallo de producción desaparece.
+- **Diagnóstico honesto**: el aviso «The model used its entire output budget…» ya no se reporta como «JSON truncado» (mentía) — dice lo que es: «el modelo agotó el presupuesto EN el razonamiento y no devolvió respuesta».
+- **Cadena completa por escalón en el toast** («Detalle: escalón 16.384… · escalón 8192…») y reintento único en transitorios del pool (401/403/429/5xx, 4 s).
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp` **28/28**, `qa:datacamp:flow`, `test-obsidian-export` y `qa:ai-health` en verde.
+
 ## [1.8.11] — 2026-11-08
 
 Reporte de producción: el 200 del proxy con 33.640 B era el escalón 1 llegando (con JSON truncado), el toast mostraba el 401/403 del escalón 2 y tiraba la historia real. Cambia código de la extensión, por eso sube la versión.
