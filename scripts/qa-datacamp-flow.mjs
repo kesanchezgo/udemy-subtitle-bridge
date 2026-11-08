@@ -215,8 +215,35 @@ await clearHistoryFor();
 await swEval((qaPort) => new Promise((done) => {
 	chrome.storage.local.set({
 		usg_ai_provider_config: { kind: 'openai', baseUrl: `http://127.0.0.1:${qaPort}/v1`, apiKey: 'qa-key', model: 'qa-model' },
+		// Vault FALSO: se cuenta que la extensión ordene guardar, sin escribir en
+		// el vault real del usuario (Obsidian lo ignora/rechaza).
+		obsidian_export_config: { vaultName: 'Kinema QA', sourcesFolder: 'wiki/fuentes', mocsFolder: 'cursos', includeCards: true, includeRawSrt: false, autoExport: false },
+		// Estado de exportación limpio: la nota se trata como PRIMERA vez (sin
+		// el aviso Añadir/Reemplazar, que es un segundo gesto legítimo).
+		obsidian_exported_notes: [],
+		obsidian_created_mocs: [],
 	}, () => done(null));
 }), QA_PORT);
+// El dock lee la config de Obsidian al MONTAR: recarga para que vea el vault de QA
+// (antes de instalar los observadores: el reload limpia window).
+await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+await page.waitForTimeout(4000);
+// Contadores: URIs obsidian:// creadas y descargas disparadas (por acción).
+await page.evaluate(() => {
+	window.__obsUris = [];
+	window.__obsToast = [];
+	new MutationObserver((muts) => {
+		for (const mu of muts) {
+			for (const n of mu.addedNodes) {
+				if (n.nodeType !== 1) continue;
+				if (n.tagName === 'A' && /^obsidian:/.test(n.getAttribute('href') ?? '')) window.__obsUris.push(n.getAttribute('href').slice(0, 80));
+			}
+		}
+	}).observe(document.body, { childList: true, subtree: true });
+});
+let downloadCount = 0;
+page.on('download', () => { downloadCount += 1; });
+const readUris = () => page.evaluate(() => (window.__obsUris ?? []).length);
 
 // Dock montado (el adaptador siembra el transcript del vídeo).
 let dockShown = false;
@@ -332,7 +359,29 @@ for (let i = 0; i < 16; i += 1) {
 check('Aplicar lleva a Fijar con «Terminar lección»', /Terminar lección/.test(finTxt), finTxt.slice(0, 110));
 check('Fijar muestra «Tarjetas de la lección»', /Tarjetas de la lección/.test(finTxt));
 
+// ── Fijar: exportaciones (un gesto = una orden de guardado) ──────────────────
+{
+	// A) .apkg: un clic = UNA descarga.
+	downloadCount = 0;
+	await waitClickInShadow(/Exportar \.apkg/);
+	await page.waitForTimeout(4000);
+	check('«Exportar .apkg» dispara UNA descarga', downloadCount === 1, `${downloadCount} descargas`);
+
+	// B) Obsidian: un clic = UNA URI obsidian:// (el resto va en avisos de un clic).
+	const u0 = await readUris();
+	await waitClickInShadow(/^Exportar$/);
+	await page.waitForTimeout(3000);
+	const u1 = await readUris();
+	check('la exportación a Obsidian abre UNA sola URI', u1 - u0 === 1, `${u1 - u0} URIs obsidian://`);
+	const avisos = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		return [...(root?.querySelectorAll('[data-sonner-toast]') ?? [])].map((x) => (x.textContent ?? '').replace(/\s+/g, ' ').slice(0, 60));
+	});
+	check('un aviso de Obsidian a la vez', avisos.filter((a) => /Obsidian|índice|MOC|subtítulos/i.test(a)).length <= 1, JSON.stringify(avisos).slice(0, 140));
+}
+
 // ── Fijar: cerrar la lección ──────────────────────────────────────────────────
+const urisAntesDeCerrar = await readUris();
 await waitClickInShadow(/Terminar lección/);
 await page.waitForTimeout(1500);
 const doneTxt = await shadow();
@@ -340,6 +389,14 @@ check('«Terminar lección» cierra la lección', /Lección terminada/.test(done
 const celebrated = await page.evaluate(() => Boolean(document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot?.querySelector('[data-sonner-toast] .kx-celebrate'))).catch(() => false);
 check('la celebración sale en la pila del panel', celebrated);
 await page.screenshot({ path: path.join(SHOTS, 'flow-fijar.png') }).catch(() => {});
+{
+	// C) «Terminar lección» + «Ir a la siguiente lección»: sin URIs de más.
+	await waitClickInShadow(/Ir a la siguiente lección|Siguiente lección|Ir a la lección siguiente/);
+	await page.waitForTimeout(3000);
+	const u2 = await readUris();
+	check('cerrar e ir a la siguiente lección no lanza más guardados', u2 - urisAntesDeCerrar === 0, `${u2 - urisAntesDeCerrar} URIs extra`);
+	check('sin descargas inesperadas al cerrar', downloadCount === 1, `${downloadCount} descargas acumuladas`);
+}
 
 // ── Historial: la lección queda guardada, completada y con su mazo ────────────
 // El SW de MV3 pudo dormirse tras el cierre (su target queda muerto para
