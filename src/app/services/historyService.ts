@@ -183,6 +183,12 @@ export interface LectureHistoryRecord {
   obsidianExportedAt?: number;
   /** Última auto-evaluación de repaso marcada por el estudiante (unix ms). */
   reviewedAt?: number;
+  /**
+   * Programa (career track) elegido cuando se estudió la lección (solo
+   * DataCamp): la re-exportación desde el Historial lleva el tag
+   * `kinema::track::<slug>` igual que la exportación del cierre.
+   */
+  dcTrackSlug?: string;
 }
 
 export interface CourseHistorySummary {

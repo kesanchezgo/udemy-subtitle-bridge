@@ -1,3 +1,10 @@
+## [1.8.2] — 2026-11-07
+
+Paridad completa del programa entre sitios: la re-exportación desde el Historial ya lleva el tag del programa. Cambia código de la extensión, por eso sube la versión.
+
+- **El registro guarda el programa elegido** (`dcTrackSlug` en el historial, escrito al cerrar la lección): la re-exportación del `.apkg` desde el Historial lleva el tag `kinema::track::<slug>` IGUAL que la exportación del cierre — antes solo la del cierre lo tenía, y una lección re-exportada de DataCamp salía sin su programa.
+- **Prototipo (.mock) al día** con las mismas ediciones; `qa:datacamp` **24/24**, `qa:full` **59/59**.
+
 ## [1.8.1] — 2026-11-07
 
 Auditoría de la integración del programa: tres fallos encontrados y corregidos antes de usarlo en serio. Cambia código de la extensión, por eso sube la versión.

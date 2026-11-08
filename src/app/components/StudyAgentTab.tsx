@@ -3884,6 +3884,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         doubt: c.doubt, isHtml: c.isHtml,
       })),
       ankiCardsCount: allCardsWithReinforce.filter(c => !c.excluded).length,
+      // Programa elegido (solo DataCamp): la re-exportación desde el Historial
+      // lleva el tag kinema::track igual que la del cierre.
+      dcTrackSlug: dcCtx?.activeSlug ?? undefined,
       // Lo realmente exportado (no lo añadido después, p. ej. una tarjeta de duda).
       exportedGuids: lastExportGuids ?? (ankiExported || obsidianExportedAt ? guids : undefined),
     }).catch(err => console.error("[history] finish", err));
@@ -3990,7 +3993,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                 <HistoryPanel
-                  onExportLesson={async rec => { await exportApkgFile((rec.ankiCards ?? []).filter(card => !card.excluded).map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concept" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck); }}
+                  onExportLesson={async rec => { await exportApkgFile((rec.ankiCards ?? []).filter(card => !card.excluded).map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concept" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck, undefined, rec.dcTrackSlug); }}
                   hideToggle
                   defaultOpen
                   onOpenLecture={(rec) => {
