@@ -1565,6 +1565,10 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 	// This is the same fallback chain the objectives and refine paths use, and it
 	// is what makes the feature work without Gemini keys.
 	let providerAttemptError = '';
+	// Historial por escalón: el toast final debe contar QUÉ devolvió cada
+	// intento (200 con JSON truncado ≠ 401 del pool) — el último error solo
+	// cuenta la mitad de la historia.
+	const rungLog: string[] = [];
 	try {
 		if (import.meta.env.DEV) console.log('[USG][study] trying configured provider…');
 		// Escalona el presupuesto como la ruta Gemini: con modelos reasoning el
@@ -1577,21 +1581,42 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 			{ maxTokens: 16384, reasoningOff: true },
 		];
 		for (const step of ladder) {
+			const stepLabel = `escalón ${step.maxTokens} (${step.reasoningOff ? 'sin razonamiento' : 'con razonamiento'})`;
+			const callProvider = () => requestConfiguredProviderText(
+				buildStudyPrompt(cleaned, metadata),
+				0.35,
+				step.maxTokens,
+				{ reasoningOff: step.reasoningOff },
+			);
 			let text = '';
 			try {
-				text = await requestConfiguredProviderText(
-					buildStudyPrompt(cleaned, metadata),
-					0.35,
-					step.maxTokens,
-					{ reasoningOff: step.reasoningOff },
-				);
+				text = await callProvider();
 			} catch (stepError) {
-				providerAttemptError = toErrorMessage(stepError).slice(0, 220);
-				if (!/contenido vac[íi]o/i.test(providerAttemptError)) throw stepError;
-				console.warn(`[USG][study] provider empty content at ${step.maxTokens} tokens (reasoning).`);
-				continue; // escala al siguiente peldaño
+				const stepMsg = toErrorMessage(stepError).slice(0, 220);
+				rungLog.push(`${stepLabel}: ${stepMsg}`);
+				console.warn(`[USG][study] ${stepLabel} falló: ${stepMsg}`);
+				if (/contenido vac[íi]o/i.test(stepMsg)) {
+					continue; // escala al siguiente peldaño
+				}
+				// Estado transitorio del pool gratuito (enfriamiento/saturación
+				// disfrazado de 401/403/429/5xx): un ÚNICO reintento por escalón
+				// tras una pausa corta — el estado suele girar en segundos.
+				if (/40[13]|429|50[0-4]|se agotó el tiempo|timeout/i.test(stepMsg)) {
+					console.warn(`[USG][study] ${stepLabel}: reintento único en 4 s (estado transitorio del pool)`);
+					await new Promise((r) => setTimeout(r, 4000));
+					try {
+						text = await callProvider();
+						rungLog.push(`${stepLabel}: reintento OK`);
+					} catch (retryError) {
+						const retryMsg = toErrorMessage(retryError).slice(0, 200);
+						rungLog.push(`${stepLabel}: reintento falló (${retryMsg})`);
+						throw retryError;
+					}
+				} else {
+					throw stepError;
+				}
 			}
-			if (import.meta.env.DEV) console.log('[USG][study] raw provider response:', text);
+			console.info(`[USG][study] ${stepLabel}: respuesta de ${text.length} B`);
 			const parsed = safeJsonParse(text);
 			if (parsed && typeof parsed === 'object') {
 				console.info('[USG][study] JSON parse ok. Keys:', Object.keys(parsed as Record<string, unknown>));
@@ -1603,16 +1628,21 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 				void recordStudyGenerationStep(stepKey);
 				return { payload: parsed, raw: cleaned };
 			}
-			console.warn(`[USG][study] Provider response could not be parsed as JSON (${step.maxTokens} tokens, reasoningOff=${step.reasoningOff}).`);
-			if (text && !looksTruncatedJsonResponse(text)) break; // reintentar no ayuda
+			const truncated = looksTruncatedJsonResponse(text);
+			rungLog.push(`${stepLabel}: ${text.length} B · ${truncated ? 'JSON truncado (el razonamiento agotó max_tokens)' : 'JSON no válido'}`);
+			console.warn(`[USG][study] ${stepLabel}: JSON ${truncated ? 'truncado' : 'no válido'} (${text.length} B).`);
+			if (text && !truncated) break; // reintentar no ayuda
 			providerAttemptError = text
 				? 'el JSON llegó truncado (el razonamiento agotó max_tokens)'
 				: 'el contenido llegó vacío (el razonamiento agotó max_tokens)';
 		}
-		if (!providerAttemptError) providerAttemptError = 'la respuesta no fue un JSON válido';
+		if (!providerAttemptError) providerAttemptError = rungLog.join(' · ') || 'la respuesta no fue un JSON válido';
 	} catch (providerError) {
-		providerAttemptError = toErrorMessage(providerError).slice(0, 220);
-		console.warn('[USG][study] provider error:', providerError);
+		const base = toErrorMessage(providerError).slice(0, 260);
+		providerAttemptError = rungLog.length > 0 ? `${base} | ${rungLog.join(' · ')}`
+			: base;
+		providerAttemptError = providerAttemptError.slice(0, 480);
+		console.warn('[USG][study] provider error (cadena completa):', providerError, '| racha:', rungLog.join(' · '));
 	}
 
 	// ── Fall back to Gemini if the provider did not produce a usable payload ──

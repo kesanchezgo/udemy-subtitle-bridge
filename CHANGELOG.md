@@ -1,3 +1,12 @@
+## [1.8.11] — 2026-11-08
+
+Reporte de producción: el 200 del proxy con 33.640 B era el escalón 1 llegando (con JSON truncado), el toast mostraba el 401/403 del escalón 2 y tiraba la historia real. Cambia código de la extensión, por eso sube la versión.
+
+- **El error de generación cuenta la historia completa.** Cada escalón registra su resultado (`escalón 8192 (con razonamiento): 33.640 B · JSON truncado… · escalón 16384: HTTP 401/403…`) y el toast añade el «Detalle: …» técnico — ya no se ve solo el último fallo, que era del REINTENTO y no de la generación original.
+- **Reintento único por escalón en errores transitorios del pool** (401/403/429/5xx tras 4 s): el estado del proxy gira en segundos — esta producción ya lo mostró (200 → 503 → 200). Sin reintento en fallos permanentes.
+- Consola del service worker con la traza por escalón siempre (antes solo en DEV).
+- **Prototipo (.mock) al día**; `qa:full` **59/59**, `qa:datacamp` y `qa:datacamp:flow` en verde.
+
 ## [1.8.10] — 2026-11-08
 
 Auditoría de calidad de la nota de Obsidian sobre la exportación real del usuario: dos defectos de contenido encontrados y corregidos. Cambia código de la extensión, por eso sube la versión.

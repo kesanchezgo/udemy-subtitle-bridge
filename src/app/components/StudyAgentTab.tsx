@@ -2276,7 +2276,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               kind: getAiProviderConfig().kind,
               endpoint: getAiProviderConfig().baseUrl,
               model: getAiProviderConfig().model,
-            }),
+            }) + ` Detalle: ${generationError.slice(0, 160)}`,
             icon: <WifiOff className="text-amber-400" size={18} />,
             duration: 7000,
           });
