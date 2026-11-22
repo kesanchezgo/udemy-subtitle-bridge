@@ -12,6 +12,7 @@ Integración completa de la versión validada del prototipo (`.mock/`) al sistem
 - **Arquitectura**: nuevos módulos puros de destinos y biblioteca (`ankiDestination`, `ankiConnectOps`, `deckConcepts`, `cardCoverage`, `library`, `practiceFormats`, `recallCue`, `vocabularySync`, `obsidianBridge`/`Writer`/`RestOps`, `platform`), con las 3 guardas de demo del repo estrictamente `if (!import.meta.env?.DEV) return null;` (sin chunk `prototypeData` en producción).
 - **QA**: tests del repo adaptados a los contratos nuevos (plantilla única, callout de Obsidian, mensajes de proveedor, textos de Study); `qa:full` y las suites unitarias y E2E del prototipo en verde; `typecheck` y build de producción limpios.
 
+- **Documentación y versión en pie**: los cuatro documentos de contrato en `docs/` (`ANKI_PEDAGOGY.md`, `STUDY_FLOW_PEDAGOGY.md`, `obsidian-integration.md` y `ejemplo-nota-obsidian.md`) quedaron alineados con los contratos actuales (1 palabra = 1 tarjeta, `inspectVocabDecks`, etiquetado `kinema::programa::`, «Lo recuerdo» / «Repasarlo», callout de sincronización y jerarquía de Ajustes → Obsidian), y el fallback de versión en `ExtensionSidebar` pasa a `1.9.8`.
 ## [1.9.8] — 2026-11-09
 
 Dos hallazgos de producción: la exportación NO se triplica (medido) y la autodetección del programa era demasiado rígida ante cuentas con varios programas. Cambia código de la extensión, por eso sube la versión.

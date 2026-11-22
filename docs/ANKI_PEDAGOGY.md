@@ -20,15 +20,18 @@ referencia.
 
 ## 1. Las dos familias de mazos NO son lo mismo
 
-### 1.2 Vocabulario v2 — Reconocer + Producir (2026-10-29)
+### 1.2 Vocabulario v2 — 1 palabra = 1 tarjeta completa (Fase 5.1)
 
-Dos tarjetas por palabra, con bury de hermanas y «plantilla primero»:
+`buildVocabModel(lang)` genera **una sola plantilla `Vocabulario`** (frente +
+reverso): no hay segunda plantilla `Producir` ni selector «Tarjetas por
+palabra». El hueco se crea por DOM sobre la oración, de forma segura (la
+oración se inserta como texto, nunca como HTML ejecutable), y una palabra
+produce **una tarjeta**, no dos.
 
-- **Reconocer**: palabra + IPA + audio + oración con la palabra RESALTADA
-  (sin hueco). Es el paso receptivo.
-- **Producir** (activada por defecto; interruptor en Ajustes → Vocabulario):
-  significado + traducción + oración con `[ ... ]` en lugar de la palabra.
-  Sin IPA ni audio (darían la respuesta). Es el paso productivo.
+- **Frente**: palabra objetivo + IPA *peek* + audio + oración con hueco cloze
+  seguro por DOM (`span.cloze-gap`, la palabra se oculta con `[ ... ]`).
+- **Reverso completo**: palabra, significado, traducción, colocación e imagen,
+  además de la oración ya resuelta.
 - **Colocación**: una combinación frecuente y natural con la palabra
   («memory leak») en el reverso. Evidencia: Boers et al., collocations en L2.
 - **Audio con respaldo**: si el campo de archivo existe suena ese archivo;
@@ -40,7 +43,8 @@ Dos tarjetas por palabra, con bury de hermanas y «plantilla primero»:
   vuelve a descargar un lote viejo, Anki lo omite por GUID (sin duplicados).
 - Campos nuevos al FINAL (los 9 del pipeline de imágenes intactos):
   `nivel` (CEFR llega a la tarjeta), `colocacion`, `fuente`,
-  `producir` («1» = genera la tarjeta Producir).
+  `producir` — **conservado vacío solo por compatibilidad de esquema**; ya no
+  genera una segunda tarjeta.
 
 | | **Conceptos de lección** (`Courses`) | **Vocabulario de idiomas** (`Vocabulary`) |
 |---|---|---|
@@ -131,13 +135,50 @@ mazos demo (`scripts/qa-anki-samples.mjs`) muestran el diseño completo.
      ver arriba). En pausa, el chip de Udemy permite «+ Mazo» con los mismos
      estados que el panel (antes solo lo tenía el prototipo: en la extensión
      real no se podía marcar desde el video aunque la app lo decía).
-- **Un mazo por idioma, un submazo por curso**: `Kinema::Vocabulary::English::‹curso›`.
-  La palabra vive en el submazo del curso donde la exportaste primero; estudia
-  el mazo del idioma para repasarlas todas juntas (límite diario del preset).
-- **Límites conocidos**: el registro de palabras exportadas es local (por
-  navegador); en otro equipo pueden volver a proponerse, pero Anki no las
-  duplica. Una palabra con otro sentido en otro curso no crea otra tarjeta: se
-  queda con el primero.
+- **Un mazo por idioma** (fase 2): `Kinema::Vocabulary::English`. Una palabra
+  pertenece al idioma, no al curso: vive una sola vez (GUID por idioma y lema)
+  y el curso, la lección, el CEFR y la plataforma van en etiquetas. Una sola
+  cola diaria coherente (límite del preset). Se puede elegir un mazo propio
+  (p. ej. «English Cards»: el pipeline de imagen y audio selecciona por mazo y
+  campo vacío). **Fase 5.1: por idioma** (`vocabDecks`, clave = el idioma del
+  mazo, «English»): un mazo tuyo para inglés ya no se lleva el francés. Se
+  se elige en un menú (Ajustes → Anki → `Vocabulario · ‹Idioma›`) con «El de
+  Kinema» y tus mazos reales de Anki. `inspectVocabDecks` ofrece el mazo
+  oficial de Kinema — **incluidos los mazos de Kinema renombrados**, detectados
+  por el tipo de nota `Kinema · Vocab · ‹Idioma›` — y únicamente tus mazos
+  compatibles con los 9 campos base (`VOCAB_FIELDS_BASE`). Se excluyen
+  `Default`, `Basic` y los mazos de cursos de programación (no compatibles).
+  Sin Anki conectado, el menú solo trae el de Kinema (y el que ya tuvieras
+  elegido). El mazo único de versiones
+  anteriores (`vocabDeck`) se sigue leyendo para los idiomas sin elección
+  propia; elegir para un idioma (también «El de Kinema» = `""`) manda solo en
+  ese idioma (`ownVocabDeck` / `withVocabDeck`). «Ordenar lo antiguo» no toca
+  el vocabulario del idioma que va a un mazo tuyo.
+- **Lo «de Kinema», en Anki, son dos cosas**: el **diseño** de la tarjeta (el
+  tipo de nota, «Kinema · Vocab · ‹idioma›»: pronunciación, ejemplo de la
+  lección y audio; o la tarjeta de conceptos) y el **ritmo** (las opciones
+  del mazo: «Kinema · Cursos», 20 nuevas al día; «Kinema · Vocabulario», 15).
+  El mazo es solo el contenedor. Un mazo tuyo recibe el mismo diseño y
+  conserva su ritmo (el importador no cambia las opciones de un mazo que ya
+  existe). Ajustes → Anki lo dice en una frase, bajo «Dónde quedan tus
+  tarjetas».
+- **Con Anki conectado, Anki manda**: las palabras que ya están en tu mazo de
+  idioma (y en los mazos compatibles que marques en Ajustes → Idiomas → «Lo
+  que ya sabes») no se vuelven a proponer. Fase 5.1: esos mazos salen de la
+  lista real de Anki filtrada por `inspectVocabDecks` (tipo de nota / 9 campos
+  base, sin `Default` ni mazos de curso), no de un campo libre. `ankiKnownWords`
+  busca también **por tipo de nota del idioma activo**
+  (`Kinema · Vocab · ‹Idioma›`), así que reconoce las palabras aunque el mazo
+  haya sido renombrado en Anki. Sin Anki, el registro local de siempre.
+- **Ajustes sin Study** (fase 5.1): antes de entrar (o de «Continuar sin
+  cuenta») Study no existe, y era quien dibujaba Anki e Idiomas: esas
+  secciones decían «Inicia sesión o continúa sin cuenta». Ahora Ajustes las
+  muestra por su cuenta (`SettingsSheet`: `StudySlot`), con una sola copia de
+  la misma configuración (`usb_vocab_config`) que Study lee al montarse.
+- **Límites conocidos**: sin Anki conectado, el registro de palabras exportadas
+  es local (por navegador); en otro equipo pueden volver a proponerse, pero
+  Anki no las duplica. Una palabra con otro sentido en otro curso no crea otra
+  tarjeta: se queda con el primero.
 - **15 nuevas/día** (preset): carga sostenible; el scheduling óptimo lo hace
   FSRS (ver §2), no el volumen diario.
 
@@ -185,6 +226,298 @@ Cursos/Vocabulario» con IDs estables derivados de los nombres originales;
 árbol de mazos bajo una raíz configurable; GUIDs por contenido (reimportar no duplica ni pisa,
 no duplica); csum SHA-1 estándar de Anki. Nada del usuario se toca (verificado
 en importaciones reales).
+
+### 3.1 Estructura de mazos (fase 2, fija desde la fase 5 — `ankiDestination.ts`)
+
+Una sola fuente decide dónde va cada tarjeta y cómo se cuentan sus repasos:
+el envío al terminar, Fijar, la espera, la Biblioteca, la nota de Obsidian
+(`anki_deck`), el badge, «Tu progreso» y «Ordenar lo antiguo».
+
+| | Siempre (fase 5: sin opciones) | Tuyo, si lo eliges |
+|---|---|---|
+| Conceptos | `Kinema::Courses::‹curso›` — un mazo por curso | un mazo tuyo para ese curso («Cambiar» en Fijar o en la Biblioteca) |
+| Vocabulario | `Kinema::Vocabulary::‹idioma›` — cada palabra, una vez | uno tuyo de Anki, por idioma (Ajustes → Anki → Palabras: el menú con tus mazos) |
+
+**Etiquetas: lo que se cruza** (todas bajo `kinema::`, el separador jerárquico de Anki):
+
+| Etiqueta | Qué es | Relación |
+|---|---|---|
+| `kinema::curso::‹curso›` | el curso | 1 por tarjeta (y el mazo) |
+| `kinema::leccion::‹lección›` | la lección | 1 por tarjeta |
+| `kinema::programa::‹programa›` | cada programa que sigues y que incluye el curso | N:M |
+| `kinema::plataforma::‹sitio›` | udemy, datacamp o el nombre del sitio | 1 por tarjeta |
+| `kinema::tipo::…`, `kinema::tema::…`, `kinema::reforzar`, `kinema::origen::…` | lo de siempre | — |
+
+- **Por qué el mazo es el curso y no el programa (ni la lección)**: en Anki
+  un mazo es un contenedor (una tarjeta vive en UN mazo, con UN preset) y el
+  manual recomienda pocos mazos y etiquetas para clasificar. Un curso puede
+  estar en varios programas y un programa tiene varios cursos (N:M): un árbol
+  de mazos solo podría representarlo eligiendo uno o duplicando tarjetas, y
+  dos tarjetas de la misma idea reparten su memoria. FSRS programa cada
+  tarjeta por separado: agrupar en más mazos no mejora el recuerdo. Un
+  submazo por lección llenaba el árbol (un curso de 48 h son cientos) sin
+  aportar nada. Por eso «Por programa» y «Por lección» desaparecen.
+- **Repasar un programa entero**: un mazo filtrado de Anki con
+  `tag:kinema::programa::‹programa›`. El etiquetado sigue intacto; lo que se
+  retiró de la UI de Ajustes → Anki fue el bloque informativo de comandos
+  `tag:kinema::…` (el etiquetado interno no cambia).
+  «Cómo buscarlas en Anki», plegado porque Kinema las pone solo;
+  `programCardsQuery` lee también la etiqueta antigua).
+- **N:M al día**: al enviar una lección, sus tarjetas llevan la etiqueta de
+  cada programa con el que estudiaste el curso (`courseProgramSlugs`: las de
+  su historial más el activo) y, con Anki conectado, las tarjetas que ya
+  tenías de ese curso reciben la que les falte (`missingProgramTagQuery` +
+  `addTags`: solo se AÑADE una etiqueta a notas de conceptos del curso; ni
+  campos, ni mazos, ni repasos, ni vocabulario).
+- **Un curso, un mazo**: la primera vez que un curso llega a Anki su mazo
+  queda en un registro local. Aunque cambie el programa activo o la
+  configuración, el curso no se reparte entre mazos. Cambiarlo es explícito
+  («Cambiar») y, con Anki conectado, mueve lo ya importado con su historial.
+- **Sin migración forzosa**: un curso fijado con una estructura anterior
+  (`Kinema::Programs::‹programa›::‹curso›`) sigue en su mazo; los submazos por
+  lección cuelgan de `Kinema::Courses::‹curso›` (estudiar el mazo del curso
+  ya los incluye). «Ordenar lo antiguo» (Ajustes → Anki) es opcional: primero
+  cuenta y solo cambia al confirmar —
+  `…::Courses::‹curso›::‹lección›` y `…::Programs::‹programa›::‹curso›` →
+  `…::Courses::‹curso›`, `…::Vocabulary::‹idioma›::‹curso›` →
+  `…::Vocabulary::‹idioma›` (`changeDeck` conserva los repasos; solo se borran
+  mazos comprobados vacíos justo antes, también los `Programs` intermedios), el
+  registro pasa al mazo nuevo, y las etiquetas antiguas `kinema::track::…` y
+  `kinema/platform::…` se renombran (`addTags` + `removeTags`). Anki deja el
+  nombre antiguo, ya sin notas, en la lista de etiquetas hasta «Comprobar base
+  de datos» (comprobado con el motor real); Kinema no lo borra por su cuenta
+  porque esa limpieza afecta a todas las etiquetas sin usar de la colección.
+- **Mazos del estudiante**: si eliges un mazo que no cuelga de la raíz, el
+  .apkg solo declara ese mazo (ni raíz ni ramas de Kinema) y Kinema no le crea
+  submazos. El importador de Anki no cambia la configuración de un mazo que ya
+  existe; si no existía, se crea con el preset de Kinema. **Pendiente de
+  verificar en Anki real** con `scripts/qa-anki-import-verify.mjs`.
+- **Repasos por etiqueta**: badge, progreso e historial cuentan por tipo de
+  nota + `kinema::curso` / `kinema::leccion` (y la ruta antigua, para tarjetas
+  de versiones sin etiquetas), así la cifra es la misma con cualquier
+  estructura y con mazos propios.
+
+### 3.2 Llega solo a Anki (fase 5: sin exportar)
+
+Lo único que hay que configurar es la conexión (Ajustes → Anki → Conexión:
+AnkiConnect, una vez). Al pulsar «Terminar lección», las tarjetas aceptadas y
+las palabras marcadas **llegan solas** a Anki: Kinema importa **el mismo
+.apkg** de siempre (`storeMediaFile` + `importPackage`, y borra el archivo de
+medios después) — mismos GUID, note types, CSS y presets, y la misma regla de
+no pisar lo importado (`addNotes` crearía GUID al azar y duplicaría). La
+confirmación es un dato de Anki: notas de la lección antes y después.
+
+- **Si Anki no responde**, la lección queda **esperando** (`syncPending.anki`
+  en el historial; las palabras, en `usb_vocab_waiting`) y se envía sola en
+  cuanto Anki vuelva a responder: Kinema lo comprueba al abrir el panel, cada
+  minuto mientras algo espera y al pulsar «Comprobar». Nunca pide un permiso
+  nuevo por su cuenta (el diálogo de AnkiConnect solo sale al pulsar
+  «Conectar»).
+- **Después de terminar**, una tarjeta añadida («Añadir igualmente», volver a
+  incluir una nueva) se envía sola; quitar una no la borra de Anki (se dice).
+- **Solo lo que «Terminar lección» dejó esperando** se envía por su cuenta.
+  Las lecciones terminadas antes de la fase 5 y nunca enviadas se ofrecen en
+  la Biblioteca («Aún no están en Anki» → «Enviar a Anki (N)») y en Fijar
+  («Enviar a Anki»): un clic, no una sorpresa.
+- **Respaldo sin AnkiConnect**: solo en la Biblioteca, discreto («¿Sin
+  AnkiConnect? Descargar los .apkg»): el mismo paquete como archivo. En Fijar
+  no hay ningún botón de exportar ni de descargar.
+- **Pendiente de verificar en Anki real**: que `importPackage` (importador
+  legacy) trae los presets sin la opción «Importar cualquier configuración».
+
+### 3.3 Biblioteca (Historial ampliado, `library.ts`)
+
+No es una pantalla nueva: el Historial de Study se llama ahora Biblioteca y
+ordena lo mismo como Programa (opcional, DataCamp) → Curso → Lección. No toma
+decisiones pedagógicas nuevas (no cambia tarjetas, mazos ni presets); muestra
+lo que ya decide §3.1 y los estados que calcula Anki.
+
+- **Un curso, una fila, un mazo**: los registros se agrupan por curso. Un
+  curso estudiado en varios programas aparece una sola vez, bajo el programa
+  con más lecciones; los demás se dicen como «también en …» (son etiquetas
+  `kinema::programa::…`, no copias). El mazo es el de Fijar: el del registro si
+  ya está fijado o, si no, `Kinema::Courses::‹curso›`. «Cambiar» en la
+  Biblioteca es el mismo control y la misma función que en Fijar.
+- **Progreso del curso, solo si se conoce el temario** (`courseTotals.ts`): al
+  abrir una lección, el content script lee el total de la plataforma (una vez
+  por curso y semana) y la Biblioteca da «2 de 475 lecciones» y su porcentaje
+  («<1%», redondeado hacia abajo: 100 % solo si está terminado). Campos
+  verificados contra las APIs reales (2026-11): Udemy
+  `api-2.0/courses/{slug}?fields[course]=num_published_lectures`
+  (`num_lectures` incluye las no publicadas) y, en DataCamp, el outline que ya
+  se descarga: ejercicios `VideoExercise` (cada vídeo es una lección de
+  Kinema; `nb_exercises` no cuadra con la lista). Sin temario, o si no cuadra
+  (más lecciones estudiadas que el total), **no hay porcentaje**: la fila dice
+  «3 terminadas de 5 empezadas» y el anillo muestra «3/5» con la pista
+  discontinua. Un porcentaje sobre lo empezado parecía del curso entero.
+- **Dos fuentes de cifras, sin mezclarlas**: las del historial (tarjetas
+  aceptadas, refuerzo, dudas, exportadas) siempre están. Las de Anki (total,
+  nuevas, para hoy, aprendiendo, reaprendiendo) solo aparecen si Anki
+  responde. Sin Anki se dice que las cifras son del historial, nunca «0
+  pendientes». Si una búsqueda no se pudo hacer, se muestra «Anki no
+  respondió» y no una cifra.
+- **Mismas búsquedas que los repasos pendientes** (`kinemaCardsQuery`, por
+  tipo de nota + `kinema::curso`/`kinema::leccion`, más la ruta antigua),
+  **solo conceptos**: `kinemaCardsQuery` excluye en lección y curso los tipos
+  de nota de vocabulario (`Kinema · Vocab · *`, `Udemy Bridge Vocab`), que
+  también llevan `kinema::curso` y se colaban por las cláusulas de mazo si
+  compartían mazo con el curso. Vale para la Biblioteca, el badge, los repasos
+  pendientes y «Cambiar» (que ya no movería vocabulario).
+- **Estados de Anki, verificados con su motor** (paquete `anki` 26.9.4, el
+  mismo código que usa AnkiConnect en `findCards`;
+  `scripts/qa-anki-real-search.mjs`, estados creados respondiendo con el
+  planificador): `is:new`, `is:learn` e `is:review` van por el **tipo** de
+  tarjeta e **incluyen suspendidas y enterradas**; `is:due` las excluye.
+  Aprendiendo = `is:learn -is:review` (tipo aprendizaje, intradía y entre
+  días); reaprendiendo = `is:learn is:review` (tipo reaprendizaje: olvidadas
+  en un repaso). El desglose (nuevas, aprendiendo, reaprendiendo) cuenta solo
+  las **activas** (`-is:suspended -is:buried`), como la pantalla de mazos de
+  Anki; el total las incluye y las suspendidas se dicen aparte.
+- **Etiquetas sin colisiones**: `kinemaSlug` conserva «+» (`plus`) y el «#»
+  pegado a una letra (`sharp`). Antes «C++», «C#» y «C» daban la misma
+  etiqueta y la misma clave de registro: se mezclaban sus repasos y «Cambiar»
+  podía mover tarjetas de un curso a otro (lo destapó la verificación con el
+  motor real). Lo ya exportado se sigue encontrando por el mazo del curso, y
+  el registro de mazos lee la clave antigua si no hay una nueva. Queda una
+  arista conocida: las tarjetas de «C++» o «C#» exportadas antes del cambio
+  llevan la etiqueta antigua (`c-…`), así que también cuentan en un curso «C»
+  si lo tienes.
+- **Solo lectura**: la Biblioteca solo hace `findCards` (hasta 120 búsquedas
+  por consulta y 40 lecciones por curso) y `guiBrowse` («Abrir en Anki»,
+  «Repasar hoy», «Ver en Anki»). Lo único que modifica es «Cambiar» el mazo, y
+  solo al confirmarlo. (El otro cambio en tarjetas ya importadas, «Repasar hoy
+  en Anki» de §3.4, vive en Fijar y también es solo al pulsarlo.)
+- **Obsidian** (fase 3, `docs/obsidian-integration.md`): la carpeta del curso
+  con el mismo control que Fijar (registro único, `obsidianDestination`),
+  cuántas lecciones tienen nota y, con Obsidian conectado (plugin Local REST
+  API), lo que hay DE VERDAD en el vault: notas que ya no están, índice del
+  curso creado o no, y «Guardar las N notas que faltan» (rehechas desde el
+  historial). Sin conexión, abrir la nota o el índice con `obsidian://open`.
+
+### 3.4 Ideas que ya están en tu mazo (fase 4, `deckConcepts.ts`)
+
+El GUID de una tarjeta de conceptos es `curso|lección|[study:|duda:]frente`:
+la misma idea estudiada en otra lección del curso (un repaso, una introducción
+que adelanta temas), la misma lección estudiada otra vez o un curso del mismo
+programa entraba en Anki como otra nota. Dos tarjetas de la misma idea reparten su memoria en dos
+calendarios y la duplican en la cola. Es el mismo principio que el
+vocabulario (§1.2, «cada lema vive en UNA tarjeta; las re-exposiciones las
+gestiona el planificador»), aplicado a conceptos. **No introduce un efecto
+nuevo**: se apoya en referencias ya verificadas — espaciado (Cepeda et al.
+2006), FSRS programa por tarjeta (Ye & Li 2022) y recuperar en la sesión lo
+que no salió (Karpicke & Blunt 2011; Metcalfe 2017 en STUDY_FLOW R4/R6).
+
+- **Identidad, sin similitud léxica.** Con las 26 tarjetas reales del repo
+  (CHANGELOG 1.9.5/1.9.6) ningún par llega al 40 % de Jaccard y los pares
+  legítimos están entre el 10 y el 23 %: un umbral léxico no sirve. Cuenta
+  como «ya en tu mazo», por este orden:
+  1. el **mismo frente** (`frontKey`) que una tarjeta del mazo — o que la
+     pregunta de UNA idea, que sería el frente de su tarjeta de cobertura;
+  2. el **mismo título de idea** («Título — detalle», la pista que la nombra;
+     al menos 8 caracteres normalizados: «Usos» no identifica nada);
+  3. la **IA**, que recibe la lista del mazo con ids (`m1…m40`) y devuelve
+     `inDeck: [{ idea, ref }]`; solo se aceptan ids de la lista enviada, cada
+     id una vez. Un id inventado no cuenta.
+- **Alcance: más cautela cuanto más lejos.**
+
+  | La tarjeta que ya tienes es de… | mismo frente | mismo título | IA |
+  |---|---|---|---|
+  | esta lección (una sesión anterior) | sí | sí | sí |
+  | otra lección de este curso | sí | sí | sí |
+  | otro curso del programa activo (DataCamp, `kinema::programa` —o `kinema::track` en notas antiguas— o un curso del programa) | sí | sí | sí |
+  | otro curso tuyo sin relación | no | no | sí |
+
+  Entre cursos sin relación una pregunta corta o un título («¿Qué es un
+  hook?») puede ser otra cosa en otro dominio: ahí solo decide la IA, que ve de
+  qué curso es cada tarjeta («— curso «Intro to SQL»») y tiene instrucciones de
+  contarla solo si la respuesta vale en el mismo sentido. A igualdad, gana la
+  más cercana (esta lección, luego el curso, luego el programa) y la más
+  reciente. `conceptTerms`, el código de los frentes, `kinema::tema` y las
+  etiquetas de la IA **solo** deciden qué tarjetas se le enseñan a la IA
+  cuando no caben todas (primero esta lección, luego el curso y su programa y
+  las que comparten un nombre canónico con la transcripción, luego las
+  recientes; de otros cursos, solo las que comparten algún nombre canónico);
+  nunca si dos tarjetas son la misma.
+- **La misma lección estudiada otra vez también cuenta.** El mismo frente puede
+  llevar otro GUID (una tarjeta de cobertura lleva `study:`, una de duda
+  `duda:`), así que volver a exportarla podía duplicarla; si es la misma nota,
+  dejarla fuera no cambia nada en Anki. Fijar lo dice: «de una sesión anterior
+  de esta lección». **No es duplicado** una tarjeta que además cubre una idea
+  nueva (p. ej. la de síntesis): se queda.
+- **Fuente**: con Anki conectado, el mazo real (`findNotes` + `notesInfo`, solo
+  lectura, hasta 1500 notas por búsqueda, las más recientes primero): las del
+  curso (la misma búsqueda que los repasos y la Biblioteca,
+  `kinemaCardsQuery('course')`) y las demás notas de conceptos de Kinema
+  (`otherCoursesConceptsQuery`: `note:"Udemy Bridge Concept"
+  -tag:kinema::curso::<este curso>`; con el motor real de Anki no confunde un
+  curso cuyo nombre empieza igual). Las dos lecturas van por separado y con
+  8 s de margen: si la de los demás cursos falla, la del curso sigue valiendo;
+  si la del curso falla, se usa el historial. El historial aporta títulos de
+  idea, `conceptTerms` y el nombre de cada curso. Sin Anki (o si no responde),
+  lo exportado según el historial de este navegador (las aceptadas y, si
+  consta, solo las que llevó la última exportación). Fijar dice cuál.
+- **Se decide al generar y se guarda** (`studyContent.deckMatches`): al
+  restaurar no se recalcula (tras exportar, las tarjetas de la propia lección
+  ya estarían en el mazo y todo parecería repetido).
+- **En la sesión se trabajan igual** (Recordar y Comprobar, sin cambios). En
+  Fijar cuentan como cubiertas («Cubren las 4 ideas clave… 2 de ellas, con las
+  tarjetas que ya tenías en tu mazo»), su tarjeta de hoy queda fuera del
+  paquete (`inDeck`) y el bloque «2 ideas ya estaban en tu mazo» dice cuál es
+  la que ya tienes, de qué lección y, si es de otro curso, de cuál. **«Añadir igualmente»** la incluye (es una
+  decisión del estudiante: entra como tarjeta nueva, con su refuerzo si no
+  salió). Ninguna tarjeta nueva de refuerzo se crea para una idea que ya está.
+  Si no queda ninguna tarjeta, a Anki no llega un paquete vacío (ni cuenta
+  como enviado): Fijar dice que lo de hoy ya estaba en tu mazo —o, si se
+  quitaron a mano, que no hay tarjetas para Anki—. Las cifras de pendientes
+  (Biblioteca, aviso de la barra y «Aún no están en Anki») cuentan solo las
+  tarjetas aceptadas, con la misma regla (`library.isPendingExport`); enviar
+  (o, sin AnkiConnect, descargar) desde la Biblioteca lleva el enlace y la
+  plataforma de ESA lección, no los de la página abierta.
+- **«Repasar hoy en Anki» (lo único que toca tarjetas que ya están en Anki)**:
+  - solo con Anki conectado y solo para ideas que ya están en el mazo y **hoy
+    no salieron** («No del todo» —o sin responder— en Recordar, o falladas en
+    Comprobar);
+  - **nunca automático**: solo al pulsarlo; el botón dice cuántas cambian
+    («Repasar hoy en Anki (2)») y el aviso confirma cuáles;
+  - `setDueDate` con `"0"` **sin «!»**. Verificado con el motor de Anki 26.9.4
+    (`scripts/qa-deck-real-anki.mjs`, estados puestos respondiendo con el
+    planificador, con FSRS y sin él): la tarjeta sigue en repaso y conserva su
+    historial; **sin FSRS conserva el intervalo** tal cual; **con FSRS conserva
+    su memoria** (estabilidad y dificultad) y el intervalo pasa a los días
+    reales desde el último repaso (1 si fue ayer; ni 0 ni el programado). El próximo
+    intervalo sale de la respuesta real del repaso adelantado. Con «!» el
+    intervalo se reiniciaría: por eso no se usa;
+  - solo tarjetas de conceptos de Kinema **en repaso y activas** que aún no
+    tocan hoy: `nid:<nota> note:"Udemy Bridge Concept" is:review -is:learn
+    -is:suspended -is:buried -is:due` (se comprueba justo antes de cambiar).
+    Sobre `is:review -is:suspended -is:buried` se añaden `-is:learn` (las de
+    reaprendizaje son `is:review` e `is:learn` a la vez: ya vuelven en minutos
+    u horas) y `-is:due` (las que ya tocan hoy no ganan nada);
+  - las **nuevas** («aún no tiene calendario que adelantar»), las que están en
+    **aprendizaje** («vuelve en minutos u horas»), las **suspendidas o
+    enterradas** («Kinema no la reactiva»), las que **ya tocan hoy** y las que no
+    son notas de conceptos de Kinema (p. ej. una tuya en el mazo del curso) no
+    se tocan, y cada fila dice por qué;
+  - **sin etiquetas de refuerzo** en notas existentes: no cambiarían nada
+    (`kinema::reforzar` solo ordena las nuevas al importar).
+  El estado se lee antes (`findCards`, solo lectura) y queda en el historial
+  (`rescheduledAt`) y en la nota de Obsidian («adelantada a hoy en Anki»).
+- **Biblioteca**: «N ideas ya estaban en tu mazo al estudiarlas» por curso, «N
+  ya en tu mazo» por lección y, en su detalle, cuáles y de qué lección. Sigue
+  siendo de solo lectura.
+- **Límites conocidos**: entre cursos sin relación solo cuenta lo que la IA
+  reconoce, y solo se le enseñan las tarjetas que comparten un nombre canónico
+  con la lección (si no lo reconoce, se crea su tarjeta, como antes: el error
+  posible es una tarjeta de más, no una idea sin tarjeta); el programa solo
+  existe en DataCamp con un programa activo (Udemy no tiene programas); sin
+  Anki, el historial es de este navegador y guarda la última sesión de cada
+  lección; la IA solo ve hasta 40 tarjetas del mazo (con un curso enorme, una
+  idea repetida de una lección antigua y sin términos en común puede
+  escaparse: entonces se crea su tarjeta, como antes). Las búsquedas de estado y `setDueDate "0"` están
+  verificadas con el motor real (`scripts/qa-deck-real-anki.mjs`); la
+  interfaz, con un AnkiConnect simulado que usa las mismas operaciones del
+  service worker (`scripts/qa-deck-flow.mjs`). **Pendiente en Anki de
+  escritorio**: la misma prueba a mano con AnkiConnect (ver INSTRUCCIONES).
 
 ## 4. Bibliografía (Scopus)
 
@@ -354,12 +687,12 @@ AND learning`.
 **Tarjetas de duda (Study §5, `docs/STUDY_FLOW_PEDAGOGY.md`)**: una duda
 resuelta en la sesión puede guardarse como tarjeta `concepto` (diseño y
 evidencia de §1.1), de refuerzo y con origen `kinema::origen::duda`; máx. 2
-por lección y sin frentes repetidos. La duda se pregunta en Study tras
+por lección (3 si tiene 6 o más ideas) y sin frentes repetidos. La duda se pregunta en Study tras
 intentar (R10–R12 de STUDY_FLOW, verificadas por DOI en Crossref; pendiente
 confirmarlas en Scopus según §0).
 
 **Badge de repasos (AnkiConnect)**: el dock consulta cuántas tarjetas de la
-lección actual tienen repaso pendiente hoy. No introduce un efecto nuevo:
+lección actual tienen repaso pendiente hoy (por etiqueta: ver §3.1). No introduce un efecto nuevo:
 operacionaliza el espaciado ya evidenciado (Cepeda et al. 2006; Dunlosky et
 al. 2013 — §1) reduciendo la fricción de adherencia al calendario.
 

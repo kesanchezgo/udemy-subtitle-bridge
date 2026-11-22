@@ -1,8 +1,8 @@
-# Ejemplo: nota de sesión exportada a Obsidian
+# Ejemplo: nota de sesión guardada en Obsidian
 
 > Generada por el builder real (`src/app/services/obsidianExport.ts`) con una sesión de ejemplo
 > (el EJEMPLO A del prompt de estudio) y el resultado de una sesión típica.
-> Ruta en el vault de la nota: `wiki/fuentes/java-bootcamp---como-java-ejecuta-tu-codigo.md` — índice del curso (MOC): `cursos/java-bootcamp.md`.
+> Ruta en el vault de la nota (fase 5: una carpeta por curso, se guarda sola al terminar la lección): `wiki/fuentes/java-bootcamp/java-bootcamp---como-java-ejecuta-tu-codigo.md` — índice del curso (MOC): `cursos/java-bootcamp.md`.
 
 ---
 
@@ -19,9 +19,9 @@ lesson: "Cómo Java ejecuta tu código"
 objective: "Preparar entrevistas backend con Java"
 relevance_score: 92
 lesson_url: "https://www.udemy.com/course/java-bootcamp/learn/lecture/12345"
-anki_deck: "Kinema::Courses::Java Bootcamp::Cómo Java ejecuta tu código"
+anki_deck: "Kinema::Courses::Java Bootcamp"
 concepts: [bytecode, jvm, jit]
-tags: [kinema/sesion, kinema/curso/java-bootcamp, udemy]
+tags: [kinema/sesion, kinema/curso/java-bootcamp, kinema/plataforma/udemy]
 ---
 
 # Cómo Java ejecuta tu código
@@ -37,10 +37,14 @@ La lección recorre el camino del código Java: javac lo compila a bytecode, la 
 
 ## Ideas clave
 
-- javac compila el fuente a bytecode, no a código nativo
-- la JVM interpreta el bytecode en cada plataforma
-- el JIT compila hot spots a nativo en runtime
-- portabilidad = un .class corre donde exista JVM
+- **Qué produce javac** — javac compila el fuente a bytecode, no a código nativo
+- **Quién ejecuta el bytecode** — la JVM de cada plataforma interpreta el bytecode
+- **Por qué no es lento** — el JIT compila los hot spots a nativo en runtime
+- **Portabilidad** — un .class corre donde exista una JVM, sin recompilar
+
+> Fase 4: si una idea ya estaba en tu mazo (de otra lección del curso), su línea lo dice y enlaza con la nota de esa lección, p. ej.
+> `- **Qué es un hot spot** — … · _ya en tu mazo: [[java-bootcamp---arquitectura-de-la-jvm|Arquitectura de la JVM]]_`,
+> y «Resultado de la sesión» añade `· 1 idea ya estaba en tu mazo` a la línea de Tarjetas.
 
 Conceptos: [[wiki/conceptos/bytecode|bytecode]] · [[wiki/conceptos/jvm|JVM]] · [[wiki/conceptos/jit|JIT]]
 
@@ -73,12 +77,25 @@ Conceptos: [[wiki/conceptos/bytecode|bytecode]] · [[wiki/conceptos/jvm|JVM]] ·
 
 ## Aplicación práctica
 
-**Escenario:** Tienes App.java compilado en tu laptop
+**Escenario:** Compilas App.java en tu laptop y quieres ejecutarlo en un servidor Linux con otra JVM
 
-**Reto:** Lleva solo el .class a una PC con otra JVM y ejecútalo sin recompilar
+**Reto:** Completa los dos comandos que faltan para ejecutarlo en el servidor sin recompilar
+
+**Formato:** Completar · el código
+
+```bash
+____ App.java        # en la laptop: genera App.class
+scp App.class servidor:~/
+ssh servidor ____ App  # sin recompilar
+```
 
 > [!example]- Ver solución
-> java -cp . App funciona si la JVM soporta la versión del bytecode; documenta la diferencia entre JDK y JRE
+> Hueco 1: javac · Hueco 2: java
+>
+> javac compila una vez a bytecode; en el servidor, java arranca su JVM, que interpreta ese mismo .class.
+
+> [!note]- Solución explicada
+> javac App.java genera App.class en la laptop; en el servidor basta java App, porque su JVM interpreta el mismo bytecode
 
 ## Próximo paso
 
@@ -89,8 +106,9 @@ Conceptos: [[wiki/conceptos/bytecode|bytecode]] · [[wiki/conceptos/jvm|JVM]] ·
 **Lección completada**
 
 - Recordaste (según tú): 3 de 4 ideas
+- Lo que dijiste saber: se confirmó
 - Comprobación: 1 a la primera · 1 tras corregir
-- Práctica: correcta
+- Práctica: correcta · a la primera (Completar)
 - Tarjetas: 4 (1 de refuerzo) · en Anki
 
 > [!info] Calibración: Elegiste «Entendido» y lo demostraste.
@@ -135,7 +153,7 @@ No me salieron sin mirar:
 > - **Frase de cierre:** «compila una vez, ejecuta donde haya JVM; acelera en caliente con JIT».
 >
 
-> [!info] El mazo con formato dev-card se exporta desde la extensión como `.apkg`.
+> [!info] Estas tarjetas se sincronizan automáticamente con tu mazo de Anki.
 
 ````
 
@@ -150,21 +168,21 @@ date: 2026-11-05
 type: curso
 platform: udemy
 status: en-progreso
-tags: [curso, udemy, java-bootcamp]
+tags: [kinema/moc/curso, kinema/plataforma/udemy]
 ---
 
 # Java Bootcamp
 
 **Objetivo:** Preparar entrevistas backend con Java
 
-> [!tip] Las sesiones se listan solas: cada exportación de la extensión
-> crea una nota en `wiki/fuentes` con `course: java-bootcamp` en el frontmatter.
+> [!tip] Las sesiones se listan solas: cada nota de Kinema lleva la etiqueta
+> `kinema/sesion` y `course: java-bootcamp` en el frontmatter, esté en la carpeta que esté.
 
 ## Sesiones
 
 ```dataview
 TABLE lesson AS "Lección", date AS "Fecha", relevance_score AS "Relevancia"
-FROM "wiki/fuentes"
+FROM "wiki/fuentes" OR #kinema/sesion
 WHERE course = "java-bootcamp"
 SORT date DESC
 ```
@@ -185,9 +203,9 @@ y muestra esta sesión automáticamente (y todas las siguientes del mismo curso)
 
 ## 3. Resultado esperado al probarlo tú
 
-1. Generas una sesión en el dock → Obsidian → **Exportar**.
-2. Chrome pregunta una vez «¿Abrir Obsidian?» → **Siempre permitir**.
-3. Obsidian crea la nota de la sesión en `wiki/fuentes/`. La primera vez de cada curso, el aviso
-   ofrece «Crear índice del curso» (el MOC en `cursos/`): Chrome abre un solo protocolo por clic.
+1. Conectas Obsidian una vez (Ajustes → Obsidian → Conexión: plugin **Local REST API**).
+2. Estudias la lección y pulsas **Terminar lección**: sin exportar nada, Kinema guarda la nota en
+   `wiki/fuentes/<curso>/` y, la primera vez de cada curso, su índice (el MOC en `cursos/`), de una vez.
+3. Si Obsidian estaba cerrado, la nota espera y se guarda sola en cuanto lo abres.
 4. Con **Dataview**, el MOC lista la sesión con fecha y relevancia; con «Repasar también en
    Obsidian» activado, las tarjetas van bajo `#flashcards` para el plugin **Spaced Repetition**.
