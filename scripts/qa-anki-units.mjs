@@ -112,7 +112,7 @@ await test("Ordenar lo antiguo: por lección, por programa y vocabulario por cur
 
 // ── Anki simulado: entiende las búsquedas que genera ankiDestination ──
 function fakeAnki({ permission = "granted", version = 6, unavailable = false } = {}) {
-	const state = { cards: [], notes: [], decks: new Set(["Default"]), media: new Map(), calls: [], failImport: false, onImport: null };
+	const state = { cards: [], notes: [], decks: new Set(["Default"]), media: new Map(), calls: [], failImport: false, onImport: null, mediaDir: "C:\\Users\\Student\\AppData\\Roaming\\Anki2\\Usuario 1\\collection.media", activeImports: 0, maxConcurrent: 0 };
 	const unq = (v) => v.replace(/\\(.)/g, "$1");
 	const match = (query, card) => {
 		const inc = [...query.matchAll(/(^|\s|\()deck:"((?:\\.|[^"\\])*)"/g)].map((m) => unq(m[2]));
@@ -132,9 +132,22 @@ function fakeAnki({ permission = "granted", version = 6, unavailable = false } =
 			case "deckNames": return [...state.decks];
 			case "findCards": return state.cards.filter((c) => match(params.query, c)).map((c) => c.id);
 			case "findNotes": return state.notes.filter((n) => match(params.query, n)).map((n) => n.id);
+			case "getMediaDirPath": return state.mediaDir;
 			case "storeMediaFile": state.media.set(params.filename, params.data); return params.filename;
-			case "deleteMediaFile": state.media.delete(params.filename); return null;
-			case "importPackage": if (state.failImport) throw new Error("import failed"); state.onImport?.(params.path); return true;
+			case "deleteMediaFile":
+				if (/[\\/]/.test(params.filename)) throw new Error("deleteMediaFile exige solo el basename");
+				state.media.delete(params.filename); return null;
+			case "importPackage":
+				if (!/^(?:[A-Za-z]:[\\/]|\/)/.test(params.path)) throw new Error("importPackage exige ruta absoluta");
+				state.activeImports += 1;
+				state.maxConcurrent = Math.max(state.maxConcurrent, state.activeImports);
+				try {
+					if (state.failImport) throw new Error("import failed");
+					const name = params.path.split(/[\\/]/).pop();
+					if (!state.media.has(name)) throw new Error("el paquete no está en collection.media");
+					await state.onImport?.(params.path);
+					return true;
+				} finally { state.activeImports -= 1; }
 			case "changeDeck": state.decks.add(params.deck); for (const c of state.cards) if (params.cards.includes(c.id)) c.deck = params.deck; return null;
 			case "deleteDecks": for (const d of params.decks) { if (state.cards.some((c) => c.deck === d || c.deck.startsWith(`${d}::`))) throw new Error("not empty"); state.decks.delete(d); } return null;
 			case "notesInfo": return params.notes.map((id) => state.notes.find((n) => n.id === id)).map((n) => ({ noteId: n.id, fields: n.fields }));
@@ -158,7 +171,8 @@ await test("AnkiConnect: «Enviar a Anki» importa el mismo .apkg y confirma con
 	const tags = ["kinema::curso::java", "kinema::leccion::jvm"];
 	anki.state.notes.push({ id: 1, tags, deck: "Kinema::Courses::Java" });
 	anki.state.onImport = (path) => {
-		assert(anki.state.media.has(path), "el paquete está en medios al importar");
+		assert(path.startsWith(anki.state.mediaDir + "\\"), "ruta nativa Windows absoluta dentro de collection.media");
+		assert(anki.state.media.has(path.split(/[\\/]/).pop()), "el paquete está en medios al importar");
 		anki.state.notes.push({ id: 2, tags, deck: "Kinema::Courses::Java" }, { id: 3, tags, deck: "Kinema::Courses::Java" });
 	};
 	const r = await ops.importApkg(anki.invoke, { base64: "QUJD", filename: "JVM conceptos.apkg", countQuery: q });
@@ -169,6 +183,24 @@ await test("AnkiConnect: «Enviar a Anki» importa el mismo .apkg y confirma con
 	anki.state.failImport = true;
 	await assert.rejects(() => ops.importApkg(anki.invoke, { base64: "QUJD", filename: "x.apkg", countQuery: q }), /import failed/);
 	assert.equal(anki.state.media.size, 0);
+});
+
+await test("AnkiConnect: importPackage usa ruta POSIX y serializa dos envíos simultáneos", async () => {
+	const anki = fakeAnki();
+	anki.state.mediaDir = "/Users/Student/Library/Application Support/Anki2/Usuario 1/collection.media";
+	const q = dest.lessonNotesQuery("Java", "JVM");
+	const tags = ["kinema::curso::java"];
+	let posixSeen = false;
+	anki.state.onImport = (path) => {
+		if (path.startsWith("/Users/")) { posixSeen = true; assert(path.includes("/collection.media/")); }
+	};
+	await Promise.all([
+		ops.importApkg(anki.invoke, { base64: "QUJD", filename: "a.apkg", countQuery: q }),
+		ops.importApkg(anki.invoke, { base64: "QUJD", filename: "b.apkg", countQuery: q }),
+	]);
+	assert(posixSeen, "ruta POSIX absoluta aceptada");
+	assert.equal(anki.state.maxConcurrent, 1, "los importes nunca se solapan");
+	assert.equal(anki.state.media.size, 0, "no quedan paquetes temporales");
 });
 
 await test("AnkiConnect: migración opcional conserva tarjetas y solo borra submazos vacíos", async () => {

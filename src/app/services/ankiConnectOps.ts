@@ -3,7 +3,7 @@
  * worker les pasa su `invoke` real y los tests, un Anki falso.
  *
  * «Enviar a Anki» importa EL MISMO .apkg que la descarga manual
- * (storeMediaFile + importPackage): mismos GUID, note types, CSS y presets,
+ * (getMediaDirPath + storeMediaFile + importPackage con ruta absoluta): mismos GUID, note types, CSS y presets,
  * y la misma regla de no pisar lo ya importado (KINEMA_NOTE_MOD). Así los dos
  * caminos nunca duplican una tarjeta entre sí, cosa que addNotes (GUID al
  * azar) no podría garantizar.
@@ -74,22 +74,53 @@ export interface ImportResult {
 }
 
 /**
- * Importa un .apkg (base64) en la colección abierta y dice cuántas notas de
- * `countQuery` había antes y hay después: la confirmación es un dato de Anki,
- * no «la descarga terminó».
+ * Une la ruta absoluta de `collection.media` (devuelta por `getMediaDirPath` en
+ * AnkiConnect) con el nombre real devuelto por `storeMediaFile`, respetando el
+ * separador nativo del sistema operativo (`\` en Windows, `/` en macOS/Linux).
+ * `importPackage` en AnkiConnect pasa `path` directo a `AnkiPackageImporter`:
+ * un nombre relativo se resuelve contra el directorio del ejecutable de Anki y
+ * provoca `ECONNRESET`.
  */
-export async function importApkg(invoke: AnkiInvoke, input: { base64: string; filename: string; countQuery: string }): Promise<ImportResult> {
-	const filename = `_kinema_import_${input.filename.replace(/[^a-z0-9._-]/gi, '_')}`;
-	const before = await countNotes(invoke, input.countQuery);
-	await invoke('storeMediaFile', { filename, data: input.base64 });
-	try {
-		await invoke('importPackage', { path: filename });
-	} finally {
-		// El paquete no se queda en la carpeta de medios del estudiante.
-		await invoke('deleteMediaFile', { filename }).catch(() => undefined);
-	}
-	const after = await countNotes(invoke, input.countQuery);
-	return { before, after, added: Math.max(0, after - before) };
+export function joinAnkiMediaPath(mediaDir: string, filename: string): string {
+	const cleanDir = mediaDir.trim().replace(/[\\/]+$/, '');
+	const cleanFile = filename.trim().replace(/^[\\/]+/, '');
+	if (!cleanDir) throw new Error('AnkiConnect no devolvió la ruta de collection.media (getMediaDirPath).');
+	const sep = cleanDir.includes('\\') ? '\\' : '/';
+	return `${cleanDir}${sep}${cleanFile}`;
+}
+
+/** Cola secuencial para que dos `importPackage` simultáneos (conceptos + vocabulario al terminar) no colisionen en el hilo único de Anki. */
+let ankiImportChain: Promise<unknown> = Promise.resolve();
+function enqueueAnkiImport<T>(task: () => Promise<T>): Promise<T> {
+	const run = ankiImportChain.then(task, task);
+	ankiImportChain = run.catch(() => undefined);
+	return run;
+}
+
+/** Importa un .apkg usando el contrato oficial de AnkiConnect v6: ruta absoluta de medios. */
+export function importApkg(invoke: AnkiInvoke, input: { base64: string; filename: string; countQuery: string }): Promise<ImportResult> {
+	return enqueueAnkiImport(async () => {
+		const filename = `_kinema_import_${input.filename.replace(/[^a-z0-9._-]/gi, '_')}`;
+		const before = await countNotes(invoke, input.countQuery);
+		const rawMediaDir = await invoke('getMediaDirPath');
+		if (typeof rawMediaDir !== 'string' || !rawMediaDir.trim()) {
+			throw new Error('AnkiConnect no devolvió la ruta de medios del perfil activo (getMediaDirPath).');
+		}
+		const stored = await invoke('storeMediaFile', { filename, data: input.base64 });
+		const actualFilename = typeof stored === 'string' && stored.trim() ? stored.trim() : filename;
+		const packagePath = joinAnkiMediaPath(rawMediaDir, actualFilename);
+		try {
+			await invoke('importPackage', { path: packagePath });
+		} finally {
+			// deleteMediaFile recibe SIEMPRE solo el basename dentro de collection.media, nunca la ruta completa.
+			await invoke('deleteMediaFile', { filename: actualFilename }).catch(() => undefined);
+			if (actualFilename !== filename) {
+				await invoke('deleteMediaFile', { filename }).catch(() => undefined);
+			}
+		}
+		const after = await countNotes(invoke, input.countQuery);
+		return { before, after, added: Math.max(0, after - before) };
+	});
 }
 
 export interface MoveResult extends DeckMove {

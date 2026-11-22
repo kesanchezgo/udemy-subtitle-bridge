@@ -302,10 +302,18 @@ el envío al terminar, Fijar, la espera, la Biblioteca, la nota de Obsidian
 Lo único que hay que configurar es la conexión (Ajustes → Anki → Conexión:
 AnkiConnect, una vez). Al pulsar «Terminar lección», las tarjetas aceptadas y
 las palabras marcadas **llegan solas** a Anki: Kinema importa **el mismo
-.apkg** de siempre (`storeMediaFile` + `importPackage`, y borra el archivo de
-medios después) — mismos GUID, note types, CSS y presets, y la misma regla de
-no pisar lo importado (`addNotes` crearía GUID al azar y duplicaría). La
-confirmación es un dato de Anki: notas de la lección antes y después.
+.apkg** de siempre — mismos GUID, note types, CSS y presets, y la misma regla
+de no pisar lo importado (`addNotes` crearía GUID al azar y duplicaría). El
+envío sigue el contrato oficial de **AnkiConnect v6**: `getMediaDirPath`
+(ruta absoluta real de `collection.media` del perfil abierto) → `storeMediaFile`
+(devuelve el nombre real almacenado) → `importPackage` con la **ruta absoluta
+nativa** (`\` en Windows, `/` en macOS/Linux, unida por `joinAnkiMediaPath`)
+→ `deleteMediaFile` con **solo el basename** al terminar. Un nombre relativo
+haría que Anki resolviera el paquete contra el directorio del ejecutable y
+cortara el socket (`ECONNRESET`). Los dos envíos que pueden coincidir al
+terminar (conceptos y vocabulario) se **serializan en una cola en memoria**:
+Anki importa en su hilo principal y dos `importPackage` simultáneos chocarían.
+La confirmación es un dato de Anki: notas de la lección antes y después.
 
 - **Si Anki no responde**, la lección queda **esperando** (`syncPending.anki`
   en el historial; las palabras, en `usb_vocab_waiting`) y se envía sola en
