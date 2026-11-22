@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, Check, HelpCircle, Plus, RotateCcw, Send, X, Icon } from "../icons";
 import { textareaCls } from "../settings/SettingsKit";
 import {
-  MAX_DOUBT_CARDS,
   MAX_DOUBT_TURNS,
   appendDoubtTurn,
   askLessonDoubt,
@@ -23,12 +22,14 @@ import {
  * «Guardar como tarjeta» es la acción principal de cada respuesta.
  */
 export function LessonDoubtPanel({
-  ctx, thread, savedCount, isInDeck, getTranscript, demoAnswer, onChange, onClose,
+  ctx, thread, savedCount, maxCards, isInDeck, getTranscript, demoAnswer, onChange, onClose,
 }: {
   ctx: LessonDoubtContext;
   thread: LessonDoubtThread | null;
   /** Tarjetas de duda ya guardadas en la lección (para el tope). */
   savedCount: number;
+  /** Tope de tarjetas de duda de esta lección (doubtCardLimit). */
+  maxCards: number;
   /** ¿Ya hay en el mazo una tarjeta con este frente? (mismo frente = mismo GUID en Anki). */
   isInDeck: (front: string) => boolean;
   getTranscript: () => Promise<DoubtTranscript | null>;
@@ -51,7 +52,7 @@ export function LessonDoubtPanel({
   const asking = pending !== null && !error;
   const canAsk = turns.length < MAX_DOUBT_TURNS;
   const followUpsLeft = MAX_DOUBT_TURNS - turns.length;
-  const capReached = savedCount >= MAX_DOUBT_CARDS;
+  const capReached = savedCount >= maxCards;
 
   // Foco: al abrir, al campo; al cerrar, de vuelta a quien abrió el panel —
   // salvo que el foco ya esté en otro sitio (p. ej. se abrió otra duda).
@@ -160,6 +161,7 @@ export function LessonDoubtPanel({
               key={turn.at}
               turn={turn}
               capReached={capReached}
+              maxCards={maxCards}
               inDeck={Boolean(turn.card && !turn.saved && isInDeck(turn.card.front))}
               onSave={() => saveCard(turn)}
               onRemove={() => removeCard(turn)}
@@ -276,10 +278,11 @@ function Badges({ outside, local }: { outside: boolean; local: boolean }) {
 }
 
 function DoubtTurnView({
-  turn, capReached, inDeck, onSave, onRemove,
+  turn, capReached, maxCards, inDeck, onSave, onRemove,
 }: {
   turn: LessonDoubtTurn;
   capReached: boolean;
+  maxCards: number;
   /** La tarjeta propuesta ya está en el mazo (otra respuesta o la sesión). */
   inDeck: boolean;
   onSave: () => void;
@@ -352,7 +355,7 @@ function DoubtTurnView({
           </div>
           {capReached && !turn.saved && !inDeck && (
             <p className="text-[10px] text-[var(--usb-fg-mid)] leading-relaxed">
-              Ya guardaste {MAX_DOUBT_CARDS} tarjetas de duda en esta lección. Quita una para guardar esta.
+              Ya guardaste {maxCards} tarjetas de duda en esta lección. Quita una para guardar esta.
             </p>
           )}
         </div>

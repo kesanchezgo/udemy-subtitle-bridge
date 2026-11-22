@@ -151,6 +151,10 @@ assert(htmlToMarkdownLite('<p>A</p><ul><li>x</li><li>y</li></ul>') === 'A · x �
 	assert(md2.includes('Comprobación: 0 a la primera · 1 tras corregir'), 'línea de comprobación');
 	assert(md2.includes('Práctica: pendiente'), 'estado de práctica');
 	assert(md2.includes('Tarjetas: 6 (1 de refuerzo) · en Anki'), 'línea de tarjetas con destino');
+	// Contrato actual: el callout al pie de tarjetas describe sincronización
+	// automática con Anki (antes hablaba de exportar el .apkg a mano).
+	assert(md2.includes('> [!info] Estas tarjetas se sincronizan automáticamente con tu mazo de Anki.'),
+		'callout de tarjetas: sincronización automática con el mazo de Anki');
 	// El mensaje de calibración ya nombra el nivel elegido y el demostrado (contrato del prototipo).
 	assert(md2.includes('> [!info] Calibración: Te sentías más seguro de lo que mostraste.'), 'línea de calibración');
 	// Sin datos nuevos, las secciones no aparecen (retrocompatible).

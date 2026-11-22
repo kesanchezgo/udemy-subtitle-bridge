@@ -22,6 +22,7 @@ import {
 } from './app/services/datacampLecture';
 import type { DataCampProgram, DataCampTrackRef, DataCampVideoMeta, DataCampVttLanguage } from './app/services/datacampLecture';
 import { initAiProviderConfig } from './app/services/ai-providers';
+import { courseTotalKey, dataCampVideoTotal, isFreshTotal, readCourseTotals, saveCourseTotal, udemyLectureTotal, type CallbackStorage } from './app/services/courseTotals';
 import { vocabularyMatches } from './shared/vocabMatch';
 import { toast } from 'sonner';
 import { exportedVocabularyKeys, readVocabularySession, toggleVocabularySelection, updateVocabularySession, vocabularyWordKey } from './app/services/vocabularySession';
@@ -2119,16 +2120,21 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 		visited.push('target=' + (node ? node.tagName + '.' + String(node.className).slice(0, 30) : 'null'));
 		while (node && (node as unknown as ShadowRoot) !== shadow) {
 			const el = node as HTMLElement;
-			const overflowY = getComputedStyle(el).overflowY;
-			if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
-				const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+			const cs = getComputedStyle(el);
+			const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+			const axisOverflow = horizontal ? cs.overflowX : cs.overflowY;
+			const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+			if ((axisOverflow === 'auto' || axisOverflow === 'scroll') && max > 1) {
 				const delta = horizontal ? event.deltaX : event.deltaY;
-				const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
 				const current = horizontal ? el.scrollLeft : el.scrollTop;
 				const next = Math.max(0, Math.min(current + delta, max));
-				if (horizontal) el.scrollLeft = next;
-				else el.scrollTop = next;
-				break;
+				if (Math.abs(next - current) > 0.5) {
+					if (horizontal) el.scrollLeft = next;
+					else el.scrollTop = next;
+					break;
+				}
+				const overscroll = horizontal ? cs.overscrollBehaviorX : cs.overscrollBehaviorY;
+				if (overscroll === 'contain' || overscroll === 'none') break;
 			}
 			node = el.parentElement;
 		}
@@ -2169,18 +2175,21 @@ function installDockInteractionGuards(shadow: ShadowRoot) {
 		const srBoundary = sr as unknown as Element;
 		while (node && node !== srBoundary) {
 			const el = node as HTMLElement;
-			const overflowY = getComputedStyle(el).overflowY;
-			if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
-				const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+			const cs = getComputedStyle(el);
+			const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+			const axisOverflow = horizontal ? cs.overflowX : cs.overflowY;
+			const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+			if ((axisOverflow === 'auto' || axisOverflow === 'scroll') && max > 1) {
 				const delta = horizontal ? event.deltaX : event.deltaY;
-				const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
 				const current = horizontal ? el.scrollLeft : el.scrollTop;
-				if (max > 0) {
-					const next = Math.max(0, Math.min(current + delta, max));
+				const next = Math.max(0, Math.min(current + delta, max));
+				if (Math.abs(next - current) > 0.5) {
 					if (horizontal) el.scrollLeft = next;
 					else el.scrollTop = next;
+					return;
 				}
-				return;
+				const overscroll = horizontal ? cs.overscrollBehaviorX : cs.overscrollBehaviorY;
+				if (overscroll === 'contain' || overscroll === 'none') return;
 			}
 			node = el.parentElement;
 		}
@@ -2454,7 +2463,37 @@ function buildLectureContextPayload() {
 	};
 }
 
+// ── Total de lecciones del curso (progreso de la Biblioteca) ────────────────
+let courseTotalCheckedFor: string | null = null;
+function localCallbackStorage(): CallbackStorage | null {
+	const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { local?: CallbackStorage } } };
+	return chromeApi.chrome?.storage?.local ?? null;
+}
+
+/**
+ * Udemy: lecciones publicadas del curso, una vez por curso y semana. Con eso la
+ * Biblioteca da el porcentaje del CURSO; sin eso, solo «terminadas de empezadas».
+ */
+async function refreshUdemyCourseTotal() {
+	if (isDataCampCampusPage()) return;
+	const slug = getCourseSlug();
+	const title = getCourseTitle();
+	const storage = localCallbackStorage();
+	if (!slug || !title || !storage || courseTotalCheckedFor === slug) return;
+	courseTotalCheckedFor = slug;
+	try {
+		const known = (await readCourseTotals(storage))[courseTotalKey(title)];
+		if (known?.slug === slug && isFreshTotal(known)) return;
+		const response = await fetch(`/api-2.0/courses/${encodeURIComponent(slug)}/?fields%5Bcourse%5D=title,num_published_lectures`, { credentials: 'include', headers: { Accept: 'application/json' } });
+		if (!response.ok) return;
+		const json = (await response.json()) as { title?: string };
+		const total = udemyLectureTotal(json);
+		if (total) await saveCourseTotal(storage, [title, json.title], { total, source: 'udemy', slug, at: Date.now() });
+	} catch { /* sin total: la Biblioteca usa lo empezado */ }
+}
+
 function sendLectureContextUpdate() {
+	void refreshUdemyCourseTotal();
 	// Auto-rellenado del curso/lección reales en el dock: se escriben por
 	// chrome.storage.sync — el mismo canal de usePersistedState("agent_course_name")
 	// — para que el dock los hidrate sin depender del puente de eventos.
@@ -2570,6 +2609,10 @@ async function seedDataCampCourseOutline() {
 	if (outline?.raw) {
 		dcTracks = parseDataCampTracks(outline.raw as { tracks?: Array<{ path?: string; title_with_subtitle?: string }> });
 		dcCourseId = typeof (outline.raw as { id?: number }).id === 'number' ? (outline.raw as { id: number }).id : null;
+		// Vídeos del curso (lo que Kinema estudia): el porcentaje del curso en la Biblioteca.
+		const videos = dataCampVideoTotal(outline.raw);
+		const storage = localCallbackStorage();
+		if (videos && outline.title && storage) void saveCourseTotal(storage, [outline.title], { total: videos, source: 'datacamp', slug, at: Date.now() });
 	}
 	await refreshDataCampProgram();
 	sendLectureContextUpdate();
@@ -3125,8 +3168,8 @@ async function toggleGlossWord(word: string): Promise<void> {
 			return toggleVocabularySelection(current, word, seen);
 		});
 		// El panel escucha el almacenamiento y vuelve a enviar el glosario con el estado nuevo.
-		toast.success(wasSelected ? 'Palabra quitada de tu selección' : 'Palabra añadida a tu selección', {
-			description: 'Se exporta desde Fijar o Ajustes → Vocabulario; todavía no está en Anki.',
+		toast.success(wasSelected ? 'Palabra desmarcada' : 'Palabra marcada para Anki', {
+			description: 'Se enviará automáticamente al terminar la lección.',
 		});
 	} catch (error) {
 		toast.error(error instanceof Error ? error.message : 'No se pudo marcar la palabra.');
@@ -3218,7 +3261,7 @@ function updateGlossChip() {
 		action.type = 'button';
 		action.dataset.glossWord = entry.word;
 		action.disabled = Boolean(entry.exported || entry.needsUpdate);
-		const title = entry.exported ? 'Ya en tu mazo' : entry.needsUpdate ? 'Actualizar palabras en Kinema' : entry.selected ? 'Desmarcar selección' : 'Seleccionar para exportar';
+		const title = entry.exported ? 'Ya en tu mazo' : entry.needsUpdate ? 'Actualizar palabras en Kinema' : entry.selected ? 'Desmarcar selección' : 'Marcar para Anki';
 		action.title = title;
 		action.setAttribute('aria-label', title);
 		action.textContent = entry.exported ? '✓ En tu mazo' : entry.needsUpdate ? 'Actualizar' : entry.selected ? '✓ En tu selección' : '+ Mazo';

@@ -137,7 +137,7 @@ export function VocabularyChip({
     ? "Ya en tu mazo"
     : isSelected
     ? "Desmarcar selección"
-    : "Seleccionar para exportar";
+    : "Marcar para Anki";
 
   // Tono del estado: violeta = en tu selección, verde = ya en Anki, neutro = sugerida.
   const dot = isExported ? "bg-emerald-400" : isSelected ? "bg-[#a48bff]" : "bg-white/55";

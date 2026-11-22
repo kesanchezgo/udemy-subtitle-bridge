@@ -28,7 +28,7 @@ const FILTERS = [
   { id: "practice", label: "Práctica" },
   { id: "mastery", label: "Maestría" },
   { id: "streak", label: "Racha" },
-  { id: "export", label: "Exportación" },
+  { id: "export", label: "Anki y Obsidian" },
 ] as const;
 
 const tint = (hue: string, pct: number, base = "var(--usb-bg-3)") => `color-mix(in srgb, ${hue} ${pct}%, ${base})`;
@@ -244,7 +244,7 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
     { v: streak, s: "d", l: "Racha", icon: "flame", tone: "amber", h: "Días seguidos estudiando (un día de descanso por semana no la rompe)" },
     { v: p.correct, s: "", l: "Aciertos", icon: "checkCircle2", tone: "green", h: "Respuestas correctas a la primera" },
     { v: p.practiceCorrect, s: "", l: "Prácticas", icon: "trophy", tone: "violet", h: "Prácticas resueltas bien (caso, código o explicación)" },
-    { v: p.exports || 0, s: "", l: "Exportadas", icon: "layers", tone: "violet", h: "Lecciones exportadas a Anki u Obsidian" },
+    { v: p.exports || 0, s: "", l: "Guardadas", icon: "layers", tone: "violet", h: "Lecciones que llegaron a Anki u Obsidian" },
   ] as { v: number; s: string; l: string; icon: IconName; tone: Tone; h: string }[];
 
   return (

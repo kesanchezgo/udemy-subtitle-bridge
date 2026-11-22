@@ -20,7 +20,7 @@ export type AiState = "comprobando" | "no-config" | "lista" | "sin-respuesta";
 
 /** Motivo, en una frase, de por qué una acción de IA está bloqueada. Nunca lleva la query del endpoint. */
 export function aiBlockedMessage(state: AiState, endpoint: string): string {
-  if (state === "no-config") return "Sin proveedor de IA: configúralo en Ajustes → Proveedor.";
+  if (state === "no-config") return "Sin proveedor de IA: configúralo en Ajustes → Proveedor de IA.";
   if (state === "comprobando") return "Comprobando la IA…";
   const where = redactProviderUrl(endpoint);
   return `El proveedor no responde${where ? ` (${where})` : ""}. Reintentando…`;
@@ -39,7 +39,7 @@ export function aiBadgeStatus(input: { kind: string; ok: boolean | null; configu
   const where = redactProviderUrl(input.endpoint).replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const cloudName = CLOUD_NAMES[input.kind];
   if (cloudName) {
-    if (!input.configured) return { name: cloudName, state: "sin configurar", tone: "off", title: `${cloudName} sin configurar: añade la API key en Ajustes → Proveedor` };
+    if (!input.configured) return { name: cloudName, state: "sin configurar", tone: "off", title: `${cloudName} sin configurar: añade la API key en Ajustes → Proveedor de IA` };
     if (input.ok === false) return { name: cloudName, state: "sin respuesta", tone: "off", title: `${cloudName} no responde${where ? ` (${where})` : ""}. Reintentando…` };
     return { name: cloudName, state: "nube", tone: "cloud", title: `Proveedor activo: ${cloudName}` };
   }

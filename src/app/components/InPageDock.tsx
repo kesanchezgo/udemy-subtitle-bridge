@@ -13,7 +13,7 @@ import { CelebrationOverlay } from "./CelebrationOverlay";
 import { Session } from "@supabase/supabase-js";
 import { ThemeProvider, useDockTheme } from "../contexts/ThemeContext";
 import { DockSheetHostContext } from "./DockSheet";
-import { SettingsSheet, VocabularyMountContext } from "./SettingsSheet";
+import { AnkiMountContext, SettingsSheet, VocabularyMountContext } from "./SettingsSheet";
 import { getAiProviderConfig, type AiProviderConfig } from "../services/ai-providers";
 import { aiBadgeStatus } from "../hooks/useAiHealth";
 import {
@@ -363,6 +363,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
     };
   }, []);
   const [vocabularyMount, setVocabularyMount] = useState<HTMLDivElement | null>(null);
+  const [ankiMount, setAnkiMount] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     if (settingsOpen) setProgressOpen(false);
     window.dispatchEvent(new CustomEvent("usb:settings-open", { detail: { open: settingsOpen } }));
@@ -618,7 +619,8 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                     toastOptions={{ duration: 3500 }}
                   />
                   <CelebrationOverlay />
-                  <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} localConnected={localAiConnected} onVocabularyMount={setVocabularyMount} />
+                  <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} localConnected={localAiConnected} onVocabularyMount={setVocabularyMount} onAnkiMount={setAnkiMount} />
+                  <AnkiMountContext.Provider value={ankiMount}>
                   <VocabularyMountContext.Provider value={vocabularyMount}>
                   <AuthGuard onSessionResolved={onSessionResolved}>
                     {(session, requestLogin, signOut) => (
@@ -632,6 +634,7 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
                     )}
                   </AuthGuard>
                   </VocabularyMountContext.Provider>
+                  </AnkiMountContext.Provider>
                 </MotionConfig>
                 </DockSheetHostContext.Provider>
               </div>

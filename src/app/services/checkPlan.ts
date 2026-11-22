@@ -10,6 +10,10 @@
 //  2. una por cada idea que no marcó y que aún no salió;
 //  3. si marcó alguna y ninguna pregunta la tocó, UNA sobre una idea marcada:
 //     confirma que el autoinforme es fiable (sobreconfianza, R5).
+//     flowVersion 3: el número de confirmaciones es un PRESUPUESTO (spotBudget):
+//     0 si las últimas autoevaluaciones fueron fiables (ser sincero ahorra
+//     preguntas), 1 por defecto y +1 si la primera confirmación falló (lo que
+//     dijiste saber no se sostuvo: se comprueba otra idea marcada).
 // Tope de fatiga: MAX_CHECK_QUESTIONS (≈10 min de respuestas abiertas). Solo
 // actúa en lecciones con 6–7 ideas y casi nada marcado; las ideas que quedan fuera
 // se dicen en pantalla y van a Anki como refuerzo (no se pierden).
@@ -57,6 +61,7 @@ export function pickNextCheckQuestion(
 	asked: number[],
 	checked: Set<number>,
 	targetDifficulty?: number,
+	spotBudget = 1,
 ): { i: number; kind: "gap" | "spot" } | undefined {
 	if (asked.length === 0 || asked.length >= checkCap(cnt)) return undefined;
 	const used = new Set(asked);
@@ -74,19 +79,23 @@ export function pickNextCheckQuestion(
 		if (gap) return { i: gap.i, kind: "gap" };
 	}
 
-	// Verificación de una idea marcada (una sola vez y solo si ninguna pregunta la tocó).
-	const spotDone = asked.some((qi) => refsOf(cnt, qi).some((r) => checked.has(r)));
-	if (checked.size === 0 || spotDone) return undefined;
+	// Verificación de ideas marcadas: tantas como permita el presupuesto (cada
+	// pregunta presentada que tocó una idea marcada ya cuenta como una).
+	const spotsAsked = asked.filter((qi) => refsOf(cnt, qi).some((r) => checked.has(r))).length;
+	if (checked.size === 0 || spotsAsked >= spotBudget) return undefined;
+	// Una idea marcada que ninguna pregunta tocó todavía va antes que repetir idea.
+	const touched = new Set(asked.flatMap((qi) => refsOf(cnt, qi)));
+	const fresh = (refs: number[]) => (refs.some((r) => checked.has(r) && !touched.has(r)) ? 1 : 0);
 	const pure = (refs: number[]) => (refs.every((r) => checked.has(r)) ? 1 : 0);
 	const spot = pool
 		.filter((x) => x.refs.some((r) => checked.has(r)))
-		.sort((a, b) => (pure(b.refs) - pure(a.refs)) || (a.refs.length - b.refs.length) || (dist(a.d) - dist(b.d)) || (a.d - b.d))[0];
+		.sort((a, b) => (fresh(b.refs) - fresh(a.refs)) || (pure(b.refs) - pure(a.refs)) || (a.refs.length - b.refs.length) || (dist(a.d) - dist(b.d)) || (a.d - b.d))[0];
 	return spot ? { i: spot.i, kind: "spot" } : undefined;
 }
 
 /** ¿`qi` habría sido un paso válido del plan tras `asked`? (para releer una cola guardada). */
-function stepKind(cnt: PlanContent, asked: number[], checked: Set<number>, qi: number): PlanStep | undefined {
-	const next = pickNextCheckQuestion(cnt, asked, checked);
+function stepKind(cnt: PlanContent, asked: number[], checked: Set<number>, qi: number, spotBudget = 1): PlanStep | undefined {
+	const next = pickNextCheckQuestion(cnt, asked, checked, undefined, spotBudget);
 	if (!next) return undefined;
 	if (next.kind === "gap") {
 		const gaps = pendingGaps(cnt, asked, checked);
@@ -96,28 +105,28 @@ function stepKind(cnt: PlanContent, asked: number[], checked: Set<number>, qi: n
 }
 
 /** Estado del plan para una cola presentada: cuántas son del plan, el total y por qué. */
-export function checkPlanState(cnt: PlanContent, queue: number[], checked: Set<number>): CheckPlan {
+export function checkPlanState(cnt: PlanContent, queue: number[], checked: Set<number>, spotBudget = 1): CheckPlan {
 	if (queue.length === 0) return { planned: 0, total: 0, kinds: [], uncovered: [] };
 	const kinds: PlanStep[] = ["start"];
 	for (let k = 1; k < queue.length; k += 1) {
-		const kind = stepKind(cnt, queue.slice(0, k), checked, queue[k]);
+		const kind = stepKind(cnt, queue.slice(0, k), checked, queue[k], spotBudget);
 		if (!kind) break;
 		kinds.push(kind);
 	}
 	const planned = kinds.length;
 	const sim = queue.slice(0, planned);
-	for (let next = pickNextCheckQuestion(cnt, sim, checked); next; next = pickNextCheckQuestion(cnt, sim, checked)) {
+	for (let next = pickNextCheckQuestion(cnt, sim, checked, undefined, spotBudget); next; next = pickNextCheckQuestion(cnt, sim, checked, undefined, spotBudget)) {
 		sim.push(next.i);
 	}
 	return { planned, total: sim.length, kinds, uncovered: [...pendingGaps(cnt, sim, checked)] };
 }
 
 /** Reordena lo respondido (guardado en orden canónico) como se presentó: arranque, plan, reto. */
-export function orderPresented(cnt: PlanContent, startIdx: number, answered: number[], checked: Set<number>): number[] {
+export function orderPresented(cnt: PlanContent, startIdx: number, answered: number[], checked: Set<number>, spotBudget = 1): number[] {
 	const queue = [startIdx];
 	const rest = answered.filter((i) => i !== startIdx);
 	while (rest.length > 0) {
-		const k = rest.findIndex((i) => stepKind(cnt, queue, checked, i) !== undefined);
+		const k = rest.findIndex((i) => stepKind(cnt, queue, checked, i, spotBudget) !== undefined);
 		queue.push(...rest.splice(k >= 0 ? k : 0, 1));
 	}
 	return queue;

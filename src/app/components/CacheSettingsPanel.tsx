@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Trash2, Clock, RefreshCw, Loader2 } from "./icons";
 import { Slider } from "./ui/slider";
 import { cacheService, type CacheStats } from "../services/cacheService";
-import { Notice, SettingsGroup, dangerBtnCls, secondaryBtnCls } from "./settings/SettingsKit";
+import { SettingsGroup, dangerBtnCls, secondaryBtnCls } from "./settings/SettingsKit";
 
 interface CacheSettingsPanelProps {
   ttlDays: number;
@@ -67,14 +67,10 @@ export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelP
         <div className="flex items-center justify-between text-[11px] text-[var(--usb-fg-mid)]">
           <span>1 día</span><span className="font-semibold">7 recomendado</span><span>30 días</span>
         </div>
-        <p className="text-[11.5px] leading-snug text-[var(--usb-fg-mid)]">
-          Subtítulos y datos del curso se guardan aquí. Al vencer, se regeneran la próxima vez que abras la lección.
+        <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">
+          Solo subtítulos y datos temporales; tu historial nunca expira.
         </p>
       </SettingsGroup>
-
-      <Notice icon="lock">
-        Solo se borran archivos regenerables (subtítulos, traducciones, temario). Tu <strong>historial de estudio</strong> vive aparte y nunca expira.
-      </Notice>
 
       <SettingsGroup
         title="Uso actual"
@@ -91,7 +87,7 @@ export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelP
               { label: "Entradas", value: String(stats.totalEntries) },
               { label: "Tamaño", value: sizeLabel(stats.estimatedSizeKb) },
             ].map(({ label, value }) => (
-              <div key={label} className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-2 py-2.5 text-center">
+              <div key={label} className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-2 py-2.5 text-center">
                 <p className="text-[15px] font-extrabold tabular-nums text-[var(--usb-fg-hi)]">{value}</p>
                 <p className="text-[11px] font-medium text-[var(--usb-fg-mid)]">{label}</p>
               </div>
@@ -109,7 +105,7 @@ export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelP
               const daysLeft = daysUntil(course.expiresAt);
               const urgent = daysLeft <= 1;
               return (
-                <li key={course.courseId} className="flex items-center gap-2.5 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-3 py-2">
+                <li key={course.courseId} className="flex items-center gap-2.5 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-semibold truncate text-[var(--usb-fg-hi)]">{course.label}</p>
                     <p className="text-[11px] text-[var(--usb-fg-mid)]">
@@ -139,8 +135,8 @@ export function CacheSettingsPanel({ ttlDays, onTtlChange }: CacheSettingsPanelP
       )}
 
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={handleClearExpired} className={secondaryBtnCls}><Clock size={14} />Limpiar expirados</button>
-        <button type="button" onClick={handleClearAll} className={dangerBtnCls}><Trash2 size={14} />Limpiar todo</button>
+        <button type="button" onClick={handleClearExpired} className={`${secondaryBtnCls} !h-9`}><Clock size={14} />Limpiar expirados</button>
+        <button type="button" onClick={handleClearAll} className={`${dangerBtnCls} !h-9`}><Trash2 size={14} />Limpiar todo</button>
       </div>
 
     </div>

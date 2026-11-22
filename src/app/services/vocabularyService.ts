@@ -16,6 +16,7 @@
  *    palabras ya vistas de lecciones anteriores dentro del mismo idioma.
  */
 import { chromeLocalStorage } from './chromeStorage';
+import { platformOf } from './platform';
 import { TIMED_TRANSCRIPT, cefrRank, type VocabularyWord } from '../../shared/prompts';
 import {
 	CONCEPT_MODEL,
@@ -25,12 +26,13 @@ import {
 	VOCAB_PRESET,
 	buildVocabModel,
 	kinemaTags,
+	platformTag,
 	stableGuid,
-	vocabDeckPath,
 	vocabModelName,
 	type VocabAudioMode,
 } from './ankiDesign';
 import { KINEMA_NOTE_MOD, type ApkgSpec } from './ankiApkgCore';
+import { vocabDestination, type ConceptLayout, type VocabLayout } from './ankiDestination';
 
 export interface VocabConfig {
 	/** Mazo raíz de TODA la extensión (Courses + Vocabulary cuelgan de él). */
@@ -51,8 +53,23 @@ export interface VocabConfig {
 	 * configs guardadas y se ignora al cargar.
 	 */
 	audioMode?: VocabAudioMode;
-	/** B3: segunda tarjeta «Producir» (español → idioma objetivo). Por defecto activada. */
-	production: boolean;
+	/** @deprecated Se conserva por compatibilidad con configs guardadas; siempre se genera 1 tarjeta única (frente y reverso) por palabra. */
+	production?: boolean;
+	// ── Fase 2 · estructura en Anki (ankiDestination; fija desde la fase 5) ──
+	/** @deprecated Fase 5: siempre un mazo por curso. Se conserva para leer configs guardadas. */
+	conceptLayout?: ConceptLayout;
+	/** @deprecated Fase 5: el programa va en la etiqueta kinema::programa (no en el mazo). */
+	groupByProgram?: boolean;
+	/** @deprecated Fase 5: siempre un mazo por idioma (o el tuyo, vocabDeck). */
+	vocabLayout?: VocabLayout;
+	/** @deprecated Fase 5.1: un mazo tuyo para todos los idiomas (configs de antes; ver vocabDecks). */
+	vocabDeck?: string;
+	/** Fase 5.1 · mazo de las palabras por idioma («English» → mazo tuyo; "" = el de Kinema). */
+	vocabDecks?: Record<string, string>;
+	/** Otros mazos de Anki cuyas palabras cuentan como «ya las sé» (además del mazo de las palabras). */
+	knownDecks?: string[];
+	/** Mazos de palabras ya conocidas separados por idioma (`en`, `fr`, `de`, `pt`, `it`). */
+	knownDecksByLang?: Record<string, string[]>;
 }
 
 export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
@@ -63,10 +80,12 @@ export const DEFAULT_VOCAB_CONFIG: VocabConfig = {
 	minLevel: 'B1',
 	maxWords: 8,
 	audioMode: 'field',
-	production: true,
+	production: false,
+	vocabDeck: '',
+	knownDecks: [],
 };
 
-const VOCAB_CONFIG_KEY = 'usb_vocab_config';
+export const VOCAB_CONFIG_KEY = 'usb_vocab_config';
 
 /** Misma regla que todas las notas de Kinema (ver KINEMA_NOTE_MOD): reimportar no pisa. */
 export const VOCAB_NOTE_MOD = KINEMA_NOTE_MOD;
@@ -135,12 +154,14 @@ export async function saveVocabConfig(config: VocabConfig): Promise<void> {
 
 /** Glosario de la lección actual: palabras exportadas con su IPA y definición
  *  monolingüe — alimenta el chip del overlay durante el video. */
-export async function getLectureGlossary(course: string, lesson: string): Promise<{ word: string; phonetic: string; monolingual: string }[]> {
+export async function getLectureGlossary(course: string, lesson: string, lang?: string): Promise<{ word: string; phonetic: string; monolingual: string }[]> {
 	const registry = await loadVocabRegistry();
 	const wantCourse = course.trim().toLowerCase();
 	const wantLesson = lesson.trim().toLowerCase();
+	const wantPrefix = lang ? `${lang.trim().toLowerCase()}|` : null;
 	const out: { word: string; phonetic: string; monolingual: string }[] = [];
-	for (const entry of Object.values(registry)) {
+	for (const [key, entry] of Object.entries(registry)) {
+		if (wantPrefix && key.includes('|') && !key.startsWith(wantPrefix)) continue;
 		if (!entry.word) continue;
 		// Apariencias: legado (course/lesson únicos) o la lista completa.
 		const appearances = entry.appearances ?? (
@@ -306,8 +327,10 @@ export function buildVocabularySpec(
 	lessonUrl?: string
 ): VocabSpecResult {
 	const langLabel = config.targetLangLabel || 'English';
-	const paths = vocabDeckPath(config.rootDeck || DEFAULT_ROOT_DECK, langLabel, course);
-	const deckPath = paths[paths.length - 1];
+	// Un mazo por idioma (o el que elegiste): cada palabra vive una sola vez.
+	const destination = vocabDestination(config, langLabel);
+	const deckPath = destination.deck;
+	const root = config.rootDeck || DEFAULT_ROOT_DECK;
 
 	const notes = words.map((word) => ({
 		modelName: vocabModelName(config.targetLang),
@@ -337,36 +360,36 @@ export function buildVocabularySpec(
 					: base;
 				return `<a href="${href.replace(/"/g, '&quot;')}">▶ Escúchala en la lección${TIMED_TRANSCRIPT && word.t ? ` (${word.t})` : ''}</a>`;
 			})(),
-			config.production === false ? '' : '1', // producir — B3 (activado por defecto)
+			'', // campo legacy sin uso: siempre 1 tarjeta única por palabra
 		],
 		// A7: esquema jerárquico único; nada suelto en la raíz de tags.
-		tags: kinemaTags({
-			course,
-			lesson,
-			cefr: word.level,
-			pos: word.pos,
-		}),
+		tags: [
+			...kinemaTags({
+				course,
+				lesson,
+				cefr: word.level,
+				pos: word.pos,
+			}),
+			// Plataforma como etiqueta (igual que las de conceptos), nunca como mazo.
+			...(lessonUrl ? [platformTag(platformOf(lessonUrl))] : []),
+		],
 	}));
 
+	const describe = (name: string): string => {
+		const rest = name.split('::').slice(root.split('::').length);
+		if (rest.length === 0) return ROOT_DECK_DESCRIPTION;
+		if (rest.length === 1) return 'Rama de vocabulario: palabras extraídas de los subtítulos de los cursos que estudias con la extensión.';
+		if (rest.length === 2) return `Vocabulario · ${langLabel} · desde ${config.minLevel}. Cada palabra vive una sola vez, aunque salga en varios cursos; el curso y la lección van en sus etiquetas.`;
+		return `Palabras (${langLabel}) de las lecciones de «${course}». La imagen y el audio de archivo pueden añadirse después; sin audio, la tarjeta usa la voz del sistema.`;
+	};
+	const deckList = destination.owned ? destination.ancestors : [destination.deck];
 	const spec: ApkgSpec = {
-		decks: [
-			{ name: paths[0], conf: COURSES_PRESET.id, desc: ROOT_DECK_DESCRIPTION },
-			{
-				name: paths[1],
-				conf: VOCAB_PRESET.id,
-				desc: 'Rama de vocabulario: palabras extraídas de los subtítulos de los cursos que estudias con la extensión.',
-			},
-			{
-				name: paths[2],
-				conf: VOCAB_PRESET.id,
-				desc: `Vocabulario · ${langLabel} · desde ${config.minLevel}. Palabras de tus cursos de Udemy; cada palabra vive una sola vez, en el curso donde la exportaste primero.`,
-			},
-			{
-				name: deckPath,
-				conf: VOCAB_PRESET.id,
-				desc: `Palabras (${langLabel}) de las lecciones de «${course}». La imagen y el audio de archivo pueden añadirse después; sin audio, la tarjeta usa la voz del sistema.`,
-			},
-		],
+		decks: deckList.map((name, i) => ({
+			name,
+			// La raíz comparte el preset de cursos (como siempre); el resto, el de vocabulario.
+			conf: destination.owned && i === 0 ? COURSES_PRESET.id : VOCAB_PRESET.id,
+			desc: destination.owned ? describe(name) : '',
+		})),
 		models: [buildVocabModel(config.targetLang)],
 		dconfs: [COURSES_PRESET, VOCAB_PRESET],
 		notes,

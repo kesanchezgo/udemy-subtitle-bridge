@@ -338,7 +338,7 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
 
 /* ── 5. Inputs & Textareas ── */
 
-.usb-dock.dock-sepia input:not([type="range"]),
+.usb-dock.dock-sepia input:not([type="range"]):not([data-code-slot]),
 .usb-dock.dock-sepia select.kx-field,
 .usb-dock.dock-sepia textarea {
   background-color: var(--usb-input-bg) !important;
@@ -348,12 +348,12 @@ ${[1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12]
   box-shadow:       var(--usb-elev-1);
 }
 
-.usb-dock.dock-sepia input:not([type="range"])::placeholder,
+.usb-dock.dock-sepia input:not([type="range"]):not([data-code-slot])::placeholder,
 .usb-dock.dock-sepia textarea::placeholder {
   color: var(--usb-placeholder) !important;
 }
 
-.usb-dock.dock-sepia input:not([type="range"]):focus,
+.usb-dock.dock-sepia input:not([type="range"]):not([data-code-slot]):focus,
 .usb-dock.dock-sepia select.kx-field:focus,
 .usb-dock.dock-sepia textarea:focus {
   border-color: #6d4aff !important;
@@ -1799,8 +1799,8 @@ ${[
 .usb-dock .kx-obj { border-radius: 18px !important; }
 .usb-dock .kx-gen-cta, .usb-dock .kx-cta { border-radius: 16px !important; letter-spacing: 0; }
 .usb-dock .kx-cta { box-shadow: 0 10px 20px -12px var(--kx-btn, #6d4aff), inset 0 1px 0 rgba(255,255,255,.18); }
-.usb-dock .kx-study input:not([type=checkbox]):not([type=range]), .usb-dock .kx-study textarea { border-radius: 14px; background: var(--usb-bg-3) !important; }
-.usb-dock .kx-study .kx-card input, .usb-dock .kx-study .kx-card textarea { background: color-mix(in srgb, var(--usb-fg) 4%, transparent) !important; }
+.usb-dock .kx-study input:not([type=checkbox]):not([type=range]):not([data-code-slot]), .usb-dock .kx-study textarea { border-radius: 14px; background: var(--usb-bg-3) !important; }
+.usb-dock .kx-study .kx-card input:not([data-code-slot]), .usb-dock .kx-study .kx-card textarea { background: color-mix(in srgb, var(--usb-fg) 4%, transparent) !important; }
 .usb-dock .kx-study .kx-row { border-radius: 14px; }
 .usb-dock .kx-study [class*="uppercase"][class*="tracking-"] { letter-spacing: 0.1em; }
 @media (min-width: 0px) { .usb-dock .kx-study .grid-cols-5 { gap: 10px; } }

@@ -13,7 +13,7 @@ import { Slider } from "./ui/slider";
 import { StudyAgentTab } from "./StudyAgentTab";
 import { TranslationPipeline } from "./TranslationPipeline";
 import { DevTab } from "./DevTab";
-import { VocabularyMountContext } from "./SettingsSheet";
+import { AnkiMountContext, VocabularyMountContext } from "./SettingsSheet";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { contentBridge, type OverlayConfig } from "../services/contentBridge";
@@ -37,6 +37,7 @@ import {
   type AiProviderConfig,
 } from "../services/ai-providers";
 import { historyService } from "../services/historyService";
+import { isPendingExport } from "../services/library";
 import { toast } from "sonner";
 import { VocabularyChip, type VocabularyChipWord } from "./study/VocabularyChip";
 import { vocabularyMatches } from "../services/vocabularySession";
@@ -248,6 +249,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
   // ── Tab & Dev mode ────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"study" | "captions" | "overlay" | "dev">("study");
   const vocabularyMount = useContext(VocabularyMountContext);
+  const ankiMount = useContext(AnkiMountContext);
   const [devMode, setDevMode]     = useState(false);
 
   // ── Hotkeys panel ─────────────────────────────────────────────────────────
@@ -259,7 +261,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     const checkReviews = async () => {
       try {
         const lecs = await historyService.listLectures();
-        const pending = lecs.filter(lecture => !lecture.deletedAt && lecture.status === "completed" && !lecture.exportedAt && (lecture.ankiCards?.length ?? 0) > 0);
+        const pending = lecs.filter(isPendingExport);
         if (alive) setPendingExportsCount(pending.length);
       } catch {
         if (alive) setPendingExportsCount(0);
@@ -579,7 +581,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
       if (msg.type === "VOCABULARY_SELECTION_RESULT") {
         const payload = msg.payload as { error?: string };
         if (payload.error) toast.error(payload.error);
-        else toast.success("Selección de vocabulario actualizada", { description: "Revísala en Study antes de exportar a Anki." });
+        else toast.success("Selección de vocabulario actualizada", { description: "Llega a Anki al terminar la lección en Study." });
       }
       if (msg.type === "LECTURE_CONTEXT_UPDATE") {
         applyLectureContext(msg.payload);
@@ -1017,7 +1019,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
                 className={`relative flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] transition-colors ${
                   active
                     ? "kx-tab-on"
-                    : t("text-white/55 hover:text-white/85","text-[#3d3a38]/65 hover:text-[#1e1b2e]")
+                    : t("text-white/55 hover:text-white/85","text-[var(--usb-fg-mid)] hover:text-[#1e1b2e]")
                 }`}>
                 {active && (
                   <motion.span layoutId="activeTabPill" className="kx-seg-pill"
@@ -1039,8 +1041,8 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             else window.dispatchEvent(new CustomEvent("usb:toggle-history"));
           }}
           aria-pressed={historyOpen}
-          title={pendingExportsCount > 0 ? `Historial · ${pendingExportsCount} archivos de contenido por descargar` : "Historial de estudio"}
-          aria-label={historyOpen ? "Cerrar historial de estudio" : "Abrir historial de estudio"}
+          title={pendingExportsCount > 0 ? `Biblioteca · ${pendingExportsCount === 1 ? "1 lección aún no está" : `${pendingExportsCount} lecciones aún no están`} en Anki` : "Biblioteca: tus cursos, sus mazos y sus notas"}
+          aria-label="Biblioteca"
           className={`relative h-[34px] w-[34px] shrink-0 rounded-lg border flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a48bff] ${historyOpen
             ? t("text-white bg-[#6d4aff]/20 border-[#8b6dff]/60", "text-[#4a2fd1] bg-[#6d4aff]/10 border-[#6d4aff]/45")
             : t("text-white/90 bg-white/5 border-white/12 hover:bg-white/10", "text-[#15161c] bg-white border-black/12 hover:bg-black/5")}`}
@@ -1064,7 +1066,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
           transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
           className={`absolute inset-0 flex flex-col ${activeTab === "study" ? "pointer-events-auto z-10" : "pointer-events-none z-0"}`}
         >
-          <StudyAgentTab session={session} apiKeys={configuredGeminiKeys} vocabularyMount={vocabularyMount} />
+          <StudyAgentTab session={session} apiKeys={configuredGeminiKeys} vocabularyMount={vocabularyMount} ankiMount={ankiMount} />
         </motion.div>
 
         {/* ════════ CAPTIONS ════════ */}
@@ -1611,7 +1613,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[#3d3a38]/60")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.6.0"}</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[var(--usb-fg-mid)]")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.6.0"}</span>
         </div>
       </div>
 

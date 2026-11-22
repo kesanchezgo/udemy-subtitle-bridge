@@ -8,6 +8,7 @@ import {
 	buildVocabularyPrompt,
 	estimateAnkiCardTarget,
 	formatOriginalSrtBlocks,
+	sanitizeDeckIdeas,
 	type SrtBlock,
 	type StudyMetadata
 } from './shared/prompts';
@@ -716,6 +717,7 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 			transcriptTruncated?: unknown;
 			platform?: unknown;
 			program?: unknown;
+			deckIdeas?: unknown;
 		};
 		const metadata = {
 			lectureKey: String(message.lectureKey || ''),
@@ -739,7 +741,9 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 					total: typeof r.total === 'number' ? r.total : undefined,
 					description: typeof r.description === 'string' ? r.description : undefined,
 				};
-			})()
+			})(),
+			// Fase 4: lo que ya está en el mazo del curso (ids m1…), saneado.
+			deckIdeas: sanitizeDeckIdeas(studyMessage.deckIdeas),
 		};
 
 		keySync
@@ -769,12 +773,32 @@ chromeApi?.runtime?.onMessage?.addListener((message: ExtensionMessage, sender: u
 		const rootDeck = String((message as { rootDeck?: unknown }).rootDeck || '');
 		const scopeRaw = String((message as { scope?: unknown }).scope || 'lesson');
 		const scope = scopeRaw === 'course' || scopeRaw === 'all' ? scopeRaw : 'lesson';
+		const courseDeck = String((message as { courseDeck?: unknown }).courseDeck || '') || null;
 
-		handleAnkiDue(course, lesson, browse, rootDeck, scope)
+		handleAnkiDue(course, lesson, browse, rootDeck, scope, courseDeck)
 			.then((result) => sendResponse({ ok: true, ...result }))
 			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
 		// true: la respuesta llega después (asíncrona). Con false Chrome cerraba el
 		// canal y «Repasos pendientes en Anki» se quedaba siempre en «—».
+		return true;
+	}
+
+	// Fase 2 · AnkiConnect: estado, mazos, «Enviar a Anki» (el mismo .apkg),
+	// migración opcional y palabras que ya están en Anki. Un solo canal.
+	if (type === 'USG_ANKI_CONNECT') {
+		handleAnkiConnect(message as Record<string, unknown>)
+			.then((result) => sendResponse({ ok: true, ...result }))
+			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error) }));
+		return true;
+	}
+
+	// Fase 3 · Obsidian conectado (plugin Local REST API): estado, leer, listar,
+	// escribir (todo de una vez), mover y abrir notas. Solo a 127.0.0.1/localhost.
+	// `unreachable` = Obsidian cerrado o sin el plugin: el dock usa obsidian://.
+	if (type === 'USG_OBSIDIAN_REST') {
+		handleObsidianRest(message as Record<string, unknown>)
+			.then((result) => sendResponse({ ok: true, ...result }))
+			.catch((error) => sendResponse({ ok: false, error: toErrorMessage(error), unreachable: isObsidianUnreachable(error) }));
 		return true;
 	}
 
@@ -2032,7 +2056,7 @@ async function requestConfiguredProviderText(
 	await initAiProviderConfig().catch(() => undefined);
 	const cfg = getAiProviderConfig();
 	if (!canServeWithConfiguredProvider(cfg)) {
-		throw new Error(`Proveedor sin configurar (kind=${cfg.kind}, baseUrl=${cfg.baseUrl || 'vacío'}). Configúralo en Ajustes → Proveedor.`);
+		throw new Error(`Proveedor sin configurar (kind=${cfg.kind}, baseUrl=${cfg.baseUrl || 'vacío'}). Configúralo en Ajustes → Proveedor de IA.`);
 	}
 
 	const messages = [{ role: 'user' as const, content: prompt }];
@@ -2275,11 +2299,11 @@ async function refineObjectiveViaGemini(
 // el SW la resuelva al compilar; el default ya es 'Kinema'.
 const ANKI_CONNECT_URL = 'http://127.0.0.1:8765';
 
-async function ankiInvokeBg(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
+async function ankiInvokeBg(action: string, params: Record<string, unknown> = {}, timeoutMs = 3000): Promise<unknown> {
 	const res = await fetch(ANKI_CONNECT_URL, {
 		method: 'POST',
 		body: JSON.stringify({ action, version: 6, params }),
-		signal: AbortSignal.timeout(3000)
+		signal: AbortSignal.timeout(timeoutMs)
 	});
 	if (!res.ok) throw new Error(`AnkiConnect HTTP ${res.status}`);
 	const json = await res.json();
@@ -2287,17 +2311,163 @@ async function ankiInvokeBg(action: string, params: Record<string, unknown> = {}
 	return json.result;
 }
 
-async function handleAnkiDue(course: string, lesson: string, browse: boolean, rootDeck: string, scope: 'lesson' | 'course' | 'all' = 'lesson') {
-	const { conceptDeckTree, DEFAULT_ROOT_DECK } = await import('./app/services/ankiDesign');
-	const root = rootDeck || DEFAULT_ROOT_DECK;
-	// lesson → mazo de la lección · course → mazo del curso · all → raíz
-	// (deck:"X" en Anki incluye los descendientes, así que cubre Courses y Vocabulary).
-	const tree = conceptDeckTree(root, course, lesson);
-	const deck = scope === 'course' ? tree[2] : scope === 'all' ? root : tree[3];
+async function handleAnkiDue(course: string, lesson: string, browse: boolean, rootDeck: string, scope: 'lesson' | 'course' | 'all' = 'lesson', courseDeck: string | null = null) {
+	// Fase 2: por etiqueta + tipo de nota (y la ruta antigua), no por ruta de
+	// mazo: la cifra es la misma con mazo por curso, por lección o uno propio.
+	const { dueQuery } = await import('./app/services/ankiDestination');
+	const query = dueQuery(scope, { rootDeck, course, lesson, courseDeck });
 	if (browse) {
-		await ankiInvokeBg('guiBrowse', { query: `deck:"${deck}" is:due` });
-		return { browse: true };
+		await ankiInvokeBg('guiBrowse', { query });
+		return { browse: true, query };
 	}
-	const ids = await ankiInvokeBg('findCards', { query: `deck:"${deck}" is:due` });
-	return { due: Array.isArray(ids) ? ids.length : 0, deck };
+	const ids = await ankiInvokeBg('findCards', { query });
+	return { due: Array.isArray(ids) ? ids.length : 0, query };
+}
+
+/** Ids de nota que llegan del dock: enteros positivos, sin repetir, como mucho 50. */
+function ankiNoteIds(value: unknown): number[] {
+	return Array.isArray(value)
+		? [...new Set(value.map(Number).filter((n) => Number.isSafeInteger(n) && n > 0))].slice(0, 50)
+		: [];
+}
+
+async function handleAnkiConnect(message: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const ops = await import('./app/services/ankiConnectOps');
+	const dest = await import('./app/services/ankiDestination');
+	const op = String(message.op || '');
+	// Importar o mover tarjetas puede tardar con colecciones grandes.
+	const slow = (action: string, params?: Record<string, unknown>) => ankiInvokeBg(action, params ?? {}, 60000);
+	if (op === 'status') return { status: await ops.ankiStatus((a, p) => ankiInvokeBg(a, p ?? {}, 20000)) };
+	if (op === 'decks') return { decks: await ops.deckNames((a, p) => ankiInvokeBg(a, p ?? {})) };
+	if (op === 'import') {
+		const base64 = String(message.base64 || '');
+		if (!base64) throw new Error('Paquete vacío.');
+		return { result: await ops.importApkg(slow, { base64, filename: String(message.filename || 'kinema.apkg'), countQuery: String(message.countQuery || '') }) };
+	}
+	if (op === 'migrate') {
+		// «Ordenar lo antiguo» (Ajustes → Anki): mazos de estructuras anteriores y
+		// etiquetas antiguas. dryRun solo cuenta; aplicar solo al confirmar.
+		const config = (message.config ?? {}) as import('./app/services/ankiDestination').AnkiLayoutConfig;
+		const quick = (a: string, p?: Record<string, unknown>) => ankiInvokeBg(a, p ?? {});
+		const dryRun = message.dryRun !== false;
+		const plan = dest.migrationPlan(await ops.deckNames(quick), config);
+		const moves = await ops.runMigration(slow, plan, { dryRun, prune: dest.prunableParents(plan, config) });
+		const tags = await ops.renameTags(slow, dest.tagMigrationPlan(await ops.allTags(quick)), { dryRun });
+		return { moves, tags };
+	}
+	// Fase 5 · el programa en las tarjetas de un curso que aún no lo llevan (solo añade la etiqueta).
+	if (op === 'addTag') {
+		const query = String(message.query || '');
+		const tag = String(message.tag || '');
+		if (!query || !tag) throw new Error('Faltan la búsqueda o la etiqueta.');
+		return { tagged: await ops.addTagToQuery(slow, query, tag) };
+	}
+	if (op === 'move') {
+		const query = String(message.query || '');
+		const deck = String(message.deck || '');
+		if (!query || !deck) throw new Error('Faltan la búsqueda o el mazo.');
+		return { moved: await ops.moveCards(slow, query, deck) };
+	}
+	if (op === 'counts') {
+		// Biblioteca: total, nuevas, aprendiendo, reaprendiendo y pendientes de un curso y sus lecciones (solo lectura: findCards).
+		const queries = Array.isArray(message.queries) ? message.queries.map(String) : [];
+		return { counts: await ops.countManyCards((a, p) => ankiInvokeBg(a, p ?? {}, 20000), queries) };
+	}
+	if (op === 'browse') {
+		const query = String(message.query || '');
+		if (!query) throw new Error('Falta la búsqueda.');
+		await ankiInvokeBg('guiBrowse', { query }, 8000);
+		return {};
+	}
+	if (op === 'knownWords') {
+		const decks = Array.isArray(message.decks) ? message.decks.map(String).filter(Boolean) : [];
+		const langCode = typeof message.langCode === 'string' ? message.langCode : undefined;
+		return { words: await ops.knownWords(slow, decks, { langCode }) };
+	}
+	if (op === 'vocabDecks') {
+		return {
+			inspection: await ops.inspectVocabDecks((a, p) => ankiInvokeBg(a, p ?? {}, 20000), {
+				langCode: String(message.langCode || 'en'),
+				langLabel: String(message.langLabel || 'English'),
+				rootDeck: String(message.rootDeck || 'Kinema'),
+			}),
+		};
+	}
+	// Fase 4 · control de duplicados: las tarjetas de conceptos del curso (solo lectura).
+	if (op === 'concepts') {
+		const query = String(message.query || '');
+		if (!query) throw new Error('Falta la búsqueda.');
+		return { notes: await ops.conceptNotes((a, p) => ankiInvokeBg(a, p ?? {}, 20000), query) };
+	}
+	// Fase 4 · estado en Anki de las tarjetas que ya tenías (solo lectura: findCards).
+	if (op === 'reviewStates') {
+		return { states: await ops.noteReviewStates((a, p) => ankiInvokeBg(a, p ?? {}, 20000), ankiNoteIds(message.noteIds)) };
+	}
+	// Fase 4 · «Repasar hoy en Anki»: SOLO al pulsarlo, solo tarjetas en repaso y
+	// activas (ops.RESCHEDULABLE), con setDueDate "0" (conserva el intervalo).
+	if (op === 'reviewToday') {
+		const noteIds = ankiNoteIds(message.noteIds);
+		if (noteIds.length === 0) throw new Error('No hay tarjetas que cambiar.');
+		return { result: await ops.rescheduleToday(slow, noteIds) };
+	}
+	throw new Error(`Operación de Anki desconocida: ${op}`);
+}
+
+// ─── Fase 3 · Obsidian conectado (plugin Local REST API) ────────────────────
+// La URL tiene que ser de este ordenador (normalizeConnection lo exige) y la
+// cubre el host_permission http://127.0.0.1/* (cualquier puerto).
+
+function isObsidianUnreachable(error: unknown): boolean {
+	const e = error as { unreachable?: boolean; name?: string } | null;
+	return Boolean(e?.unreachable) || error instanceof TypeError || e?.name === 'TimeoutError' || e?.name === 'AbortError';
+}
+
+function unreachable(message: string): Error {
+	return Object.assign(new Error(message), { unreachable: true });
+}
+
+/** Rutas del vault que llegan del dock: relativas y sin «..» (el plugin también lo exige). */
+function safeVaultPath(value: unknown): string {
+	const path = String(value ?? '').replace(/\\/g, '/').trim();
+	if (!path || path.startsWith('/') || path.split('/').some((s) => s === '..' || s === '.')) throw new Error(`Ruta del vault no válida: ${path}`);
+	return path;
+}
+
+async function handleObsidianRest(message: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const ops = await import('./app/services/obsidianRestOps');
+	const connection = ops.normalizeConnection(message.connection);
+	if (!connection) throw new Error('Kinema solo se conecta con Obsidian en este ordenador (127.0.0.1 o localhost) y con la clave del plugin.');
+	const request = ops.fetchRequest(connection, (input, init) => fetch(input, init), 10000);
+	const op = String(message.op || '');
+	if (op === 'status') return { status: await ops.restStatus(request) };
+	// Antes de leer o escribir: ¿está Obsidian al otro lado y acepta la clave?
+	const status = await ops.restStatus(request);
+	if (!status.available) throw unreachable(status.error || 'Obsidian no responde.');
+	if (!status.authenticated) throw new Error('Obsidian rechazó la clave. Cópiala de nuevo desde Ajustes → Local REST API.');
+	if (op === 'read') return { note: await ops.readNote(request, safeVaultPath(message.path)) };
+	if (op === 'list') return { files: await ops.listFolder(request, String(message.folder ?? '')) };
+	if (op === 'open') { await ops.openInObsidian(request, safeVaultPath(message.path)); return {}; }
+	if (op === 'writes') {
+		const writer = await import('./app/services/obsidianWriter');
+		const raw = Array.isArray(message.writes) ? message.writes : [];
+		const writes = raw.map((w) => {
+			const item = (w ?? {}) as { kind?: unknown; mode?: unknown; note?: { path?: unknown; markdown?: unknown } };
+			return {
+				kind: String(item.kind || 'session') as import('./app/services/obsidianWriter').WriteKind,
+				mode: String(item.mode || 'create') as import('./app/services/obsidianWriter').WriteMode,
+				note: { path: safeVaultPath(item.note?.path), markdown: String(item.note?.markdown ?? '') },
+			};
+		});
+		return { outcomes: await writer.runVaultWrites(request, writes) };
+	}
+	if (op === 'move') {
+		const moves = Array.isArray(message.moves) ? message.moves : [];
+		const results: string[] = [];
+		for (const m of moves) {
+			const item = (m ?? {}) as { from?: unknown; to?: unknown };
+			results.push(await ops.moveNote(request, safeVaultPath(item.from), safeVaultPath(item.to)));
+		}
+		return { results };
+	}
+	throw new Error(`Operación de Obsidian desconocida: ${op}`);
 }

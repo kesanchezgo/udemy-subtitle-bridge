@@ -61,10 +61,17 @@ export function SettingsSection({
   const accordion = useContext(AccordionContext);
   const [localOpen, setLocalOpen] = useState(defaultOpen);
   const open = accordion && sectionId ? accordion.openId === sectionId : localOpen;
+  const [overflowVisible, setOverflowVisible] = useState(open);
   const setOpen = (next: boolean | ((v: boolean) => boolean)) => {
     const value = typeof next === "function" ? next(open) : next;
+    if (!value) setOverflowVisible(false);
     if (accordion && sectionId) accordion.setOpenId(value ? sectionId : null); else setLocalOpen(value);
   };
+  useEffect(() => {
+    if (!open) { setOverflowVisible(false); return; }
+    const timer = setTimeout(() => setOverflowVisible(true), 240);
+    return () => clearTimeout(timer);
+  }, [open]);
   const body = <div className="border-t border-[var(--usb-border)] px-4 py-4 space-y-4">{children}</div>;
   const bodyId = useId();
   const ref = useRef<HTMLElement>(null);
@@ -80,13 +87,13 @@ export function SettingsSection({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionId, accordion?.setOpenId]);
   return (
-    <section ref={ref} className="kx-card kx-settings-section bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl overflow-hidden" aria-label={title}>
+    <section ref={ref} className={`kx-card kx-settings-section bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-2xl ${overflowVisible ? "overflow-visible" : "overflow-hidden"}`} aria-label={title}>
       <button
         type="button"
         onClick={() => { const next = !open; setOpen(next); if (next) setTimeout(() => ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 240); }}
         aria-expanded={open}
         aria-controls={bodyId}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6d4aff]/70"
+        className={`w-full flex items-center gap-3 px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6d4aff]/70 ${open ? "rounded-t-2xl" : "rounded-2xl"}`}
       >
         <IconTile icon={icon} />
         <span className="flex-1 min-w-0">
@@ -105,7 +112,7 @@ export function SettingsSection({
           animate={open ? { height: "auto", opacity: 1, visibility: "visible" } : { height: 0, opacity: 0, transitionEnd: { visibility: "hidden" } }}
           transition={{ duration: 0.22, ease: EASE }}
           aria-hidden={!open}
-          className="overflow-hidden"
+          className={overflowVisible ? "overflow-visible" : "overflow-hidden"}
         >
           {body}
         </motion.div>
@@ -118,7 +125,7 @@ export function SettingsSection({
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.22, ease: EASE }}
-              className="overflow-hidden"
+              className={overflowVisible ? "overflow-visible" : "overflow-hidden"}
             >
               {body}
             </motion.div>
@@ -281,20 +288,55 @@ export function RowList({ children }: { children: React.ReactNode }) {
   return <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] divide-y divide-[var(--usb-border)]">{children}</div>;
 }
 
-export function SettingRow({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
+/**
+ * Una fila: qué es (y su ayuda) a la izquierda, su control a la derecha. Sin
+ * control, la fila solo informa (p. ej. un mazo que Kinema crea solo).
+ */
+export function SettingRow({ label, hint, children, hintTone = "mid", attrs }: { label: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode; hintTone?: "mid" | "warn"; attrs?: Record<string, string> }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-3 py-2.5 min-h-[52px]">
-      <div className="min-w-0">
+    <div {...attrs} className="flex items-center justify-between gap-3 px-3 py-2.5 min-h-[48px]">
+      <div className="min-w-0 flex-1">
         <p className="text-[12.5px] font-semibold text-[var(--usb-fg)]">{label}</p>
-        {hint && <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">{hint}</p>}
+        {hint && <div className={`text-[11px] leading-snug ${hintTone === "warn" ? "text-[var(--usb-warn-text)]" : "text-[var(--usb-fg-mid)]"}`}>{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      {children !== undefined && children !== null && children !== false && <div className="shrink-0">{children}</div>}
+    </div>
+  );
+}
+
+/** Botón pequeño dentro de una fila (Conectar · Comprobar · Quitar). */
+export const rowBtnCls = `${secondaryBtnCls} !h-8 !px-3 shrink-0`;
+
+/**
+ * Dónde acaba cada cosa: la raíz (mazo de Anki o vault de Obsidian) y, debajo,
+ * cada ruta con lo que guarda. La misma pieza en Anki y en Obsidian.
+ */
+export function PathPreview({ root, rows, attrs }: {
+  root: string;
+  rows: { path: string; hint: string; attrs?: Record<string, string> }[];
+  attrs?: Record<string, string>;
+}) {
+  return (
+    <div {...attrs} className="rounded-xl bg-[var(--usb-bg-2)] border border-[var(--usb-border)] px-3.5 py-3 text-[11px] text-[var(--usb-fg)] space-y-1.5">
+      <div className="flex items-center gap-2 min-w-0 pb-0.5">
+        <Icon name="folderSync" size={12} className="text-[#8b6dff] shrink-0" />
+        <span className="font-mono font-bold text-[var(--usb-fg-hi)] truncate">{root}</span>
+      </div>
+      {rows.map((row, i) => (
+        <div key={row.path + i} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 min-w-0 pl-3.5">
+          <div className="flex items-baseline gap-1.5 min-w-0">
+            <span className="font-mono text-[var(--usb-fg-mid)] shrink-0">{i === rows.length - 1 ? "└" : "├"}</span>
+            <span {...row.attrs} className="font-mono text-[11px] text-[var(--usb-fg-hi)] break-all sm:break-normal">{row.path}</span>
+          </div>
+          <span className="font-sans text-[10.5px] text-[var(--usb-fg-mid)] pl-3 sm:pl-0">{row.hint}</span>
+        </div>
+      ))}
     </div>
   );
 }
 
 /** Selector compacto propio (no <select> nativo): botón + lista desplegable accesible. */
-export function Picker<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (value: T) => void; options: { id: T; label: string; hint?: string }[] }) {
+export function Picker<T extends string>({ label, value, onChange, options, placeholder }: { label: string; value: T; onChange: (value: T) => void; options: { id: T; label: string; hint?: string }[]; placeholder?: string }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -315,7 +357,7 @@ export function Picker<T extends string>({ label, value, onChange, options }: { 
     <div ref={root} className="relative">
       <button type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={id} onClick={() => setOpen(v => !v)}
         className="kx-picker h-8 pl-3 pr-2 rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--usb-fg-hi)] hover:border-[#6d4aff]/45 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
-        {current?.label ?? value}
+        <span className="truncate max-w-[180px]">{current?.label ?? placeholder ?? value}</span>
         <ChevronDown size={13} className={`text-[var(--usb-fg-mid)] transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       <AnimatePresence>
@@ -328,14 +370,14 @@ export function Picker<T extends string>({ label, value, onChange, options }: { 
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(active); }
               if (event.key === "Escape" || event.key === "Tab") { event.preventDefault(); event.stopPropagation(); setOpen(false); root.current?.querySelector("button")?.focus(); }
             }}
-            className="kx-picker-menu absolute right-0 top-[calc(100%+4px)] z-30 min-w-[176px] p-1 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] shadow-[0_16px_36px_-18px_rgba(0,0,0,.55)] outline-none">
+            className="kx-picker-menu absolute right-0 top-[calc(100%+4px)] z-50 min-w-[176px] max-w-[300px] max-h-64 overflow-y-auto overscroll-contain p-1 rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-3)] shadow-[0_16px_36px_-18px_rgba(0,0,0,.55)] outline-none">
             {options.map((option, index) => {
               const on = option.id === value;
               return (
                 <li key={option.id} id={`${id}-${index}`} role="option" aria-selected={on} onMouseEnter={() => setActive(index)} onClick={() => choose(index)}
                   className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer text-[12px] ${index === active ? "bg-[var(--usb-accent-soft)]" : ""} ${on ? "font-bold text-[var(--usb-fg-hi)]" : "font-medium text-[var(--usb-fg)]"}`}>
                   <span className="flex-1 min-w-0">
-                    <span className="block">{option.label}</span>
+                    <span className="block [overflow-wrap:anywhere]">{option.label}</span>
                     {option.hint && <span className="block text-[10.5px] font-medium text-[var(--usb-fg-mid)]">{option.hint}</span>}
                   </span>
                   {on && <Check size={13} className="text-[#8b6dff] shrink-0" />}
@@ -377,4 +419,64 @@ export function Stepper({ label, value, min, max, onChange }: { label: string; v
       <button type="button" className={stepBtn} aria-label="Aumentar" disabled={value >= max} onClick={() => onChange(clamp(value + 1))}><Plus size={13} /></button>
     </div>
   );
+}
+
+// ── Fase 5.1 · las mismas piezas en IA, Anki y Obsidian (un solo nivel: nada de tarjetas dentro de la sección) ──
+
+/**
+ * Estado de una conexión, igual en las tres herramientas:
+ *  ok   → responde y está lista ·  warn → configurada pero no responde (o rechazó)
+ *  idle → sin configurar        ·  busy → comprobando
+ */
+export type ConnectionTone = "ok" | "warn" | "idle" | "busy";
+
+/** La píldora de la cabecera de «Conexión» (Conectado · No responde · Sin conectar). */
+export function StatusPill({ tone, children }: { tone: ConnectionTone; children: React.ReactNode }) {
+  const cls = tone === "ok" ? "text-[var(--usb-ok-text)] border-emerald-500/35 bg-emerald-500/10"
+    : tone === "warn" ? "text-[var(--usb-warn-text)] border-amber-500/40 bg-amber-500/10"
+      : "text-[var(--usb-fg-mid)] border-[var(--usb-border)] bg-[var(--usb-bg-3)]";
+  return (
+    <span data-status-pill={tone} className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${cls}`}>
+      {tone === "ok" && <Check size={9} strokeWidth={3} aria-hidden="true" />}{children}
+    </span>
+  );
+}
+
+/**
+ * Pliegue con el mismo aspecto en todas las secciones («Cómo activarla»,
+ * «Cambiar carpetas»…). `defaultOpen` vale solo al montar: después manda el
+ * estudiante (no se cierra solo mientras escribe dentro).
+ */
+export function Disclosure({ summary, children, defaultOpen = false, attrs }: { summary: React.ReactNode; children: React.ReactNode; defaultOpen?: boolean; attrs?: Record<string, string> }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details {...attrs} open={open} onToggle={event => setOpen((event.currentTarget as HTMLDetailsElement).open)} className="group">
+      <summary className="list-none cursor-pointer select-none inline-flex items-center gap-1 text-[11.5px] font-semibold text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 rounded">
+        {summary}<ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="pt-2 space-y-2">{children}</div>
+    </details>
+  );
+}
+
+/** «Cómo activarla»: los pasos numerados, plegados. */
+export function HowTo({ steps, summary = "Cómo activarla", attrs, children }: { steps: React.ReactNode[]; summary?: string; attrs?: Record<string, string>; children?: React.ReactNode }) {
+  return (
+    <Disclosure summary={summary} attrs={attrs}>
+      <ol className="space-y-1.5">
+        {steps.map((step, i) => (
+          <li key={i} className="flex gap-2 text-[11px] leading-relaxed text-[var(--usb-fg-mid)]">
+            <span className="w-4 h-4 rounded-full bg-[#6d4aff]/15 text-[var(--usb-accent-text)] text-[9px] font-bold flex items-center justify-center shrink-0 mt-px">{i + 1}</span>
+            <span>{step}</span>
+          </li>
+        ))}
+      </ol>
+      {children}
+    </Disclosure>
+  );
+}
+
+/** Nombre de mazo, ruta o etiqueta: monoespaciada y sin cortar a la mitad de una palabra. */
+export function Code({ children, attrs }: { children: React.ReactNode; attrs?: Record<string, string> }) {
+  return <code {...attrs} className="font-mono text-[11px] text-[var(--usb-fg)] [overflow-wrap:anywhere]">{children}</code>;
 }

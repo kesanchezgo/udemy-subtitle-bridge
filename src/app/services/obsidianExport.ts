@@ -34,6 +34,10 @@
 // resuelven igual.
 import { chromeLocalStorage } from './chromeStorage.ts';
 import { bloomTaskLabel } from '../../shared/prompts.ts';
+import { splitIdea } from './recallCue.ts';
+import { practiceFormatMeta, practiceMarkdown, type PracticeFormat, type StructuredPractice } from './practiceFormats.ts';
+import { sessionNoteFileName, sessionNotePathIn, sourcesRoot, type NoteLayout } from './obsidianDestination.ts';
+import { deckIdeaMatches, type DeckMatch } from './deckConcepts.ts';
 
 export interface ObsidianExportConfig {
 	/** Nombre EXACTO del vault tal como aparece en el selector de Obsidian. */
@@ -46,10 +50,35 @@ export interface ObsidianExportConfig {
 	includeCards: boolean;
 	/** C6: repasar también en Obsidian con el formato del plugin Spaced Repetition. Apagado por defecto: un solo planificador. */
 	srFlashcards?: boolean;
-	/** Exportar automáticamente al terminar de generar la sesión. */
+	/**
+	 * @deprecated Fase 5: con Obsidian conectado, la nota se guarda SIEMPRE al
+	 * terminar la lección (no hay que exportar). Se conserva para leer configs.
+	 */
 	autoExport: boolean;
 	/** Guardar el SRT crudo (EN) en raw/<plataforma>/<curso>/ junto a la sesión. */
 	includeRawSrt: boolean;
+	/**
+	 * Fase 3 · estructura de las notas. Fase 5: siempre una carpeta por curso
+	 * («course»); «flat»/«program» solo aparecen en configs de antes y sirven
+	 * para fijar, una vez, la carpeta de los cursos que ya tenían notas
+	 * (obsidianBridge.loadObsidianConfig). Ver obsidianDestination.
+	 */
+	noteLayout?: NoteLayout;
+	/**
+	 * Fase 3 · Obsidian conectado (plugin Local REST API): URL local del plugin y
+	 * su clave. Sin clave, Kinema usa obsidian:// como siempre.
+	 */
+	restUrl?: string;
+	restApiKey?: string;
+	/**
+	 * Fase 5.1 · preparar el vault con la conexión directa: crear UNA vez lo
+	 * que falte (índice, registro, plantillas y el esquema CLAUDE.md /
+	 * AGENTS.md), sin pisar nada. Se activa al pegar la clave por primera vez;
+	 * en configs de antes (sin el campo) queda apagado hasta que lo enciendas.
+	 */
+	prepareVault?: boolean;
+	/** Cuándo quedó preparado (ms). Sin fecha y con prepareVault, se prepara al conectar. */
+	vaultPreparedAt?: number;
 }
 
 export const OBSIDIAN_EXPORT_STORAGE_KEY = 'obsidian_export_config';
@@ -63,6 +92,7 @@ export const DEFAULT_OBSIDIAN_EXPORT_CONFIG: ObsidianExportConfig = {
 	includeCards: true,
 	autoExport: false,
 	includeRawSrt: false,
+	noteLayout: 'course',
 };
 
 /** Resumen de cierre de la lección (el mismo que muestra Study, §1.4). */
@@ -94,6 +124,10 @@ export interface ObsidianSessionData {
 	unrecalledIdeas?: string[];
 	/** La práctica se intentó sin acierto o se vio la solución: repetirla. */
 	practiceToRedo?: boolean;
+	/** flowVersion 3: ¿se sostuvo lo que dijiste saber? (skip = no se pidió: autoevaluación fiable). */
+	spotCheck?: 'ok' | 'fail' | 'skip';
+	/** flowVersion 3: resultado de la práctica estructurada (corregida al momento). */
+	practiceResult?: { format: PracticeFormat; correct: boolean; attempts: number; hintsUsed: number; solutionSeen: boolean; answer: string };
 	/** §5: dudas resueltas sobre la lección (respuesta + citas verificadas). */
 	doubts?: { q: string; answer: string; quotes: string[]; outside: boolean; t?: string }[];
 	/** Resumen de cierre del flujo (§1.4) para la nota. */
@@ -115,7 +149,7 @@ export interface ObsidianSessionData {
 		keyConcepts: string[];
 		quickWin?: string;
 		questions: { q: string; bloom?: string; difficulty?: string; hint?: string; answer?: string }[];
-		application: { isCode: boolean; setup: string; challenge: string; solution: string };
+		application: { isCode: boolean; setup: string; challenge: string; solution: string; practice?: StructuredPractice };
 		interviewQ: { q: string; idealAnswer: string } | null;
 		nextAction: string;
 		ankiCards: { front: string; back: string; type?: string }[];
@@ -143,6 +177,11 @@ export async function loadObsidianExportConfig(): Promise<ObsidianExportConfig> 
 		srFlashcards: raw.srFlashcards === true,
 			autoExport: typeof raw.autoExport === 'boolean' ? raw.autoExport : false,
 			includeRawSrt: typeof raw.includeRawSrt === 'boolean' ? raw.includeRawSrt : false,
+			noteLayout: raw.noteLayout === 'course' || raw.noteLayout === 'program' ? raw.noteLayout : 'flat',
+			restUrl: typeof raw.restUrl === 'string' ? raw.restUrl.trim() : undefined,
+			restApiKey: typeof raw.restApiKey === 'string' ? raw.restApiKey.trim() : undefined,
+			prepareVault: raw.prepareVault === true ? true : raw.prepareVault === false ? false : undefined,
+			vaultPreparedAt: typeof raw.vaultPreparedAt === 'number' ? raw.vaultPreparedAt : undefined,
 		};
 	} catch {
 		return { ...DEFAULT_OBSIDIAN_EXPORT_CONFIG };
@@ -173,13 +212,17 @@ export async function saveCreatedMocs(slugs: string[]): Promise<void> {
  * repaso a una nota que no está). Las claves viejas (<curso>---<leccion>, sin
  * vault) se siguen reconociendo.
  */
-export function sessionExportKey(config: ObsidianExportConfig, courseName: string, lessonName: string): string {
-	return `${config.vaultName.trim()}|${buildSessionNotePath(config, courseName, lessonName)}`;
+export function sessionExportKey(config: ObsidianExportConfig, courseName: string, lessonName: string, folder?: string): string {
+	return `${config.vaultName.trim()}|${buildSessionNotePath(config, courseName, lessonName, folder)}`;
 }
 
-export function isSessionExported(keys: string[], config: ObsidianExportConfig, courseName: string, lessonName: string): boolean {
+/**
+ * Fase 3: con la carpeta del curso (registro), la clave es la de esa carpeta.
+ * Las claves viejas (<curso>---<leccion>, sin vault) se siguen reconociendo.
+ */
+export function isSessionExported(keys: string[], config: ObsidianExportConfig, courseName: string, lessonName: string, folder?: string): boolean {
 	const legacy = `${slugifyVault(courseName)}---${slugifyVault(lessonName)}`;
-	return keys.includes(sessionExportKey(config, courseName, lessonName)) || keys.includes(legacy);
+	return keys.includes(sessionExportKey(config, courseName, lessonName, folder)) || keys.includes(legacy);
 }
 
 export async function loadObsidianExportedNotes(): Promise<string[]> {
@@ -361,11 +404,13 @@ function todayIso(today?: Date): string {
 
 // ── Nota de sesión ───────────────────────────────────────────────────────────
 
-export function buildSessionNotePath(config: ObsidianExportConfig, courseName: string, lessonName: string): string {
-	const course = slugifyVault(courseName);
-	const lesson = slugifyVault(lessonName);
-	const folder = config.sourcesFolder.replace(/^\/+|\/+$/g, '') || DEFAULT_OBSIDIAN_EXPORT_CONFIG.sourcesFolder;
-	return `${folder}/${course}---${lesson}.md`;
+/**
+ * Ruta de la nota de una lección. Sin carpeta, la de lecciones de Ajustes (la
+ * estructura de siempre); con carpeta (la del curso, obsidianDestination), esa.
+ * El nombre del fichero es siempre <curso>---<lección>.md.
+ */
+export function buildSessionNotePath(config: ObsidianExportConfig, courseName: string, lessonName: string, folder?: string): string {
+	return sessionNotePathIn(folder || sourcesRoot(config), courseName, lessonName);
 }
 
 export function buildSessionNoteMarkdown(
@@ -402,7 +447,8 @@ export function buildSessionNoteMarkdown(
 	const conceptTermsFront = (c as { conceptTerms?: string[] }).conceptTerms ?? [];
 	if (conceptTermsFront.length > 0) lines.push(`concepts: [${conceptTermsFront.map((x) => slugifyVault(x)).join(', ')}]`);
 	// C9: tags anidados de Obsidian (el MOC filtra por `course`, no por tag).
-	lines.push(`tags: [kinema/sesion, kinema/curso/${course}, ${platform}]`);
+	// Fase 5: todo bajo kinema/ (la plataforma ya no va suelta en la raíz de tus etiquetas).
+	lines.push(`tags: [kinema/sesion, kinema/curso/${course}, kinema/plataforma/${platform}]`);
 	lines.push('---');
 	lines.push('');
 	lines.push(`# ${data.lessonName}`);
@@ -436,16 +482,23 @@ export function buildSessionNoteMarkdown(
 	}
 	lines.push('## Ideas clave');
 	lines.push('');
+	// Fase 4: las ideas que ya estaban en el mazo lo dicen y enlazan con la nota
+	// de la lección donde está su tarjeta (sin tarjeta nueva en esta sesión).
+	const inDeck = new Map(deckIdeaMatches(c).map((m) => [m.idea, m]));
 	// F2-1: si el content trae t por idea (keyConcepts como {text,t}), el
 	// enlace salta al minuto. Retrocompatible: un string sigue siendo válido.
 	(c.keyConcepts || []).forEach((k, i) => {
 		const item = typeof k === 'string' ? { text: k, t: undefined } : (k as { text?: string; t?: string });
-		const text = item.text || String(k);
+		const raw = item.text || String(k);
+		// flowVersion 3: «Título — detalle» se lee como **Título** — detalle.
+		const cue = splitIdea(raw);
+		const text = cue.detail ? `**${cue.title}** — ${cue.detail}` : raw;
 		const url = data.sourceUrl && item.t && /^\d{1,2}:\d{2}$/.test(item.t)
 			? `${data.sourceUrl.split('#')[0].split('?')[0]}?start=${Number(item.t.split(':')[0]) * 60 + Number(item.t.split(':')[1])}#overview`
 			: null;
 		const link = url ? ` — [▶ ${item.t}](${url})` : '';
-		lines.push(`- ${text}${link}`);
+		const deck = inDeck.get(i);
+		lines.push(`- ${text}${link}${deck ? ` · ${inDeckNote(deck, data.courseName)}` : ''}`);
 	});
 	lines.push('');
 	// F2-2: conceptos enlazables (grafo entre cursos). Los enlaces sin resolver
@@ -486,7 +539,15 @@ export function buildSessionNoteMarkdown(
 		lines.push('');
 		if (c.application.setup) lines.push(`**Escenario:** ${c.application.setup}`, '');
 		if (c.application.challenge) lines.push(`**Reto:** ${c.application.challenge}`, '');
-		if (c.application.solution) {
+		if (c.application.practice) {
+			// flowVersion 3: el ejercicio tal como se vio y su clave plegada.
+			lines.push(...practiceMarkdown(c.application.practice, c.application.isCode));
+			if (c.application.solution) {
+				lines.push('> [!note]- Solución explicada');
+				c.application.solution.split('\n').forEach((l) => lines.push(l.trim() ? `> ${l}` : '>'));
+				lines.push('');
+			}
+		} else if (c.application.solution) {
 			// C5: la solución va plegada.
 			lines.push(`> [!example]- Ver solución`);
 			lines.push(`> ${c.application.solution}`);
@@ -514,7 +575,7 @@ export function buildSessionNoteMarkdown(
 				const back = htmlToMarkdown(card.back);
 				if (front && back) lines.push(`${front}\n?\n${back}\n`);
 			});
-			lines.push('> [!info] El mazo con formato dev-card se exporta desde la extensión como `.apkg`.');
+			lines.push('> [!info] Estas tarjetas se sincronizan automáticamente con tu mazo de Anki.');
 			lines.push('');
 		} else {
 			lines.push(`> [!example]- Tarjetas de esta lección (${c.ankiCards.length}) · repásalas en Anki`);
@@ -532,11 +593,24 @@ export function buildSessionNoteMarkdown(
 				}
 			});
 			lines.push('');
-			lines.push('> [!info] El mazo con formato dev-card se exporta desde la extensión como `.apkg`.');
+			lines.push('> [!info] Estas tarjetas se sincronizan automáticamente con tu mazo de Anki.');
 			lines.push('');
 		}
 	}
 	return lines.join('\n');
+}
+
+/**
+ * Fase 4: «_ya en tu mazo · [[nota de su lección|Lección]]_» (y si se adelantó
+ * a hoy en Anki). El enlace va por nombre de fichero: Obsidian lo resuelve en
+ * cualquier carpeta; si esa lección no tiene nota, queda sin resolver (a propósito).
+ */
+function inDeckNote(m: DeckMatch, courseName: string): string {
+	const label = (text: string) => text.replace(/[[\]|]/g, ' ').trim();
+	const where = m.sameLesson
+		? 'de una sesión anterior de esta lección'
+		: `[[${sessionNoteFileName(m.course || courseName, m.lesson).replace(/\.md$/, '')}|${label(m.lesson)}]]${m.course ? ` (curso «${label(m.course)}»)` : ''}`;
+	return `_ya en tu mazo: ${where}${m.rescheduledAt ? ' · adelantada a hoy en Anki' : ''}_`;
 }
 
 /**
@@ -554,13 +628,25 @@ function sessionOutcomeLines(data: ObsidianSessionData, h: '##' | '###'): string
 		lines.push('');
 		lines.push(`**${r.title}**`);
 		lines.push('');
+		const pr = data.practiceResult;
+		const practiceHow = pr
+			? pr.correct
+				? ` · ${pr.attempts <= 1 && pr.hintsUsed === 0 ? 'a la primera' : pr.attempts <= 1 ? 'con pista' : `en ${pr.attempts} intentos`}`
+				: pr.solutionSeen ? ' · vista la solución' : ''
+			: '';
 		const parts = [
 			`Recordaste (según tú): ${r.remembered.count} de ${r.remembered.total} ideas`,
+			...(data.spotCheck
+				? [`Lo que dijiste saber: ${data.spotCheck === 'ok' ? 'se confirmó' : data.spotCheck === 'fail' ? 'no se sostuvo del todo' : 'sin confirmar hoy (tus últimas autoevaluaciones fueron acertadas)'}`]
+				: []),
 			r.check.skipped
 				? 'Comprobación: saltada'
 				: `Comprobación: ${r.check.firstTry} a la primera${r.check.improved ? ` · ${r.check.improved} tras corregir` : ''}`,
-			`Práctica: ${r.practice === 'correct' ? 'correcta' : r.practice === 'done' ? 'hecha' : 'pendiente'}`,
-			`Tarjetas: ${r.cards.total} (${r.cards.reinforce} de refuerzo${r.cards.doubt ? `, ${r.cards.doubt} de duda` : ''}) · ${r.cards.destination === 'anki' ? 'en Anki' : r.cards.destination === 'obsidian' ? 'en Obsidian' : 'sin exportar'}`,
+			`Práctica: ${r.practice === 'correct' ? 'correcta' : r.practice === 'done' ? 'hecha' : 'pendiente'}${practiceHow}${pr ? ` (${practiceFormatMeta(pr.format, data.content.application.isCode).label})` : ''}`,
+			`Tarjetas: ${r.cards.total} (${r.cards.reinforce} de refuerzo${r.cards.doubt ? `, ${r.cards.doubt} de duda` : ''}) · ${r.cards.destination === 'anki' ? 'en Anki' : r.cards.destination === 'obsidian' ? 'en Obsidian' : 'sin exportar'}${(() => {
+				const k = deckIdeaMatches(data.content).length;
+				return k > 0 ? ` · ${k === 1 ? '1 idea ya estaba' : `${k} ideas ya estaban`} en tu mazo` : '';
+			})()}`,
 		];
 		parts.forEach((p) => lines.push(`- ${p}`));
 		if (r.calibration) {
@@ -583,7 +669,10 @@ function sessionOutcomeLines(data: ObsidianSessionData, h: '##' | '###'): string
 		lines.push('');
 		if (unrecalled.length > 0) {
 			lines.push('No me salieron sin mirar:');
-			unrecalled.forEach((idea) => lines.push(`- ${idea}`));
+			unrecalled.forEach((idea) => {
+				const cue = splitIdea(idea);
+				lines.push(cue.detail ? `- **${cue.title}** — ${cue.detail}` : `- ${idea}`);
+			});
 			lines.push('');
 		}
 		if (data.practiceToRedo) {
@@ -620,6 +709,38 @@ export function buildSessionUpdateMarkdown(data: ObsidianSessionData, options: {
 	return [`## Repaso · ${todayIso(options.today)}`, '', ...sessionOutcomeLines(data, '###')].join('\n');
 }
 
+// ── Bloque gestionado por Kinema (fase 3) ──────────────────────────────────
+
+/**
+ * Marcas de comentario de Obsidian (no se ven al leer): lo que va entre ellas lo
+ * reescribe Kinema; lo de fuera es del estudiante y nunca se toca.
+ */
+export const KINEMA_AUTO_START = '%% kinema:auto:inicio — este bloque lo actualiza Kinema %%';
+export const KINEMA_AUTO_END = '%% kinema:auto:fin %%';
+
+const AUTO_RE = /%% kinema:auto:inicio[^%]*%%[\s\S]*?%% kinema:auto:fin %%/;
+
+/**
+ * La nota existente con SOLO su bloque gestionado sustituido por el de `fresh`.
+ * null si alguna de las dos no tiene el bloque (nota de antes o marcas
+ * borradas): entonces no se toca nada.
+ */
+export function replaceManagedBlock(existing: string, fresh: string): string | null {
+	const mine = String(existing || '').match(AUTO_RE);
+	const next = String(fresh || '').match(AUTO_RE);
+	if (!mine || !next) return null;
+	return existing.replace(AUTO_RE, () => next[0]);
+}
+
+/**
+ * Origen Dataview de las sesiones: la carpeta de lecciones (incluye sus
+ * subcarpetas: una por curso, y las de estructuras anteriores) O la etiqueta
+ * kinema/sesion (una carpeta elegida fuera de la de lecciones).
+ */
+function dataviewSource(sourcesFolder: string): string {
+	return `"${sourcesFolder}" OR #kinema/sesion`;
+}
+
 // ── MOC del curso (índice automático con Dataview) ──────────────────────────
 
 export function buildCourseMocPath(config: ObsidianExportConfig, courseName: string): string {
@@ -643,20 +764,22 @@ export function buildCourseMocMarkdown(
 	lines.push('type: curso');
 	lines.push(`platform: ${platform}`);
 	lines.push('status: en-progreso');
-	lines.push(`tags: [curso, ${platform}, ${course}]`);
+	lines.push(`tags: [kinema/moc/curso, kinema/plataforma/${platform}]`);
 	lines.push('---');
 	lines.push('');
 	lines.push(`# ${courseName}`);
 	lines.push('');
 	if (options.objective) lines.push(`**Objetivo:** ${options.objective}`, '');
-	lines.push('> [!tip] Las sesiones se listan solas: cada exportación de la extensión');
-	lines.push('> crea una nota en `' + sourcesFolderPlaceholder + '` con `course: ' + course + '` en el frontmatter.');
+	lines.push('> [!tip] Las sesiones se listan solas: cada nota de Kinema lleva la etiqueta');
+	lines.push('> `kinema/sesion` y `course: ' + course + '` en el frontmatter, esté en la carpeta que esté.');
 	lines.push('');
 	lines.push('## Sesiones');
 	lines.push('');
 	lines.push('```dataview');
 	lines.push('TABLE lesson AS "Lección", date AS "Fecha", relevance_score AS "Relevancia"');
-	lines.push(`FROM "${sourcesFolderPlaceholder}"`);
+	// Fase 3: por etiqueta (cualquier carpeta: la del curso, una de antes o la
+	// elegida) y por la carpeta de lecciones (notas de antes de la etiqueta).
+	lines.push(`FROM ${dataviewSource(sourcesFolderPlaceholder)}`);
 	lines.push(`WHERE course = "${course}"`);
 	lines.push('SORT date DESC');
 	lines.push('```');
@@ -711,7 +834,7 @@ export function buildProgramMocMarkdown(
 	lines.push(`platform: ${platform}`);
 	lines.push(`programa_slug: ${program.slug}`);
 	lines.push('status: en-progreso');
-	lines.push(`tags: [programa, ${platform}, ${slugifyVault(program.slug)}]`);
+	lines.push(`tags: [kinema/moc/programa, kinema/plataforma/${platform}]`);
 	lines.push('---');
 	lines.push('');
 	lines.push(`# ${program.title}`);
@@ -722,6 +845,10 @@ export function buildProgramMocMarkdown(
 	if (program.timeNeeded) meta.push(`Tiempo estimado: **${program.timeNeeded}**`);
 	if (pct !== null) meta.push(`Progreso en la plataforma: **${pct}%**`);
 	if (program.enrolled !== null) meta.push(program.enrolled ? 'Inscrito' : 'No inscrito');
+	// Fase 3: lo que cambia con el tiempo (progreso y estado de cada curso) va
+	// entre marcas: con Obsidian conectado se actualiza SOLO ese bloque y lo que
+	// escribas fuera se queda como está.
+	lines.push(KINEMA_AUTO_START);
 	if (meta.length > 0) lines.push(`> [!info] ${meta.join(' · ')}`, '');
 	lines.push('## Cursos (en orden)');
 	lines.push('');
@@ -732,18 +859,20 @@ export function buildProgramMocMarkdown(
 		// Mismo convenio que el MOC de curso: el enlace vive en la carpeta de MOCs.
 		lines.push(`| ${index + 1} | [[${mocsFolderPlaceholder}/${slugifyVault(c.title)}|${c.title}]] | ${state} |`);
 	});
+	lines.push(KINEMA_AUTO_END);
 	lines.push('');
 	lines.push('## Sesiones estudiadas con Kinema');
 	lines.push('');
 	lines.push('```dataview');
 	lines.push('TABLE lesson AS "Lección", course AS "Curso", date AS "Fecha"');
-	lines.push(`FROM "${sourcesFolderPlaceholder}"`);
+	lines.push(`FROM ${dataviewSource(sourcesFolderPlaceholder)}`);
 	lines.push(`WHERE contains(programas, "${program.slug}") OR programa_slug = "${program.slug}"`);
 	lines.push('SORT date DESC');
 	lines.push('```');
 	lines.push('');
 	lines.push('> [!tip] Las sesiones llevan `programa_slug: ' + program.slug + '` en el frontmatter');
-	lines.push('> cuando el programa está elegido en el dock.');
+	lines.push('> cuando el programa está elegido en el dock. El bloque de cursos lo actualiza Kinema;');
+	lines.push('> lo que escribas fuera de él no se toca.');
 	lines.push('');
 	return lines.join('\n');
 }
@@ -774,7 +903,7 @@ export function buildRawSrtNoteMarkdown(
 	lines.push(`course: ${course}`);
 	lines.push(`lesson: ${yamlEscape(lessonName)}`);
 	if (options.sourceUrl) lines.push(`lesson_url: ${yamlEscape(options.sourceUrl)}`);
-	lines.push(`tags: [${platform}, raw, srt, ${course}]`);
+	lines.push(`tags: [kinema/raw, kinema/curso/${course}, kinema/plataforma/${platform}]`);
 	lines.push('---');
 	lines.push('');
 	lines.push('> [!warning] Material crudo INMUTABLE (`raw/`). Fuente de verdad de la sesión;');
@@ -790,7 +919,8 @@ export function buildRawSrtNoteMarkdown(
 // ── Scaffold: crear el vault desde cero ─────────────────────────────────────
 
 export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNote[] {
-	const platform = slugifyVault(options.platform || 'curso', 24);
+	// Sin plataforma (desde Ajustes): las plantillas dicen «plataforma»; cada nota real lleva la suya.
+	const platform = slugifyVault(options.platform || 'plataforma', 24);
 	const claudemd = [
 		'# Wiki Schema (aprendizaje universal)',
 		'',
@@ -803,7 +933,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'## Estructura de carpetas',
 		'- `raw/<fuente>/<curso>/` — material bruto INMUTABLE (transcripciones .srt como nota .md, PDFs, capturas). El LLM lee pero nunca modifica. La extensión puede crearlos (opción «Subtítulos originales»).',
 		'- `cursos/` — un MOC (Map of Content) por curso/tema, con índice automático Dataview de sus sesiones.',
-		'- `wiki/fuentes/` — UNA nota por sesión o recurso consumido (la extensión exporta aquí).',
+		'- `wiki/fuentes/<curso>/` — UNA nota por sesión o recurso consumido, en la carpeta de su curso (la extensión la guarda aquí al terminar la lección). El programa NO es una carpeta: un curso puede estar en varios programas, así que va en la propiedad `programas` y en su MOC.',
 		'- `wiki/entidades/` — personas, organizaciones, productos, tecnologías.',
 		'- `wiki/conceptos/` — ideas y conceptos destilados, con enlaces a todas las fuentes que los mencionan.',
 		'- `wiki/sintesis/` — comparaciones y análisis que cruzan fuentes.',
@@ -811,22 +941,23 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'- `index.md` — catálogo. `log.md` — registro cronológico de operaciones.',
 		'',
 		'## Formato de nota de sesión (wiki/fuentes/)',
-		'Frontmatter: title, date, type: sesion, platform, course, lesson, objective, relevance_score, lesson_url, anki_deck, concepts, tags (kinema/sesion, kinema/curso/<curso>).',
+		'Frontmatter: title, date, type: sesion, platform, course, lesson, objective, relevance_score, lesson_url, anki_deck, programa, programa_slug, programas, concepts, tags (kinema/sesion, kinema/curso/<curso>, kinema/plataforma/<plataforma>). Las relaciones van en propiedades y enlaces; las etiquetas, todas bajo kinema/.',
 		'Secciones: Resumen, Ideas clave, Preguntas para comprobarte, Práctica oral, Aplicación práctica, Próximo paso, Resultado de la sesión, Lo que recordé sin mirar, Puntos a reforzar, Dudas resueltas y las tarjetas de la lección (referencia plegada; con «Repasar también en Obsidian», formato multilínea del plugin Spaced Repetition bajo #flashcards). Cada nueva sesión de la misma lección AÑADE al final un «## Repaso · fecha» (la nota no se reescribe).',
 		'',
 		'## Formato de MOC de curso (cursos/)',
-		'Frontmatter: title, date, type: curso, platform, status, tags. Secciones: Sesiones (query Dataview por `course`), Progreso, Conceptos del curso.',
+		'Frontmatter: title, date, type: curso, platform, status, tags. Secciones: Sesiones (query Dataview por la etiqueta `kinema/sesion` y `course`, en cualquier carpeta), Progreso, Conceptos del curso.',
+		'Los MOC de programa (`cursos/moc-<programa>.md`) tienen un bloque entre `%% kinema:auto:inicio %%` y `%% kinema:auto:fin %%` que Kinema actualiza; lo de fuera es tuyo.',
 		'',
 		'## Naming',
 		'- Filenames kebab-case, en español, sin tildes, minúsculas: `aprendizaje-activo.md`.',
-		'- Sesiones: `wiki/fuentes/<curso>---<leccion>.md`.',
+		'- Sesiones: `wiki/fuentes/<curso>/<curso>---<leccion>.md` (el nombre lleva el curso: los enlaces por nombre funcionan aunque la nota cambie de carpeta).',
 		'- Títulos H1 con tildes y mayúsculas apropiadas.',
 		'',
 		'## Log',
 		'`## [YYYY-MM-DD] operacion | Detalle` — tipos: init, export, ingest, query, lint, update.',
 		'',
 		'## Workflow',
-		'1. Consumir la lección/recursos con la extensión → exportar a Obsidian (nota de sesión + MOC automático).',
+		'1. Consumir la lección/recursos con la extensión → al terminar, la nota de sesión y el MOC llegan solos (con Obsidian conectado).',
 		'2. Ingestión supervisada (una fuente a la vez): de las sesiones → páginas de concepto/entidad con enlaces.',
 		'3. Síntesis cuando haya 2+ fuentes que se crucen.',
 	].join('\n');
@@ -877,7 +1008,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'objective: "Para qué estudio esto"',
 		'relevance_score: 0',
 		'lesson_url: ""',
-		`tags: [kinema/sesion, kinema/curso/slug-del-curso, ${platform}]`,
+		`tags: [kinema/sesion, kinema/curso/slug-del-curso, kinema/plataforma/${platform}]`,
 		'---',
 		'',
 		'# Nombre de la lección',
@@ -922,7 +1053,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'type: curso',
 		`platform: ${platform}`,
 		'status: en-progreso',
-		`tags: [curso, ${platform}]`,
+		`tags: [kinema/moc/curso, kinema/plataforma/${platform}]`,
 		'---',
 		'',
 		'# Nombre del curso',
@@ -933,7 +1064,7 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'',
 		'```dataview',
 		'TABLE lesson AS "Lección", date AS "Fecha", relevance_score AS "Relevancia"',
-		'FROM "wiki/fuentes"',
+		'FROM "wiki/fuentes" OR #kinema/sesion',
 		'WHERE course = "slug-del-curso"',
 		'SORT date DESC',
 		'```',
@@ -1041,6 +1172,11 @@ export function buildObsidianOpenVaultUri(vaultName: string): string {
 	return `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
 }
 
+/** Abre una nota que ya existe (sin reescribirla). La ruta va sin «.md». */
+export function buildObsidianOpenFileUri(vaultName: string, path: string): string {
+	return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(path.replace(/\.md$/i, ''))}`;
+}
+
 /**
  * Abre una URI obsidian:// desde la página. Los protocolos externos no
  * navegan la página: Chrome muestra su diálogo "Abrir Obsidian?" y lanza la
@@ -1072,6 +1208,8 @@ export function exportSessionToObsidian(
 		today?: Date;
 		/** C7: «Reemplazar nota» — true solo en el reemplazo explícito. */
 		overwrite?: boolean;
+		/** Fase 3: carpeta del curso (obsidianDestination); sin ella, la de lecciones. */
+		folder?: string;
 	},
 ): { notePath: string; moc: { note: VaultNote; key: string } | null } {
 	if (!config.vaultName.trim()) {
@@ -1099,7 +1237,7 @@ export function exportSessionToObsidian(
 		},
 	};
 	const note: VaultNote = {
-		path: buildSessionNotePath(config, data.courseName, data.lessonName),
+		path: buildSessionNotePath(config, data.courseName, data.lessonName, orchestration.folder),
 		markdown: buildSessionNoteMarkdown(data, config, { today: orchestration.today }),
 	};
 	// C7: overwrite=true SOLO en «Reemplazar nota» (el usuario pide pisar la
@@ -1115,13 +1253,13 @@ export function exportSessionToObsidian(
 export function exportSessionUpdateToObsidian(
 	data: ObsidianSessionData,
 	config: ObsidianExportConfig,
-	options: { today?: Date } = {},
+	options: { today?: Date; folder?: string } = {},
 ): { notePath: string } {
 	if (!config.vaultName.trim()) {
 		throw new Error('Configura el nombre del vault en Ajustes antes de exportar.');
 	}
 	const note: VaultNote = {
-		path: buildSessionNotePath(config, data.courseName, data.lessonName),
+		path: buildSessionNotePath(config, data.courseName, data.lessonName, options.folder),
 		markdown: buildSessionUpdateMarkdown(data, options),
 	};
 	openObsidianNote(config.vaultName.trim(), note, { append: true });
@@ -1135,13 +1273,14 @@ export function exportSessionUpdateToObsidian(
  */
 export function buildVaultScaffold(config: ObsidianExportConfig, options: { platform?: string } = {}): { notes: VaultNote[]; folders: string[] } {
 	const clean = (folder: string, fallback: string) => folder.replace(/^\/+|\/+$/g, '') || fallback;
-	const platform = slugifyVault(options.platform || 'curso', 24);
+	// raw/<plataforma> se crea con la primera transcripción de cada plataforma.
+	const raw = options.platform ? `raw/${slugifyVault(options.platform, 24)}` : 'raw';
 	return {
 		notes: buildScaffoldNotes({ platform: options.platform }),
 		folders: [
 			clean(config.sourcesFolder, DEFAULT_OBSIDIAN_EXPORT_CONFIG.sourcesFolder),
 			clean(config.mocsFolder, DEFAULT_OBSIDIAN_EXPORT_CONFIG.mocsFolder),
-			`raw/${platform}`,
+			raw,
 			'wiki/conceptos',
 			'wiki/entidades',
 			'wiki/sintesis',

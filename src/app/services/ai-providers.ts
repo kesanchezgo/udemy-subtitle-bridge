@@ -537,7 +537,7 @@ export function describeProviderFailure(
   const where = opts.endpoint ? ` (${opts.endpoint})` : '';
   const who = opts.kind ? `proveedor «${opts.kind}»` : 'proveedor de IA';
   if (!msg.trim() || msg.includes('sin configurar') || msg.includes('sin runtime')) {
-    return 'No hay proveedor de IA configurado. Ábrelo en Ajustes → Proveedor y pulsa «Probar conexión y guardar».';
+    return 'No hay proveedor de IA configurado. Ábrelo en Ajustes → Proveedor de IA y pulsa «Probar y guardar».';
   }
   if (msg.includes('failed to fetch') || msg.includes('econnrefused') || msg.includes('err_connection')
     || msg.includes('networkerror') || msg.includes('network request failed') || msg.includes('timeout')
@@ -546,7 +546,7 @@ export function describeProviderFailure(
   }
   if (msg.includes('401') || msg.includes('403') || msg.includes('invalid') && msg.includes('key')
     || msg.includes('api key') || msg.includes('unauthorized')) {
-    return `El ${who} rechazó la credencial (401/403)${where}. Revísala en Ajustes → Proveedor.`;
+    return `El ${who} rechazó la credencial (401/403)${where}. Revísala en Ajustes → Proveedor de IA.`;
   }
   if (msg.includes('429') || msg.includes('rate') && msg.includes('limit') || msg.includes('too many')) {
     return `El ${who} está limitando peticiones (429). Espera unos segundos y reintenta.`;

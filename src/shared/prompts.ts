@@ -41,7 +41,36 @@ export type StudyMetadata = {
 	transcriptTruncated?: boolean;
 	platform?: string;
 	program?: AiProgramContext;
+	/**
+	 * Fase 4: tarjetas que YA están en el mazo (de Anki si está conectado; si
+	 * no, de lo exportado según el historial), con un id corto: las de este
+	 * curso y, con `course`, las de otro curso suyo. La IA no les crea tarjeta y
+	 * dice cuáles son en "inDeck" (solo con estos ids).
+	 */
+	deckIdeas?: { ref: string; text: string; lesson?: string; course?: string }[];
 };
+
+/** Fase 4: cuántas tarjetas del mazo viajan al prompt como mucho. */
+export const DECK_IDEAS_LIMIT = 40;
+
+/**
+ * Fase 4: las tarjetas del mazo que llegan del dock (ids m1…m40), saneadas en
+ * el service worker antes de ir al prompt.
+ */
+export function sanitizeDeckIdeas(raw: unknown): { ref: string; text: string; lesson: string; course?: string }[] {
+	if (!Array.isArray(raw)) return [];
+	const out: { ref: string; text: string; lesson: string; course?: string }[] = [];
+	const clean = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+	for (const item of raw.slice(0, DECK_IDEAS_LIMIT)) {
+		const r = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+		const ref = String(r.ref ?? '').trim();
+		const text = clean(r.text, 240);
+		if (!/^m\d{1,3}$/.test(ref) || !text || out.some((o) => o.ref === ref)) continue;
+		const course = clean(r.course, 120);
+		out.push({ ref, text, lesson: clean(r.lesson, 120), ...(course ? { course } : {}) });
+	}
+	return out;
+}
 
 export function formatOriginalSrtBlocks(blocks: SrtBlock[]) {
 	return blocks
@@ -241,6 +270,8 @@ export function buildRefinePrompt(
 export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata) {
 	const cardTarget = estimateAnkiCardTarget(transcriptText, metadata.cueCount);
 	const ideas = keyConceptRange(transcriptText, metadata.cueCount);
+	const deck = (metadata.deckIdeas ?? []).filter((d) => d && d.ref && d.text).slice(0, DECK_IDEAS_LIMIT);
+	const hasDeck = deck.length > 0;
 	return [
 		'Eres un diseñador instruccional experto para cursos online.',
 		'Genera una sesión de estudio adaptada al curso, la lección actual y el objetivo del estudiante.',
@@ -264,21 +295,28 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'TRANSCRIPCIÓN (O TEXTO) DE LA LECCIÓN:',
 		transcriptText.slice(0, 18000),
 		'',
+		...(hasDeck ? [
+			'IDEAS QUE YA ESTÁN EN SU MAZO (tarjetas que ya repasa en Anki · id · «idea» — tarjeta · lección; si es de otro curso suyo, también el curso):',
+			...deck.map((d) => `- ${d.ref} · ${d.text}${d.lesson ? ` · lección «${d.lesson}»` : ''}${d.course ? ` del curso «${d.course}»` : ''}`),
+			'',
+		] : []),
 		'Genera un JSON VÁLIDO (sin markdown, sin ```json) con esta estructura EXACTA:',
 		'{',
 		'  "relevance": { "score": 85, "reason": "explicación breve" },',
-		'  "keyConcepts": ["idea 1 en una oración", "idea 2", "..."],',
+		'  "keyConcepts": ["Título breve — la idea en una oración", "Título — idea 2", "..."],',
 		'  "questions": [',
 		'    { "q": "pregunta", "bloom": "comprender|aplicar|analizar|evaluar", "difficulty": "confused|partial|clear|mastered", "conceptRefs": [0], "hint": "pista", "answer": "respuesta ideal" }',
 		'  ],',
 		'  "application": {',
 		'    "isCode": true,',
 		'    "setup": "contexto del ejercicio práctico",',
-		'    "challenge": "código con bug o ejercicio",',
-		'    "solution": "solución explicada"',
+		'    "challenge": "la instrucción del ejercicio en una frase",',
+		'    "solution": "solución explicada",',
+		'    "practice": { "format": "completar|ordenar|predecir|error|decidir", "language": "python", "body": "…", "blanks": [{ "accept": ["…"], "hint": "…", "options": ["…", "…", "…"] }], "steps": ["…"], "options": ["…"], "answerIndex": 0, "lines": ["…"], "errorLine": 0, "fixedLine": "…", "explanation": "por qué la correcta lo es" }',
 		'  },',
 		'  "interviewQ": { "q": "pregunta oral/de cierre", "idealAnswer": "estructura ideal de respuesta" },',
 		'  "nextAction": "una acción concreta para usar lo aprendido en algo propio",',
+		...(hasDeck ? ['  "inDeck": [{ "idea": 0, "ref": "m1" }],'] : []),
 		'  "ankiCards": [',
 		'    { "id": "card-001", "type": "concepto|aplicacion|codigo|entrevista|comparacion|proceso", "conceptRefs": [0], "front": "pregunta clara (HTML simple)", "back": "respuesta estructurada (HTML del vocabulario permitido)", "tags": ["tag1", "tag2"] }',
 		'  ]',
@@ -287,10 +325,17 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'REGLAS:',
 		'- "relevance.score" es un entero 0-100 que mide qué tan útil es ESTA lección para el objetivo del estudiante; "reason" lo justifica en una frase.',
 		`- Genera entre ${ideas.min} y ${ideas.max} keyConcepts: las ideas centrales que la lección realmente enseña. Elige el número por el contenido, no por el tiempo: no rellenes, no partas una idea en dos y no dejes fuera una idea central. El índice de cada idea (0, 1, 2…) se usa en conceptRefs.`,
+		'- Cada keyConcept tiene la forma «Título — detalle» (separados por « — »). El título (4-8 palabras, formulado como pregunta directa con ¿…?) plantea una pregunta concreta y autocontenida que obligue a recordar la idea sin revelar la respuesta (p. ej. «¿Qué genera javac al compilar?», nunca un sustantivo suelto como «Portabilidad» ni frases incompletas como «Por qué no es lento»). El detalle es la respuesta clara en una oración.',
 		'- questions: UNA pregunta por cada keyConcept, en el mismo orden (la pregunta i evalúa la idea i y su conceptRefs empieza por i), MÁS una pregunta final de síntesis que combine 2-3 ideas. Total = número de keyConcepts + 1. Ninguna idea puede quedar sin pregunta.',
 		'- difficulty: la de síntesis es "mastered". Las de cada idea van de "confused" (recordar o definir) a "partial" (explicar) o "clear" (aplicar o analizar) según lo que exija esa idea. Incluye al menos una "confused" y, si hay 3 o más ideas, al menos una "partial" y una "clear".',
 		'- conceptRefs de preguntas y tarjetas: 1-3 índices VÁLIDOS de keyConcepts (de 0 al número de ideas menos 1).',
-		'- ankiCards: al menos una tarjeta por keyConcept (todas las ideas cubiertas). Si generas más ideas que el mínimo de tarjetas, sube las tarjetas hasta cubrirlas.',
+		hasDeck
+			? '- ankiCards: al menos una tarjeta por keyConcept que NO esté en inDeck (todas las ideas nuevas cubiertas). Si generas más ideas que el mínimo de tarjetas, sube las tarjetas hasta cubrirlas. Las ideas de inDeck no llevan tarjeta y no cuentan para la cantidad recomendada: no rellenes.'
+			: '- ankiCards: al menos una tarjeta por keyConcept (todas las ideas cubiertas). Si generas más ideas que el mínimo de tarjetas, sube las tarjetas hasta cubrirlas.',
+		...(hasDeck ? [
+			'- inDeck: si una keyConcept es la MISMA idea que una de «IDEAS QUE YA ESTÁN EN SU MAZO» (la tarjeta existente ya obliga a recordar exactamente eso, aunque esté redactada distinto), mantenla en keyConcepts y en questions (se practica igual en la sesión), NO generes ninguna ankiCard para ella y añade {"idea": <índice en keyConcepts>, "ref": "<id de la lista>"} a "inDeck".',
+			'- Misma idea = misma respuesta esperada. Un tema relacionado, un caso más avanzado, otro aspecto del mismo concepto o una idea que solo comparte términos NO es la misma: esa sí lleva su tarjeta. Una tarjeta de OTRO curso solo cuenta si su respuesta vale tal cual en esta lección (mismo dominio y mismo sentido). En la duda, NO la pongas en inDeck. Usa SOLO ids de la lista, cada id una vez; si ninguna coincide, "inDeck": [].',
+		] : []),
 		'- Las preguntas deben enfocarse en verificar comprension aplicable, no repetir literalmente el subtitulo.',
 		'- Usa el objetivo para decidir el enfoque de preguntas y tarjetas. Ejemplo: si el objetivo es entrevista, favorece explicación oral, comparaciones, trade-offs y preguntas tipo entrevista, PERO solo cuando se justifiquen desde la transcripción.',
 		`- Genera entre ${cardTarget.min} y ${cardTarget.max} tarjetas Anki útiles y específicas de la lección. No rellenes por cantidad: una lección corta debe tener pocas tarjetas de alta calidad; una lección densa puede tener más.`,
@@ -329,6 +374,15 @@ export function buildStudyPrompt(transcriptText: string, metadata: StudyMetadata
 		'- application: UNA práctica que transfiera a un caso nuevo las ideas más útiles para el objetivo; en una lección densa, que integre 2-3 ideas en el mismo caso. No repitas ninguna pregunta de questions ni pidas recordar definiciones (eso ya lo hacen Comprobar y Anki).',
 		'- application.isCode debe ser true solo si la lección realmente requiere código.',
 		'- Si no es código, challenge debe ser un caso práctico, análisis, decisión o ejercicio aplicable.',
+		'- application.practice: el MISMO ejercicio en un formato que Kinema corrige al instante, para CUALQUIER curso (programación, idiomas, cocina, negocio…). Elige el formato que mejor ejercite lo que enseña la lección:',
+		'  · "completar": "body" con 1-3 huecos marcados [[1]], [[2]], [[3]] (en orden, cada uno una sola vez); "blanks"[i].accept = las respuestas válidas de ese hueco (incluye variantes equivalentes), "hint" = pista corta, "options" opcional = 3 opciones que incluyen la correcta. En código, el hueco es una palabra o expresión corta, nunca una línea entera.',
+		'  · "ordenar": "steps" = 3-7 pasos (o líneas de código) EN EL ORDEN CORRECTO; Kinema los baraja.',
+		'  · "predecir": «¿qué pasa si…?»: "body" = el código o la situación; "options" = 3 resultados posibles; "answerIndex" = índice (desde 0) del correcto.',
+		'  · "error": "lines" = 3-12 líneas de código o pasos de un proceso con UN error; "errorLine" = índice (desde 0) de la línea mala; "fixedLine" = esa línea corregida.',
+		'  · "decidir": "body" = un caso práctico; "options" = 3 enfoques plausibles; "answerIndex" = el mejor para ese caso.',
+		'  · Incluye SOLO los campos del formato elegido, más "explanation" (1-2 frases: por qué la respuesta correcta lo es) y "language" (el lenguaje real, sin «language-») si hay código.',
+		'  · Código: 12 líneas como máximo. NUNCA pidas escribir una clase, una función o un programa desde cero: da el código casi hecho y pide la pieza clave.',
+		'  · Las opciones incorrectas son errores plausibles de quien no entendió la lección, no absurdos. challenge es la instrucción en una frase y solution la solución completa explicada (también para quien no ve el ejercicio interactivo).',
 		'- Todo en español excepto términos técnicos, marcas, comandos, APIs, librerías o nombres propios que convenga mantener.',
 		'- No inventes temas ajenos a la transcripción; si falta contexto, usa el curso/lección como guía.',
 		'- Back de TODAS las tarjetas: la 1.ª línea RESPONDE la pregunta y la 2.ª da el porqué o el mecanismo (elaboración). El front nunca pide recordar una tabla o lista completa.',
@@ -341,7 +395,7 @@ EJEMPLO A — lección técnica (Java/JVM):
   "summary": "La lección recorre el camino del código Java: javac lo compila a bytecode, la JVM de cada plataforma lo interpreta y el JIT traduce en caliente los hot spots a nativo. Ese reparto explica por qué el mismo .class corre en Windows y Linux sin recompilar, y por qué el rendimiento se acerca al nativo tras el warm-up.",
   "conceptTerms": ["bytecode", "JVM", "JIT"],
   "relevance": {"score": 92, "reason": "La lección explica el mecanismo central de portabilidad de Java, directamente útil para entrevistas backend."},
-  "keyConcepts": ["javac compila el fuente a bytecode, no a código nativo", "la JVM interpreta el bytecode en cada plataforma", "el JIT compila hot spots a nativo en runtime", "portabilidad = un .class corre donde exista JVM"],
+  "keyConcepts": ["¿Qué genera javac al compilar? — javac compila el fuente a bytecode, no a código nativo", "¿Quién lee y ejecuta el bytecode? — la JVM de cada plataforma interpreta el bytecode", "¿Por qué Java logra velocidad casi nativa? — el JIT compila los hot spots a nativo en runtime", "¿Por qué un .class corre sin recompilar? — un .class corre donde exista una JVM, sin recompilar"],
   "questions": [
     {"q": "¿Qué archivo genera exactamente javac a partir del código fuente?", "bloom": "comprender", "difficulty": "confused", "conceptRefs": [0], "hint": "No es un .exe; es un formato intermedio", "answer": "Un archivo .class con bytecode"},
     {"q": "¿Qué componente ejecuta el bytecode en cada sistema operativo?", "bloom": "comprender", "difficulty": "partial", "conceptRefs": [1], "hint": "Es específico de cada plataforma", "answer": "La JVM instalada en esa plataforma, que lo interpreta"},
@@ -349,7 +403,7 @@ EJEMPLO A — lección técnica (Java/JVM):
     {"q": "¿Por qué el mismo .class puede correr en Windows y Linux sin recompilar?", "bloom": "aplicar", "difficulty": "partial", "conceptRefs": [3, 1], "hint": "Algo específico de la plataforma hace el trabajo", "answer": "La JVM de cada plataforma interpreta el mismo bytecode"},
     {"q": "Un compañero dice que Java es más lento que C++ para todo. Evalúa esa afirmación.", "bloom": "evaluar", "difficulty": "mastered", "conceptRefs": [1, 2, 3], "hint": "Depende del workload y del JIT", "answer": "En picos cálidos el JIT acerca el rendimiento a nativo; C++ sigue ganando en latencia predecible y control de memoria. La afirmación es una simplificación."}
   ],
-  "application": {"isCode": true, "setup": "Tienes App.java compilado en tu laptop", "challenge": "Lleva solo el .class a una PC con otra JVM y ejecútalo sin recompilar", "solution": "java -cp . App funciona si la JVM soporta la versión del bytecode; documenta la diferencia entre JDK y JRE"},
+  "application": {"isCode": true, "setup": "Compilas App.java en tu laptop y quieres ejecutarlo en un servidor Linux con otra JVM", "challenge": "Completa los dos comandos que faltan para ejecutarlo en el servidor sin recompilar", "solution": "javac App.java genera App.class en la laptop; en el servidor basta java App, porque su JVM interpreta el mismo bytecode", "practice": {"format": "completar", "language": "bash", "body": "[[1]] App.java        # en la laptop: genera App.class\\nscp App.class servidor:~/\\nssh servidor [[2]] App  # sin recompilar", "blanks": [{"accept": ["javac"], "hint": "el compilador", "options": ["javac", "java", "jar"]}, {"accept": ["java"], "hint": "lanza la JVM", "options": ["javac", "java", "jvm"]}], "explanation": "javac compila una vez a bytecode; en el servidor, java arranca su JVM, que interpreta ese mismo .class."}},
   "interviewQ": {"q": "Explica en un minuto cómo Java logra independencia de plataforma sin perder velocidad.", "idealAnswer": "Dos capas: compilación a bytecode (portabilidad) + JVM con JIT (velocidad). Mencionar write-once-run-anywhere y warm-up."},
   "nextAction": "Ejecuta tu app con -XX:+PrintCompilation y observa el JIT en acción",
   "ankiCards": [
@@ -363,7 +417,7 @@ EJEMPLO A — lección técnica (Java/JVM):
 EJEMPLO B — lección NO técnica (cocina):
 {
   "relevance": {"score": 85, "reason": "La técnica del punto de cocción es transversal a cualquier receta de la clase."},
-  "keyConcepts": ["al dente = resistencia firme al morder, núcleo apenas húmedo", "el agua debe hervir fuerte y estar bien salada", "la pasta sigue cocinándose un minuto fuera del fuego", "reservar agua de cocción emulsiona la salsa"],
+  "keyConcepts": ["¿Qué significa el punto al dente? — resistencia firme al morder, con el núcleo apenas húmedo", "¿Cómo debe estar el agua al cocer? — hirviendo fuerte y bien salada antes de echar la pasta", "¿Por qué apagar el fuego un minuto antes? — la pasta sigue cocinándose un minuto fuera del fuego por calor residual", "¿Para qué se reserva agua de cocción? — su almidón emulsiona y liga la salsa"],
   "questions": [
     {"q": "¿Qué significa «al dente» al morder la pasta?", "bloom": "comprender", "difficulty": "confused", "conceptRefs": [0], "hint": "No es blanda ni cruda", "answer": "Firme con el núcleo apenas húmedo"},
     {"q": "¿Por qué el agua debe hervir fuerte y estar bien salada antes de echar la pasta?", "bloom": "comprender", "difficulty": "partial", "conceptRefs": [1], "hint": "Temperatura y sabor desde dentro", "answer": "El hervor fuerte aguanta la bajada de temperatura y evita que se pegue; la sal la sazona por dentro porque la pasta absorbe el agua"},
@@ -371,7 +425,7 @@ EJEMPLO B — lección NO técnica (cocina):
     {"q": "Tu salsa quedó cortada, ¿qué recurso de la lección la salva?", "bloom": "analizar", "difficulty": "clear", "conceptRefs": [3], "hint": "Un líquido de la cocción", "answer": "Agregar agua de cocción almidonada y emulsionar"},
     {"q": "Evalúa si conviene pasta fresca o seca para una salsa pesada de caza.", "bloom": "evaluar", "difficulty": "mastered", "conceptRefs": [0, 2], "hint": "Superficie y morder", "answer": "La seca, con superficie rugosa y bocado firme, aguanta salsas densas; la fresca se pasa"}
   ],
-  "application": {"isCode": false, "setup": "Vas a cocinar spaghetti con salsa de tomate", "challenge": "Apunta el reloj y prueba un hilo 1 minuto antes del tiempo del paquete", "solution": "Deberá ofrecer resistencia pareja; escurre reservando una taza de agua y termina en la sartén con la salsa"},
+  "application": {"isCode": false, "setup": "Vas a cocinar spaghetti con salsa de tomate para cuatro", "challenge": "Ordena los pasos para que la pasta quede al dente y ligada con la salsa", "solution": "Hervir agua abundante y salarla; echar la pasta; probar un hilo 1 minuto antes del tiempo del paquete; reservar una taza de agua de cocción; escurrir y terminar en la sartén con la salsa", "practice": {"format": "ordenar", "steps": ["Hervir agua abundante y salarla", "Echar la pasta y remover", "Probar un hilo 1 minuto antes del tiempo del paquete", "Reservar una taza de agua de cocción", "Escurrir y terminar en la sartén con la salsa"], "explanation": "La sal va en el agua antes de la pasta; se prueba antes de tiempo por el calor residual y el agua se reserva antes de escurrir para ligar la salsa."}},
   "interviewQ": {"q": "Explica a un principiante el error más común al cocer pasta.", "idealAnswer": "Pasarse de cocción por ignorar el calor residual; corregir probando antes y terminando en la sartén."},
   "nextAction": "Practica el test del bocado con dos formas de pasta distintas",
   "ankiCards": [
@@ -424,16 +478,15 @@ export type VocabularyWord = {
 };
 
 /**
- * Cuántas candidatas pedir según el volumen de la lección. Una lección corta
- * no da para 20 palabras útiles: pedir de más empuja a la IA a rellenar. El
- * estudiante elige después hasta su máximo por lección (VocabConfig.maxWords).
+ * Cuántas palabras proponer: hasta el máximo por lección del estudiante
+ * (VocabConfig.maxWords, 3–20) y, si la lección es corta, menos: una lección
+ * corta no da para 20 palabras útiles y pedir de más empuja a la IA a rellenar
+ * (6 · 10 · 15 · 20 según el volumen). Un solo número para el estudiante.
  */
-export function vocabularyCandidateTarget(transcriptText: string): number {
+export function vocabularyCandidateTarget(transcriptText: string, maxWords = 20): number {
 	const chars = transcriptText.trim().length;
-	if (chars < 2500) return 6;
-	if (chars < 6000) return 10;
-	if (chars < 12000) return 15;
-	return 20;
+	const byVolume = chars < 2500 ? 6 : chars < 6000 ? 10 : chars < 12000 ? 15 : 20;
+	return Math.min(byVolume, Math.min(20, Math.max(3, Math.round(Number(maxWords) || 20))));
 }
 
 const CEFR_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];

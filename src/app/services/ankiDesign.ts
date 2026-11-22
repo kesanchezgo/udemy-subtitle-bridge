@@ -9,9 +9,15 @@
  *    "Default"): el .apkg incluye sus PROPIOS presets con ID propio y los
  *    mazos de la extensión apuntan a ellos.
  *  - Todo mazo de la extensión vive bajo el mazo raíz configurable
- *    (default "Kinema"), con dos ramas:
- *        <Root>::Courses::<Curso>::<Lección>       → conceptos de la lección
- *        <Root>::Vocabulary::<Idioma>::<Curso>     → vocabulario del curso
+ *    (default "Kinema"). Dónde va cada tarjeta lo decide SOLO
+ *    ankiDestination.ts (fase 2; fija desde la fase 5, sin opciones):
+ *        <Root>::Courses::<Curso>                  → conceptos (un mazo por curso)
+ *        <Root>::Vocabulary::<Idioma>              → vocabulario (un mazo por idioma)
+ *    La lección, el programa y la plataforma van en etiquetas (kinemaTags:
+ *    todo bajo kinema::). Las estructuras anteriores (submazo por lección,
+ *    Programs::<Programa>::<Curso>, vocabulario por curso) solo existen en
+ *    colecciones de antes; conceptDeckPath/vocabDeckPath las describen
+ *    (compatibilidad y QA) y «Ordenar lo antiguo» las aplana.
  *  - El note type de vocabulario usa EXACTAMENTE los nombres de campo del
  *    note type "English Cards" del usuario (word, phonetic, sentence,
  *    translation, bilingual, monolingual, picture, sentence audio,
@@ -72,9 +78,12 @@ export function buildConceptSpec(
 	course: string,
 	lesson: string,
 	rootDeck: string,
-	lessonUrl: string
+	lessonUrl: string,
+	/** Fase 2: destino resuelto por ankiDestination (mazo por curso, por
+	 *  programa o uno del estudiante). Sin él, la estructura antigua por lección. */
+	destination?: { deck: string; owned: boolean; ancestors: string[] },
 ): ApkgSpec {
-	const lessonPath = conceptDeckPath(rootDeck, course, lesson);
+	const lessonPath = destination?.deck ?? conceptDeckPath(rootDeck, course, lesson);
 	const deckTree = conceptDeckTree(rootDeck, course, lesson);
 	const fuente = (card: { t?: string }) => {
 		// F2-1: con minuto, el enlace salta a ?start=<segundos> — el campo
@@ -93,8 +102,26 @@ export function buildConceptSpec(
 	// flowVersion 2 (§3): las de refuerzo encabezan la cola de nuevas — el
 	// orden de `notes` fija el due al importar, así que se ordenan AQUÍ.
 	const orderedCards = [...cards].sort((a, b) => Number(Boolean(b.reinforce)) - Number(Boolean(a.reinforce)));
+	const describe = (name: string): string => {
+		const root = sanitizeDeckSegment(rootDeck) || DEFAULT_ROOT_DECK;
+		const rest = name.split('::').slice(root.split('::').length);
+		if (rest.length === 0) return ROOT_DECK_DESCRIPTION;
+		if (rest.length === 1 && rest[0] === 'Courses') return 'Un mazo por curso. La lección va en la etiqueta kinema::leccion::… y en la píldora de cada tarjeta.';
+		// Solo cursos fijados aquí por una versión anterior («Por programa»): el programa va ahora en kinema::programa::….
+		if (rest.length === 1 && rest[0] === 'Programs') return 'Cursos agrupados por programa en versiones anteriores. Ahora cada curso tiene su mazo en Courses y el programa va en la etiqueta kinema::programa::….';
+		if (rest[0] === 'Programs' && rest.length === 2) return `Cursos del programa «${rest[1]}» (estructura anterior). Para repasar el programa entero: tag:kinema::programa::….`;
+		// Mazo del curso (por curso o por programa): la lección va en la etiqueta.
+		if ((rest[0] === 'Courses' && rest.length === 2) || (rest[0] === 'Programs' && rest.length === 3)) {
+			return `Conceptos de las lecciones de «${safeCourse}». Filtra una lección con su etiqueta kinema::leccion::….`;
+		}
+		if (name === lessonPath) return `Tarjetas de consolidación de la lección «${safeLesson}».`;
+		return '';
+	};
+	const decks = destination
+		? (destination.owned ? destination.ancestors : [destination.deck]).map((name) => ({ name, conf: COURSES_PRESET.id, desc: describe(name) }))
+		: null;
 	return {
-		decks: [
+		decks: decks ?? [
 			{ name: deckTree[0], conf: COURSES_PRESET.id, desc: ROOT_DECK_DESCRIPTION },
 			{
 				name: deckTree[1],
@@ -148,10 +175,39 @@ export function sanitizeDeckSegment(name: string): string {
 export const DEFAULT_ROOT_DECK = 'Kinema';
 
 /**
+ * Slug de las etiquetas kinema::… (curso, lección, tipo, programa). Una sola
+ * regla: las consultas de repasos (ankiDestination) buscan por estas mismas
+ * etiquetas, así que deben salir idénticas.
+ *
+ * «+» y el «#» pegado a una letra cuentan: «C++», «C#» y «C» son cursos
+ * distintos (antes los tres daban «c-…» y se mezclaban sus repasos, su mazo
+ * fijado y «Cambiar» movía tarjetas de uno a otro). «Ejercicio #2» no cambia.
+ */
+export function kinemaSlug(value: string): string {
+	return legacyKinemaSlug(String(value || '').replace(/\+/g, ' plus ').replace(/([a-z])#/gi, '$1 sharp '));
+}
+
+/** El slug de antes (sin «plus»/«sharp»): solo para leer registros guardados con él. */
+export function legacyKinemaSlug(value: string): string {
+	return String(value || '')
+		.toLowerCase()
+		.normalize('NFKD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-|-$/g, '');
+}
+
+/**
  * Esquema único de tags jerárquicos para TODOS los mazos de la extensión.
  * Antes había tags sueltos en la raíz (java, concepto, udemy-bridge,
  * curso::…, leccion::…, cefr::…) que ensuciaban la colección del usuario.
  * Al volver a descargar, Anki actualiza los tags por GUID.
+ *
+ * Fase 5: TODO cuelga de «kinema::» (Anki anida con «::»), también el
+ * programa y la plataforma. El mazo es el curso (un contenedor: una tarjeta
+ * vive en un solo mazo); lo que se cruza va en etiquetas, porque un curso
+ * puede estar en varios programas y un programa tiene varios cursos (N:M), y
+ * un árbol de mazos no puede representar eso sin duplicar tarjetas.
  */
 export function kinemaTags(parts: {
 	course: string;
@@ -164,19 +220,25 @@ export function kinemaTags(parts: {
 	reinforce?: boolean;
 	/** Origen especial de la tarjeta (p. ej. «study» → kinema::origen::study). */
 	origin?: string;
+	/** Fase 5: los programas que sigues y que incluyen este curso (kinema::programa::…). */
+	programs?: string[];
+	/** Fase 5: la plataforma de la lección (kinema::plataforma::…). */
+	platform?: string;
 }): string[] {
-	const slug = (value: string) =>
-		String(value || '')
-			.toLowerCase()
-			.normalize('NFKD')
-			.replace(/[\u0300-\u036f]/g, '')
-			.replace(/[^a-z0-9]+/g, '-')
-			.replace(/^-|-$/g, '');
+	const slug = kinemaSlug;
 	const tags: string[] = [];
 	const course = slug(parts.course);
 	if (course) tags.push(`kinema::curso::${course}`);
 	const lesson = slug(parts.lesson);
 	if (lesson) tags.push(`kinema::leccion::${lesson}`);
+	for (const program of parts.programs ?? []) {
+		const tag = programTag(program);
+		if (tag) tags.push(tag);
+	}
+	if (parts.platform) {
+		const tag = platformTag(parts.platform);
+		if (tag) tags.push(tag);
+	}
 	if (parts.type) tags.push(`kinema::tipo::${slug(parts.type)}`);
 	if (parts.reinforce) tags.push('kinema::reforzar');
 	if (parts.origin) tags.push(`kinema::origen::${slug(parts.origin)}`);
@@ -187,6 +249,46 @@ export function kinemaTags(parts: {
 	if (parts.cefr) tags.push(`kinema::cefr::${slug(parts.cefr)}`);
 	if (parts.pos) tags.push(`kinema::pos::${slug(parts.pos)}`);
 	return [...new Set(tags)];
+}
+
+// ── Programa y plataforma (fase 5: dentro de «kinema::», como el resto) ────
+
+export const PROGRAM_TAG = 'kinema::programa::';
+export const PLATFORM_TAG = 'kinema::plataforma::';
+/** Los de versiones anteriores: se siguen leyendo y «Ordenar lo antiguo» los renombra. */
+export const LEGACY_PROGRAM_TAG = 'kinema::track::';
+export const LEGACY_PLATFORM_TAG = 'kinema/platform::';
+
+/** kinema::programa::<slug> (el slug del programa, p. ej. el del track de DataCamp). */
+export function programTag(program: string): string {
+	const value = kinemaSlug(program);
+	return value ? `${PROGRAM_TAG}${value}` : '';
+}
+
+/** kinema::plataforma::<id> (udemy, datacamp o el nombre del sitio). */
+export function platformTag(platform: string): string {
+	const value = kinemaSlug(platform);
+	return value ? `${PLATFORM_TAG}${value}` : '';
+}
+
+/** Los programas de una nota, con la etiqueta de ahora o la de antes. */
+export function programsInTags(tags: string[]): string[] {
+	const out = new Set<string>();
+	for (const tag of tags) {
+		const lower = String(tag).toLowerCase();
+		for (const prefix of [PROGRAM_TAG, LEGACY_PROGRAM_TAG]) {
+			if (lower.startsWith(prefix) && lower.length > prefix.length) out.add(lower.slice(prefix.length));
+		}
+	}
+	return [...out];
+}
+
+/** La etiqueta nueva que corresponde a una antigua (o null si no es antigua). */
+export function renamedLegacyTag(tag: string): string | null {
+	const lower = String(tag).toLowerCase();
+	if (lower.startsWith(LEGACY_PROGRAM_TAG) && lower.length > LEGACY_PROGRAM_TAG.length) return programTag(lower.slice(LEGACY_PROGRAM_TAG.length)) || null;
+	if (lower.startsWith(LEGACY_PLATFORM_TAG) && lower.length > LEGACY_PLATFORM_TAG.length) return platformTag(lower.slice(LEGACY_PLATFORM_TAG.length)) || null;
+	return null;
 }
 
 export const ROOT_DECK_DESCRIPTION =
@@ -1427,99 +1529,11 @@ export const VOCAB_WORD_REGEX_JS = String.raw`function kxWordRegex(word) {
     catch (e) { return new RegExp("(^|[^A-Za-z0-9\\u00c0-\\u024f])(" + body + ")(?=$|[^A-Za-z0-9\\u00c0-\\u024f])", "gi"); }
   }`;
 
-// ── B3 · Front de PRODUCIR ───────────────────────────────────────────────────
-// Da el significado y la traducción, y pide PRODUCIR la palabra en el idioma
-// objetivo: la oración trae [ ... ] en su lugar. Sin IPA y sin audio (darían
-// la respuesta). Solo existe cuando el campo `producir` viene lleno.
-const VOCAB_PRODUCE_FRONT_TEMPLATE = `<div class="anki-wrapper">
-  <div class="card-box front-layout">
-
-    <div class="front-header">
-      <div class="eyebrow-tag">
-        <span class="pulse-dot"></span>
-        <span>Produce la palabra</span>
-      </div>
-      {{#nivel}}
-      <span class="cefr-chip">{{nivel}}</span>
-      {{/nivel}}
-    </div>
-
-    <div class="produce-prompt">
-      {{#bilingual}}
-      <div class="produce-meaning">{{bilingual}}</div>
-      {{/bilingual}}
-      {{#translation}}
-      <div class="produce-translation">{{translation}}</div>
-      {{/translation}}
-    </div>
-
-    <div id="hiddenWord" style="display:none">{{word}}</div>
-    <div id="hiddenSentence" style="display:none">{{sentence}}</div>
-
-    <div id="contextContainer" class="cloze-container" style="display:none;">
-      <div class="section-label">Contexto cloze</div>
-      <p id="clozeOutput" class="cloze-sentence"></p>
-    </div>
-
-  </div>
-</div>
-
-<script>
-  (function() {
-    var wordRaw = document.getElementById("hiddenWord").innerText.trim();
-    var sentenceRaw = document.getElementById("hiddenSentence").innerText.trim();
-    var container = document.getElementById("contextContainer");
-    var output = document.getElementById("clozeOutput");
-
-    if (wordRaw && sentenceRaw) {
-      // La frase puede venir de un subtítulo o de la IA: se monta por DOM
-      // (createTextNode / createElement), nunca con innerHTML — un
-      // <img onerror> en la frase no debe ejecutarse dentro de Anki. La
-      // palabra se escapa para que metacaracteres de regex (C++, node.js,
-      // (a), ?) no lancen una excepción ni marquen de más.
-      container.style.display = "block";
-      try {
-        // La palabra (o su flexión) con límites de palabra; nunca dentro de otra.
-        ${VOCAB_WORD_REGEX_JS}
-        var wordRe = kxWordRegex(wordRaw);
-        var match, lastIndex = 0, matched = false;
-        while ((match = wordRe.exec(sentenceRaw)) !== null) {
-          var start = match.index + match[1].length;
-          if (!match[2]) { wordRe.lastIndex += 1; continue; }
-          matched = true;
-          if (start > lastIndex) {
-            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, start)));
-          }
-          var gap = document.createElement("span");
-          gap.className = "cloze-gap";
-          gap.textContent = "[ ... ]";
-          output.appendChild(gap);
-          lastIndex = start + match[2].length;
-        }
-        if (matched) {
-          if (lastIndex < sentenceRaw.length) {
-            output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex)));
-          }
-        } else {
-          // La palabra no aparece literalmente en la frase: sin hueco, se
-          // oculta el contenedor igual que cuando falta la palabra.
-          container.style.display = "none";
-        }
-      } catch (e) {
-        container.style.display = "none";
-      }
-    } else {
-      container.style.display = "none";
-    }
-  })();
-</script>`;
-
-
-// ── B2 · Front de RECONOCER ──────────────────────────────────────────────────
-// La palabra va a la vista (con IPA y audio) y la oración la trae RESALTADA
-// (<mark class="target">, montado por DOM como el arreglo XSS del cloze):
-// sin hueco — el hueco vive en «Producir».
-const VOCAB_RECOGNIZE_FRONT_TEMPLATE = `<div class="anki-wrapper">
+// ── Front único de VOCABULARIO (diseño English Cards del usuario) ────────────
+// Palabra objetivo + IPA peek + audio + oración en contexto con hueco cloze
+// montado de forma segura por DOM (sin innerHTML). Una palabra = una tarjeta
+// completa (anverso + reverso).
+const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
   <div class="card-box front-layout">
 
     <div class="front-header">
@@ -1544,9 +1558,9 @@ const VOCAB_RECOGNIZE_FRONT_TEMPLATE = `<div class="anki-wrapper">
     <div id="hiddenWord" style="display:none">{{word}}</div>
     <div id="hiddenSentence" style="display:none">{{sentence}}</div>
 
-    <div id="highlightContainer" class="cloze-container" style="display:none;">
-      <div class="section-label">En contexto</div>
-      <p id="highlightOutput" class="cloze-sentence"></p>
+    <div id="contextContainer" class="cloze-container" style="display:none;">
+      <div class="section-label">Contexto cloze</div>
+      <p id="clozeOutput" class="cloze-sentence"></p>
     </div>
 
   </div>
@@ -1556,12 +1570,10 @@ const VOCAB_RECOGNIZE_FRONT_TEMPLATE = `<div class="anki-wrapper">
   (function() {
     var wordRaw = document.getElementById("hiddenWord").innerText.trim();
     var sentenceRaw = document.getElementById("hiddenSentence").innerText.trim();
-    var container = document.getElementById("highlightContainer");
-    var output = document.getElementById("highlightOutput");
+    var container = document.getElementById("contextContainer");
+    var output = document.getElementById("clozeOutput");
 
     if (wordRaw && sentenceRaw) {
-      // Resaltado por DOM (nunca innerHTML): la palabra se escapa por si trae
-      // metacaracteres (C++, node.js) y cada coincidencia se marca.
       container.style.display = "block";
       try {
         ${VOCAB_WORD_REGEX_JS}
@@ -1574,10 +1586,10 @@ const VOCAB_RECOGNIZE_FRONT_TEMPLATE = `<div class="anki-wrapper">
           if (start > lastIndex) {
             output.appendChild(document.createTextNode(sentenceRaw.slice(lastIndex, start)));
           }
-          var mark = document.createElement("mark");
-          mark.className = "target";
-          mark.textContent = match[2];
-          output.appendChild(mark);
+          var gap = document.createElement("span");
+          gap.className = "cloze-gap";
+          gap.textContent = "[ ... ]";
+          output.appendChild(gap);
           lastIndex = start + match[2].length;
         }
         if (matched) {
@@ -1709,15 +1721,12 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
 </script>`;
 
 /**
- * Note type v2 POR IDIOMA (B1): «Kinema · Vocab · English», etc. Dos
- * plantillas — «Reconocer» siempre existe; «Producir» solo cuando el campo
- * `producir` viene lleno (B3, activado por defecto en Ajustes → Vocabulario).
- * El campo de orden es 0 ('word'), así que «Reconocer» (req [0]) sale antes
- * que «Producir» con newSortOrder 0 y bury de hermanas (A4).
+ * Note type de vocabulario por idioma («Kinema · Vocab · English», etc.):
+ * UNA sola plantilla de tarjeta completa (frente + reverso), fiel al diseño
+ * «English Cards» del proyecto original, con soporte TTS por idioma.
  */
 export function buildVocabModel(lang: string): import('./ankiApkgCore').ApkgModelSpec {
 	const audio = vocabAudioBlocks(lang);
-	const produceFieldOrd = VOCAB_FIELDS_BASE.length + VOCAB_FIELDS_EXTRA.indexOf('producir');
 	return {
 		id: vocabModelId(lang),
 		name: vocabModelName(lang),
@@ -1725,16 +1734,10 @@ export function buildVocabModel(lang: string): import('./ankiApkgCore').ApkgMode
 		fields: VOCAB_FIELDS,
 		templates: [
 			{
-				name: 'Reconocer',
-				qfmt: VOCAB_RECOGNIZE_FRONT_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word),
+				name: 'Vocabulario',
+				qfmt: VOCAB_FRONT_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word),
 				afmt: VOCAB_BACK_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word).replace('{{AUDIO_SENTENCE}}', audio.sentence),
 				requires: [0],
-			},
-			{
-				name: 'Producir',
-				qfmt: `{{#producir}}${VOCAB_PRODUCE_FRONT_TEMPLATE}{{/producir}}`.replace('{{AUDIO_WORD}}', '').replace('{{AUDIO_SENTENCE}}', ''),
-				afmt: VOCAB_BACK_TEMPLATE.replace('{{AUDIO_WORD}}', audio.word).replace('{{AUDIO_SENTENCE}}', audio.sentence),
-				requires: [produceFieldOrd],
 			},
 		],
 		css: VOCAB_MODEL_CSS,

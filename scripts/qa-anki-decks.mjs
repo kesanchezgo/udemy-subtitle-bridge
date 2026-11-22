@@ -248,7 +248,7 @@ check('prompt exige lema/minúsculas y prohíbe subtítulo crudo', vocabPrompt.i
 check('prompt inyecta nivel y tope', vocabPrompt.includes('NIVEL MÍNIMO (CEFR, incluido): B1') && vocabPrompt.includes('MÁXIMO DE PALABRAS: 8'));
 
 const { spec: vocabSpec, deckPath } = buildVocabularySpec(freshWords, COURSE, LESSON, DEFAULT_VOCAB_CONFIG);
-check('mazo destino = Root::Vocabulary::English::Curso', deckPath === `${ROOT}::Vocabulary::English::${sanitizeDeckSegment(COURSE)}`, deckPath);
+check('mazo destino = Root::Vocabulary::English (un mazo por idioma)', deckPath === `${ROOT}::Vocabulary::English`, deckPath);
 const vocabApkg = await zipApkg(await buildCollectionBuffer(vocabSpec, await initSqlJs()));
 fs.writeFileSync('tmp/qa-vocab.apkg', vocabApkg);
 console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
@@ -264,17 +264,16 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 		'word', 'phonetic', 'sentence', 'translation', 'bilingual', 'monolingual', 'picture', 'sentence audio', 'word audio',
 		'nivel', 'colocacion', 'fuente', 'producir',
 	]), JSON.stringify(fieldNames));
-	// B2/B3: dos plantillas — «Reconocer» (resaltado, sin hueco) y «Producir»
-	// (hueco cloze, envuelta en {{#producir}}), con req por plantilla.
-	const recognize = vocabModel?.tmpls?.find((tm) => tm.name === 'Reconocer');
-	const produce = vocabModel?.tmpls?.find((tm) => tm.name === 'Producir');
-	check('plantilla Reconocer: hero + resaltado mark.target (sin hueco)',
-		Boolean(recognize) && recognize.qfmt.includes('front-word-hero') && recognize.qfmt.includes(String.fromCharCode(109, 97, 114, 107)) && recognize.qfmt.includes(String.fromCharCode(34) + "target" + String.fromCharCode(34)) && !recognize.qfmt.includes('cloze-gap'));
-	check('plantilla Producir: hueco cloze + envuelta en {{#producir}}',
-		Boolean(produce) && produce.qfmt.includes('cloze-gap') && produce.qfmt.startsWith('{{#producir}}') && produce.qfmt.endsWith('{{/producir}}'));
-	check('req por plantilla (word / producir)', JSON.stringify(vocabModel?.req) === JSON.stringify([[0, 'any', [0]], [1, 'any', [12]]]), JSON.stringify(vocabModel?.req));
+	// Contrato actual: UNA sola plantilla «Vocabulario» — frente con hueco cloze
+	// por DOM y reverso completo; 1 palabra = 1 tarjeta (sin «Producir»).
+	const vocabTmpl = vocabModel?.tmpls?.find((tm) => tm.name === 'Vocabulario');
+	check('plantilla única «Vocabulario»: frente con cloze-gap + reverso completo',
+		Boolean(vocabTmpl) && vocabModel.tmpls.length === 1
+		&& vocabTmpl.qfmt.includes('cloze-gap') && vocabTmpl.afmt.includes('bilingualField'),
+		vocabModel?.tmpls?.map((tm) => tm.name).join(','));
+	check('req de la plantilla única sobre el campo word', JSON.stringify(vocabModel?.req) === JSON.stringify([[0, 'any', [0]]]), JSON.stringify(vocabModel?.req));
 	// B4: audio con respaldo de voz del sistema, locale por idioma.
-	check('audio: campo si existe, si no {{tts en_US}} (B4)', recognize.qfmt.includes('{{#word audio}}') && recognize.qfmt.includes('{{^word audio}}') && recognize.qfmt.includes('{{tts en_US:word}}'));
+	check('audio: campo si existe, si no {{tts en_US}} (B4)', vocabTmpl?.qfmt.includes('{{#word audio}}') && vocabTmpl?.qfmt.includes('{{^word audio}}') && vocabTmpl?.qfmt.includes('{{tts en_US:word}}'));
 	// B5: nivel CEFR llega a la tarjeta y producir va lleno por defecto (B3).
 	const note = col.notes[0];
 	const fields = note.flds.split('\x1f');
@@ -285,7 +284,7 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 		&& fields[4].startsWith('(noun)')
 		&& fields[5].length > 10
 		&& fields[6] === '' && fields[7] === '' && fields[8] === '');
-	check('campos nuevos: nivel B2, fuente VACÍA sin URL (nada de texto muerto), producir=1 (B3 default)', fields[9] === 'B2' && fields[11] === '' && fields[12] === '1', JSON.stringify(fields.slice(9)));
+	check('campos nuevos: nivel B2, fuente VACÍA sin URL (nada de texto muerto), producir vacío (1 tarjeta única)', fields[9] === 'B2' && fields[11] === '' && fields[12] === '', JSON.stringify(fields.slice(9)));
 	// Con URL: la fuente es un <a> real a la lección (sin minuto: gate F2-1).
 	{
 		const { spec: specUrl } = buildVocabularySpec(freshWords, COURSE, LESSON, DEFAULT_VOCAB_CONFIG, 'https://www.udemy.com/course/x/learn/lecture/123?start=99#overview');
@@ -298,9 +297,9 @@ console.log(`  → tmp/qa-vocab.apkg (${vocabApkg.length} bytes)`);
 	const tagList = note.tags.split(' ');
 	check('sin tags sueltos de la era vieja (por token completo)', !tagList.includes('udemy-bridge') && !tagList.some((tg) => tg.startsWith('curso::') || tg.startsWith('leccion::') || tg.startsWith('cefr::')), note.tags);
 	check('GUID por (idioma|lema)', note.guid === stableGuid(`usb-vocab|en|bottleneck`));
-	// B3: dos tarjetas por nota (Reconocer ord 0 + Producir ord 1) compartiendo nota.
+	// 1 palabra = 1 única tarjeta completa (frente + reverso).
 	const noteCards = col.cards.filter((c) => c.nid === note.id);
-	check('2 tarjetas por nota (Reconocer + Producir), ords 0 y 1', noteCards.length === 2 && noteCards.map((c) => c.ord).sort().join(',') === '0,1', JSON.stringify(noteCards.map((c) => c.ord)));
+	check('1 tarjeta por nota (frente + reverso), ord 0', noteCards.length === 1 && noteCards[0].ord === 0, JSON.stringify(noteCards.map((c) => c.ord)));
 
 	const langDeck = Object.values(col.decks).find((d) => d.name === `${ROOT}::Vocabulary::English`);
 	check('mazo de idioma apunta al preset de Vocabulario', langDeck?.conf === VOCAB_PRESET.id);

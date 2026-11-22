@@ -11,6 +11,8 @@
 // re-hydrate it on next login (same pattern as the existing migrate flow).
 
 import type { LessonDoubtThread } from "./lessonDoubts";
+import type { PracticeAnswer, StructuredPractice } from "./practiceFormats";
+import type { DeckMatch } from "./deckConcepts";
 
 const HISTORY_PREFIX = "usb_history_";
 
@@ -100,7 +102,25 @@ export interface CodeChallengeAttempt {
   rating?: AnswerRating;
   feedback?: string;
   answeredAt?: number;
+  // ── flowVersion 3 · práctica estructurada (todo opcional: lo antiguo sigue igual) ──
+  /** Formato corregido al momento: completar | ordenar | predecir | error | decidir. */
+  format?: string;
+  /** Comprobaciones hasta acertar (o hasta ver la solución). */
+  attempts?: number;
+  /** Pistas usadas (reducen el bonus). */
+  hintsUsed?: number;
+  /** Vio la solución: el intento queda cerrado. */
+  solutionSeen?: boolean;
+  /** «exercise» (reto) o «explain» (explicarlo con tus palabras). */
+  mode?: "exercise" | "explain";
+  /** La respuesta estructurada tal cual (PracticeAnswer), para restaurar el tablero. */
+  structuredAnswer?: PracticeAnswer;
 }
+
+/** Recordar (flowVersion 3): respuesta por idea antes de ver su detalle. */
+export type RecallMark = "knew" | "unsure";
+/** Resultado de confirmar lo que dijiste saber (calibra futuras sesiones). */
+export type SpotCheckOutcome = "ok" | "fail" | "skip";
 
 export interface StoredAnkiCard {
   id?: string;
@@ -113,6 +133,7 @@ export interface StoredAnkiCard {
   excluded?: boolean;       // el estudiante la quitó del paquete (no se exporta)
   doubt?: boolean;          // §5: guardada desde una duda sobre la lección
   isHtml?: boolean;         // front/back ya son HTML de confianza (no se re-escapan)
+  inDeck?: boolean;         // fase 4: su idea ya estaba en el mazo (fuera del paquete salvo «Añadir igualmente»)
 }
 
 export interface StoredStudyQuestion {
@@ -129,10 +150,12 @@ export interface StoredStudyContent {
   keyConcepts: string[];
   quickWin?: string;
   questions: StoredStudyQuestion[];
-  application: { setup: string; challenge: string; solution: string; isCode: boolean };
+  application: { setup: string; challenge: string; solution: string; isCode: boolean; practice?: StructuredPractice };
   interviewQ: { q: string; idealAnswer: string } | null;
   nextAction: string;
   ankiCards: StoredAnkiCard[];
+  /** Fase 4: ideas de la sesión que ya estaban en el mazo (se decide al generar y no se recalcula). */
+  deckMatches?: DeckMatch[];
 }
 
 export interface LectureHistoryRecord {
@@ -145,6 +168,13 @@ export interface LectureHistoryRecord {
   studyContent?: StoredStudyContent;  // snapshot completo generado por IA
   confidence?: ConfidenceLevel;      // paso 3 — "¿Lo sé?"
   checkedConceptIndexes?: number[];  // paso 2 — conceptos que el estudiante dice entender
+  /** flowVersion 3: «Lo sabía» / «No del todo» por idea (null = sin responder).
+   *  checkedConceptIndexes sigue siendo la lista de «Lo sabía» (compatibilidad). */
+  recallMarks?: (RecallMark | null)[];
+  /** Confirmación de lo marcado: ok / fail, o skip si no se pidió (autoevaluación fiable). */
+  spotCheck?: SpotCheckOutcome;
+  /** Confirmaciones base del plan al entrar en Comprobar (0 o 1). Ausente = sesión antigua (1 fija). */
+  spotBudgetBase?: number;
   conceptsAcknowledged?: boolean;    // permite continuar incluso con 0 conceptos marcados
   questionsComplete?: boolean;       // (v1) paso 3 desbloqueado — legado, migrado a questionsDone
   focusStep?: number;                // último paso visible 0..3 (flowVersion 2)
@@ -179,16 +209,35 @@ export interface LectureHistoryRecord {
   version: number;
   /** Primera exportación a Anki/Obsidian (unix ms) — alimenta el panel de memoria. */
   exportedAt?: number;
+  /** Fase 2: mazo de Anki al que fue la lección (re-exportar desde el historial va al mismo). */
+  ankiDeck?: string;
   /** C3: última exportación a OBSIDIAN (unix ms) — independiente de Anki. */
   obsidianExportedAt?: number;
   /** Última auto-evaluación de repaso marcada por el estudiante (unix ms). */
   reviewedAt?: number;
   /**
    * Programa (career track) elegido cuando se estudió la lección (solo
-   * DataCamp): la re-exportación desde el Historial lleva el tag
-   * `kinema::track::<slug>` igual que la exportación del cierre.
+   * DataCamp): el envío desde la Biblioteca lleva la etiqueta
+   * `kinema::programa::<slug>` (antes `kinema::track::`) igual que el de «Terminar lección».
    */
   dcTrackSlug?: string;
+  /** Fase 3: plataforma de la lección (udemy | datacamp) — la nota rehecha desde la Biblioteca la cita. */
+  platform?: string;
+  /** Fase 3: URL de la lección (frontmatter lesson_url de la nota). */
+  lessonUrl?: string;
+  /** Fase 3: ruta de su nota en el vault (la última escrita; cambia si se mueve). */
+  obsidianNotePath?: string;
+  /**
+   * Fase 5 · terminada cuando Anki u Obsidian no respondían: lo que falta se
+   * envía SOLO cuando vuelvan a responder (unix ms de cuando quedó en espera).
+   * Solo lo marca «Terminar lección»: lo de antes no se envía por su cuenta.
+   */
+  syncPending?: SyncPending;
+}
+
+export interface SyncPending {
+  anki?: number;
+  obsidian?: number;
 }
 
 export interface CourseHistorySummary {
@@ -209,6 +258,13 @@ export interface HistoryStats {
   estimatedSizeKb: number;
 }
 
+/** La espera sin ese destino (undefined si ya no queda ninguno). */
+function withoutTarget(pending: SyncPending | undefined, target: keyof SyncPending): SyncPending | undefined {
+  if (!pending) return undefined;
+  const { [target]: _drop, ...rest } = pending;
+  return Object.keys(rest).length ? rest : undefined;
+}
+
 // ─── Key helpers ──────────────────────────────────────────────────────────────
 
 /**
@@ -224,6 +280,21 @@ export function slugify(input: string): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "")
     .slice(0, 80) || "untitled";
+}
+
+/**
+ * Escrituras de una misma lección en fila: upsertLecture lee, fusiona y
+ * escribe; dos llamadas seguidas (p. ej. «entrar en Comprobar» y «cambiar de
+ * paso») leían el mismo registro y la segunda pisaba lo que guardó la primera.
+ */
+const lectureWriteQueue = new Map<string, Promise<unknown>>();
+function enqueueLectureWrite<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const previous = lectureWriteQueue.get(key) ?? Promise.resolve();
+  const run = previous.then(task, task);
+  const settled = run.catch(() => undefined);
+  lectureWriteQueue.set(key, settled);
+  void settled.then(() => { if (lectureWriteQueue.get(key) === settled) lectureWriteQueue.delete(key); });
+  return run;
 }
 
 function lectureKey(courseId: string, lectureId: string): string {
@@ -309,12 +380,21 @@ export const historyService = {
   },
 
   /** Create or merge-update a lecture record. Returns the persisted record. */
-  async upsertLecture(
+  upsertLecture(
     partial: Partial<LectureHistoryRecord> &
       Pick<LectureHistoryRecord, "courseName" | "lectureName"> & { clearProgress?: boolean }
   ): Promise<LectureHistoryRecord> {
     const courseId = partial.courseId ?? slugify(partial.courseName);
     const lectureId = partial.lectureId ?? slugify(partial.lectureName);
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), () => this.writeLecture(courseId, lectureId, partial));
+  },
+
+  async writeLecture(
+    courseId: string,
+    lectureId: string,
+    partial: Partial<LectureHistoryRecord> &
+      Pick<LectureHistoryRecord, "courseName" | "lectureName"> & { clearProgress?: boolean }
+  ): Promise<LectureHistoryRecord> {
     const now = Date.now();
 
     const prev = await this.getLecture(courseId, lectureId);
@@ -333,6 +413,9 @@ export const historyService = {
       studyContent: partial.studyContent ?? (clearProgress ? undefined : prev?.studyContent),
       confidence:   partial.confidence   ?? (clearProgress ? undefined : prev?.confidence),
       checkedConceptIndexes: partial.checkedConceptIndexes ?? (clearProgress ? [] : prev?.checkedConceptIndexes),
+      recallMarks: partial.recallMarks ?? (clearProgress ? undefined : prev?.recallMarks),
+      spotCheck: partial.spotCheck ?? (clearProgress ? undefined : prev?.spotCheck),
+      spotBudgetBase: partial.spotBudgetBase ?? (clearProgress ? undefined : prev?.spotBudgetBase),
       conceptsAcknowledged: partial.conceptsAcknowledged ?? (impliesQuestionsComplete ? true : clearProgress ? false : prev?.conceptsAcknowledged),
       questionsComplete: partial.questionsComplete ?? (impliesQuestionsComplete ? true : clearProgress ? false : prev?.questionsComplete),
       focusStep: partial.focusStep ?? (clearProgress ? 0 : prev?.focusStep),
@@ -371,8 +454,18 @@ export const historyService = {
           ? undefined
           : prev?.deletedAt,
       exportedAt: clearProgress ? partial.exportedAt : (prev?.exportedAt ?? partial.exportedAt),
+      ankiDeck: partial.ankiDeck ?? (clearProgress ? undefined : prev?.ankiDeck),
       obsidianExportedAt: clearProgress ? partial.obsidianExportedAt : (prev?.obsidianExportedAt ?? partial.obsidianExportedAt),
       reviewedAt: partial.reviewedAt ?? (clearProgress ? undefined : prev?.reviewedAt),
+      // Antes no se fusionaba: el programa se perdía en cada guardado (y con él la
+      // etiqueta kinema::programa al reenviar y el programa en la Biblioteca).
+      dcTrackSlug: partial.dcTrackSlug ?? (clearProgress ? undefined : prev?.dcTrackSlug),
+      platform: partial.platform ?? prev?.platform,
+      lessonUrl: partial.lessonUrl ?? prev?.lessonUrl,
+      // La nota sigue existiendo aunque se reinicie el progreso de la lección.
+      obsidianNotePath: partial.obsidianNotePath ?? prev?.obsidianNotePath,
+      // Fase 5: la espera de envío solo la cambian setSyncPending / markAnkiSent / markObsidianSaved.
+      syncPending: partial.syncPending ?? (clearProgress ? undefined : prev?.syncPending),
       version:      (prev?.version ?? 0) + 1,
     };
 
@@ -381,35 +474,91 @@ export const historyService = {
   },
 
   /** Mark a lecture as completed (idempotent). */
-  async markCompleted(courseId: string, lectureId: string): Promise<void> {
-    const rec = await this.getLecture(courseId, lectureId);
-    if (!rec) return;
-    if (rec.status === "completed") return;
-    rec.status = "completed";
-    rec.completedAt = Date.now();
-    rec.updatedAt = Date.now();
-    rec.version = (rec.version ?? 0) + 1;
-    await sSet(lectureKey(courseId, lectureId), rec);
+  markCompleted(courseId: string, lectureId: string): Promise<void> {
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), async () => {
+      const rec = await this.getLecture(courseId, lectureId);
+      if (!rec) return;
+      if (rec.status === "completed") return;
+      rec.status = "completed";
+      rec.completedAt = Date.now();
+      rec.updatedAt = Date.now();
+      rec.version = (rec.version ?? 0) + 1;
+      await sSet(lectureKey(courseId, lectureId), rec);
+    });
   },
 
   /** Stamp lectures as exported (fixed in Anki/Obsidian). */
-  async markExported(courseId: string, lectureId: string): Promise<void> {
-    const rec = await this.getLecture(courseId, lectureId);
-    if (!rec) return;
-    rec.exportedAt = rec.exportedAt ?? Date.now();
-    rec.updatedAt = Date.now();
-    rec.version = (rec.version ?? 0) + 1;
-    await sSet(lectureKey(courseId, lectureId), rec);
+  markExported(courseId: string, lectureId: string): Promise<void> {
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), async () => {
+      const rec = await this.getLecture(courseId, lectureId);
+      if (!rec) return;
+      rec.exportedAt = rec.exportedAt ?? Date.now();
+      rec.updatedAt = Date.now();
+      rec.version = (rec.version ?? 0) + 1;
+      await sSet(lectureKey(courseId, lectureId), rec);
+    });
+  },
+
+  /**
+   * Fase 5 · las tarjetas de la lección están en Anki (enviadas al terminar o
+   * desde la espera): quedan sus GUID y su mazo, y sale de la espera de Anki.
+   */
+  markAnkiSent(courseId: string, lectureId: string, sent: { guids: string[]; deck?: string }): Promise<void> {
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), async () => {
+      const rec = await this.getLecture(courseId, lectureId);
+      if (!rec) return;
+      rec.exportedAt = rec.exportedAt ?? Date.now();
+      rec.exportedGuids = [...new Set([...(rec.exportedGuids ?? []), ...sent.guids])];
+      if (sent.deck) rec.ankiDeck = sent.deck;
+      rec.syncPending = withoutTarget(rec.syncPending, "anki");
+      rec.updatedAt = Date.now();
+      rec.version = (rec.version ?? 0) + 1;
+      await sSet(lectureKey(courseId, lectureId), rec);
+    });
+  },
+
+  /** Fase 5 · deja la lección esperando a Anki u Obsidian (o la saca de la espera). */
+  setSyncPending(courseId: string, lectureId: string, target: keyof SyncPending, pending: boolean): Promise<void> {
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), async () => {
+      const rec = await this.getLecture(courseId, lectureId);
+      if (!rec) return;
+      const next = pending ? { ...(rec.syncPending ?? {}), [target]: rec.syncPending?.[target] ?? Date.now() } : withoutTarget(rec.syncPending, target);
+      if (JSON.stringify(next ?? null) === JSON.stringify(rec.syncPending ?? null)) return;
+      rec.syncPending = next;
+      rec.updatedAt = Date.now();
+      rec.version = (rec.version ?? 0) + 1;
+      await sSet(lectureKey(courseId, lectureId), rec);
+    });
   },
 
   /** Self-reported Anki review for a lecture. */
-  async markReviewed(courseId: string, lectureId: string): Promise<void> {
-    const rec = await this.getLecture(courseId, lectureId);
-    if (!rec) return;
-    rec.reviewedAt = Date.now();
-    rec.updatedAt = Date.now();
-    rec.version = (rec.version ?? 0) + 1;
-    await sSet(lectureKey(courseId, lectureId), rec);
+  markReviewed(courseId: string, lectureId: string): Promise<void> {
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), async () => {
+      const rec = await this.getLecture(courseId, lectureId);
+      if (!rec) return;
+      rec.reviewedAt = Date.now();
+      rec.updatedAt = Date.now();
+      rec.version = (rec.version ?? 0) + 1;
+      await sSet(lectureKey(courseId, lectureId), rec);
+    });
+  },
+
+  /**
+   * Fase 3: la nota de la lección está en el vault, en `path` (guardada desde
+   * la Biblioteca, encontrada ya en el vault o movida a otra carpeta). No toca
+   * nada más del registro.
+   */
+  markObsidianSaved(courseId: string, lectureId: string, path: string): Promise<void> {
+    return enqueueLectureWrite(lectureKey(courseId, lectureId), async () => {
+      const rec = await this.getLecture(courseId, lectureId);
+      if (!rec) return;
+      rec.obsidianExportedAt = rec.obsidianExportedAt ?? Date.now();
+      rec.obsidianNotePath = path;
+      rec.syncPending = withoutTarget(rec.syncPending, "obsidian");
+      rec.updatedAt = Date.now();
+      rec.version = (rec.version ?? 0) + 1;
+      await sSet(lectureKey(courseId, lectureId), rec);
+    });
   },
 
   /** All lectures across all courses, newest-first. */

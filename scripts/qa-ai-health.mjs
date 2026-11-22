@@ -27,7 +27,7 @@ const blocked = aiBlockedMessage('sin-respuesta', `${G}/models?key=${SECRET}`);
 assert.ok(!blocked.includes(SECRET) && !blocked.includes('key='), blocked);
 assert.equal(blocked, `El proveedor no responde (${G}/models). Reintentando…`);
 assert.equal(aiBlockedMessage('sin-respuesta', ''), 'El proveedor no responde. Reintentando…');
-assert.equal(aiBlockedMessage('no-config', 'x'), 'Sin proveedor de IA: configúralo en Ajustes → Proveedor.');
+assert.equal(aiBlockedMessage('no-config', 'x'), 'Sin proveedor de IA: configúralo en Ajustes → Proveedor de IA.');
 assert.equal(aiBlockedMessage('comprobando', 'x'), 'Comprobando la IA…');
 
 // 3. aiBadgeStatus: los 7 estados

@@ -1,24 +1,30 @@
 // ─── ApiKeysPanel ─────────────────────────────────────────────────────────────
-// Cuerpo de la sección "Proveedor de IA" en Configuración: motor principal,
-// endpoint, llave y modelo. Una sola llave por proveedor (sin rotación).
-//
-// Cadena de resolución:
-//   IA local (8010) → Proveedor configurado → Demo offline (solo prototipo)
+// Cuerpo de «Proveedor de IA» en Configuración (rediseño 5.1, el mismo
+// lenguaje que el resto de Ajustes, en un solo nivel): Motor (cuál, y si
+// funciona) · Conexión (servidor, o llave y modelo) · «Probar» y una línea
+// con lo último que se supo. Una sola llave por proveedor (sin rotación).
+// Probar = una petición corta real: se guarda solo si responde.
 
 import { toast } from "sonner";
 import React, { useState, useEffect } from "react";
-import { Eye, EyeOff, CheckCircle2, Loader2, Zap, Sparkles, HardDrive, Brain, Icon } from "./icons";
+import { Eye, EyeOff, Icon, Loader2, Zap } from "./icons";
 import { useDockTheme } from "../contexts/ThemeContext";
-import { Field, Notice, SettingsGroup, fieldCls, primaryBtnCls } from "./settings/SettingsKit";
+import { chromeLocalStorage } from "../services/chromeStorage";
+import {
+  Disclosure, Field, SettingsGroup, StatusPill, fieldCls, primaryBtnCls, type ConnectionTone,
+} from "./settings/SettingsKit";
+import type { IconName } from "./icons";
 import {
   DEFAULT_BASE_URLS,
   DEFAULT_MODELS,
+  normalizeAiProviderConfig,
   validateProviderConfig,
   type AiProviderConfig,
   type AiProviderKind,
 } from "../services/ai-providers";
 
 interface ApiKeysPanelProps {
+  /** Se sigue aceptando (lo pasa Ajustes); el estado de la IA local se ve en la barra del dock. */
   localConnected?: boolean;
   providerConfig: AiProviderConfig;
   onSaveProvider: (config: AiProviderConfig) => void;
@@ -26,24 +32,37 @@ interface ApiKeysPanelProps {
 
 const PROVIDER_KINDS: AiProviderKind[] = ["local", "openai", "anthropic", "gemini"];
 
-const PROVIDER_KINDS_INFO: Record<AiProviderKind, { label: string; desc: string; icon: React.ReactNode; keyHint: string; models: string[] }> = {
-  local: { label: "Local", desc: "En tu equipo · sin llave", icon: <HardDrive size={18} />, keyHint: "", models: [] },
-  openai: { label: "OpenAI", desc: "OpenAI o compatible (DeepSeek, OpenRouter, Groq)", icon: <Zap size={18} />, keyHint: "platform.openai.com → API keys", models: ["gpt-4o-mini", "gpt-4o"] },
-  anthropic: { label: "Claude", desc: "Anthropic", icon: <Brain size={18} />, keyHint: "console.anthropic.com → API keys", models: ["claude-sonnet-5", "claude-haiku-4-5-20251001"] },
-  gemini: { label: "Gemini", desc: "Google AI Studio", icon: <Sparkles size={18} />, keyHint: "aistudio.google.com → Get API key", models: ["gemini-2.5-flash", "gemini-2.5-pro"] },
+const PROVIDER_KINDS_INFO: Record<AiProviderKind, { label: string; tag: string; desc: string; icon: IconName; keyHint: string; models: string[] }> = {
+  local: { label: "Local", tag: "En tu equipo", desc: "Servidor local en tu ordenador compatible con OpenAI (sin llave API).", icon: "hardDrive", keyHint: "", models: [] },
+  openai: { label: "OpenAI", tag: "Con llave", desc: "Modelos de OpenAI o servicios compatibles (DeepSeek, OpenRouter, Groq).", icon: "zap", keyHint: "platform.openai.com → API keys", models: ["gpt-4o-mini", "gpt-4o"] },
+  anthropic: { label: "Claude", tag: "Con llave", desc: "Modelos Claude de Anthropic.", icon: "brain", keyHint: "console.anthropic.com → API keys", models: ["claude-sonnet-5", "claude-haiku-4-5-20251001"] },
+  gemini: { label: "Gemini", tag: "Con llave", desc: "Modelos Gemini de Google AI Studio.", icon: "sparkles", keyHint: "aistudio.google.com → Get API key", models: ["gemini-2.5-flash", "gemini-2.5-pro"] },
 };
 
 const ENDPOINT_HINTS: Record<AiProviderKind, string> = {
-  local: "Servidor compatible con OpenAI: Kinema (8010), Ollama (:11434/v1) o LM Studio (:1234/v1).",
-  openai: "Cambia la URL para usar otro servicio compatible, p. ej. api.deepseek.com/v1.",
-  anthropic: "Normalmente no hace falta cambiarlo.",
-  gemini: "Normalmente no hace falta cambiarlo.",
+  local: "Servidor local compatible con OpenAI.",
+  openai: "Para servicios compatibles (ej. api.deepseek.com/v1).",
+  anthropic: "Déjalo por defecto salvo proxy propio.",
+  gemini: "Déjalo por defecto salvo proxy propio.",
 };
+
+/** El último «Probar» que respondió (o no), por configuración: el estado sin gastar otra petición. */
+const LAST_CHECK_KEY = "kinema_ai_last_check";
+type LastCheck = { fingerprint: string; ok: boolean; message: string; at: number };
+const fingerprintOf = (raw: AiProviderConfig) => {
+  const c = normalizeAiProviderConfig(raw);
+  return `${c.kind}|${c.baseUrl}|${c.model}|${c.apiKey ? `${c.apiKey.length}:${c.apiKey.slice(-4)}` : ""}`;
+};
+const formatWhen = (ms: number) => new Date(ms).toLocaleString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const isLoopback = (url: string) => { try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname); } catch { return false; } };
 
 /** Infer the provider kind from a base URL so the two can never disagree. */
 function inferProviderKind(rawUrl: string): AiProviderKind | null {
   const url = String(rawUrl || "").toLowerCase();
   if (!url) return null;
+  // Un servidor de este ordenador puede ser «Local» u «OpenAI compatible»:
+  // lo decide el motor elegido, no la URL.
+  if (isLoopback(rawUrl)) return null;
   if (url.includes("anthropic")) return "anthropic";
   if (url.includes("generativelanguage.googleapis") || url.includes("/v1beta")) return "gemini";
   if (url.includes("/v1") || url.includes("openai") || url.includes("deepseek") || url.includes("openrouter")) return "openai";
@@ -51,7 +70,6 @@ function inferProviderKind(rawUrl: string): AiProviderKind | null {
 }
 
 export function ApiKeysPanel({
-  localConnected = false,
   providerConfig,
   onSaveProvider,
 }: ApiKeysPanelProps) {
@@ -61,6 +79,20 @@ export function ApiKeysPanel({
   const [providerKeyVisible, setProviderKeyVisible] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState<{ status: string; message: string } | null>(null);
+  const [lastCheck, setLastCheck] = useState<LastCheck | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void chromeLocalStorage.get([LAST_CHECK_KEY]).then((items) => {
+      const value = items[LAST_CHECK_KEY] as LastCheck | undefined;
+      if (alive && value && typeof value.fingerprint === "string") setLastCheck(value);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
+  const rememberCheck = (config: AiProviderConfig, ok: boolean, message: string) => {
+    const value: LastCheck = { fingerprint: fingerprintOf(config), ok, message, at: Date.now() };
+    setLastCheck(value);
+    void chromeLocalStorage.set({ [LAST_CHECK_KEY]: value }).catch(() => undefined);
+  };
 
   const externalProviderSignature = `${providerConfig.kind}|${providerConfig.baseUrl}|${providerConfig.apiKey}|${providerConfig.model}`;
 
@@ -103,7 +135,7 @@ export function ApiKeysPanel({
       if (detail?.type !== 'USG_HOST_PERMISSION_ADDED') return;
       if (!(detail.origins ?? []).length) return;
       toast.success("Permiso concedido", {
-        description: "Ya puedes pulsar «Probar conexión y guardar».",
+        description: "Ya puedes pulsar «Probar y guardar».",
         duration: 8000,
       });
     };
@@ -157,6 +189,7 @@ export function ApiKeysPanel({
     }
     setValidating(false);
     setValidation(result);
+    if (result.status === 'ok' || result.status === 'unreachable' || result.status === 'http_error') rememberCheck(provider, result.status === 'ok', result.message);
     // Un resultado con error es un veredicto, no un fallo de la sonda: hay que
     // mostrarlo. Antes se guardaba el proveedor igual y se marcaba «Guardado y
     // activo», así que un endpoint caído (HTTP 503, sin red, llave inválida)
@@ -173,10 +206,6 @@ export function ApiKeysPanel({
     setProviderSaved(true);
     setTimeout(() => setProviderSaved(false), 2600);
   };
-
-  const productionRuntime = Boolean(
-    (globalThis as typeof globalThis & { chrome?: { runtime?: { id?: string } } }).chrome?.runtime?.id
-  );
 
   /**
    * ¿El endpoint ya tiene permiso de red? Lo consulta el service worker, que es
@@ -258,27 +287,32 @@ export function ApiKeysPanel({
     }
   };
 
-  const providerReady = provider.kind === "local"
-    ? Boolean(provider.baseUrl)
-    : Boolean(provider.baseUrl && provider.apiKey);
-
-  // La IA local siempre se intenta primero; si el motor elegido ya es local,
-  // no se repite como segundo paso.
-  const chain = [
-    { id: "local", title: "IA local", sub: localConnected ? "Conectada" : "Sin conexión", active: localConnected },
-    ...(provider.kind === "local" ? [] : [{ id: provider.kind, title: PROVIDER_KINDS_INFO[provider.kind].label, sub: providerReady ? provider.model : "Falta la llave", active: providerReady }]),
-    productionRuntime
-      ? { id: "none", title: "Sin IA", sub: "Avisa del error", active: false }
-      : { id: "mock", title: "Demo", sub: "Respuestas de ejemplo", active: true },
-  ];
-
-  const monoField = fieldCls + " font-mono";
-
+  const saved = providerConfig;
+  const dirty = fingerprintOf(provider) !== fingerprintOf(saved);
+  const savedInfo = PROVIDER_KINDS_INFO[saved.kind];
+  const savedReady = saved.kind === "local" ? Boolean(saved.baseUrl) : Boolean(saved.baseUrl && saved.apiKey);
+  const savedCheck = lastCheck && lastCheck.fingerprint === fingerprintOf(saved) ? lastCheck : null;
   const info = PROVIDER_KINDS_INFO[provider.kind];
+  const monoField = fieldCls + " font-mono";
+  const host = (() => { try { return new URL(saved.baseUrl).host; } catch { return saved.baseUrl; } })();
+
+  // Qué se dice arriba: el motor GUARDADO (el que usa Kinema) y lo último que se supo de él.
+  let tone: ConnectionTone;
+  let statusText: string;
+  if (validating) { tone = "busy"; statusText = "Comprobando conexión…"; }
+  else if (validation && validation.status !== "ok") { tone = "warn"; statusText = validation.message; }
+  else if (dirty) { tone = "idle"; statusText = "Cambios sin guardar."; }
+  else if (!savedReady) { tone = "warn"; statusText = "Falta la llave API."; }
+  else if (savedCheck?.ok) { tone = "ok"; statusText = `Verificado (${formatWhen(savedCheck.at)}).`; }
+  else if (savedCheck && !savedCheck.ok) { tone = "warn"; statusText = savedCheck.message; }
+  else { tone = "idle"; statusText = "Sin verificar."; }
+  const pill = tone === "ok" ? "Conectado" : tone === "busy" ? "Comprobando" : tone === "warn" ? "No responde" : dirty ? "Sin guardar" : "Sin verificar";
+
+  const engineName = saved.kind === "local" ? `Local · ${host}` : `${savedInfo.label}${saved.model ? ` · ${saved.model}` : ""}`;
 
   return (
     <div className="space-y-4">
-      <SettingsGroup title="Motor principal">
+      <SettingsGroup title="Motor" aside={<StatusPill tone={tone}>{pill}</StatusPill>}>
         <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Motor principal">
           {PROVIDER_KINDS.map((kind) => {
             const isSelected = provider.kind === kind;
@@ -290,21 +324,25 @@ export function ApiKeysPanel({
                 aria-checked={isSelected}
                 onClick={() => changeProviderKind(kind)}
                 data-on={isSelected ? "1" : "0"}
-                className="kx-tile-btn kx-choice border border-[var(--usb-border)] !h-[64px] !gap-1 !text-[12px] rounded-xl font-semibold transition-all"
+                className="kx-tile-btn kx-choice border border-[var(--usb-border)] !h-[68px] !gap-0.5 !text-[12px] rounded-xl font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70"
               >
-                {PROVIDER_KINDS_INFO[kind].icon}
-                <span>{PROVIDER_KINDS_INFO[kind].label}</span>
+                <Icon name={PROVIDER_KINDS_INFO[kind].icon} size={17} />
+                <span className="mt-0.5">{PROVIDER_KINDS_INFO[kind].label}</span>
+                <span className="text-[10px] font-medium opacity-80">{PROVIDER_KINDS_INFO[kind].tag}</span>
               </button>
             );
           })}
         </div>
-        <p className="text-[11px] text-[var(--usb-fg-mid)]">{info.desc}</p>
       </SettingsGroup>
 
       <SettingsGroup title="Conexión">
         <div className="space-y-3">
-          {provider.kind !== "local" && (
-            <Field label="Llave API" hint={<>Consíguela en {info.keyHint}.</>}>
+          {provider.kind === "local" ? (
+            <Field label="Servidor" hint={ENDPOINT_HINTS.local}>
+              <input type="text" value={provider.baseUrl} onChange={(e) => updateProvider({ baseUrl: e.target.value })} placeholder={DEFAULT_BASE_URLS.local} autoComplete="off" spellCheck={false} className={monoField} aria-label="Endpoint" />
+            </Field>
+          ) : (
+            <Field label="Llave API" hint={`Solo en este navegador · ${info.keyHint}`}>
               <span className="relative flex items-center">
                 <input type={providerKeyVisible ? "text" : "password"} value={provider.apiKey} onChange={(e) => updateProvider({ apiKey: e.target.value })} placeholder={provider.kind === "anthropic" ? "sk-ant-…" : provider.kind === "gemini" ? "AIza…" : "sk-…"} autoComplete="off" spellCheck={false} className={`${monoField} pr-9`} />
                 <button type="button" onClick={(e) => { e.preventDefault(); setProviderKeyVisible((v) => !v); }} className="absolute right-1.5 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors" aria-label={providerKeyVisible ? "Ocultar llave" : "Mostrar llave"}>
@@ -314,57 +352,45 @@ export function ApiKeysPanel({
             </Field>
           )}
 
-          <Field label="Modelo" hint={info.models.length ? undefined : "El nombre que muestra tu servidor local."}>
+          <Field label="Modelo">
             <input type="text" value={provider.model} onChange={(e) => updateProvider({ model: e.target.value })} placeholder={DEFAULT_MODELS[provider.kind]} autoComplete="off" spellCheck={false} className={monoField} />
           </Field>
           {info.models.length > 0 && (
             <div className="flex flex-wrap gap-1.5 -mt-1.5" aria-label="Modelos sugeridos">
               {info.models.map((model) => (
                 <button key={model} type="button" onClick={() => updateProvider({ model })} aria-pressed={provider.model === model}
-                  className={`h-7 px-2.5 rounded-lg border font-mono text-[11px] transition-colors ${provider.model === model ? "border-[#6d4aff]/50 bg-[var(--usb-accent-soft)] text-[var(--usb-fg-hi)]" : "border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)]"}`}>
+                  className={`kx-choice h-7 px-2.5 rounded-lg border font-mono text-[11px] transition-colors ${provider.model === model ? "border-[#6d4aff]/50 bg-[var(--usb-accent-soft)] text-[var(--usb-fg-hi)]" : "border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)]"}`}>
                   {model}
                 </button>
               ))}
             </div>
           )}
 
-          <Field label="Endpoint" hint={ENDPOINT_HINTS[provider.kind]}>
-            <input type="text" value={provider.baseUrl} onChange={(e) => updateProvider({ baseUrl: e.target.value })} placeholder={DEFAULT_BASE_URLS[provider.kind]} autoComplete="off" spellCheck={false} className={monoField} />
-          </Field>
+          {provider.kind !== "local" && (
+            <Disclosure summary="Endpoint personalizado (opcional)" defaultOpen={provider.baseUrl !== DEFAULT_BASE_URLS[provider.kind]}>
+              <input type="text" value={provider.baseUrl} onChange={(e) => updateProvider({ baseUrl: e.target.value })} placeholder={DEFAULT_BASE_URLS[provider.kind]} autoComplete="off" spellCheck={false} className={monoField} aria-label="Endpoint" />
+              <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">{ENDPOINT_HINTS[provider.kind]}</p>
+            </Disclosure>
+          )}
         </div>
       </SettingsGroup>
 
-      <button
-        type="button"
-        onClick={handleSaveProvider}
-        disabled={validating}
-        className={`${primaryBtnCls} w-full`}
-        style={providerSaved ? ({ "--kx-btn": "#059669" } as React.CSSProperties) : undefined}
-      >
-        {validating ? <><Loader2 size={14} className="animate-spin" />Verificando conexión…</>
-          : providerSaved ? <><CheckCircle2 size={14} />Guardado y activo</>
-          : <><Zap size={14} />Probar conexión y guardar</>}
-      </button>
-
-      {validation && (
-        <Notice tone={validation.status === "ok" ? "ok" : "warn"} icon={validation.status === "ok" ? "checkCircle2" : "alertCircle"}>
-          {validation.message}
-        </Notice>
-      )}
-
-      <SettingsGroup title="Orden de uso" aside={<span className="text-[11px] text-[var(--usb-fg-mid)]">Si uno falla, pasa al siguiente</span>}>
-        <ol className={`grid gap-2 ${chain.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
-          {chain.map((step, i) => (
-            <li key={step.id} className={`min-w-0 rounded-xl border px-2.5 py-2.5 ${step.active ? "border-[#6d4aff]/35 bg-[var(--usb-accent-soft)]" : "border-[var(--usb-border)] bg-[var(--usb-bg-3)]"}`}>
-              <span className="text-[11px] font-bold tabular-nums text-[var(--usb-fg-mid)]">{i + 1}</span>
-              <p className={`text-[12px] font-bold leading-tight truncate ${step.active ? "text-[var(--usb-fg-hi)]" : "text-[var(--usb-fg)]"}`}>{step.title}</p>
-              <p className="text-[11px] truncate mt-0.5 text-[var(--usb-fg-mid)]">{step.sub}</p>
-            </li>
-          ))}
-        </ol>
-      </SettingsGroup>
-
-      <p className="text-[11px] text-[var(--usb-fg-mid)] flex items-center gap-1.5"><Icon name="lock" size={12} /> La llave se guarda solo en este navegador.</p>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={handleSaveProvider}
+          disabled={validating}
+          className={`${primaryBtnCls} !h-9 w-full`}
+          style={providerSaved ? ({ "--kx-btn": "#059669" } as React.CSSProperties) : undefined}
+        >
+          {validating ? <><Loader2 size={14} className="animate-spin motion-reduce:animate-none" />Comprobando…</>
+            : providerSaved ? <><Icon name="checkCircle2" size={14} />Guardado y conectado</>
+            : <><Zap size={14} />{dirty ? "Probar y guardar" : "Probar conexión"}</>}
+        </button>
+        <p role="status" data-ai-connection className={`text-[11px] leading-snug ${tone === "warn" ? "text-[var(--usb-warn-text)]" : tone === "ok" ? "text-[var(--usb-ok-text)]" : "text-[var(--usb-fg-mid)]"}`}>
+          <span className="font-semibold">{engineName}.</span> <span data-ai-connection-status>{statusText}</span>
+        </p>
+      </div>
     </div>
   );
 }

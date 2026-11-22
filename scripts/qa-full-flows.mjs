@@ -720,10 +720,11 @@ check('v1 sembrada restaura al paso Fijar con el resumen de cierre',
 const mods = await page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	const ps = [...(root?.querySelectorAll('section p') ?? [])].map((p) => (p.textContent ?? '').trim());
+	const vocabRegion = Boolean(root?.querySelector('[aria-label="Candidatas de vocabulario"]') ?? root?.querySelector('[aria-label="Selección de vocabulario"]'));
 	return {
 		cards: ps.includes('Tarjetas de la lección'),
-		vocab: ps.includes('Mazo de idiomas · opcional'),
-		obsidian: ps.includes('Obsidian'),
+		vocab: vocabRegion || ps.some((p) => /Idiomas|Vocabulario/.test(p)),
+		obsidian: ps.some((p) => /^Obsidian/.test(p)),
 	};
 });
 check('los tres módulos de Fijar están presentes', mods.cards && mods.vocab && mods.obsidian, JSON.stringify(mods));
@@ -791,7 +792,12 @@ if (await apkgBtn.count().catch(() => 0)) {
 		check('hay botón para un segundo export', false, 'no encontrado');
 	}
 } else {
-	check('hay botón de exportar .apkg', false, 'no encontrado');
+	// Contrato actual (fase 5): no hay botón de exportación manual en Fijar.
+	// Lo marcado se envía a Anki al «Terminar lección»; sin AnkiConnect el
+	// respaldo .apkg se descarga desde la Biblioteca. Verificar que el botón
+	// antiguo NO esté y que el cierre ya no ofrezca exportar a mano.
+	const exportStillThere = await page.locator(`${OUTER} button`).filter({ hasText: /Exportar \.apkg/ }).count().catch(() => 0);
+	check('Fijar ya no ofrece exportar .apkg a mano (envío automático)', exportStillThere === 0, `${exportStillThere} botones`);
 }
 
 // ── D.1 — flujo mínimo: nivel → 1 respuesta → Saltar este paso → Terminar ───
@@ -843,7 +849,14 @@ for (let i = 0; i < 25; i += 1) {
 // Nivel → recuerdo libre, confirmando el efecto (si el clic no llega, reintenta).
 await clickAndWait(/^Confuso/, { sel: 'textarea[placeholder^="Lo que recuerdo"]' });
 await page.waitForTimeout(600);
-// Gate del recuerdo libre (§1.1): rellenarlo y comparar con la lista.
+// Gate del recuerdo libre (§1.1): el textarea va detrás de un botón expandible
+// («Escribir primero lo que recuerdo»); abrirlo antes de rellenar.
+await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const toggle = root?.querySelector('[data-free-recall-toggle]');
+	if (toggle && !root?.querySelector('[data-free-recall] textarea')) toggle.click();
+});
+await page.waitForTimeout(250);
 const fillRecall = await page.evaluate(() => {
 	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 	const ta = [...root.querySelectorAll('textarea')].find((el) => /Lo que recuerdo es/.test(el.placeholder));
@@ -1074,8 +1087,8 @@ await page.screenshot({ path: path.join(SHOTS, 'd-estudio.png') }).catch(() => {
 
 } // fin del bloque D (solo modo CLON)
 
-// ══ E. Obsidian — export + guard de duplicados ════════════════════════════════
-section('E. Obsidian — export y aviso de duplicado');
+// ══ E. Obsidian — módulo del flujo automático (fase 5) ═════════════════════════
+section('E. Obsidian — módulo del flujo automático');
 if (REAL) {
 	console.log('  · omitido en modo REAL: escribiría notas en el vault real del usuario');
 } else {
@@ -1101,60 +1114,29 @@ for (let i = 0; i < 12; i += 1) {
 }
 let obsidianUris = [];
 context.on('request', (r) => { if (r.url().startsWith('obsidian://')) obsidianUris.push(r.url()); });
-const obsBtn = page.locator(`${OUTER} section`).filter({
-	has: page.locator('p', { hasText: /^Obsidian$/ }),
-}).locator('button', { hasText: /^(Exportar|Exportado)$/ }).last();
-
-for (let i = 0; i < 14; i++) {
-	if (await obsBtn.count().catch(() => 0)) {
-		await obsBtn.scrollIntoViewIfNeeded().catch(() => {});
-		const b = await obsBtn.boundingBox().catch(() => null);
-		if (b && b.y > 60 && b.y + b.height < 990) break;
-	}
-	await page.mouse.move(840, 700);
-	await page.mouse.wheel(0, 400);
-	await page.waitForTimeout(400);
-}
-if (await obsBtn.count().catch(() => 0)) {
-	await obsBtn.evaluate((el) => el.click()).catch(() => {});
-	await page.waitForTimeout(4000);
-	// Un clic = UNA nota: el índice del curso es una acción aparte en el aviso
-	// («Crear índice»), con su propio clic. Con «>= 1» un doble lanzamiento
-	// pasaría la prueba.
-	const nota = decodeURIComponent(obsidianUris[0] ?? '');
-	check('«Exportar» emite exactamente la URI de la nota',
-		obsidianUris.length === 1, `${obsidianUris.length} URIs`);
-	check('la nota va a la carpeta de fuentes del vault',
-		/wiki\/fuentes\/[^&]*---[^&]*\.md/.test(nota), nota.slice(0, 160));
-	let listo = false;
-	for (let i = 0; i < 12 && !listo; i += 1) {
-		await page.waitForTimeout(1000);
-		listo = await page.evaluate(() => {
-			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-			return [...root.querySelectorAll('section')]
-				.filter((s) => [...s.querySelectorAll('p')].some((p) => (p.textContent ?? '').trim() === 'Obsidian'))
-				.some((s) => /Listo/i.test(s.textContent ?? ''));
-		});
-	}
-	check('aparece la insignia «✓ Listo» tras exportar', listo);
-	// El índice del curso, desde el aviso, sí es un segundo clic explícito.
-	const clickedIndex = await page.evaluate(() => {
-		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
-		const btn = [...(root?.querySelectorAll('[data-sonner-toast] button') ?? [])]
-			.find((b) => /Crear índice/i.test(b.textContent ?? ''));
-		if (!btn) return false;
-		btn.click();
-		return true;
-	});
-	await page.waitForTimeout(3000);
-	const moc = decodeURIComponent(obsidianUris[1] ?? '');
-	check('«Crear índice» emite la URI del MOC en su carpeta',
-		clickedIndex && obsidianUris.length === 2 && /cursos\/[^&]*\.md/.test(moc),
-		JSON.stringify({ clickedIndex, uris: obsidianUris.length, moc: moc.slice(0, 120) }));
-	await page.screenshot({ path: path.join(SHOTS, 'e-obsidian.png') }).catch(() => {});
-} else {
-	check('el botón de Obsidian está presente', false, 'no encontrado tras scroll');
-}
+// Contrato actual: Obsidian ya no se exporta a mano con obsidian:// desde Fijar.
+// Con vault configurado PERO sin Local REST API, el módulo dice qué falta y
+// muestra la píldora «Sin conectar»; el guardado es automático al terminar
+// cuando hay REST. Verificamos el estado honesto y la AUSENCIA del botón viejo.
+const obsModule = await page.evaluate(() => {
+	const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+	const sections = [...root.querySelectorAll('section')];
+	const sec = sections.find((s) => [...s.querySelectorAll('p')].some((p) => /^Obsidian( · opcional)?$/.test((p.textContent ?? '').trim())));
+	const txt = sec?.textContent ?? '';
+	return {
+		present: Boolean(sec),
+		sinConectar: /Sin conectar/.test(txt),
+		guiarest: /Local REST API/i.test(txt),
+		manualExport: [...sec.querySelectorAll('button')].some((b) => /^(Exportar|Exportado)$/.test((b.textContent ?? '').trim())),
+	};
+});
+check('el módulo de Obsidian está presente en Fijar', obsModule.present, eTxt.slice(0, 120));
+check('sin REST configura el guardado automático y dice «Sin conectar»',
+	obsModule.sinConectar && obsModule.guiarest, JSON.stringify(obsModule));
+check('ya no hay botón manual de exportar a Obsidian', !obsModule.manualExport, JSON.stringify(obsModule));
+await page.waitForTimeout(1200);
+check('Fijar no dispara URIs obsidian:// por su cuenta', obsidianUris.length === 0, `${obsidianUris.length} URIs`);
+await page.screenshot({ path: path.join(SHOTS, 'e-obsidian.png') }).catch(() => {});
 } // fin del bloque E (solo modo CLON)
 
 // ══ F. Proveedor — permiso de host ════════════════════════════════════════════
@@ -1163,8 +1145,8 @@ await page.evaluate(() => window.dispatchEvent(new CustomEvent('usb:open-setting
 // La hoja tarda en abrirse y el panel del proveedor en montar sus controles. Sin
 // esperar a que existan, la prueba mide una hoja cerrada y reporta fallos falsos.
 const openaiBtn = page.locator(`${OUTER} button[role="radio"]`).filter({ hasText: /^OpenAI$/ }).first();
-const ep = page.locator(`${OUTER} input[placeholder="https://api.openai.com/v1"]`).first();
-const saveBtn = page.locator(`${OUTER} button`).filter({ hasText: /Probar conexión y guardar/ }).first();
+const ep = page.locator(`${OUTER} input[aria-label="Endpoint"]`).first();
+const saveBtn = page.locator(`${OUTER} button`).filter({ hasText: /Probar (y guardar|conexión)/ }).first();
 // El campo Endpoint solo existe con el motor OpenAI elegido, y el proveedor
 // activo depende del estado previo (Local no lo muestra). Hay que seleccionar
 // OpenAI PRIMERO y esperar después: esperar el campo antes no lo crea.
@@ -1250,7 +1232,7 @@ if (REAL) {
 		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
 		const txt = (root?.textContent ?? '');
 		return {
-			panel: /Mazo de idiomas/i.test(txt),
+			panel: /Idiomas|Mazo de idiomas/i.test(txt),
 			cefr: /CEFR/i.test(txt),
 			nivel: /Desde el nivel/i.test(txt),
 		};

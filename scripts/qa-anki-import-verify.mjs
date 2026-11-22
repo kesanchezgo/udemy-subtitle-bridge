@@ -54,11 +54,11 @@ console.log('  ✓ qa-vocab.apkg importado');
 // ── C. verificación en colección viva ───────────────────────────────────────
 console.log('\n══ C. Verificación en Anki ══');
 const ROOT = 'Kinema';
-const { COURSES_PRESET, VOCAB_PRESET } = await import('../src/app/services/ankiDesign.ts');
+const { COURSES_PRESET, VOCAB_PRESET, vocabModelName } = await import('../src/app/services/ankiDesign.ts');
 const COURSE = 'USB QA — Curso de Prueba';
 const LESSON = '01 — Lección de Prueba';
 const lessonDeck = `${ROOT}::Courses::${COURSE}::${LESSON}`;
-const vocabDeck = `${ROOT}::Vocabulary::English::${COURSE}`;
+const vocabDeck = `${ROOT}::Vocabulary::English`; // un mazo por idioma
 
 const afterDecks = (await call('deckNames')).sort();
 const added = afterDecks.filter((d) => !beforeDecks.includes(d));
@@ -76,10 +76,10 @@ check('solo se añadieron mazos bajo la raíz de la extensión', added.every((d)
 		&& lessonConf.lapse.leechAction === 1);
 	console.log(`  fsrs en preset importado (inerte; FSRS es de la colección): ${'fsrs' in lessonConf ? lessonConf.fsrs : '(clave no expuesta por getDeckConfig)'}`);
 
-	const vocabTemplates = await call('modelTemplates', { modelName: 'Udemy Bridge Vocab' });
+	const vocabTemplates = await call('modelTemplates', { modelName: vocabModelName('en') });
 	const tplJson = JSON.stringify(vocabTemplates);
-	check('plantilla de vocabulario reproduce ARCHIVOS de calidad (word/sentence audio)',
-		tplJson.includes('{{#word audio}}') && tplJson.includes('{{sentence audio}}') && !tplJson.includes('{{tts'));
+	check('plantilla única de vocabulario: cloze-gap + audio con respaldo TTS',
+		tplJson.includes('cloze-gap') && tplJson.includes('{{#word audio}}') && tplJson.includes('{{sentence audio}}'));
 
 const vocabConf = await call('getDeckConfig', { deck: vocabDeck });
 check('mazo de vocabulario usa preset Kinema · Vocabulario (15/día)', vocabConf.name === VOCAB_PRESET.name && vocabConf.new.perDay === 15, `${vocabConf.name} ${vocabConf.new.perDay}`);
@@ -89,7 +89,7 @@ check('preset "Default" del usuario INTOCO', defaultConfAfter.new.perDay === def
 	&& defaultConfAfter.name === 'Default' && defaultConfAfter.id === 1);
 
 const modelNames = (await call('modelNames')).sort();
-check('note types propios creados', modelNames.includes('Udemy Bridge Concept') && modelNames.includes('Udemy Bridge Vocab'));
+check('note types propios creados', modelNames.includes('Udemy Bridge Concept') && modelNames.includes(vocabModelName('en')));
 
 const conceptNids = await call('findNotes', { query: `deck:"${lessonDeck}"` });
 check('3 notas de concepto importadas', conceptNids.length === 3, String(conceptNids.length));
@@ -166,7 +166,7 @@ async function renderCards({ modelName, noteIds, fileBase }) {
 const conceptCards = await call('cardsInfo', { cards: (await call('findCards', { query: `deck:"${lessonDeck}"` })).slice(0, 1) });
 const shotsConcept = await renderCards({ modelName: 'Udemy Bridge Concept', noteIds: conceptCards.map((c) => c.note), fileBase: 'concepto' });
 const vocabCards = await call('cardsInfo', { cards: (await call('findCards', { query: `deck:"${vocabDeck}"` })).slice(0, 1) });
-const shotsVocab = await renderCards({ modelName: 'Udemy Bridge Vocab', noteIds: vocabCards.map((c) => c.note), fileBase: 'vocabulario' });
+const shotsVocab = await renderCards({ modelName: vocabModelName('en'), noteIds: vocabCards.map((c) => c.note), fileBase: 'vocabulario' });
 console.log('  capturas:', [...shotsConcept, ...shotsVocab].map((p) => path.basename(p)).join(', '));
 
 // ── E. limpieza (SOLO el árbol de prueba) ───────────────────────────────────

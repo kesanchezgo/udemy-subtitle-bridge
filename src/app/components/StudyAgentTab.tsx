@@ -1,13 +1,15 @@
 import { fieldCls, textareaCls } from "./settings/SettingsKit";
 import { TIMED_TRANSCRIPT, bloomTaskLabel, vocabularyCandidateTarget } from "../../shared/prompts";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { isPlatformId, platformOf } from "../services/platform";
 import {
   Target, Sparkles, Wand2, Check, Edit3, ArrowRight, Brain,
   CheckCircle2, Circle, RotateCcw, X, Zap, FlipHorizontal,
-  ChevronLeft, ChevronRight, Info, FileDown,
+  ChevronLeft, ChevronRight,
   FolderSync, Send, Loader2, Wifi, WifiOff, BookOpen,
-  Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, Download, FastForward, History,
-  BookMarked, RefreshCw, Settings2, ClipboardCopy, ExternalLink, Languages,
+  Repeat2, Lock, ChevronDown, Package, Rocket, Diamond, Flame, FastForward, History,
+  BookMarked, ExternalLink, Languages,
   HelpCircle, Plus, Icon, Glyph, splitLeadingMarker
 } from "./icons";
 import type { IconName } from "./icons";
@@ -15,7 +17,7 @@ import { FrameMarks } from "./AppLogo";
 import { motion, AnimatePresence } from "motion/react";
 import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
 import { buildAnkiApkg, downloadApkg, PRISM_MEDIA_FILES } from "../services/ankiApkg";
-import { buildConceptSpec, sanitizeDeckSegment } from "../services/ankiDesign";
+import { buildConceptSpec } from "../services/ankiDesign";
 import { cacheService } from "../services/cacheService";
 import { aiBlockedMessage, type AiState } from "../hooks/useAiHealth";
 import { AI_PROVIDER_STORAGE_KEY, describeProviderFailure, getAiProviderConfig } from "../services/ai-providers";
@@ -24,9 +26,10 @@ import {
   type VocabConfig,
 } from "../services/vocabularyService";
 import { VocabularyPanel } from "./study/VocabularyPanel";
+import { AnkiSettings } from "./study/AnkiSettings";
 import { LessonDoubtPanel } from "./study/LessonDoubtPanel";
 import {
-  DOUBT_TRANSCRIPT_CHARS, MAX_DOUBT_CARDS, cardFrontKey, doubtCardHtml, doubtCardId, doubtThreadId,
+  DOUBT_TRANSCRIPT_CHARS, cardFrontKey, doubtCardLimit, doubtCardHtml, doubtCardId, doubtThreadId,
   sanitizeStoredDoubts, savedDoubtCount, snapshotDoubtCard, updateDoubtTurn, upsertDoubtThread,
   type DoubtTranscript, type LessonDoubtContext, type LessonDoubtKind, type LessonDoubtThread,
 } from "../services/lessonDoubts";
@@ -36,7 +39,7 @@ import {
 async function prototypeVocabularyFor(lang: string) {
   // Prototipo: la vista previa es un build de producción sin runtime de
   // extensión, así que la demo sustituye a la transcripción real (en el repo: solo DEV).
-  if (!import.meta.env?.DEV) return null; // en el repo: solo DEV
+  if (!import.meta.env?.DEV) return null;
   try {
     const mod = await import("../services/prototypeData");
     return mod.prototypeVocabulary(lang);
@@ -44,9 +47,19 @@ async function prototypeVocabularyFor(lang: string) {
     return null;
   }
 }
+/** Sesión de estudio de demostración para la vista previa (misma condición que las dudas). */
+async function prototypeStudyFor(lesson: string): Promise<Record<string, unknown> | null> {
+  if (!import.meta.env?.DEV) return null;
+  try {
+    const mod = await import("../services/prototypeData");
+    return mod.prototypeStudyPayload(lesson);
+  } catch {
+    return null;
+  }
+}
 /** §5: transcripción y respuestas de demostración para las dudas (misma condición que el vocabulario). */
 async function prototypeDoubtDemoFor() {
-  if (!import.meta.env?.DEV) return null; // en el repo: solo DEV
+  if (!import.meta.env?.DEV) return null;
   try {
     const mod = await import("../services/prototypeData");
     return mod.prototypeDoubtDemo();
@@ -55,7 +68,7 @@ async function prototypeDoubtDemoFor() {
   }
 }
 import { knownVocabularyIn, vocabularyMatches } from "../services/vocabularySession";
-import { ExportModule, exportFieldCls, exportGhostBtnCls, exportLabelCls, exportPrimaryBtnCls } from "./study/ExportModule";
+import { ExportModule, exportFieldCls, exportLabelCls } from "./study/ExportModule";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
@@ -64,18 +77,46 @@ import { usePersistedState } from "../hooks/usePersistedState";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
 import { checkPlanState, conceptCoverage, orderPresented, pickNextCheckQuestion } from "../services/checkPlan";
+import { ensureConceptCards, ideasWithoutCard, isStudyCard, mergeDuplicateCards } from "../services/cardCoverage";
+import { spotBudgetFor, splitIdea, trustsSelfReport } from "../services/recallCue";
+import { gradePractice, parsePractice, practiceBonus, practiceFormatMeta, practiceSolutionText, summarizePracticeAnswer, type StructuredPractice as StructuredPracticeSpec, type PracticeSpec } from "../services/practiceFormats";
+import { StructuredPractice, answerFits, initialRun, type PracticeRun } from "./study/StructuredPractice";
+import { RecallIdeas } from "./study/RecallIdeas";
+import type { RecallMark } from "../services/historyService";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
-import { conceptDeckPath, kinemaTags } from "../services/ankiDesign";
+import { kinemaSlug, kinemaTags } from "../services/ankiDesign";
+import { conceptDestination, defaultConceptDeck, isOwnedDeck, deckAncestors, kinemaCardsQuery, normalizeDeckName, otherCoursesConceptsQuery, rootOf, vocabDestination, type DeckDestination } from "../services/ankiDestination";
+import { ankiBrowse, ankiConceptNotes, ankiKnownWords, loadCourseDecks, ankiReviewStates, ankiReviewToday, assignCourseDeck, moveCourseCards, rememberCourseDeck, rememberedAnki, resolveConceptDestination, sendApkgToAnki, tagCourseWithPrograms } from "../services/ankiBridge";
+import { courseProgramSlugs, isWaitingForAnki, isWaitingForObsidian } from "../services/library";
+import { VOCAB_WAITING_KEY, sendWaitingVocabulary, vocabularyWaitingKeys } from "../services/vocabularySync";
+import { vocabularySessionKey } from "../services/vocabularyService";
+import type { NoteReviewState } from "../services/ankiConnectOps";
 import {
-  buildSessionNoteMarkdown, buildSessionNotePath, buildRawSrtNoteMarkdown, buildRawSrtNotePath,
-  openObsidianNote, sessionExportKey, isSessionExported, exportSessionUpdateToObsidian,
-  DEFAULT_OBSIDIAN_EXPORT_CONFIG, exportSessionToObsidian, loadCreatedMocs,
-  loadObsidianExportConfig, loadObsidianExportedNotes, openObsidianUri,
-  buildObsidianNewUri, buildProgramMocMarkdown, buildProgramMocPath,
+  conceptCardGuid, conceptsFromAnki, conceptsFromHistory, deckCoverage, deckPromptLine, matchDeckIdeas, resolveNoteIds, sanitizeDeckMatches, selectForPrompt,
+  type DeckIndex, type DeckMatch, type DeckScope, type SentDeckIdea,
+} from "../services/deckConcepts";
+import { DeckDuplicates, type DeckDupRow } from "./study/DeckDuplicates";
+import { SyncStatus, type SyncTone } from "./study/SyncStatus";
+import { useAnkiConnection } from "../hooks/useAnkiConnection";
+import { AnkiDeckPicker } from "./study/AnkiDeckPicker";
+import {
+  openObsidianNote, sessionExportKey, isSessionExported,
+  DEFAULT_OBSIDIAN_EXPORT_CONFIG, loadCreatedMocs,
+  loadObsidianExportedNotes, openObsidianUri, buildObsidianOpenFileUri,
   saveCreatedMocs, saveObsidianExportConfig, saveObsidianExportedNotes,
   slugifyVault,
-  type ObsidianExportConfig, type ObsidianSessionData,
+  type ObsidianExportConfig, type ObsidianProgramData, type ObsidianSessionData,
 } from "../services/obsidianExport";
+import { useObsidianConnection } from "../hooks/useObsidianConnection";
+import { ObsidianFolderPicker } from "./study/ObsidianFolderPicker";
+import { courseNoteFolder, folderMovePlan, sessionNoteFileName, sessionNotePathIn, sourcesRoot, type CourseFolderRegistry } from "../services/obsidianDestination";
+import {
+  ObsidianUnavailableError, assignCourseFolder, loadCourseFolders, obsidianMoveNotes, obsidianOpenNote,
+  loadObsidianConfig, obsidianReadNote, obsidianWrites, prepareVaultIfNeeded, rememberCourseFolder, restConnectionOf,
+} from "../services/obsidianBridge";
+import { planLessonWrites, summarizeWrites, uriOptionsFor, type LessonIntent, type WriteOutcome } from "../services/obsidianWriter";
+import { sessionDataFromRecord } from "../services/obsidianSession";
+import type { LectureHistoryRecord } from "../services/historyService";
 import { initGeminiKeys, normalizeGeminiKeys, saveGeminiKeys, setGeminiKeysSync } from "../../gemini-config";
 import { toast } from "sonner";
 import { celebrate } from "./CelebrationOverlay";
@@ -115,6 +156,8 @@ interface AnkiCard {
   isHtml?: boolean;
   /** §5: guardada desde una duda sobre la lección (de refuerzo, origen «duda»). */
   doubt?: boolean;
+  /** Fase 4: su idea ya estaba en el mazo — fuera del paquete salvo «Añadir igualmente». */
+  inDeck?: boolean;
 }
 
 interface StudyContent {
@@ -127,10 +170,25 @@ interface StudyContent {
   /** Legado: ya no se genera ni se muestra (tarea genérica sin verificación). */
   quickWin?: string;
   questions: { q: string; bloom: string; difficulty: ConfidenceLevel; hint: string; answer: string; conceptRefs?: number[] }[];
-  application: { setup: string; challenge: string; solution: string; isCode: boolean };
+  application: {
+    setup: string; challenge: string; solution: string; isCode: boolean;
+    /** flowVersion 3: el mismo ejercicio en un formato corregible al momento (practiceFormats). */
+    practice?: StructuredPracticeSpec;
+  };
   interviewQ: { q: string; idealAnswer: string } | null;
   nextAction: string;
   ankiCards: AnkiCard[];
+  /** Fase 4: ideas que ya estaban en el mazo al generar la sesión (no se recalcula al restaurar). */
+  deckMatches?: DeckMatch[];
+}
+
+/** Fase 4: con qué mazo se compara la sesión al generarla (al restaurar, manda lo guardado). */
+interface DeckGenContext {
+  index: DeckIndex;
+  /** Lo que se le enseñó a la IA (sus ids m1…); vacío si no viajó nada. */
+  sent: SentDeckIdea[];
+  /** La lección, su curso y su programa (decide qué reglas valen para cada tarjeta del mazo). */
+  scope: DeckScope;
 }
 
 type StudyTranscriptResult = {
@@ -492,7 +550,7 @@ function ensureInterviewCard(content: StudyContent, objective: string): StudyCon
   return { ...content, ankiCards: [...content.ankiCards, card] };
 }
 
-function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyContent {
+function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: DeckGenContext): StudyContent {
   const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const relevance = (raw.relevance && typeof raw.relevance === "object" ? raw.relevance : {}) as Record<string, unknown>;
   const fallbackQuestions = fallback.questions;
@@ -522,8 +580,16 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
     : [];
 
   const app = (raw.application && typeof raw.application === "object" ? raw.application : {}) as Record<string, unknown>;
-  const cards = Array.isArray(raw.ankiCards)
-    ? raw.ankiCards.slice(0, 8).map((item, i) => {
+  // Hasta 8 de la IA y, aparte, las que creó Kinema (cobertura/refuerzo, al
+  // restaurar): antes un solo tope de 8 recortaba tarjetas de la lección al
+  // restaurar una sesión con refuerzos.
+  const cardId = (item: unknown) => (item && typeof item === "object" ? String((item as Record<string, unknown>).id ?? "") : "");
+  const rawCards = Array.isArray(raw.ankiCards) ? raw.ankiCards : null;
+  const limitedCards = rawCards
+    ? [...rawCards.filter((c) => !isStudyCard(cardId(c))).slice(0, 8), ...rawCards.filter((c) => isStudyCard(cardId(c))).slice(0, 8)]
+    : null;
+  const cards = limitedCards
+    ? limitedCards.map((item, i) => {
         const card = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
         const fb = fallback.ankiCards[i % Math.max(1, fallback.ankiCards.length)];
         const tagsRaw = card.tags;
@@ -553,6 +619,22 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
       })
     : [];
 
+  const finalQuestions = questions.length >= 3 ? questions : fallback.questions;
+  // Sin duplicados: mismo frente = misma nota en Anki (una pisaría a la otra).
+  // Dos tarjetas con el MISMO frente normalizado se fusionan en una, que
+  // hereda los conceptRefs de ambas (antes la segunda se perdía con sus ideas).
+  const mergedCards = mergeDuplicateCards(cards);
+  const baseCards = mergedCards.length > 0 ? mergedCards : fallback.ankiCards;
+  // Fase 4: ideas que ya están en el mazo. Al generar se deciden contra el mazo
+  // (frente, título de la idea y lo que la IA dijo con los ids que se le
+  // enviaron); al restaurar, lo guardado (determinista: no se recalcula).
+  const deckMatches = deck
+    ? matchDeckIdeas({ keyConcepts, cards: baseCards, questions: finalQuestions, claims: raw.inDeck, index: deck.index, sent: deck.sent, scope: deck.scope })
+    : sanitizeDeckMatches(raw.deckMatches, keyConcepts.length);
+  // flowVersion 3: práctica estructurada (plana en application o en application.practice).
+  // Inválida o ausente → undefined y Aplicar usa el ejercicio clásico.
+  const practice = parsePractice(app as PracticeSpec) ?? parsePractice((isRecord(app.practice) ? app.practice : null) as PracticeSpec | null) ?? undefined;
+
   return {
     relevance: {
       // -1 = sin estimación (plantilla): se conserva para no mostrar una cifra inventada.
@@ -563,12 +645,13 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
     conceptTerms,
     keyConcepts,
     // Con menos de 3 no hay comprobación posible: validateStudyPayload ya lo rechaza antes.
-    questions: questions.length >= 3 ? questions : fallback.questions,
+    questions: finalQuestions,
     application: {
       isCode: typeof app.isCode === "boolean" ? app.isCode : fallback.application.isCode,
       setup: asText(app.setup, fallback.application.setup),
       challenge: asText(app.challenge, fallback.application.challenge),
       solution: asText(app.solution, fallback.application.solution),
+      ...(practice ? { practice } : {}),
     },
     interviewQ: raw.interviewQ === null
       ? null
@@ -579,21 +662,11 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent): StudyC
           }
         : fallback.interviewQ,
     nextAction: asText(raw.nextAction, fallback.nextAction),
-    // Sin duplicados: mismo frente = misma nota en Anki (una pisaría a la otra).
-    // Red de seguridad: dos tarjetas con el MISMO frente normalizado se
-    // fusionan en una (el prompt ya pide no duplicar ideas; esto lo garantiza).
-    ankiCards: (() => {
-      const withUniqueFronts = cards.filter((c, i, arr) => arr.findIndex((o) => cardFrontKey(o.front) === cardFrontKey(c.front)) === i);
-      const seen = new Set<string>();
-      const noRepeat = withUniqueFronts.filter((c) => {
-        const key = String(c.front || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
-        if (!key) return true;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      return noRepeat.length >= 3 ? noRepeat : (noRepeat.length > 0 ? noRepeat : fallback.ankiCards);
-    })(),
+    // Cobertura: CADA idea con al menos una tarjeta real (cardCoverage). Las que
+    // ya están en el mazo cuentan como cubiertas y su tarjeta queda fuera del
+    // paquete por defecto (inDeck): Fijar lo dice y deja añadirla igualmente.
+    ankiCards: ensureConceptCards(keyConcepts, finalQuestions, baseCards, (c) => ({ ...c, type: c.type as CardType }), deckCoverage(deckMatches)),
+    ...(deckMatches.length > 0 ? { deckMatches } : {}),
   };
 }
 
@@ -1094,18 +1167,6 @@ function markQa(marker: string): void {
   } catch {}
 }
 
-function downloadFile(content: string, filename: string, mime = "text/plain;charset=utf-8"): void {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 function detectTranscriptLang(text: string): "en" | "es" | null {
   const sample = text.slice(0, 4000).toLowerCase();
   const words = sample.match(/[a-záéíóúñ]+/g) ?? [];
@@ -1164,20 +1225,36 @@ function cardTextToHtml(s: string): string {
     .replace(/\n/g, "<br>");
 }
 
-async function exportApkgFile(
+/** Mazo de destino a partir de un nombre ya decidido (registro o historial). */
+function destinationForDeck(rootDeck: string, deck: string): DeckDestination {
+  const root = rootOf({ rootDeck });
+  const clean = normalizeDeckName(deck);
+  const owned = isOwnedDeck(root, clean);
+  return { deck: clean, owned, ancestors: owned ? deckAncestors(root, clean) : [] };
+}
+
+/** El .apkg de la lección, el que se envía a Anki (fase 2: destino resuelto fuera). */
+async function buildLessonApkg(
   cards: AnkiCard[],
   course: string,
   lesson: string,
   rootDeck: string,
+  destination: DeckDestination,
   onProgress?: (msg: string) => void,
-  dcTrackSlug?: string | null,
-): Promise<string> {
+  /** Fase 5: los programas que sigues y que incluyen el curso (kinema::programa::…). */
+  programs?: string[] | null,
+  /** La lección exportada desde la Biblioteca: su URL y su plataforma (no las de la página abierta). */
+  origin?: { lessonUrl?: string; platform?: string },
+): Promise<{ data: Uint8Array; filename: string; deck: string }> {
   const root = rootDeck.trim() || "Kinema";
   // HTML de confianza que el propio prompt autoriza en front/back: si el
   // modelo lo mandó sin la marca isHtml, se repara aquí — la preview, Anki y
   // la re-exportación desde Historial pintan estructuras, no etiquetas crudas.
 
-  const lessonUrl = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
+  const here = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
+  // Desde la Biblioteca, el enlace «Repasar esta lección» es el de ESA lección (o ninguno si no consta).
+  const lessonUrl = origin ? (/^https?:/.test(origin.lessonUrl ?? "") ? String(origin.lessonUrl) : "") : here;
+  const platform = isPlatformId(origin?.platform) ? origin!.platform! : platformOf(origin ? lessonUrl || null : here || null);
   const selected = cards.filter((c) => !c.excluded);
   const spec = buildConceptSpec(
     selected.map((c) => ({
@@ -1189,29 +1266,41 @@ async function exportApkgFile(
       // §3: las de refuerzo se ordenan primero dentro de buildConceptSpec.
       reinforce: c.reinforce,
       // §5: las de duda también son de refuerzo, con su propio origen.
-      // Programa activo: tag kinema::track::<slug> en TODAS las tarjetas —
-      // en Anki una tarjeta vive en un mazo, así que el programa va por tag
-      // (un curso puede estar en varios programas sin duplicar nada).
-      tags: [
-        ...kinemaTags({ course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce, origin: c.doubt ? "duda" : c.reinforce ? "study" : undefined }),
-        ...(dcTrackSlug ? [`kinema::track::${dcTrackSlug}`] : []),
-        // Plataforma como tag (nunca como mazo): filtrable sin fragmentar el árbol.
-        ...(() => {
-          const platform = typeof window !== "undefined" && window.location.hostname.includes("datacamp") ? "datacamp" : "udemy";
-          return [`kinema/platform::${platform}`];
-        })(),
-      ],
+      // Fase 5: el programa (cada uno que sigues con este curso) y la plataforma
+      // van en etiquetas bajo kinema:: — una tarjeta vive en UN mazo (el del
+      // curso) y un curso puede estar en varios programas sin duplicar nada.
+      tags: kinemaTags({
+        course, lesson, type: c.type, aiTags: c.tags, reinforce: c.reinforce,
+        origin: c.doubt ? "duda" : c.reinforce ? "study" : undefined,
+        programs: programs ?? [], platform,
+      }),
     })),
     course,
     lesson,
     root,
     lessonUrl,
+    destination,
   );
   onProgress?.("Empaquetando tarjetas…");
   const apkg = await buildAnkiApkg(spec, onProgress, PRISM_MEDIA_FILES);
   const safe = (s: string) => s.replace(/[^a-z0-9]/gi, "_");
-  downloadApkg(apkg, `${safe(lesson)}_conceptos.apkg`);
-  return conceptDeckPath(root, course, lesson);
+  return { data: apkg, filename: `${safe(lesson)}_conceptos.apkg`, deck: destination.deck };
+}
+
+/** Solo la Biblioteca, sin AnkiConnect: el mismo paquete, como archivo. */
+async function exportApkgFile(
+  cards: AnkiCard[],
+  course: string,
+  lesson: string,
+  rootDeck: string,
+  destination: DeckDestination,
+  onProgress?: (msg: string) => void,
+  programs?: string[] | null,
+  origin?: { lessonUrl?: string; platform?: string },
+): Promise<string> {
+  const built = await buildLessonApkg(cards, course, lesson, rootDeck, destination, onProgress, programs, origin);
+  downloadApkg(built.data, built.filename);
+  return built.deck;
 }
 
 // GUID por contenido (curso|lección|[study:]front): reimportar la misma
@@ -1221,8 +1310,18 @@ async function exportApkgFile(
 // (§5) llevan "duda:" por el mismo motivo. Marcar una de IA como refuerzo
 // cambia sus etiquetas y su orden, no su GUID.
 /** Tarjetas que ejercitan lo mismo que Aplicar (refuerzo si la práctica no salió). */
+/** Fase 5 · el envío a Anki de una lección (no hay descargas: con Anki conectado llega sola). */
+type AnkiSyncState =
+  | { status: "idle" }
+  | { status: "sending"; progress: string }
+  | { status: "sent"; added: number; deck: string; tagged: number }
+  | { status: "waiting" }
+  | { status: "error"; message: string };
+
 /** Un solo aviso de Obsidian en pantalla: cada uno reemplaza al anterior. */
 const OBSIDIAN_TOAST_ID = "kx-obsidian";
+/** «a», «a y b», «a, b y c». */
+const joinEs = (items: string[]) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}` : items[0] ?? "");
 
 function isPracticeCard(c: { type: AnkiCard["type"] }): boolean {
   return c.type === "aplicacion" || c.type === "codigo" || c.type === "entrevista";
@@ -1232,14 +1331,10 @@ function stableAnkiGuid(course: string, lesson: string, card: { id?: string; fro
   // "study:" solo en las tarjetas NUEVAS de refuerzo (frente = una pregunta). Una
   // tarjeta de la lección que pasa a ser de refuerzo conserva su GUID: si no,
   // cambiar una marca o hacer la práctica tras exportar la duplicaría en Anki.
-  const extra = card.reinforce && (card.id ?? "").startsWith("study-refuerzo-");
-  const source = `${sanitizeDeckSegment(course)}|${sanitizeDeckSegment(lesson)}|${card.doubt ? "duda:" : extra ? "study:" : ""}${card.front}`;
-  let hash = 2166136261;
-  for (let i = 0; i < source.length; i += 1) {
-    hash ^= source.charCodeAt(i);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return `usb${hash.toString(36)}`;
+  // Las de cobertura (study-cobertura-q*) comparten origen con las antiguas de
+  // refuerzo (study-refuerzo-q*): misma pregunta → mismo GUID, sin duplicados.
+  // Fase 4: el cálculo vive en deckConcepts (el control de duplicados lo usa con el historial).
+  return conceptCardGuid(course, lesson, card);
 }
 
 function generateContent(objectiveId: string, custom: string, course: string, lesson: string): StudyContent {
@@ -1289,6 +1384,7 @@ function generateContent(objectiveId: string, custom: string, course: string, le
 
 // ─── Progress stepper ─────────────────────────────────────────────────────────
 function ProgressStepper({ steps, focus }: { steps: { label: string; done: boolean; active: boolean }[]; focus: number }) {
+  const { t } = useDockTheme();
   return (
     <div className="flex items-start" role="list" aria-label="Progreso de la sesión">
       {steps.map((s, i) => {
@@ -1345,7 +1441,9 @@ function ProgressStepper({ steps, focus }: { steps: { label: string; done: boole
             <span
               className="text-[10px] truncate max-w-full leading-none transition-colors"
               style={{
-                color: cur ? stepColor : s.done ? "var(--usb-fg-hi)" : "var(--usb-fg-lo)",
+                // El nombre del paso actual va en su tinta (la de STEP_META para texto): el tono
+                // del círculo (#6d4aff, #0284c7…) no llega a 4,5:1 como texto en ningún tema.
+                color: cur ? t(m.inkDark, m.inkLight) : s.done ? "var(--usb-fg-hi)" : "var(--usb-fg-lo)",
                 fontWeight: cur ? 700 : 500,
               }}
             >
@@ -1489,6 +1587,10 @@ function AnkiFlipPreview({ cards, onToggleExclude }: { cards: AnkiCard[]; onTogg
               <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300" style={{ fontWeight: 700 }}>
                 Duda{card.t ? ` · ${card.t}` : ""}
               </span>
+            ) : card.inDeck ? (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-sky-500/30 bg-sky-500/10 text-sky-300" style={{ fontWeight: 700 }} data-card-in-deck>
+                Ya en tu mazo
+              </span>
             ) : card.reinforce && (
               <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" style={{ fontWeight: 700 }}>Refuerzo</span>
             )}
@@ -1537,7 +1639,7 @@ function AnkiFlipPreview({ cards, onToggleExclude }: { cards: AnkiCard[]; onTogg
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { session?: Session; apiKeys?: string[]; vocabularyMount?: HTMLElement | null }) {
+export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMount }: { session?: Session; apiKeys?: string[]; vocabularyMount?: HTMLElement | null; ankiMount?: HTMLElement | null }) {
   const { t } = useDockTheme();
   const [phase, setPhase]             = useState<Phase>(() => {
     // Si ya hay contenido en cache o estamos en prototipo, permitir iniciar en ready si existe
@@ -1601,6 +1703,17 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [content, setContent]                       = useState<StudyContent | null>(null);
   const [confidence, setConfidence]                 = useState<ConfidenceLevel | null>(null);
   const [conceptsChecked, setConceptsChecked]       = useState<Record<number, boolean>>({});
+  // flowVersion 3: «No del todo» explícito (conceptsChecked = «Lo sabía»). Sin
+  // ninguna de las dos marcas, la idea está sin responder (cuenta como débil).
+  const [recallUnsure, setRecallUnsure]             = useState<Record<number, boolean>>({});
+  // Confirmaciones base del plan de Comprobar (0 o 1). null = sesión antigua o aún sin entrar.
+  const [spotBase, setSpotBase]                     = useState<number | null>(null);
+  // Tus últimas confirmaciones salieron bien (historial de otras lecciones).
+  const [selfReportTrusted, setSelfReportTrusted]   = useState(false);
+  // Resultado de confirmar lo que dijiste saber en ESTA sesión.
+  const spotOutcomeRef = useRef<"ok" | "fail" | null>(null);
+  // Aplicar estructurado: el estado vive aquí (sobrevive al cambiar de paso).
+  const [practiceRun, setPracticeRun]               = useState<PracticeRun | null>(null);
   const [conceptsAcknowledged, setConceptsAcknowledged] = useState(false);
   const [appAnswer, setAppAnswer]                   = useState("");
   const [appFeedback, setAppFeedback]               = useState<FeedbackState>(IDLE_FB);
@@ -1608,14 +1721,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [ankiExported, setAnkiExported]             = useState(false);
   const appRewardedRef = useRef(false);
   const [showAppHint, setShowAppHint]               = useState(false);
-  const [showAnkiGuide, setShowAnkiGuide]           = useState(false);
   const [showCardPreview, setShowCardPreview]       = useState(false);
-  const [apkgStatus, setApkgStatus]                 = useState<"idle" | "loading" | "done" | "error">("idle");
-  // v1.5.4: aviso ÚNICO tras el primer export .apkg — sin la opción
-  // «Importar cualquier configuración del mazo» los presets no llegan y los
-  // mazos caen en Default. Anki recuerda la opción: basta una vez.
-  const [importHintSeen, setImportHintSeen]         = usePersistedState<boolean>("kinema_import_hint_seen", false);
-  const [apkgProgress, setApkgProgress]             = useState("");
+  // Fase 5 · sin exportar: al terminar, las tarjetas van solas a Anki. Estado
+  // del envío de ESTA lección y si el envío automático está armado (la lección
+  // se terminó aquí, esperaba a Anki o ya estaba en Anki).
+  const [ankiSync, setAnkiSync]                     = useState<AnkiSyncState>({ status: "idle" });
+  const [ankiArmed, setAnkiArmed]                   = useState(false);
   const [showHint, setShowHint]                     = useState(false);
   const [questionAnswers, setQuestionAnswers]       = useState<Record<number, string>>({});
   const [questionFeedbacks, setQuestionFeedbacks]   = useState<Record<number, FeedbackState>>({});
@@ -1700,8 +1811,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const [showInterviewAnswer, setShowInterviewAnswer] = useState(false);
   const [oralAnswer, setOralAnswer]                 = useState("");
   const [oralFeedback, setOralFeedback]             = useState<FeedbackState>(IDLE_FB);
-  const [recallRevealed, setRecallRevealed]         = useState(false);
   const [recallNotes, setRecallNotes]               = useState("");
+  // Recuerdo libre: opcional y plegado (flowVersion 3).
+  const [freeRecallOpen, setFreeRecallOpen]         = useState(false);
   const [historyOpen, setHistoryOpen]               = useState(false);
 
   // Vocabulary export
@@ -1730,13 +1842,139 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     total: dcCtx.program.courses.length || undefined,
     description: dcCtx.program.description || undefined,
   } : undefined;
-  const aiPlatform = isDataCampSite ? "datacamp" : "udemy";
+  const aiPlatform = platformOf();
+
+  // ── Fase 2 · el mazo de este curso en Anki (fuente única: ankiDestination) ──
+  // Fijar, la exportación, la nota de Obsidian y los repasos usan este destino.
+  const dcProgramTitle = dcCtx?.activeSlug && dcCtx.program ? dcCtx.program.title : null;
+  const [ankiDest, setAnkiDest] = useState<DeckDestination | null>(null);
+  const [ankiDestNonce, setAnkiDestNonce] = useState(0);
+  useEffect(() => {
+    if (!courseName.trim()) { setAnkiDest(null); return; }
+    let alive = true;
+    void resolveConceptDestination(vocabCfg, courseName, lessonName, dcProgramTitle)
+      .then((r) => { if (alive) setAnkiDest(r.destination); })
+      .catch(() => { if (alive) setAnkiDest(null); });
+    return () => { alive = false; };
+  }, [courseName, lessonName, vocabCfg.rootDeck, dcProgramTitle, ankiDestNonce]);
+  const lessonDest: DeckDestination = ankiDest ?? conceptDestination(vocabCfg, courseName, lessonName);
+  // Mazo del curso (para contar sus repasos): fase 5, siempre el de la lección (un mazo por curso).
+  const courseDeckForDue = lessonDest.deck;
+  const anki = useAnkiConnection(true);
+  // ── Fase 4 · ¿qué ideas ya están en tu mazo? ─────────────────────────────
+  // Con Anki conectado, el mazo real (solo lectura: findNotes + notesInfo): las
+  // tarjetas del curso (la misma búsqueda que los repasos y la Biblioteca) y las
+  // demás de conceptos de Kinema; si no responde o no está conectado, lo
+  // exportado según el historial de este navegador. Qué regla vale para cada
+  // tarjeta (frente, título, IA) depende de su cercanía: deckConcepts.proximityOf.
+  const loadDeckIndex = useCallback(async (): Promise<DeckIndex> => {
+    if (!courseName.trim()) return { source: "historial", entries: [] };
+    const records = await historyService.listLectures().catch(() => [] as LectureHistoryRecord[]);
+    if (anki.ready) {
+      // Nombres de los cursos (para decir de cuál es una tarjeta de otro curso): historial y registro de mazos.
+      const registry = await loadCourseDecks().catch(() => ({}));
+      const courseNames: Record<string, string> = Object.fromEntries([
+        ...Object.entries(registry).map(([key, entry]) => [key, String((entry as { deck?: string }).deck ?? "").split("::").pop() ?? ""]),
+        ...records.map(r => [kinemaSlug(r.courseName), r.courseName]),
+      ].filter(([, name]) => name));
+      // Si Anki tarda, no se hace esperar a la sesión: se usa el historial (y Fijar lo dice).
+      // Las dos lecturas van por separado: si la de los demás cursos falla o tarda,
+      // la del curso sigue valiendo (solo se pierde la comparación entre cursos).
+      const within = <T,>(p: Promise<T>) => Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000))]);
+      const [own, otherNotes] = await Promise.all([
+        within(ankiConceptNotes(kinemaCardsQuery("course", { rootDeck: vocabCfg.rootDeck, course: courseName, courseDeck: courseDeckForDue }))),
+        within(ankiConceptNotes(otherCoursesConceptsQuery(courseName))),
+      ]);
+      if (own) {
+        const ownIds = new Set(own.map(n => n.id));
+        const others = (otherNotes ?? []).filter(n => !ownIds.has(n.id));
+        return {
+          source: "anki",
+          entries: [
+            ...conceptsFromAnki(own, records, { course: courseName, courseNames }),
+            ...conceptsFromAnki(others, records, { courseNames }),
+          ],
+        };
+      }
+    }
+    return { source: "historial", entries: conceptsFromHistory(records) };
+  }, [anki.ready, courseName, vocabCfg.rootDeck, courseDeckForDue]);
+  // La lección, su curso y (DataCamp) su programa: cuanto más cerca, más reglas valen.
+  const deckScopeFor = useCallback((course: string, lesson: string): DeckScope => ({
+    course,
+    lesson,
+    program: dcCtx?.activeSlug && dcCtx.program
+      ? { slug: dcCtx.activeSlug, courseKeys: dcCtx.program.courses.map(c => kinemaSlug(c.title)) }
+      : null,
+  }), [dcCtx?.activeSlug, dcCtx?.program]);
+  // Títulos de los programas de DataCamp vistos (slug → título): la Biblioteca
+  // agrupa también cursos que no están abiertos ahora.
+  const [programTitles, setProgramTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void chromeLocalStorage.get(["usb_dc_program_titles"])
+      .then((d) => setProgramTitles((d.usb_dc_program_titles as Record<string, string>) ?? {}))
+      .catch(() => undefined);
+    // Otra pestaña (otro curso de DataCamp) puede añadir títulos.
+    return chromeLocalStorage.onChange((changes) => {
+      if ("usb_dc_program_titles" in changes) setProgramTitles((changes.usb_dc_program_titles as Record<string, string>) ?? {});
+    });
+  }, []);
+  useEffect(() => {
+    const tracks = dcCtxRaw?.tracks ?? [];
+    if (!tracks.length) return;
+    // Se fusiona sobre lo guardado (no sobre el estado, que puede no haber cargado aún).
+    void chromeLocalStorage.get(["usb_dc_program_titles"]).then((d) => {
+      const next = { ...((d.usb_dc_program_titles as Record<string, string>) ?? {}) };
+      let changed = false;
+      for (const tr of tracks) if (tr.slug && tr.title && next[tr.slug] !== tr.title) { next[tr.slug] = tr.title; changed = true; }
+      setProgramTitles(next);
+      if (changed) return chromeLocalStorage.set({ usb_dc_program_titles: next });
+    }).catch(() => undefined);
+  }, [dcCtxRaw?.tracks]);
   const openObsidianSettings = () => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "obsidian" } }));
-  const [obsidianHelpOpen, setObsidianHelpOpen]   = useState(false);
-  const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "done" | "error">("idle");
+  // Fase 5: «waiting» = terminada sin que Obsidian respondiera (se guarda sola cuando vuelva).
+  const [obsidianStatus, setObsidianStatus]       = useState<"idle" | "saving" | "done" | "waiting" | "error">("idle");
   const [createdMocs, setCreatedMocs]             = useState<string[]>([]);
   const [exportedNotes, setExportedNotes]                    = useState<string[]>([]);
   const [obsidianExportedAt, setObsidianExportedAt]           = useState<number | null>(null);
+  // ── Fase 3 · Obsidian conectado y carpeta del curso (fuente única: obsidianDestination) ──
+  // Fijar, el guardado automático, la Biblioteca y Ajustes leen la carpeta de aquí.
+  const obsidian = useObsidianConnection(true);
+  const [courseFolders, setCourseFolders] = useState<CourseFolderRegistry>({});
+  const [courseFoldersNonce, setCourseFoldersNonce] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    void loadCourseFolders().then((r) => { if (alive) setCourseFolders(r); });
+    return () => { alive = false; };
+  }, [courseFoldersNonce]);
+  const obsidianProgramSlug = dcCtx?.activeSlug ?? null;
+  const obsidianFolder = courseNoteFolder(obsidianCfg, courseFolders, courseName, obsidianProgramSlug);
+  const obsidianNotePath = sessionNotePathIn(obsidianFolder.folder, courseName, lessonName);
+  const obsidianRestConfigured = Boolean(restConnectionOf(obsidianCfg));
+  /** Hay a dónde guardar: nombre del vault (obsidian://) o conexión directa. */
+  const hasObsidianTarget = Boolean(obsidianCfg.vaultName.trim()) || obsidianRestConfigured;
+  /** Con Obsidian conectado: ¿la nota de esta lección está en el vault? (null = no se sabe). */
+  const [vaultNote, setVaultNote] = useState<{ exists: boolean; mtime?: number } | null>(null);
+  const [vaultNoteNonce, setVaultNoteNonce] = useState(0);
+  /** Notas del curso ya guardadas (historial): para ofrecer moverlas al cambiar de carpeta. */
+  const [courseNoteCount, setCourseNoteCount] = useState(0);
+  useEffect(() => {
+    if (!obsidian.ready || confidence === null || !courseName.trim()) { setVaultNote(null); return; }
+    let alive = true;
+    void obsidianReadNote(obsidianNotePath)
+      .then((note) => { if (alive) setVaultNote({ exists: note.exists, mtime: note.mtime }); })
+      .catch(() => { if (alive) setVaultNote(null); });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obsidian.ready, confidence === null, obsidianNotePath, vaultNoteNonce]);
+  useEffect(() => {
+    if (!courseName.trim()) return;
+    let alive = true;
+    void historyService.listLectures().then((list) => {
+      if (alive) setCourseNoteCount(list.filter((r) => !r.deletedAt && r.courseId === slugify(courseName) && r.obsidianExportedAt).length);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [courseName, obsidianExportedAt, courseFoldersNonce]);
   // «Ir a la siguiente lección» (tras terminar).
   const [nextLessonStatus, setNextLessonStatus] = useState<"idle" | "going" | "failed">("idle");
   const pendingNextLessonRef = useRef<string | null>(null);
@@ -1806,7 +2044,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   useEffect(() => {
     let alive = true;
     void loadVocabConfig().then((cfg) => { if (alive) setVocabCfg(cfg); }).catch(() => undefined);
-    void loadObsidianExportConfig().then((cfg) => { if (alive) setObsidianCfg(cfg); }).catch(() => undefined);
+    // Fase 5: con la estructura de ahora (los cursos que ya tenían notas se quedan en su carpeta).
+    void loadObsidianConfig().then((cfg) => { if (alive) setObsidianCfg(cfg); }).catch(() => undefined);
     void loadCreatedMocs().then((mocs) => { if (alive) setCreatedMocs(mocs); }).catch(() => undefined);
     void loadObsidianExportedNotes().then((notes) => {
       if (!alive) return;
@@ -1814,7 +2053,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       setExportedNotes(notes);
     }).catch(() => undefined);
     const unsubscribe = chromeLocalStorage.onChange(changes => {
-      if ("obsidian_export_config" in changes) void loadObsidianExportConfig().then(config => { if (alive) setObsidianCfg(config); });
+      if ("usb_vocab_config" in changes) void loadVocabConfig().then(config => { if (alive) setVocabCfg(config); });
+      if ("usb_anki_course_decks" in changes) setAnkiDestNonce(n => n + 1);
+      if ("obsidian_export_config" in changes) void loadObsidianConfig().then(config => { if (alive) setObsidianCfg(config); });
+      if ("obsidian_course_folders" in changes) setCourseFoldersNonce(n => n + 1);
     });
     return () => { alive = false; unsubscribe(); };
   }, []);
@@ -1839,7 +2081,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     if (!content) return;
     let alive = true;
     void sendRuntimeMessage<{ ok?: boolean; due?: number }>({
-      type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, rootDeck: vocabCfg.rootDeck,
+      type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, rootDeck: vocabCfg.rootDeck, courseDeck: courseDeckForDue,
     }).then((r) => {
       if (alive && r?.ok && typeof r.due === "number") {
         setAnkiDue(r.due);
@@ -1848,7 +2090,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
     });
     return () => { alive = false; };
-  }, [content, courseName, lessonName, ankiExported, vocabCfg.rootDeck]);
+  }, [content, courseName, lessonName, ankiExported, vocabCfg.rootDeck, courseDeckForDue]);
 
   const handleSaveVocabCfg = (patch: Partial<VocabConfig>) => {
     const next = { ...vocabCfg, ...patch };
@@ -1865,12 +2107,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       lesson: lessonName,
       browse: true,
       rootDeck: vocabCfg.rootDeck,
+      courseDeck: courseDeckForDue,
       scope,
     });
     setTimeout(() => {
       setAnkiOpening(false);
     }, 1200);
-  }, [ankiOpening, courseName, lessonName, vocabCfg.rootDeck]);
+  }, [ankiOpening, courseName, lessonName, vocabCfg.rootDeck, courseDeckForDue]);
 
   // ── Verdict sound is handled centrally by celebrate() ──────────────────────
 
@@ -1921,13 +2164,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     let alive = true;
     void sendRuntimeMessage<{ ok?: boolean; due?: number }>({
       type: "USG_ANKI_DUE", course: courseName, lesson: lessonName, browse: false,
-      rootDeck: vocabCfg.rootDeck, scope: "course",
+      rootDeck: vocabCfg.rootDeck, scope: "course", courseDeck: courseDeckForDue,
     }).then((r) => {
       if (!alive) return;
       setCourseDueCount(r?.ok && typeof r.due === "number" ? r.due : null);
     });
     return () => { alive = false; };
-  }, [phase, courseName, lessonName, vocabCfg.rootDeck]);
+  }, [phase, courseName, lessonName, vocabCfg.rootDeck, courseDeckForDue]);
 
   // NO auto-advance step 3→4: el usuario lee el feedback y decide cuándo continuar
 
@@ -2052,9 +2295,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         pre.lectureKey = lectureId;
         const existing = await cacheService.get<{ payload: unknown }>(cacheKey).catch(() => null);
         if (existing?.payload) { pre.status = "done"; return; }
+        // Fase 4: lo que ya está en el mazo viaja al prompt (ids m1…) y se guarda con el mazo pre-generado.
+        const deckIndex = await loadDeckIndex().catch((): DeckIndex => ({ source: "historial", entries: [] }));
+        const deckSent = selectForPrompt(deckIndex.entries, { scope: deckScopeFor(courseName, lessonName), transcript: transcript.transcriptText ?? "" });
         const aiResult = await sendRuntimeMessage<LearningPanelResponse>({
           type: "USG_GENERATE_LEARNING_PANEL",
           apiKeys: resolvedGeminiKeys,
+          deckIdeas: deckSent.map(deckPromptLine),
           transcriptText: transcript.transcriptText,
           cueCount: transcript.cueCount,
           transcriptTruncated: Boolean(transcript.transcriptTruncated ?? transcript.truncated),
@@ -2086,6 +2333,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             objectiveId: objective.id,
             courseSlug,
             lectureId,
+            deckSent,
             at: Date.now(),
           }, 2, { type: "other" });
           pre.status = "done";
@@ -2099,7 +2347,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       }
     })();
     return pre.promise;
-  }, [apiKeys, courseName, effectiveCourseDescription, lessonName, preGenCacheKey, requestStudyTranscript, resolveGeminiKeysForStudy, sendRuntimeMessage]);
+  }, [apiKeys, courseName, effectiveCourseDescription, lessonName, preGenCacheKey, requestStudyTranscript, resolveGeminiKeysForStudy, sendRuntimeMessage, loadDeckIndex, deckScopeFor]);
 
   // Sondeo de disponibilidad: al montar, al cambiar la configuración (evento o
   // storage) y con reintento (5 s si no está lista, 30 s si lo está). Así el
@@ -2220,8 +2468,18 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       const fallbackContent = generateContent(selectedObj, customObj, courseName, lessonName);
       const resolvedGeminiKeys = await resolveGeminiKeysForStudy(apiKeys);
       const transcript = await requestStudyTranscript(22000);
+      // Fase 4: el mazo del curso ANTES de generar (y antes de que el historial
+      // de esta lección se reinicie): lo que ya está no vuelve a ser tarjeta.
+      const deckIndex = await loadDeckIndex().catch((): DeckIndex => ({ source: "historial", entries: [] }));
+      const deckScope = deckScopeFor(courseName, lessonName);
+      const deckCtx: DeckGenContext = {
+        index: deckIndex,
+        sent: selectForPrompt(deckIndex.entries, { scope: deckScope, transcript: transcript.transcriptText ?? "" }),
+        scope: deckScope,
+      };
       let newContent = fallbackContent;
       let usedFallback = false;
+      let usedDemo = false;
       let generationError = "";
 
       if (transcript.ok && transcript.transcriptText?.trim()) {
@@ -2247,16 +2505,19 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           await preState.promise.catch(() => undefined);
         }
         let prePayload: unknown = null;
+        let preDeckSent: SentDeckIdea[] = [];
         if (preState.status !== "running" && preState.objectiveText === sessionObjective) {
-          const cached = await cacheService.get<{ payload: unknown; courseSlug?: string; lectureId?: string }>(preKey).catch(() => null);
+          const cached = await cacheService.get<{ payload: unknown; courseSlug?: string; lectureId?: string; deckSent?: SentDeckIdea[] }>(preKey).catch(() => null);
           // Doble comprobación al consumir: el mazo debe ser de este curso y de
           // esta lección, no solo coincidir el nombre de la lección.
           if (cached?.payload && (cached.courseSlug ?? preCourseSlug) === preCourseSlug && (cached.lectureId ?? preLectureId) === preLectureId) {
             prePayload = cached.payload;
+            preDeckSent = Array.isArray(cached.deckSent) ? cached.deckSent : [];
           }
         }
         if (prePayload && validateStudyPayload(prePayload).length === 0) {
-          newContent = ensureInterviewCard(normalizeStudyContent(prePayload, fallbackContent), sessionObjective);
+          // Los ids de la IA se validan contra la lista que ELLA vio (la del momento de pre-generar).
+          newContent = ensureInterviewCard(normalizeStudyContent(prePayload, fallbackContent, { ...deckCtx, sent: preDeckSent }), sessionObjective);
           await cacheService.del(preKey).catch(() => undefined);
           preGenRef.current = { status: "idle", lectureKey: "", objectiveText: "", objectiveId: null, promise: null, lastAttemptAt: 0 };
           console.info("[USG][study][client] mazo pre-generado consumido (sin espera)");
@@ -2270,6 +2531,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         const aiResult = await sendRuntimeMessage<LearningPanelResponse>({
           type: "USG_GENERATE_LEARNING_PANEL",
           apiKeys: resolvedGeminiKeys,
+          deckIdeas: deckCtx.sent.map(deckPromptLine),
           transcriptText: transcript.transcriptText,
           cueCount: transcript.cueCount,
           transcriptTruncated: Boolean(transcript.transcriptTruncated ?? transcript.truncated),
@@ -2289,7 +2551,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
             console.warn("[USG][study][client] invalid learning panel payload:", payloadIssues, aiResult.payload);
             generationError = `Gemini respondió, pero faltan campos requeridos en la sesión: ${payloadIssues.slice(0, 5).join(", ")}.`;
           } else {
-          newContent = ensureInterviewCard(normalizeStudyContent(aiResult.payload, fallbackContent), sessionObjective);
+          newContent = ensureInterviewCard(normalizeStudyContent(aiResult.payload, fallbackContent, deckCtx), sessionObjective);
           }
         } else if (aiResult?.error) {
           generationError = aiResult.error;
@@ -2328,6 +2590,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
           return;
         }
         usedFallback = true;
+        // Vista previa: la lección de la demo trae su sesión completa (ideas con
+        // título, Aplicar estructurado), para ver el flujo real sin proveedor de IA.
+        const demo = await prototypeStudyFor(lessonName);
+        if (demo && validateStudyPayload(demo).length === 0) {
+          newContent = ensureInterviewCard(normalizeStudyContent(demo, fallbackContent, deckCtx), sessionObjective);
+          usedDemo = true;
+        }
       }
 
       clearInterval(iv);
@@ -2360,7 +2629,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       // este repo), se reactiva con Authorization: Bearer y sin userId en URL.
 
       toast.message("¡Material de estudio listo!", {
-        description: usedFallback
+        description: usedDemo
+          ? "Vista previa: sesión de demostración de esta lección (sin proveedor de IA)."
+          : usedFallback
           ? "Kinema usó una plantilla local porque tu proveedor de IA no completó la generación."
           : "Analizamos la lección y preparamos tu sesión de 4 pasos.",
         icon: <Rocket className="text-violet-400" size={18} />
@@ -2427,6 +2698,16 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const startIdx = restoredConfidence
       ? pickStartQuestion(restoredConfidence, restored, new Set(Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : []))
       : -1;
+    // Presupuesto de confirmaciones de ESTA sesión: el guardado al entrar en
+    // Comprobar (+1 si la confirmación falló). Sesión antigua: 1 fija, como entonces.
+    const restoredCheckedArr = Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : [];
+    const restoredSpotFailed = rec.spotBudgetBase != null && rec.questions.some((a) => {
+      const q = restored.questions.find((cq) => cq.q === a.prompt);
+      const refs = q?.conceptRefs ?? [];
+      const reviewed = Boolean(a.rating || a.feedback);
+      return reviewed && refs.length > 0 && refs.every((r) => restoredCheckedArr.includes(r)) && !a.firstTryCorrect;
+    });
+    const restoredBudget = spotBudgetFor(rec.spotBudgetBase ?? 1, restoredSpotFailed);
     const answeredIdx = rec.questions
       .filter((a) => a.prompt && ((a.answer ?? "").trim() || a.rating || a.feedback))
       .map((a) => restored.questions.findIndex((q) => q.q === a.prompt))
@@ -2438,7 +2719,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const restoredQueue = answeredIdx.length > 0
       ? answeredIdx.includes(startIdx)
         // Arranque, luego los pasos del plan y al final el reto (orderPresented).
-        ? orderPresented(restored, startIdx, [startIdx, ...byLevel], restoredChecked)
+        ? orderPresented(restored, startIdx, [startIdx, ...byLevel], restoredChecked, restoredBudget)
         : byLevel
       : startIdx >= 0
         ? [startIdx]
@@ -2474,22 +2755,44 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // La última presentada: si no se acertó, vuelve con su revisión y «¿Cómo sigues?».
     setCurrentQIdx(Math.max(0, restoredQueue.length - 1));
     // Más respondidas que el plan = la última fue el reto opcional.
-    setChallengeUsed(startIdx >= 0 && restoredQueue.length > checkPlanState(restored, restoredQueue, restoredChecked).planned);
+    setChallengeUsed(startIdx >= 0 && restoredQueue.length > checkPlanState(restored, restoredQueue, restoredChecked, restoredBudget).planned);
     setChallengeOpen(false);
     setEvaluatedAnswers({});
 
     const checkedConceptIndexes = Array.isArray(rec.checkedConceptIndexes) ? rec.checkedConceptIndexes : [];
     setConceptsChecked(Object.fromEntries(checkedConceptIndexes.map((idx) => [idx, true])));
+    // «No del todo»: guardado (flowVersion 3) o, en una sesión antigua ya
+    // reconocida, lo no marcado (entonces no marcar = no lo recordaba).
+    const legacyAck = !Array.isArray(rec.recallMarks) && (rec.conceptsAcknowledged || rec.questionsDone);
+    setRecallUnsure(Object.fromEntries(restored.keyConcepts.map((_, idx) => [idx,
+      Array.isArray(rec.recallMarks) ? rec.recallMarks[idx] === "unsure" : Boolean(legacyAck) && !checkedConceptIndexes.includes(idx),
+    ]).filter(([, v]) => v)));
+    setSpotBase(typeof rec.spotBudgetBase === "number" ? rec.spotBudgetBase : null);
+    spotOutcomeRef.current = rec.spotCheck === "ok" || rec.spotCheck === "fail" ? rec.spotCheck : null;
     setConceptsAcknowledged(Boolean(rec.conceptsAcknowledged));
     setRecallNotes(rec.recallNotes ?? "");
-    if (rec.recallNotes || rec.confidence) setRecallRevealed(true);
     // §5: las dudas de la sesión vuelven con ella (de ellas perdura la tarjeta).
-    setDoubts(sanitizeStoredDoubts(rec.doubts));
+    setDoubts(sanitizeStoredDoubts(rec.doubts, doubtCardLimit(restored.keyConcepts.length)));
     setOpenDoubtKey(null);
     setLastExportGuids(Array.isArray(rec.exportedGuids) ? rec.exportedGuids : null);
     setStudySession({ course: rec.courseName, lesson: rec.lectureName });
 
-    if (rec.codeChallenge) {
+    // Práctica estructurada: vuelve tal como quedó (respuesta, intentos, pista, solución).
+    const restoredPractice = restored.application.practice;
+    const storedStructured = rec.codeChallenge?.structuredAnswer;
+    if (restoredPractice && rec.codeChallenge?.format === restoredPractice.format && answerFits(restoredPractice, storedStructured)) {
+      // La corrección es determinista: se recalcula (qué hueco o paso estaba bien) en vez de fiarse del rating.
+      const graded = gradePractice(restoredPractice, storedStructured, restored.application.isCode);
+      setPracticeRun({
+        answer: storedStructured,
+        attempts: rec.codeChallenge.attempts ?? 1,
+        hintsUsed: rec.codeChallenge.hintsUsed ?? 0,
+        hintOpen: false,
+        last: rec.codeChallenge.rating ? { correct: graded.correct, parts: graded.parts, key: JSON.stringify(storedStructured) } : null,
+        solutionSeen: Boolean(rec.codeChallenge.solutionSeen),
+      });
+      if (rec.codeChallenge.solutionSeen) setAppSolutionSeen(true);
+    } else if (rec.codeChallenge) {
       setAppAnswer(rec.codeChallenge.answer ?? "");
       if (rec.codeChallenge.feedback || rec.codeChallenge.rating) {
         setAppFeedback({
@@ -2510,8 +2813,15 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // Exportaciones previas restauran su estado sin completar la lección:
     // terminar es una acción explícita (§1.4).
     const hasAnkiExport = Boolean(rec.ankiCards && rec.ankiCards.length > 0);
-    if (hasAnkiExport) setAnkiExported(true);
+    // «En Anki» solo si de verdad llegó (antes bastaba con tener tarjetas guardadas).
+    setAnkiExported(Boolean(rec.exportedAt));
     if (rec.obsidianExportedAt) setObsidianExportedAt(rec.obsidianExportedAt);
+    // Fase 5: lo que esperaba sigue esperando (y se envía solo); lo que ya estaba
+    // en Anki sigue al día si añades una tarjeta. Una lección terminada antes de
+    // la fase 5 y nunca enviada no se envía por su cuenta: Fijar lo ofrece.
+    setAnkiArmed(Boolean(rec.syncPending?.anki || rec.exportedAt));
+    setAnkiSync(rec.syncPending?.anki ? { status: "waiting" } : { status: "idle" });
+    setObsidianStatus(rec.syncPending?.obsidian ? "waiting" : "idle");
     // Flags de refuerzo/exclusión persistidos vuelven al contenido.
     if (hasAnkiExport && rec.ankiCards?.length) {
       const byFront = new Map(rec.ankiCards.map((c) => [c.front, c]));
@@ -2738,23 +3048,23 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setContent(null); setConfidence(null);
     setActiveSessionObjective(null);
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
+    setRecallUnsure({}); setSpotBase(null); spotOutcomeRef.current = null; setPracticeRun(null);
     setConceptsAcknowledged(false);
     setShowAppSolution(false); setShowAppHint(false); appRewardedRef.current = false; setQuestionAnswers({}); setQuestionFeedbacks({});
     setCurrentQIdx(0); setQuestionsComplete(false); setQuestionsSkipped(false); setChallengeUsed(false);
     setQuestionQueue([]); setPracticeStatus(null); setFinishedAt(null); setPracticeMode("exercise");
     setPendingLevelUp(null); setPendingUnlocked([]);
     firstTryCorrectRef.current.clear();
-    setAnkiExported(false); setShowAnkiGuide(false); setShowHint(false);
-    setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setRecallRevealed(false); setRecallNotes("");
+    setAnkiExported(false); setAnkiArmed(false); setAnkiSync({ status: "idle" }); setShowHint(false);
+    setShowInterviewAnswer(false); setOralAnswer(""); setOralFeedback(IDLE_FB); setRecallNotes(""); setFreeRecallOpen(false);
     setEvaluatedAnswers({}); setChallengeOpen(false); setAppEvaluated(""); setAppSolutionSeen(false); setOralEvaluated("");
     setDoubts([]); setOpenDoubtKey(null); setLastExportGuids(null); setStudySession(null);
     qRewardedRef.current.clear(); conceptRewardedRef.current.clear();
-    setApkgStatus("idle"); setApkgProgress("");
     setFocusStep(0); setFocusDir(1);
     sessionCelebratedRef.current = false;
     sessionStartRef.current = Date.now();
     setSessionXp(0); setLevelPickerOpen(false); setShowCardPreview(false);
-    setObsidianStatus("idle"); setObsidianExportedAt(null); setObsidianHelpOpen(false);
+    setObsidianStatus("idle"); setObsidianExportedAt(null);
     setNextLessonStatus("idle");
   };
 
@@ -2811,32 +3121,36 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setAppAnswer("");
     setAppFeedback(IDLE_FB);
     setShowAppSolution(false);
+    setPracticeRun(null);
+    spotOutcomeRef.current = null;
+    // Provisional: al entrar en Comprobar (prepareVerify) se recalcula con tus
+    // respuestas finales de Recordar — aquí aún no hay ninguna.
     setQuestionQueue(content ? [pickStartQuestion(c, content, new Set(Object.keys(conceptsChecked).filter(k => conceptsChecked[Number(k)]).map(Number)))] : []);
   };
 
-  // §1.1: marcar conceptos es autodeclarado — ya no da XP (§2).
-  const handleConceptToggle = (idx: number) => {
-    const isNowChecked = !conceptsChecked[idx];
-    setConceptsChecked(p => {
-      const next = { ...p, [idx]: isNowChecked };
-      const checkedConceptIndexes = Object.entries(next)
-        .filter(([, checked]) => checked)
-        .map(([key]) => Number(key))
-        .filter(Number.isFinite);
-      historyService.upsertLecture({
-        courseName,
-        lectureName: lessonName,
-        checkedConceptIndexes,
-        conceptsAcknowledged: false,
-        focusStep: 0,
-      }).catch(err => console.error("[history] upsert concepts", err));
-      return next;
-    });
+  // §1.1 / flowVersion 3: «Lo sabía» / «No del todo» por idea (autodeclarado,
+  // sin XP §2). «Lo sabía» = checkedConceptIndexes (lo que leen el plan de
+  // Comprobar, el refuerzo, el historial y la nota); el resto se practica.
+  const recallMarksOf = (knew: Record<number, boolean>, unsure: Record<number, boolean>): (RecallMark | null)[] =>
+    (content?.keyConcepts ?? []).map((_, i) => (knew[i] ? "knew" : unsure[i] ? "unsure" : null));
+  const handleRecallMark = (idx: number, mark: RecallMark) => {
+    const knew = { ...conceptsChecked, [idx]: mark === "knew" };
+    const unsure = { ...recallUnsure, [idx]: mark === "unsure" };
+    setConceptsChecked(knew);
+    setRecallUnsure(unsure);
+    const checkedConceptIndexes = Object.entries(knew)
+      .filter(([, checked]) => checked)
+      .map(([key]) => Number(key))
+      .filter(Number.isFinite);
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      checkedConceptIndexes,
+      recallMarks: recallMarksOf(knew, unsure),
+      conceptsAcknowledged: false,
+      focusStep: 0,
+    }).catch(err => console.error("[history] upsert recall mark", err));
     setConceptsAcknowledged(false);
-    setCurrentQIdx(0);
-    setQuestionAnswers({});
-    setQuestionFeedbacks({});
-    setShowHint(false);
   };
 
   const conceptSelectionSignature = useMemo(
@@ -2928,6 +3242,15 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const isGoodNow = fb.rating === "correct" || fb.rating === "excellent";
     const firstAttempt = !qRewardedRef.current.has(q.q);
     const improved = isGoodNow && (prevRating === "partial" || prevRating === "wrong");
+    // Confirmación de una idea que dijiste saber (todas sus ideas marcadas):
+    // su PRIMER intento calibra futuras sesiones (trustsSelfReport). Un fallo manda.
+    const qRefs = q.conceptRefs ?? [];
+    if (firstAttempt && !challengeOpen && qRefs.length > 0 && qRefs.every((r) => checkedSet.has(r))) {
+      const outcome: "ok" | "fail" = isGoodNow && spotOutcomeRef.current !== "fail" ? "ok" : "fail";
+      spotOutcomeRef.current = outcome;
+      historyService.upsertLecture({ courseName, lectureName: lessonName, spotCheck: outcome })
+        .catch(err => console.error("[history] upsert spot check", err));
+    }
     if (firstAttempt) {
       qRewardedRef.current.add(q.q);
       let gained = 0;
@@ -2957,16 +3280,24 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     setTimeout(() => scrollToBottom(), 120);
   };
 
-  // §1.2: el plan de Comprobar — una pregunta por idea que no marcaste en
-  // Recordar (+ una que sí marcaste, para confirmarla), con tope de fatiga.
+  // §1.2: el plan de Comprobar — una pregunta por idea que no tenías clara en
+  // Recordar (+ confirmaciones de lo que dijiste saber, según spotBudget), con tope de fatiga.
   // Su tamaño sale de la lección (nº de ideas) y de tus marcas (checkPlan.ts).
   const checkedSet = useMemo(
     () => new Set(Object.keys(conceptsChecked).filter(k => conceptsChecked[Number(k)]).map(Number)),
     [conceptsChecked],
   );
+  // Confirmaciones de lo que dijiste saber: base 0-1 (fijada al entrar en
+  // Comprobar) y +1 si la primera no salió a la primera (recallCue).
+  const spotFailed = useMemo(() => spotBase !== null && (challengeUsed ? queueQuestions.slice(0, -1) : queueQuestions).some((q, i) => {
+    const refs = q.conceptRefs ?? [];
+    return questionFeedbacks[i]?.status === "done" && refs.length > 0 && refs.every((r) => checkedSet.has(r)) && !firstTryCorrectRef.current.has(q.q);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [spotBase, queueQuestions, questionFeedbacks, checkedSet, challengeUsed]);
+  const spotBudget = spotBudgetFor(spotBase ?? 1, spotFailed);
   const planState = useMemo(
-    () => content ? checkPlanState(content, challengeUsed ? questionQueue.slice(0, -1) : questionQueue, checkedSet) : null,
-    [content, questionQueue, checkedSet, challengeUsed],
+    () => content ? checkPlanState(content, challengeUsed ? questionQueue.slice(0, -1) : questionQueue, checkedSet, spotBudget) : null,
+    [content, questionQueue, checkedSet, challengeUsed, spotBudget],
   );
   const planTotal = Math.max(1, planState?.total ?? 1);
   /** Siguiente pregunta del plan tras la `idx` (solo desde la última presentada, nunca en el reto). */
@@ -2978,7 +3309,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     const good = goodOverride ?? (fb?.status === "done" && (fb.rating === "correct" || fb.rating === "excellent"));
     const lastD = DIFF_ORDER.indexOf(queueQuestions[idx]?.difficulty ?? confidence ?? "partial");
     const target = Math.max(0, Math.min(DIFF_ORDER.length - 1, lastD + (good ? 1 : -1)));
-    return pickNextCheckQuestion(content, planQueue, checkedSet, target);
+    return pickNextCheckQuestion(content, planQueue, checkedSet, target, spotBudget);
   };
 
   const goNextQuestion = (idx: number) => {
@@ -3139,6 +3470,63 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // §1.3: sin banner «¡Sesión completada!» — el cierre ocurre en Fijar.
   };
 
+  // ── Aplicar estructurado (flowVersion 3): corrección al momento, sin IA ──
+  // XP: el intento (practice_attempted) una vez por lección, como siempre. El
+  // acierto (practice_correct) solo en los 2 primeros intentos y sin haber visto
+  // la solución: con 3 opciones, probar todas no es saberlo. Bonus (practiceBonus)
+  // igual para cualquier curso: a la primera y sin pista paga lo que antes solo
+  // pagaba el código.
+  const structuredPractice = content?.application.practice;
+  const practiceRunNow: PracticeRun | null = structuredPractice ? (practiceRun ?? initialRun(structuredPractice)) : null;
+  const persistStructured = (run: PracticeRun, summary: string, correct: boolean) => {
+    if (!content || !structuredPractice) return;
+    historyService.upsertLecture({
+      courseName,
+      lectureName: lessonName,
+      codeChallenge: {
+        prompt: content.application.challenge,
+        answer: summary,
+        rating: correct ? "correct" : "wrong",
+        feedback: structuredPractice.explanation || undefined,
+        answeredAt: Date.now(),
+        format: structuredPractice.format,
+        attempts: run.attempts,
+        hintsUsed: run.hintsUsed,
+        solutionSeen: run.solutionSeen || undefined,
+        mode: "exercise",
+        structuredAnswer: run.answer,
+      },
+      practiceStatus: correct ? "correct" : "done",
+      focusStep: 2,
+    }).catch(err => console.error("[history] upsert structured practice", err));
+  };
+  const handleStructuredCheck = (next: PracticeRun, result: { correct: boolean; summary: string }) => {
+    if (!content || !structuredPractice || next.solutionSeen) return;
+    setPracticeRun(next);
+    let gained = 0;
+    if (!appRewardedRef.current) {
+      appRewardedRef.current = true;
+      gained += recordXp("practice_attempted");
+    }
+    if (result.correct && practiceStatus !== "correct" && next.attempts <= 2) {
+      gained += recordXp("practice_correct", practiceBonus(next.attempts, next.hintsUsed));
+    }
+    if (gained) setSessionXp(prev => prev + gained);
+    setPracticeStatus(prev => (prev === "correct" ? prev : result.correct ? "correct" : "done"));
+    persistStructured(next, result.summary, result.correct);
+    setTimeout(() => scrollToBottom(), 120);
+  };
+  // «Ver la solución» cierra el intento (igual que en el ejercicio clásico).
+  const handleStructuredSolution = () => {
+    if (!structuredPractice || !practiceRunNow) return;
+    const next: PracticeRun = { ...practiceRunNow, solutionSeen: true, hintOpen: false };
+    setPracticeRun(next);
+    setAppSolutionSeen(true);
+    setShowAppSolution(true);
+    setPracticeStatus(prev => prev ?? "done");
+    persistStructured(next, summarizePracticeAnswer(structuredPractice, next.answer), false);
+  };
+
   // §1.7: «Saltar este paso» en Aplicar — el estudiante decide; queda como pendiente.
   const handlePracticeLater = () => {
     setPracticeStatus(prev => prev ?? "later");
@@ -3202,12 +3590,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   // C3: marca la sesión como exportada a OBSIDIAN, sin tocar exportedAt (que
   // alimenta el «en Anki» del historial). Exportar NO completa la lección:
   // terminar es la acción explícita «Terminar lección» (§1.4).
-  const persistObsidianExport = () => {
+  const persistObsidianExport = (notePath?: string) => {
     if (!content) return;
     const cards: StoredAnkiCard[] = allCardsWithReinforce.map(c => ({
       id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
       conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
-      doubt: c.doubt, isHtml: c.isHtml,
+      doubt: c.doubt, isHtml: c.isHtml, inDeck: c.inDeck,
     }));
     historyService.upsertLecture({
       courseName,
@@ -3220,16 +3608,21 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       practiceStatus: practiceStatus ?? "later",
       focusStep: 3,
       obsidianExportedAt: Date.now(),
+      // Fase 3: dónde quedó la nota, y lo que la Biblioteca necesita para rehacerla.
+      ...(notePath ? { obsidianNotePath: notePath } : {}),
+      platform: aiPlatform,
+      lessonUrl: typeof window !== "undefined" ? window.location.href : undefined,
+      dcTrackSlug: dcCtx?.activeSlug ?? undefined,
       recallNotes: recallNotes.trim() || undefined,
     }).catch(err => console.error("[history] export (obsidian)", err));
   };
 
-  const persistAnkiExport = (guids: string[]) => {
+  const persistAnkiExport = (guids: string[], deck?: string) => {
     if (!content) return;
     const cards: StoredAnkiCard[] = allCardsWithReinforce.map(c => ({
       id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
       conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
-      doubt: c.doubt, isHtml: c.isHtml,
+      doubt: c.doubt, isHtml: c.isHtml, inDeck: c.inDeck,
     }));
     historyService.upsertLecture({
       courseName,
@@ -3243,72 +3636,140 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       focusStep: 3,
       exportedAt: Date.now(),
       exportedGuids: guids,
+      ...(deck ? { ankiDeck: deck } : {}),
+      platform: aiPlatform,
+      lessonUrl: typeof window !== "undefined" ? window.location.href : undefined,
+      dcTrackSlug: dcCtx?.activeSlug ?? undefined,
       recallNotes: recallNotes.trim() || undefined,
     }).catch(err => console.error("[history] export", err));
   };
 
-  const handleExportApkg = async () => {
-    markQa("apkg-click");
-    if (!content || apkgStatus === "loading") { markQa("apkg-skip:" + (content ? "loading" : "no-content")); return; }
-    setApkgStatus("loading");
-    setApkgProgress("Iniciando…");
+  /** Fase 5 · los programas del curso para sus etiquetas: los de su historial y el de ahora (N:M). */
+  const programsForCourse = async (course: string, current?: string | null): Promise<string[]> => {
+    const records = await historyService.listLectures().catch(() => [] as LectureHistoryRecord[]);
+    return courseProgramSlugs(records.filter(r => !r.deletedAt), course, current ?? null);
+  };
+
+  /**
+   * Fase 5 · las tarjetas de la lección llegan solas a Anki al terminarla: sin
+   * exportar ni descargar. Es el MISMO .apkg de siempre (GUID, note types, CSS
+   * y presets), importado con AnkiConnect, y la confirmación es el recuento
+   * real de Anki. Las que ya tenías no se duplican ni se pisan. Si Anki no
+   * responde, la lección queda esperando (historial) y se envía sola cuando
+   * vuelva. Tras terminar, una tarjeta añadida («Añadir igualmente», una duda)
+   * se envía igual.
+   */
+  const ankiSyncingRef = useRef(false);
+  const syncLessonToAnki = async () => {
+    if (!content || ankiSyncingRef.current) return;
+    const accepted = allCardsWithReinforce.filter(c => !c.excluded);
+    if (accepted.length === 0) return;
+    ankiSyncingRef.current = true;
+    markQa("anki-sync:start");
+    setAnkiSync({ status: "sending", progress: "Preparando…" });
     try {
-      const deckName = await exportApkgFile(allCardsWithReinforce, courseName, lessonName, vocabCfg.rootDeck, (msg) => {
-        setApkgProgress(msg);
-        markQa("apkg-progress:" + msg.slice(0, 40));
-      }, dcCtx?.activeSlug);
-      const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
-      setApkgStatus("done");
+      const programs = await programsForCourse(courseName, dcCtx?.activeSlug);
+      const built = await buildLessonApkg(allCardsWithReinforce, courseName, lessonName, vocabCfg.rootDeck, lessonDest, (msg) => setAnkiSync({ status: "sending", progress: msg }), programs);
+      setAnkiSync({ status: "sending", progress: "Enviando a Anki…" });
+      const result = await sendApkgToAnki(built.data, built.filename, courseName, lessonName);
+      const guids = [...new Set([...(lastExportGuids ?? []), ...accepted.map(c => stableAnkiGuid(courseName, lessonName, c))])];
+      // Un curso puede estar en varios programas: lo que ya tenías del curso recibe también su etiqueta (solo se añade).
+      const tagged = programs.length ? await tagCourseWithPrograms(courseName, programs) : 0;
       setAnkiExported(true);
       setLastExportGuids(guids);
-      markQa("apkg-done:" + deckName.slice(0, 60));
-      // §3: el aviso de reexportación solo si el CONJUNTO de tarjetas cambió.
-      try {
-        const rec = await historyService.getLecture(slugify(courseName), slugify(lessonName));
-        const prev = rec?.exportedGuids;
-        const added = prev ? guids.filter(g => !prev.includes(g)).length : 0;
-        const removed = prev ? prev.filter(g => !guids.includes(g)).length : 0;
-        if (prev && removed > 0) {
-          toast.info("Ya exportaste otra versión de esta lección", {
-            description: "Anki conservará las anteriores. Si solo quieres las nuevas, borra el mazo de la lección antes de importar.",
-            duration: 12000,
-          });
-        } else if (prev && added > 0) {
-          // GUID estables: Anki reconoce las ya importadas y solo suma las nuevas.
-          toast.info(added === 1 ? "1 tarjeta nueva en este mazo" : `${added} tarjetas nuevas en este mazo`, {
-            description: "Las que ya importaste no se duplican: Anki reconoce cada tarjeta y solo añade las nuevas.",
-            duration: 9000,
-          });
-        }
-      } catch {}
-      persistAnkiExport(guids);
-      if (!importHintSeen) {
-        setImportHintSeen(true);
-        toast.info("Antes de importar en Anki", {
-          description: "Activa «Importar cualquier configuración del mazo» en la pantalla de importación para recibir los presets de Kinema. Anki lo recordará; solo hace falta la primera vez.",
-          duration: 12000,
-          action: { label: "Ver guía", onClick: () => setShowAnkiGuide(true) },
-        });
-      }
-      // §2: export_done una vez por lección (Anki u Obsidian) — silencioso,
-      // la celebración grande es la del cierre.
-      celebrate({ type: "anki_export", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Paquete Anki listo!", subtitle: `Mazo: ${deckName} — impórtalo con doble clic en Anki Desktop`, icon: <Package className="text-violet-400" /> });
-      setTimeout(() => setApkgStatus("idle"), 4000);
-    } catch (err) {
-      console.error("[apkg export]", err);
-      markQa("apkg-error:" + String(err instanceof Error ? err.message : err).slice(0, 80));
-      setApkgStatus("error");
-      setApkgProgress("Error al generar el .apkg. Revisa la consola.");
-      toast.error("Hubo un error al generar el paquete .apkg", {
-        icon: (
-          <div className="p-1.5 rounded-full bg-red-500/10 border border-red-500/20">
-            <X className="text-red-400 w-4 h-4" />
-          </div>
-        )
+      setAnkiSync({ status: "sent", added: result.added, deck: built.deck, tagged });
+      persistAnkiExport(guids, built.deck);
+      void historyService.markAnkiSent(slugify(courseName), slugify(lessonName), { guids, deck: built.deck });
+      void rememberCourseDeck(vocabCfg, courseName, lessonDest, dcProgramTitle).then(() => setAnkiDestNonce(n => n + 1));
+      markQa("anki-sync:done:" + result.added);
+      toast.success(result.added > 0 ? `${result.added} ${result.added === 1 ? "tarjeta nueva" : "tarjetas nuevas"} en Anki` : "Ya estaban en Anki", {
+        description: `Mazo: ${built.deck}. ${result.added > 0 ? "Las que ya tenías no se duplican ni se pisan." : "Anki no duplica las que ya tenías."}`,
+        icon: <Package className="text-violet-400" size={18} />,
       });
-      setTimeout(() => setApkgStatus("idle"), 5000);
+      celebrate({ type: "anki_export", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "¡Tarjetas en Anki!", subtitle: `Mazo: ${built.deck}`, icon: <Package className="text-violet-400" /> });
+    } catch (err) {
+      console.error("[anki sync]", err);
+      markQa("anki-sync:error");
+      // Se queda esperando: se envía sola en cuanto Anki vuelva a responder.
+      void historyService.setSyncPending(slugify(courseName), slugify(lessonName), "anki", true);
+      setAnkiSync({ status: "error", message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      ankiSyncingRef.current = false;
     }
   };
+
+  /**
+   * Fase 5 · una lección del historial a Anki (la espera y la Biblioteca): el
+   * mismo paquete que el cierre, con el mazo de la primera vez, el enlace y la
+   * plataforma de ESA lección y los programas del curso. Devuelve las notas
+   * que entraron. Lanza si Anki no responde.
+   */
+  const sendRecordToAnki = async (rec: LectureHistoryRecord): Promise<number> => {
+    const accepted = (rec.ankiCards ?? []).filter(card => !card.excluded);
+    if (accepted.length === 0) { await historyService.setSyncPending(rec.courseId, rec.lectureId, "anki", false); return 0; }
+    const dest = rec.ankiDeck
+      ? destinationForDeck(vocabCfg.rootDeck, rec.ankiDeck)
+      : (await resolveConceptDestination(vocabCfg, rec.courseName, rec.lectureName)).destination;
+    const programs = await programsForCourse(rec.courseName, rec.dcTrackSlug ?? null);
+    const cards = accepted.map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concepto" })) as unknown as AnkiCard[];
+    const built = await buildLessonApkg(cards, rec.courseName, rec.lectureName, vocabCfg.rootDeck, dest, undefined, programs, { lessonUrl: rec.lessonUrl, platform: rec.platform });
+    const result = await sendApkgToAnki(built.data, built.filename, rec.courseName, rec.lectureName);
+    if (programs.length) await tagCourseWithPrograms(rec.courseName, programs);
+    await historyService.markAnkiSent(rec.courseId, rec.lectureId, { guids: cards.map(c => stableAnkiGuid(rec.courseName, rec.lectureName, c)), deck: built.deck });
+    await rememberCourseDeck(vocabCfg, rec.courseName, dest, null);
+    return result.added;
+  };
+
+  /** Las que esperaban a Anki (de otras lecciones), ahora que responde: se envían solas. */
+  const ankiQueueRef = useRef(false);
+  const runAnkiQueue = async () => {
+    if (ankiQueueRef.current) return;
+    ankiQueueRef.current = true;
+    try {
+      const here = finishedAt !== null ? `${slugify(courseName)}::${slugify(lessonName)}` : "";
+      const waiting = (await historyService.listLectures()).filter(isWaitingForAnki).filter(r => `${r.courseId}::${r.lectureId}` !== here);
+      let lessons = 0;
+      let added = 0;
+      for (const rec of waiting) {
+        try { added += await sendRecordToAnki(rec); lessons += 1; }
+        catch (err) { console.warn("[anki queue]", err); break; }
+      }
+      const words = await sendWaitingVocabulary({ live: vocabCfg, skip: finishedAt !== null ? vocabularySessionKey(courseName, lessonName, vocabCfg.targetLang) : undefined }).catch(() => 0);
+      if (lessons > 0 || words > 0) {
+        toast.success("Lo que esperaba ya está en Anki", {
+          description: [
+            lessons > 0 ? `${lessons === 1 ? "1 lección" : `${lessons} lecciones`} (${added === 1 ? "1 tarjeta nueva" : `${added} tarjetas nuevas`})` : "",
+            words > 0 ? `${words === 1 ? "1 palabra" : `${words} palabras`}` : "",
+          ].filter(Boolean).join(" y ") + ".",
+          icon: <Package className="text-violet-400" size={18} />,
+        });
+        setAnkiDestNonce(n => n + 1);
+      }
+    } catch (err) {
+      console.warn("[anki queue]", err);
+    } finally {
+      ankiQueueRef.current = false;
+    }
+  };
+
+  // «Cambiar» en Fijar: el mazo de TODO el curso (registro único) y, con Anki
+  // conectado, lo ya importado del curso se mueve con su historial.
+  // Lo mismo desde la Biblioteca, para cualquier curso (una sola función).
+  const changeCourseDeck = async (course: string, deck: string, moveExisting: boolean, program?: string | null) => {
+    const clean = normalizeDeckName(deck);
+    if (!clean) return;
+    await assignCourseDeck(course, clean, program);
+    if (slugify(course) === slugify(courseName)) setAnkiDestNonce(n => n + 1);
+    let moved = 0;
+    if (moveExisting && anki.ready) {
+      try { moved = await moveCourseCards(vocabCfg, course, clean); }
+      catch (err) { toast.error("No se pudieron mover las tarjetas", { description: err instanceof Error ? err.message : String(err) }); }
+    }
+    toast.success("Mazo del curso actualizado", {
+      description: moved > 0 ? `${moved} tarjetas ya importadas pasaron a ${clean}, con sus repasos.` : `Las próximas tarjetas de «${course}» irán a ${clean}.`,
+    });
+  };
+  const handleChangeCourseDeck = (deck: string, moveExisting: boolean) => changeCourseDeck(courseName, deck, moveExisting, dcProgramTitle);
 
   // ── Vocabulario del curso → .apkg (note type + preset propios) ─────────────
   const generateVocabularyCandidates = async () => {
@@ -3320,17 +3781,29 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     // Lo que ya está en tu mazo (de cualquier lección o curso del idioma) y sale
     // en esta lección no se vuelve a pedir: las candidatas son todas nuevas.
     const transcriptText = transcript.transcriptText;
-    const known = await knownVocabularyIn(vocabCfg.targetLang, transcriptText);
+    const localKnown = await knownVocabularyIn(vocabCfg.targetLang, transcriptText);
+    // Fase 2: con Anki conectado, el mazo real manda (tu mazo de idioma y los
+    // que marcaste como «ya las sé»); sin Anki, el registro local de siempre.
+    const ankiWords = anki.ready
+      ? await ankiKnownWords([vocabDestination(vocabCfg, vocabCfg.targetLangLabel, courseName).deck], vocabCfg.targetLang)
+      : null;
+    const ankiSet = new Set(ankiWords ?? []);
+    const known = [
+      ...localKnown,
+      ...[...ankiSet].filter(w => !localKnown.some(k => k.word === w) && vocabularyMatches(w, transcriptText)).map(word => ({ word, phonetic: "", monolingual: "", course: "" })),
+    ];
     const knownWords = known.map(entry => entry.word).slice(0, 80);
     const response = await sendRuntimeMessage<{ ok?: boolean; payload?: unknown; error?: string }>({
       type: "USG_GENERATE_VOCABULARY", transcriptText: transcript.transcriptText, knownWords,
       course: courseName, lesson: lessonName, targetLang: vocabCfg.targetLangLabel,
-      // Candidatas según el volumen de la lección (6 corta … 20 densa); el
-      // estudiante exporta después hasta su máximo por lección.
-      baseLang: vocabCfg.baseLangLabel, minLevel: vocabCfg.minLevel, maxWords: vocabularyCandidateTarget(transcript.transcriptText),
+      // Un solo número: hasta tu máximo por lección y, si la lección es corta,
+      // menos (6 · 10 · 15 · 20 según su volumen: sin relleno).
+      baseLang: vocabCfg.baseLangLabel, minLevel: vocabCfg.minLevel, maxWords: vocabularyCandidateTarget(transcript.transcriptText ?? "", vocabCfg.maxWords),
     });
     if (!response?.ok) throw new Error(response?.error || "Para generar vocabulario, Kinema necesita la extensión y un proveedor de IA configurado. Puedes probar la demo sin exportar.");
-    const words = parseVocabularyPayload(response.payload).filter(word => vocabularyMatches(word.word, transcript.transcriptText ?? "", word.form));
+    const words = parseVocabularyPayload(response.payload)
+      .filter(word => vocabularyMatches(word.word, transcript.transcriptText ?? "", word.form))
+      .filter(word => !ankiSet.has(word.word.toLowerCase().trim().replace(/\s+/g, " ")));
     // Sin nuevas pero con palabras que ya tienes: no es un error (la lección solo repasa).
     if (!words.length && known.length === 0) throw new Error("Kinema no encontró palabras de los subtítulos con estos criterios. Revisa el idioma objetivo y la transcripción.");
     // Las que ya tienes viajan aparte: no ocupan hueco en la lista, pero el chip
@@ -3360,167 +3833,284 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       objective: getActiveObjectiveText() || undefined,
       sourceUrl: typeof window !== "undefined" ? window.location.href : undefined,
       // Plataforma real de la lección (raw/ y frontmatter la citan).
-      platform: typeof window !== "undefined" && window.location.hostname.includes("datacamp") ? "datacamp" : "udemy",
+      platform: platformOf(),
       // Programa elegido (solo DataCamp con track activo): frontmatter + MOC.
       program: dcCtx?.activeSlug && dcCtx.program ? { title: dcCtx.program.title, slug: dcCtx.program.slug } : undefined,
       // TODOS los programas del curso: la sesión se mapea a cada uno (un curso
       // puede estar en varios programas a la vez).
       programs: dcCtx?.tracks?.map(tr => tr.slug),
-      ankiDeck: conceptDeckPath(vocabCfg.rootDeck || "Kinema", courseName, lessonName),
+      ankiDeck: lessonDest.deck,
       recallNotes: recallNotes.trim() || undefined,
       weakPoints: weakPoints.length > 0 ? weakPoints : undefined,
       // Lo mismo que Anki refuerza: ideas no marcadas y la práctica que no salió.
       unrecalledIdeas: unrecalledIdeas.length > 0 ? unrecalledIdeas : undefined,
       practiceToRedo: practiceWeak || undefined,
+      // flowVersion 3: si lo que dijiste saber se confirmó, y cómo salió la práctica estructurada.
+      spotCheck: spotOutcomeRef.current ?? (spotBase === 0 && checkedSet.size > 0 ? "skip" : undefined),
+      practiceResult: structuredPractice && practiceRunNow && practiceRunNow.attempts > 0 ? {
+        format: structuredPractice.format,
+        correct: Boolean(practiceRunNow.last?.correct),
+        attempts: practiceRunNow.attempts,
+        hintsUsed: practiceRunNow.hintsUsed,
+        solutionSeen: practiceRunNow.solutionSeen,
+        answer: summarizePracticeAnswer(structuredPractice, practiceRunNow.answer),
+      } : undefined,
       doubts: doubtNotes.length > 0 ? doubtNotes : undefined,
       result: buildResultSummary(),
       content: { ...content, ankiCards: noteCards } as ObsidianSessionData["content"],
     };
   };
 
-  const handleExportObsidian = () => {
-    const data = getObsidianSessionData();
-    if (!data) return;
-    if (!obsidianCfg.vaultName.trim()) {
-      openObsidianSettings();
-      toast.error("Escribe el nombre de tu vault para exportar", {
-        description: "Obsidian lo abre y crea la nota — sin plugins ni servidores.",
-        icon: <BookMarked className="text-violet-400" size={18} />,
-      });
-      return;
-    }
-    // Ya exportada (en este vault y carpeta): obsidian://new crearía «nombre 1.md».
-    // Lo seguro es AÑADIR el repaso de hoy al final; reemplazar es la otra opción.
-    // (Ref, no state: el guard debe ver las marcas aunque el closure sea viejo.)
-    if (isSessionExported(exportedNotesRef.current, obsidianCfg, data.courseName, data.lessonName)) {
-      markQa("exportar-guard");
-      // Un solo aviso de Obsidian a la vez (mismo id): el nuevo reemplaza al anterior.
-      toast.warning("Esta lección ya tiene nota", {
+  // Programa del curso con su lista de cursos (DataCamp + track): MOC del programa.
+  const obsidianProgramData = (): ObsidianProgramData | null =>
+    dcCtx?.program && dcCtx.activeSlug ? { ...dcCtx.program, platform: platformOf() } : null;
+
+  const markObsidianNoteKey = (folder: string, data: ObsidianSessionData) => {
+    const key = sessionExportKey(obsidianCfg, data.courseName, data.lessonName, folder);
+    const next = [...new Set([...exportedNotesRef.current, key])];
+    exportedNotesRef.current = next;
+    setExportedNotes(next);
+    void saveObsidianExportedNotes(next);
+  };
+
+  const markMocsCreated = (keys: string[]) => {
+    if (keys.length === 0) return;
+    setCreatedMocs(prev => {
+      const next = [...new Set([...prev, ...keys])];
+      void saveCreatedMocs(next);
+      return next;
+    });
+  };
+
+  /** La lección ya tiene nota: añadir el repaso de hoy (seguro) o reemplazarla (borra tus cambios). */
+  const askExistingObsidianNote = (data: ObsidianSessionData) => {
+    markQa("exportar-guard");
+    // Un solo aviso de Obsidian a la vez (mismo id): el nuevo reemplaza al anterior.
+    toast.warning("Esta lección ya tiene nota", {
+      id: OBSIDIAN_TOAST_ID,
+      description: "Añadir: suma lo de hoy al final, sin tocar tu nota. Reemplazar: la rehace y borra tus cambios.",
+      // El aviso con el resultado usa el mismo id: «Añadir» deja este vivo (preventDefault) para que
+      // el resultado lo sustituya; «Reemplazar» (sonner siempre lo cierra) espera a que desaparezca,
+      // o el resultado iría a parar a un aviso que se está cerrando y no se vería.
+      action: { label: "Añadir", onClick: (event) => { event.preventDefault(); void saveLessonToObsidian(data, "append"); } },
+      cancel: { label: "Reemplazar", onClick: () => { setTimeout(() => { void saveLessonToObsidian(data, "replace"); }, 260); } },
+      duration: 12000,
+      icon: <BookMarked className="text-amber-400" size={18} />,
+    });
+  };
+
+  /** Fase 5 · Obsidian no respondía al terminar: la nota espera y se guarda sola cuando vuelva. */
+  const markObsidianWaiting = () => {
+    setObsidianStatus("waiting");
+    void historyService.setSyncPending(slugify(courseName), slugify(lessonName), "obsidian", true);
+  };
+
+  /**
+   * Guardar la lección en Obsidian (fase 3; fase 5: siempre con Obsidian
+   * conectado — al terminar la lección, «Añadir repaso» y «Reemplazar»). Qué se
+   * escribe lo decide planLessonWrites: nota, índice del curso, MOC del
+   * programa y transcripción de una vez, sabiendo si la nota existe de verdad.
+   * «auto» (al terminar): si la nota existe, se le añade el repaso; si no, se
+   * crea. Si Obsidian no responde, la nota queda esperando (no hay que exportar).
+   */
+  const saveLessonToObsidian = async (data: ObsidianSessionData, intent: LessonIntent | "auto") => {
+    const folder = obsidianFolder.folder;
+    const program = obsidianProgramData();
+    if (!obsidianRestConfigured) { openObsidianSettings(); return; }
+    setObsidianStatus("saving");
+    try {
+      let final: LessonIntent = intent === "auto" ? "create" : intent;
+      if (intent === "create" || intent === "auto") {
+        const current = await obsidianReadNote(sessionNotePathIn(folder, data.courseName, data.lessonName));
+        if (current.exists) {
+          if (intent === "create") { setObsidianStatus("idle"); askExistingObsidianNote(data); return; }
+          final = "append";
+        }
+      }
+      // La transcripción se pide solo si se va a crear la nota (raw/ no cambia).
+      const wantSrt = obsidianCfg.includeRawSrt && final !== "append";
+      const srt = wantSrt ? await fetchEnSrtForExport() : "";
+      const outcomes = await obsidianWrites(planLessonWrites({ data, config: obsidianCfg, folder, intent: final, program, srt }));
+      handleObsidianOutcomes(data, folder, outcomes);
+      if (wantSrt && !srt) toast.info("Los subtítulos aún no están disponibles: esta vez no se guardan en raw/.");
+    } catch (err) {
+      if (err instanceof ObsidianUnavailableError) { markObsidianWaiting(); return; }
+      setObsidianStatus("error");
+      toast.error("No se pudo guardar en Obsidian", {
         id: OBSIDIAN_TOAST_ID,
-        description: "Añadir: suma lo de hoy al final, sin tocar tu nota. Reemplazar: la rehace y borra tus cambios.",
-        action: { label: "Añadir", onClick: () => doExportObsidianUpdate(data) },
-        cancel: { label: "Reemplazar", onClick: () => doExportObsidian(data, false, { overwrite: true }) },
-        duration: 12000,
-        icon: <BookMarked className="text-amber-400" size={18} />,
+        description: err instanceof Error ? err.message : String(err),
+        action: { label: "Ajustar", onClick: openObsidianSettings },
+        cancel: undefined,
       });
+    }
+  };
+
+  /** Aviso tras escribir con el plugin: lo que pasó de verdad, y abrir la nota. */
+  const handleObsidianOutcomes = (data: ObsidianSessionData, folder: string, outcomes: WriteOutcome[]) => {
+    const summary = summarizeWrites(outcomes);
+    const lesson = summary.lesson;
+    if (!lesson || lesson.result === "failed") {
+      setObsidianStatus("error");
+      toast.error(summary.title, { id: OBSIDIAN_TOAST_ID, description: summary.description || "Inténtalo de nuevo.", action: undefined, cancel: undefined });
       return;
     }
-    doExportObsidian(data, true);
+    if (lesson.result === "exists") { askExistingObsidianNote(data); return; }
+    setObsidianStatus("done");
+    setObsidianExportedAt(Date.now());
+    persistObsidianExport(lesson.path);
+    void historyService.setSyncPending(slugify(data.courseName), slugify(data.lessonName), "obsidian", false);
+    markObsidianNoteKey(folder, data);
+    void rememberCourseFolder(data.courseName, folder, obsidianProgramSlug).then(() => setCourseFoldersNonce(n => n + 1));
+    // Fase 5.1: si «Preparar el vault» está encendido y aún no se hizo (p. ej.
+    // Obsidian estaba cerrado al conectar), se completa ahora, sin pisar nada.
+    void prepareVaultIfNeeded().catch(() => undefined);
+    // Índice y MOC: existen en el vault (creados ahora o ya estaban).
+    const vault = obsidianCfg.vaultName.trim();
+    markMocsCreated(outcomes.flatMap((o) => (
+      o.result === "failed" ? []
+        : o.kind === "courseMoc" ? [`${vault}|${slugifyVault(data.courseName)}`]
+          : o.kind === "programMoc" && dcCtx?.program ? [`program::${dcCtx.program.slug}`] : [])));
+    celebrate({ type: "export_done", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "Guardado en Obsidian" });
+    toast.success(summary.title, {
+      id: OBSIDIAN_TOAST_ID,
+      description: summary.description,
+      icon: <BookMarked className="text-violet-400" size={18} />,
+      duration: 6000,
+      action: { label: "Abrir", onClick: () => { void obsidianOpenNote(lesson.path).catch(() => toast.error("Obsidian no respondió")); } },
+      cancel: undefined,
+    });
+    setVaultNoteNonce(n => n + 1);
   };
 
-  // Nota ya exportada: el vault crece con un «Repaso · fecha» al final (append).
-  const doExportObsidianUpdate = (data: ObsidianSessionData) => {
-    try {
-      const result = exportSessionUpdateToObsidian(data, obsidianCfg);
-      setObsidianStatus("done");
-      setObsidianExportedAt(Date.now());
-      persistObsidianExport();
-      toast.success("Repaso añadido a la nota", { id: OBSIDIAN_TOAST_ID, description: "Al final de la nota de la lección; lo que escribiste sigue igual.", icon: <BookMarked className="text-violet-400" size={18} /> });
-      setTimeout(() => setObsidianStatus("idle"), 4000);
-    } catch (err) {
-      setObsidianStatus("error");
-      toast.error(err instanceof Error ? err.message : "No se pudo exportar a Obsidian.");
+  // «Cambiar» en Fijar y en la Biblioteca: la carpeta de TODO el curso
+  // (registro único) y, con Obsidian conectado, las notas que ya existen se
+  // mueven con el renombrado de Obsidian (actualiza los enlaces). Una sola función.
+  const changeCourseFolder = async (course: string, folder: string, moveExisting: boolean, program?: string | null) => {
+    await assignCourseFolder(course, folder, program);
+    setCourseFoldersNonce(n => n + 1);
+    let moved = 0;
+    let unsupported = false;
+    if (moveExisting && obsidian.ready) {
+      try {
+        const records = (await historyService.listLectures()).filter((r) => !r.deletedAt && r.courseId === slugify(course) && r.obsidianExportedAt);
+        const notes = records.map((r) => ({
+          lessonId: r.lectureId,
+          path: r.obsidianNotePath || sessionNotePathIn(sourcesRoot(obsidianCfg), r.courseName, r.lectureName),
+        }));
+        const plan = folderMovePlan(notes, folder);
+        const results = await obsidianMoveNotes(plan.map(({ from, to }) => ({ from, to })));
+        for (let i = 0; i < plan.length; i += 1) {
+          const rec = records.find((r) => r.lectureId === plan[i].lessonId);
+          if (!rec) continue;
+          if (results[i] === "moved") {
+            moved += 1;
+            await historyService.markObsidianSaved(rec.courseId, rec.lectureId, plan[i].to);
+            const key = `${obsidianCfg.vaultName.trim()}|${plan[i].to}`;
+            exportedNotesRef.current = [...new Set([...exportedNotesRef.current, key])];
+          } else if (results[i] === "unsupported") unsupported = true;
+        }
+        setExportedNotes(exportedNotesRef.current);
+        void saveObsidianExportedNotes(exportedNotesRef.current);
+      } catch (err) {
+        toast.error("No se pudieron mover las notas", { description: err instanceof Error ? err.message : String(err) });
+      }
     }
+    setVaultNoteNonce(n => n + 1);
+    toast.success("Carpeta del curso actualizada", {
+      id: OBSIDIAN_TOAST_ID,
+      action: undefined,
+      cancel: undefined,
+      description: unsupported
+        ? "Tu versión del plugin no puede mover notas: muévelas en Obsidian (arrastrar actualiza los enlaces) o actualiza Local REST API."
+        : moved > 0 ? `${moved} ${moved === 1 ? "nota pasó" : "notas pasaron"} a ${folder}/ (Obsidian actualizó los enlaces).` : `Las próximas notas de «${course}» irán a ${folder}/.`,
+    });
+  };
+  const handleChangeCourseFolder = (folder: string, moveExisting: boolean) => changeCourseFolder(courseName, folder, moveExisting, obsidianProgramSlug);
+
+  /**
+   * Biblioteca · guardar en Obsidian lecciones terminadas sin nota, rehechas
+   * desde el historial (obsidianSession). Con Obsidian conectado, todas de una
+   * vez; sin conexión, una (Chrome deja una URI por clic). Si la nota ya estaba
+   * en el vault, se da por guardada sin tocarla.
+   */
+  const saveHistoryLessonsToObsidian = async (records: LectureHistoryRecord[]): Promise<number> => {
+    const items = records
+      .map((rec) => ({ rec, data: sessionDataFromRecord(rec, { programTitles, includeCards: obsidianCfg.includeCards }) }))
+      .filter((x): x is { rec: LectureHistoryRecord; data: ObsidianSessionData } => Boolean(x.data));
+    if (items.length === 0) return 0;
+    const folderFor = (rec: LectureHistoryRecord) => courseNoteFolder(obsidianCfg, courseFolders, rec.courseName, rec.dcTrackSlug ?? null).folder;
+    if (obsidian.ready) {
+      let saved = 0;
+      for (const { rec, data } of items) {
+        const folder = folderFor(rec);
+        const outcomes = await obsidianWrites(planLessonWrites({ data, config: obsidianCfg, folder, intent: "create" }));
+        const lesson = outcomes[0];
+        if (lesson && (lesson.result === "created" || lesson.result === "exists")) {
+          saved += 1;
+          await historyService.markObsidianSaved(rec.courseId, rec.lectureId, lesson.path);
+          await rememberCourseFolder(rec.courseName, folder, rec.dcTrackSlug ?? null);
+        }
+      }
+      setCourseFoldersNonce(n => n + 1);
+      return saved;
+    }
+    const vault = obsidianCfg.vaultName.trim();
+    if (!vault) throw new Error("Escribe el nombre del vault en Ajustes (o conecta Obsidian).");
+    const { rec, data } = items[0];
+    const folder = folderFor(rec);
+    const [write] = planLessonWrites({ data, config: obsidianCfg, folder, intent: "create" });
+    if (isSessionExported(exportedNotesRef.current, obsidianCfg, rec.courseName, rec.lectureName, folder)) {
+      await historyService.markObsidianSaved(rec.courseId, rec.lectureId, write.note.path);
+      return 1;
+    }
+    openObsidianNote(vault, write.note, uriOptionsFor(write));
+    markObsidianNoteKey(folder, data);
+    await historyService.markObsidianSaved(rec.courseId, rec.lectureId, write.note.path);
+    await rememberCourseFolder(rec.courseName, folder, rec.dcTrackSlug ?? null);
+    setCourseFoldersNonce(n => n + 1);
+    return 1;
   };
 
-  const doExportObsidian = async (data: ObsidianSessionData, markExported: boolean, options: { overwrite?: boolean } = {}) => {
+  /**
+   * Fase 5 · las notas que esperaban a Obsidian (lecciones terminadas cuando no
+   * respondía), en cuanto responde: rehechas desde el historial, igual que en
+   * la Biblioteca. Si la nota ya existe (otra sesión de esa lección), se le
+   * añade el repaso al final; lo que escribiste no se toca.
+   */
+  const obsidianQueueRef = useRef(false);
+  const runObsidianQueue = async () => {
+    if (obsidianQueueRef.current || !obsidianRestConfigured) return;
+    obsidianQueueRef.current = true;
     try {
-      // C8: si va a viajar el SRT crudo, pedirlo ANTES de abrir la primera URI
-      // (el fetch es asíncrono y después perderíamos el gesto del clic).
-      const srt = obsidianCfg.includeRawSrt ? await fetchEnSrtForExport() : "";
-      const result = exportSessionToObsidian(data, obsidianCfg, {
-        createdMocs,
-        overwrite: options.overwrite,
-      });
-      setObsidianStatus("done");
-      // C3: exportar a Obsidian NO marca la lección como «en Anki» — estados
-      // separados. §2: XP de exportación compartido, una vez por lección.
-      setObsidianExportedAt(Date.now());
-      persistObsidianExport();
-      celebrate({ type: "export_done", silent: true, rewardKey: `export::${slugify(courseName)}::${slugify(lessonName)}`, title: "Exportado a Obsidian" });
-      // Chrome abre UN protocolo externo por clic: lo demás (índice del curso,
-      // subtítulos) se ofrece como acción propia, encadenada, cada una con su clic.
-      // Textos cortos: el aviso es estrecho y las rutas largas lo desbordaban.
-      const followUps: { label: string; pending: string; done: string; path: string; open: () => void }[] = [];
-      if (result.moc) {
-        const moc = result.moc;
-        const mocExists = createdMocs.includes(moc.key);
-        followUps.push({
-          label: mocExists ? "Actualizar índice" : "Crear índice",
-          pending: mocExists ? "Actualizar el índice del curso: un clic más." : "Falta el índice del curso: un clic más.",
-          done: "Índice del curso creado", path: moc.note.path,
-          open: () => {
-            openObsidianNote(obsidianCfg.vaultName.trim(), moc.note);
-            setCreatedMocs(prev => {
-              const next = [...new Set([...prev, moc.key])];
-              void saveCreatedMocs(next);
-              return next;
-            });
-          },
+      const here = finishedAt !== null ? `${slugify(courseName)}::${slugify(lessonName)}` : "";
+      const waiting = (await historyService.listLectures()).filter(isWaitingForObsidian).filter(r => `${r.courseId}::${r.lectureId}` !== here);
+      let saved = 0;
+      for (const rec of waiting) {
+        const data = sessionDataFromRecord(rec, { programTitles, includeCards: obsidianCfg.includeCards });
+        if (!data) { await historyService.setSyncPending(rec.courseId, rec.lectureId, "obsidian", false); continue; }
+        const folder = courseNoteFolder(obsidianCfg, courseFolders, rec.courseName, rec.dcTrackSlug ?? null).folder;
+        try {
+          let outcomes = await obsidianWrites(planLessonWrites({ data, config: obsidianCfg, folder, intent: "create" }));
+          if (outcomes[0]?.result === "exists") outcomes = await obsidianWrites(planLessonWrites({ data, config: obsidianCfg, folder, intent: "append" }));
+          const lesson = outcomes[0];
+          if (lesson && lesson.result !== "failed") {
+            saved += 1;
+            await historyService.markObsidianSaved(rec.courseId, rec.lectureId, lesson.path);
+            await rememberCourseFolder(rec.courseName, folder, rec.dcTrackSlug ?? null);
+          }
+        } catch (err) {
+          console.warn("[obsidian queue]", err);
+          break;
+        }
+      }
+      if (saved > 0) {
+        setCourseFoldersNonce(n => n + 1);
+        toast.success(saved === 1 ? "La nota que esperaba ya está en Obsidian" : `Las ${saved} notas que esperaban ya están en Obsidian`, {
+          id: OBSIDIAN_TOAST_ID, icon: <BookMarked className="text-violet-400" size={18} />, action: undefined, cancel: undefined,
         });
       }
-      // MOC del programa (career track): índice de los cursos en orden + las
-      // sesiones estudiadas (Dataview por programa_slug). Solo con programa.
-      if (dcCtx?.program && dcCtx.activeSlug) {
-        const program = dcCtx.program;
-        const programPath = buildProgramMocPath(obsidianCfg, program.title, program.slug);
-        const programKey = `program::${program.slug}`;
-        const programExists = createdMocs.includes(programKey);
-        followUps.push({
-          label: programExists ? "Actualizar MOC del programa" : "MOC del programa",
-          pending: programExists ? "Actualizar el MOC del programa: un clic más." : "Falta el MOC del programa: un clic más.",
-          done: "MOC del programa creado", path: programPath,
-          open: () => {
-            openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
-              path: programPath,
-              markdown: buildProgramMocMarkdown({ ...program, platform: "datacamp" }, { sourcesFolder: obsidianCfg.sourcesFolder, mocsFolder: obsidianCfg.mocsFolder }),
-            }, { overwrite: true }));
-            setCreatedMocs(prev => {
-              const next = [...new Set([...prev, programKey])];
-              void saveCreatedMocs(next);
-              return next;
-            });
-          },
-        });
-      }
-      if (obsidianCfg.includeRawSrt && srt) {
-        const rawPath = buildRawSrtNotePath(data.courseName, data.lessonName, { platform: "udemy" });
-        followUps.push({
-          label: "Guardar subtítulos", pending: "Faltan los subtítulos (raw/): un clic más.", done: "Subtítulos guardados en raw/", path: rawPath,
-          open: () => openObsidianUri(buildObsidianNewUri(obsidianCfg.vaultName, {
-            path: rawPath,
-            markdown: buildRawSrtNoteMarkdown(data.courseName, data.lessonName, srt, { platform: "udemy", sourceUrl: data.sourceUrl }),
-          })),
-        });
-      }
-      const folderOf = (path: string) => `${path.split("/").slice(0, -1).join("/")}/`;
-      const offer = (i: number, title: string, path: string) => {
-        const next = followUps[i];
-        toast.success(title, {
-          id: OBSIDIAN_TOAST_ID,
-          description: next ? next.pending : `En ${folderOf(path)}`,
-          icon: <BookMarked className="text-violet-400" size={18} />,
-          duration: next ? 12000 : 4000,
-          action: next ? { label: next.label, onClick: () => { next.open(); offer(i + 1, next.done, next.path); } } : undefined,
-        });
-      };
-      offer(0, "Nota creada en Obsidian", result.notePath);
-      setTimeout(() => setObsidianStatus("idle"), 4000);
-      if (markExported) {
-        const key = sessionExportKey(obsidianCfg, data.courseName, data.lessonName);
-        const next = [...new Set([...exportedNotesRef.current, key])];
-        exportedNotesRef.current = next;
-        setExportedNotes(next);
-        void saveObsidianExportedNotes(next);
-      }
-
-      // Subtítulos → raw/: se ofrecen arriba como acción propia (otro clic).
-      if (obsidianCfg.includeRawSrt && !srt) {
-        toast.info("Los subtítulos aún no están disponibles: esta vez no se guardan en raw/.");
-      }
-    } catch (err) {
-      setObsidianStatus("error");
-      toast.error(err instanceof Error ? err.message : "No se pudo exportar a Obsidian.");
+    } finally {
+      obsidianQueueRef.current = false;
     }
   };
 
@@ -3543,48 +4133,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         }
       }, 5000);
     });
-  };
-
-  const handleCopyObsidianMarkdown = async () => {
-    const data = getObsidianSessionData();
-    if (!data) { markQa("copy-skip:no-content"); return; }
-    markQa("copy-click");
-    const markdown = buildSessionNoteMarkdown(data, obsidianCfg);
-    // writeText falla silencioso en algunos contextos de content script:
-    // el fallback execCommand copia con la activación del click.
-    try {
-      await navigator.clipboard.writeText(markdown);
-    } catch {
-      const area = document.createElement("textarea");
-      area.value = markdown;
-      area.style.position = "fixed";
-      area.style.opacity = "0";
-      document.body.appendChild(area);
-      area.focus();
-      area.select();
-      try {
-        if (!document.execCommand("copy")) throw new Error("execCommand(copy) devolvió false");
-      } catch {
-        toast.error("No se pudo copiar el Markdown", { description: "Usa «Descargar .md» como alternativa." });
-        return;
-      } finally {
-        area.remove();
-      }
-    }
-    toast.success("Markdown copiado", { description: "Pégalo en Obsidian donde quieras (Ctrl+V)." });
-  };
-
-  const handleDownloadObsidianMarkdown = () => {
-    const data = getObsidianSessionData();
-    if (!data) return;
-    try {
-      const path = buildSessionNotePath(obsidianCfg, courseName, lessonName);
-      downloadFile(buildSessionNoteMarkdown(data, obsidianCfg), path.split("/").pop() || "sesion.md", "text/markdown;charset=utf-8");
-    } catch (error) {
-      toast.error("No se pudo descargar la nota", { description: error instanceof Error ? error.message : "Inténtalo de nuevo." });
-      return;
-    }
-    toast.success("Nota .md descargada", { description: "Muévela a la carpeta del vault si no la guardaste ahí." });
   };
 
   const handleSaveObsidianCfg = (patch: Partial<ObsidianExportConfig>) => {
@@ -3633,6 +4181,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const goToStep = (target: number, force = false) => {
     if (target < 0 || target > 3) return;
     if (!force && !stepUnlocked[target as 0|1|2|3]) return;
+    // Salir de Recordar (botón, «Siguiente» o la barra de pasos): Comprobar se
+    // prepara con tus respuestas FINALES de Recordar.
+    if (focusStep === 0 && target >= 1) prepareVerify();
     // Reset scroll ANTES del re-render — evita que AnimatePresence empuje hacia abajo
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setFocusDir(target > focusStep ? 1 : -1);
@@ -3646,22 +4197,48 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     }
   };
 
-  // §1.1: el CTA del paso Recordar — solo el toque de nivel bloquea.
-  const handleGoVerify = () => {
+  // Lo que pasa al entrar en Comprobar. Si aún no revisaste ninguna respuesta:
+  //  · la primera pregunta se elige con tus marcas FINALES (antes se elegía al
+  //    tocar el nivel, cuando aún no había ninguna marca);
+  //  · se fija cuántas confirmaciones pide el plan (0 si tus últimas
+  //    autoevaluaciones fueron fiables, 1 si no).
+  const prepareVerify = () => {
+    if (!content) return;
     const checkedConceptIndexes = Object.entries(conceptsChecked)
       .filter(([, checked]) => checked)
       .map(([key]) => Number(key))
       .filter(Number.isFinite);
+    const checked = new Set(checkedConceptIndexes);
+    const fresh = !queueQuestions.some((_, i) => questionFeedbacks[i]?.status === "done");
+    let base = spotBase;
+    if (fresh) {
+      base = selfReportTrusted ? 0 : 1;
+      setSpotBase(base);
+      if (confidence) {
+        const start = pickStartQuestion(confidence, content, checked);
+        if (questionQueue.length !== 1 || questionQueue[0] !== start) {
+          setQuestionQueue([start]);
+          setCurrentQIdx(0);
+          setQuestionAnswers({});
+          setEvaluatedAnswers({});
+          setShowHint(false);
+        }
+      }
+    }
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
       checkedConceptIndexes,
+      recallMarks: recallMarksOf(conceptsChecked, recallUnsure),
       conceptsAcknowledged: true,
       recallNotes: recallNotes.trim() || undefined,
-      focusStep: 1,
+      ...(fresh ? { spotBudgetBase: base ?? 1, ...(base === 0 && checked.size > 0 ? { spotCheck: "skip" as const } : {}) } : {}),
     }).catch(err => console.error("[history] upsert concept acknowledgement", err));
-    goToStep(1);
+    setConceptsAcknowledged(true);
   };
+
+  // §1.1: el CTA del paso Recordar — solo el toque de nivel bloquea.
+  const handleGoVerify = () => goToStep(1);
 
   const conceptsMarkedCount = Object.values(conceptsChecked).filter(Boolean).length;
 
@@ -3763,6 +4340,22 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
     return () => { alive = false; };
   }, []);
 
+  // Calibración progresiva: tus confirmaciones en OTRAS lecciones (de la más
+  // reciente a la más antigua) deciden si esta sesión pide confirmar lo que
+  // dices saber. Una lectura por sesión, no por render.
+  const hasContent = content !== null;
+  useEffect(() => {
+    if (!hasContent || !courseName.trim() || !lessonName.trim()) return;
+    let alive = true;
+    const here = `${slugify(courseName)}::${slugify(lessonName)}`;
+    historyService.listLectures().then((list) => {
+      if (!alive) return;
+      const recent = list.filter((l) => `${l.courseId}::${l.lectureId}` !== here && l.spotCheck).slice(0, 6).map((l) => l.spotCheck);
+      setSelfReportTrusted(trustsSelfReport(recent));
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [hasContent, courseName, lessonName]);
+
   // Solo con la sesión abierta, sin terminar y del vídeo que se está viendo: la
   // respuesta se apoya en la transcripción del vídeo abierto y se guarda en SU lección.
   // Tras «Ir a la siguiente lección»: en cuanto Udemy abre otra, Study la prepara.
@@ -3801,6 +4394,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   };
 
   const savedDoubts = savedDoubtCount(doubts);
+  // Tope de tarjetas de duda: 2, o 3 en una lección densa (6+ ideas).
+  const maxDoubtCards = doubtCardLimit(content?.keyConcepts.length ?? 0);
   const doubtCtx = (kind: LessonDoubtKind, anchor: string, extra?: Partial<LessonDoubtContext>): LessonDoubtContext => ({
     course: courseName,
     lesson: lessonName,
@@ -3819,9 +4414,18 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   const questionDoubtCtx = (i: number) => doubtCtx("question", queueQuestions[i]?.q ?? "", {
     studentAnswer: questionAnswers[i], feedback: questionFeedbacks[i]?.content,
   });
-  const practiceDoubtCtx = () => doubtCtx("practice", content?.application.challenge ?? "", {
-    studentAnswer: appAnswer, feedback: appFeedback.content,
-  });
+  const practiceDoubtCtx = () => doubtCtx("practice", content?.application.challenge ?? "", structuredPractice && practiceRunNow
+    ? {
+        // La duda sobre el ejercicio estructurado lleva lo que respondiste y la clave.
+        studentAnswer: practiceRunNow.attempts > 0 ? summarizePracticeAnswer(structuredPractice, practiceRunNow.answer) : "",
+        // La clave solo viaja si el intento ya está cerrado: la duda no debe chivar la respuesta.
+        feedback: !practiceRunNow.last
+          ? undefined
+          : practiceRunNow.last.correct || practiceRunNow.solutionSeen
+            ? `${practiceRunNow.last.correct ? "Correcto" : "Vio la solución"}. Solución: ${practiceSolutionText(structuredPractice)}${structuredPractice.explanation ? ` — ${structuredPractice.explanation}` : ""}`
+            : "Incorrecto (aún puede intentarlo: no le des la respuesta, ayúdale a entender por qué).",
+      }
+    : { studentAnswer: appAnswer, feedback: appFeedback.content });
   // El panel pertenece a un ancla de un paso: al cambiar de paso, de pregunta o
   // de lección (o al cerrarse la sesión), se cierra.
   useEffect(() => { setOpenDoubtKey(null); }, [focusStep, currentQIdx, courseName, lessonName, doubtsAvailable]);
@@ -3838,15 +4442,19 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   }));
 
 
-  // ── §3: conceptos débiles → tarjetas de refuerzo (máx. 2 nuevas) ──────────
+  // ── §3: conceptos débiles → sus tarjetas van primero (refuerzo) ───────────
+  // La cobertura ya garantiza una tarjeta por idea (cardCoverage, al normalizar):
+  // aquí solo se MARCAN y PRIORIZAN. Crear una tarjeta nueva queda como red de
+  // seguridad para una idea sin ninguna (datos antiguos sin pregunta propia).
   // Lo débil sale de las tres fases: ideas no marcadas (Recordar), preguntas
   // falladas (Comprobar) y la práctica intentada sin acierto o con la solución
   // vista (Aplicar → sus tarjetas de aplicación/código/entrevista van primero).
   // Saltar la práctica no es evidencia de nada: no refuerza.
   const practiceWeak = practiceStatus !== "correct" && (practiceStatus === "done" || appSolutionSeen);
-  const reinforcePlan = useMemo(() => {
-    if (!content) return [];
+  // Ideas que hoy no salieron: «No del todo» (o sin responder) en Recordar y lo fallado en Comprobar.
+  const weakIdeas = useMemo(() => {
     const weak = new Set<number>();
+    if (!content) return weak;
     content.keyConcepts.forEach((_, i) => { if (!conceptsChecked[i]) weak.add(i); });
     queueQuestions.forEach((q, i) => {
       const fb = questionFeedbacks[i];
@@ -3854,25 +4462,32 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         (q.conceptRefs ?? []).forEach(r => weak.add(r));
       }
     });
+    return weak;
+  }, [content, conceptsChecked, queueQuestions, questionFeedbacks]);
+  const reinforcePlan = useMemo(() => {
+    if (!content) return [];
+    const weak = weakIdeas;
     const cards = content.ankiCards.map(c => ({
       ...c,
       reinforce: (c.conceptRefs ?? []).some(r => weak.has(r)) || (practiceWeak && isPracticeCard(c)) || Boolean(c.reinforce),
     }));
     const covered = new Set(cards.filter(c => c.reinforce).flatMap(c => c.conceptRefs ?? []));
-    const uncoveredWeak = new Set([...weak].filter(i => !covered.has(i)));
+    // Fase 4: una idea que ya está en el mazo no recibe tarjeta nueva (ni de refuerzo).
+    const inDeckIdeas = deckCoverage(content.deckMatches ?? []).ideas;
+    const uncoveredWeak = new Set([...weak].filter(i => !covered.has(i) && !inDeckIdeas.has(i)));
     if (uncoveredWeak.size === 0) return cards;
-    // Máx. 2 en TOTAL: las que ya pasaron al contenido (efecto de abajo) cuentan.
-    let added = cards.filter(c => c.id.startsWith("study-refuerzo-")).length;
+    // Sin tope fijo: como mucho una por idea débil sin tarjeta, y solo desde una
+    // pregunta real de la lección (nunca texto inventado).
     const extras: AnkiCard[] = [];
-    for (const q of queueQuestions) {
-      if (added >= 2) break;
+    for (const q of content.questions) {
+      if (uncoveredWeak.size === 0) break;
       const hits = (q.conceptRefs ?? []).filter(r => uncoveredWeak.has(r));
       if (hits.length === 0) continue;
       const qIdx = content.questions.findIndex(cq => cq.q === q.q);
       const id = `study-refuerzo-q${qIdx}`;
       // Id estable por pregunta (no por posición): con la cola creciendo
       // (consolidación, reto) dos refuerzos distintos no pueden compartir id.
-      if (cards.some(c => c.id === id)) continue;
+      if (cards.some(c => c.id === id || c.id === `study-cobertura-q${qIdx}` || cardFrontKey(c.front) === cardFrontKey(q.q))) continue;
       extras.push({
         id,
         type: "concepto",
@@ -3884,11 +4499,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         isHtml: true,
       });
       hits.forEach(r => { uncoveredWeak.delete(r); covered.add(r); });
-      added += 1;
     }
     return [...extras, ...cards];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, conceptsChecked, queueQuestions, questionFeedbacks, practiceWeak]);
+  }, [content, weakIdeas, practiceWeak]);
 
   // El contenido exportable lleva los flags del plan de refuerzo.
   const exportCards: AnkiCard[] = content
@@ -3920,7 +4534,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   // ── §5b: dudas frente al mazo ─────────────────────────────────────────────
   // Mismo frente = mismo GUID en Anki = una nota pisaría a la otra: una duda no
   // puede guardar una tarjeta que ya está en el mazo (de IA, de refuerzo o de duda).
-  const deckFrontKeys = new Set(allCardsWithReinforce.filter(c => !c.excluded).map(c => cardFrontKey(c.front)));
+  // Tampoco una cuyo frente es el de una tarjeta que ya tenías (las coincidencias del mazo).
+  const deckFrontKeys = new Set([
+    ...allCardsWithReinforce.filter(c => !c.excluded).map(c => cardFrontKey(c.front)),
+    ...(content?.deckMatches ?? []).map(m => cardFrontKey(m.front)),
+  ].filter(Boolean));
   const isInDeck = (front: string) => deckFrontKeys.has(cardFrontKey(front));
   const renderDoubtPanel = (ctx: LessonDoubtContext) => {
     const key = doubtThreadId(ctx.kind, ctx.anchor);
@@ -3931,6 +4549,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
         ctx={ctx}
         thread={doubts.find(t => t.id === key) ?? null}
         savedCount={savedDoubts}
+        maxCards={maxDoubtCards}
         isInDeck={isInDeck}
         getTranscript={getDoubtTranscript}
         demoAnswer={doubtDemo?.answerFor ?? null}
@@ -3955,27 +4574,167 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
   })();
   const addDoubtCardFromFijar = (thread: LessonDoubtThread, at: number) => {
     const turn = thread.turns.find(x => x.at === at);
-    if (!turn?.card || savedDoubts >= MAX_DOUBT_CARDS || isInDeck(turn.card.front)) return;
+    if (!turn?.card || savedDoubts >= maxDoubtCards || isInDeck(turn.card.front)) return;
     const snapshot = snapshotDoubtCard(turn);
     if (snapshot) handleDoubtChange(updateDoubtTurn(thread, at, snapshot));
   };
 
-  // ── §1.4: «Terminar lección» — siempre disponible, sin exportar ───────────
+  // ── Fase 4 · ideas que ya estaban en el mazo ──────────────────────────────
+  // Su tarjeta de hoy queda fuera del paquete (inDeck): Fijar lo dice y deja
+  // añadirla igualmente. Con Anki conectado, de las que hoy no salieron se lee
+  // su estado real (solo lectura) y «Repasar hoy en Anki» pone para hoy las que
+  // están en repaso — SOLO al pulsarlo (setDueDate "0": conserva el intervalo).
+  const [deckReview, setDeckReview] = useState<{ states: NoteReviewState[]; noteIdByIdea: Record<number, number> } | null>(null);
+  const [deckReviewBusy, setDeckReviewBusy] = useState(false);
+  const [deckReviewNonce, setDeckReviewNonce] = useState(0);
+  const weakDeckMatches = (content?.deckMatches ?? []).filter(m => m.idea >= 0 && weakIdeas.has(m.idea));
+  const weakDeckKey = weakDeckMatches.map(m => `${m.idea}:${m.noteId ?? ""}`).join(",");
+  useEffect(() => {
+    // Se conserva lo último leído hasta que llega lo nuevo (sin parpadeo al refrescar).
+    if (focusStep !== 3 || !anki.ready || !weakDeckKey) { setDeckReview(null); return; }
+    let alive = true;
+    void (async () => {
+      // Sin id de nota (la sesión se comparó con el historial): se busca en Anki por su frente.
+      const missing = weakDeckMatches.filter(m => !m.noteId);
+      const notes = missing.length === 0 ? []
+        : [
+          ...(missing.some(m => !m.course) ? (await ankiConceptNotes(kinemaCardsQuery("course", { rootDeck: vocabCfg.rootDeck, course: courseName, courseDeck: courseDeckForDue }))) ?? [] : []),
+          ...(missing.some(m => m.course) ? (await ankiConceptNotes(otherCoursesConceptsQuery(courseName))) ?? [] : []),
+        ];
+      const noteIdByIdea = resolveNoteIds(weakDeckMatches, notes, courseName);
+      const ids = [...new Set(Object.values(noteIdByIdea))];
+      const states = ids.length ? await ankiReviewStates(ids) : [];
+      if (alive && states) setDeckReview({ states, noteIdByIdea });
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusStep, anki.ready, weakDeckKey, deckReviewNonce, courseName]);
+  const deckNoteIdOf = (m: DeckMatch) => m.noteId ?? deckReview?.noteIdByIdea[m.idea];
+  const deckStateOf = (m: DeckMatch) => {
+    const id = deckNoteIdOf(m);
+    return id ? deckReview?.states.find(st => st.noteId === id)?.state : undefined;
+  };
+  const deckReviewTargets = anki.ready ? weakDeckMatches.filter(m => !m.rescheduledAt && deckStateOf(m) === "review") : [];
+  const handleDeckReviewToday = async () => {
+    if (!content || deckReviewBusy || deckReviewTargets.length === 0) return;
+    const targets = deckReviewTargets;
+    const ids = [...new Set(targets.map(deckNoteIdOf).filter((id): id is number => typeof id === "number"))];
+    setDeckReviewBusy(true);
+    try {
+      const result = await ankiReviewToday(ids);
+      const changed = new Set(result.changed);
+      const done = targets.filter(m => changed.has(deckNoteIdOf(m) ?? -1));
+      const titleOf = (m: DeckMatch) => `«${splitIdea(content.keyConcepts[m.idea] ?? "").title}»`;
+      if (done.length > 0) {
+        const now = Date.now();
+        const doneIdeas = new Set(done.map(m => m.idea));
+        const nextMatches = (content.deckMatches ?? []).map(m => doneIdeas.has(m.idea) ? { ...m, rescheduledAt: now } : m);
+        const next = { ...content, deckMatches: nextMatches };
+        setContent(prev => prev ? { ...prev, deckMatches: nextMatches } : prev);
+        // Queda en el historial (y en la nota): la tarjeta que ya tenías se adelantó a hoy.
+        historyService.upsertLecture({ courseName, lectureName: lessonName, studyContent: next as StoredStudyContent })
+          .catch(err => console.error("[history] deck reschedule", err));
+      }
+      const skipped = targets.filter(m => !changed.has(deckNoteIdOf(m) ?? -1));
+      toast.success(done.length > 0
+        ? `${result.cards === 1 ? "1 tarjeta" : `${result.cards} tarjetas`} para hoy en Anki`
+        : "Ninguna tarjeta cambió", {
+        description: [
+          done.length > 0 ? `${joinEs(done.map(titleOf))}: ${done.length === 1 ? "conserva su historial y Anki calcula" : "conservan su historial y Anki calcula"} el próximo intervalo con tu respuesta.` : "",
+          skipped.length > 0 ? `${joinEs(skipped.map(titleOf))}: ya no estaba${skipped.length === 1 ? "" : "n"} en repaso al comprobarlo, así que no se tocó.` : "",
+        ].filter(Boolean).join(" "),
+        icon: <Repeat2 className="text-emerald-400" size={18} />,
+        duration: 9000,
+      });
+      setDeckReviewNonce(n => n + 1);
+    } catch (err) {
+      toast.error("Anki no aceptó el cambio", { description: `${err instanceof Error ? err.message : String(err)}. Las tarjetas siguen como estaban.` });
+    } finally {
+      setDeckReviewBusy(false);
+    }
+  };
+
+  // ── Fase 5 · lo que llega solo ──────────────────────────────────────────
+  // Tarjetas aceptadas de esta lección que aún no están en Anki.
+  const unsentCards = content && finishedAt !== null
+    ? allCardsWithReinforce.filter(c => !c.excluded && !(lastExportGuids ?? []).includes(stableAnkiGuid(courseName, lessonName, c))).length
+    : 0;
+  // Terminada (o reabierta esperando): con Anki conectado se envía; sin Anki, espera.
+  useEffect(() => {
+    if (!ankiArmed || finishedAt === null || unsentCards === 0) return;
+    if (ankiSync.status === "sending" || ankiSync.status === "error") return;
+    if (!anki.ready) {
+      if (ankiSync.status !== "waiting") {
+        setAnkiSync({ status: "waiting" });
+        void historyService.setSyncPending(slugify(courseName), slugify(lessonName), "anki", true);
+      }
+      return;
+    }
+    const timer = setTimeout(() => { void syncLessonToAnki(); }, 500);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ankiArmed, finishedAt, unsentCards, anki.ready, ankiSync.status]);
+  // Anki volvió a responder tras un fallo: se reintenta una vez (sin bucles: un fallo nuevo vuelve a «error»).
+  const ankiStatusAt = anki.status;
+  useEffect(() => {
+    if (anki.ready && ankiSync.status === "error") setAnkiSync({ status: "waiting" });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ankiStatusAt]);
+  // La nota que esperaba a Obsidian, en cuanto responde.
+  useEffect(() => {
+    if (!obsidian.ready || obsidianStatus !== "waiting" || finishedAt === null) return;
+    const data = getObsidianSessionData();
+    if (data) void saveLessonToObsidian(data, "auto");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obsidian.ready, obsidianStatus, finishedAt]);
+  // Lo que esperaba de OTRAS lecciones, en cuanto Anki u Obsidian responden.
+  useEffect(() => { if (anki.ready) void runAnkiQueue(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anki.ready]);
+  useEffect(() => { if (obsidian.ready) void runObsidianQueue(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obsidian.ready]);
+  // Mientras algo espera, se vuelve a comprobar cada minuto (sin pedir permisos nuevos a Anki).
+  const [waitingElsewhere, setWaitingElsewhere] = useState<{ anki: number; obsidian: number }>({ anki: 0, obsidian: 0 });
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const records = await historyService.listLectures().catch(() => [] as LectureHistoryRecord[]);
+      const words = await vocabularyWaitingKeys().catch(() => [] as string[]);
+      if (alive) setWaitingElsewhere({ anki: records.filter(isWaitingForAnki).length + words.length, obsidian: records.filter(isWaitingForObsidian).length });
+    };
+    void load();
+    const off = historyService.onChanged(() => { void load(); });
+    const offStorage = chromeLocalStorage.onChange((changes) => { if (VOCAB_WAITING_KEY in changes) void load(); });
+    return () => { alive = false; off(); offStorage(); };
+  }, []);
+  const ankiWaits = (waitingElsewhere.anki > 0 || ankiSync.status === "waiting") && !anki.ready;
+  const obsidianWaits = (waitingElsewhere.obsidian > 0 || obsidianStatus === "waiting") && obsidianRestConfigured && !obsidian.ready;
+  useEffect(() => {
+    if (!ankiWaits && !obsidianWaits) return;
+    const timer = setInterval(() => {
+      if (ankiWaits) void rememberedAnki().then((yes) => { if (yes) void anki.connect(); });
+      if (obsidianWaits) void obsidian.connect();
+    }, 60_000);
+    return () => clearInterval(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ankiWaits, obsidianWaits]);
+
+  // ── §1.4 · «Terminar lección» — siempre disponible. Fase 5: sin exportar ──
+  // Al terminar, todo llega solo a lo que tengas conectado: las tarjetas y las
+  // palabras a Anki (efecto de abajo y VocabularyPanel) y la nota a Obsidian.
+  // Lo que no responda queda esperando y se envía solo cuando vuelva.
   const handleFinishLesson = () => {
     if (finishedAt) return;
     const now = Date.now();
     setFinishedAt(now);
-    // «Guardar automáticamente» en Obsidian: al terminar (la nota ya lleva todo)
-    // y dentro de este clic (Chrome exige un gesto para abrir Obsidian). Si la
-    // lección ya tenía nota, se le añade el repaso de hoy (no se pisa).
-    if (obsidianCfg.autoExport && obsidianCfg.vaultName.trim()) {
+    setAnkiArmed(true);
+    // Obsidian conectado: la nota (o, si ya existía, el repaso de hoy al final), sin diálogos.
+    if (obsidianRestConfigured) {
       const data = getObsidianSessionData();
       if (data) {
-        if (isSessionExported(exportedNotesRef.current, obsidianCfg, courseName, lessonName)) doExportObsidianUpdate(data);
-        else void doExportObsidian(data, true);
+        if (obsidian.ready) void saveLessonToObsidian(data, "auto");
+        else markObsidianWaiting();
       }
     }
-    const guids = allCardsWithReinforce.filter(c => !c.excluded).map(c => stableAnkiGuid(courseName, lessonName, c));
     historyService.upsertLecture({
       courseName,
       lectureName: lessonName,
@@ -3989,14 +4748,17 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       ankiCards: allCardsWithReinforce.map(c => ({
         id: c.id, front: c.front, back: c.back, tags: c.tags, type: c.type,
         conceptRefs: c.conceptRefs, reinforce: c.reinforce, excluded: c.excluded,
-        doubt: c.doubt, isHtml: c.isHtml,
+        doubt: c.doubt, isHtml: c.isHtml, inDeck: c.inDeck,
       })),
       ankiCardsCount: allCardsWithReinforce.filter(c => !c.excluded).length,
-      // Programa elegido (solo DataCamp): la re-exportación desde el Historial
-      // lleva el tag kinema::track igual que la del cierre.
+      // Programa elegido (solo DataCamp): el envío desde la espera o la Biblioteca
+      // lleva la etiqueta kinema::programa igual que el del cierre.
       dcTrackSlug: dcCtx?.activeSlug ?? undefined,
-      // Lo realmente exportado (no lo añadido después, p. ej. una tarjeta de duda).
-      exportedGuids: lastExportGuids ?? (ankiExported || obsidianExportedAt ? guids : undefined),
+      // Fase 3: la nota rehecha desde la Biblioteca cita la plataforma y la URL reales.
+      platform: aiPlatform,
+      lessonUrl: typeof window !== "undefined" ? window.location.href : undefined,
+      // Lo que de verdad está en Anki (lo marca el envío: markAnkiSent).
+      exportedGuids: lastExportGuids ?? undefined,
     }).catch(err => console.error("[history] finish", err));
     // XP de cierre + la ÚNICA celebración grande, con nivel/logros dentro.
     if (!sessionCelebratedRef.current) {
@@ -4088,12 +4850,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               <div className="flex items-center gap-3 px-4 pt-5 pb-3 border-b border-[var(--usb-divider)] shrink-0">
                 <div className="min-w-0 flex-1">
                   <span className="kx-slate block" style={{ color: t("#b7a6ff", "#5b37e8") }}>Estudio</span>
-                  <h3 className="mt-1 text-[16px] font-extrabold tracking-tight leading-tight text-[var(--usb-fg-hi)] truncate">Historial</h3>
+                  <h3 className="mt-1 text-[16px] font-extrabold tracking-tight leading-tight text-[var(--usb-fg-hi)] truncate">Biblioteca</h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setHistoryOpen(false)}
-                  aria-label="Cerrar historial"
+                  aria-label="Cerrar biblioteca"
                   className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 w-8 h-8 flex items-center justify-center rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors"
                 >
                   <X size={14} />
@@ -4101,9 +4863,43 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                 <HistoryPanel
-                  onExportLesson={async rec => { await exportApkgFile((rec.ankiCards ?? []).filter(card => !card.excluded).map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concept" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck, undefined, rec.dcTrackSlug); }}
+                  // Fase 5: con Anki conectado, la Biblioteca ENVÍA (el mismo paquete que el cierre).
+                  onSendLesson={sendRecordToAnki}
+                  // Respaldo sin AnkiConnect: el mismo paquete como archivo.
+                  onExportLesson={async rec => {
+                    // El mismo mazo que la primera vez (historial); si no consta, el del curso.
+                    const dest = rec.ankiDeck
+                      ? destinationForDeck(vocabCfg.rootDeck, rec.ankiDeck)
+                      : (await resolveConceptDestination(vocabCfg, rec.courseName, rec.lectureName)).destination;
+                    const accepted = (rec.ankiCards ?? []).filter(card => !card.excluded);
+                    // Nada que descargar (todo quitado o ya en tu mazo): no se genera un paquete vacío.
+                    if (accepted.length === 0) throw new Error("Esta lección no tiene tarjetas nuevas que descargar.");
+                    const programs = await programsForCourse(rec.courseName, rec.dcTrackSlug ?? null);
+                    await exportApkgFile(accepted.map(card => ({ ...card, tags: card.tags ?? [], type: card.type ?? "concepto" })) as unknown as AnkiCard[], rec.courseName, rec.lectureName, vocabCfg.rootDeck, dest, undefined, programs, { lessonUrl: rec.lessonUrl, platform: rec.platform });
+                  }}
                   hideToggle
                   defaultOpen
+                  library={{
+                    config: vocabCfg,
+                    ankiReady: anki.ready,
+                    ankiDecks: anki.decks,
+                    // El mismo flujo que «Cambiar» en Fijar, para cualquier curso de la Biblioteca.
+                    onChangeCourseDeck: (course, deck, moveExisting, program) => changeCourseDeck(course, deck, moveExisting, program),
+                    // Fase 3: la misma carpeta que Fijar (registro + Ajustes) y, con Obsidian
+                    // conectado, lo que hay de verdad en el vault.
+                    obsidian: hasObsidianTarget ? {
+                      config: obsidianCfg,
+                      registry: courseFolders,
+                      ready: obsidian.ready,
+                      openNote: (path) => {
+                        if (obsidian.ready) { void obsidianOpenNote(path).catch(() => toast.error("Obsidian no respondió")); return; }
+                        if (obsidianCfg.vaultName.trim()) openObsidianUri(buildObsidianOpenFileUri(obsidianCfg.vaultName.trim(), path));
+                      },
+                      saveLessons: saveHistoryLessonsToObsidian,
+                      onChangeFolder: (course, folder, moveExisting, program) => changeCourseFolder(course, folder, moveExisting, program),
+                    } : null,
+                    programTitles,
+                  }}
                   onOpenLecture={(rec) => {
                     setCourseName(rec.courseName);
                     setLessonName(rec.lectureName);
@@ -4119,6 +4915,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
       </AnimatePresence>
 
       <VocabularyPanel compact mount={vocabularyMount} course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)} />
+      {/* Ajustes → Anki: la misma configuración (y el mismo guardado) que usa Study al exportar. */}
+      {ankiMount && createPortal(<AnkiSettings config={vocabCfg} onConfig={handleSaveVocabCfg} />, ankiMount)}
 
       <AnimatePresence mode="wait">
 
@@ -4794,8 +5592,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               {focusStep === 0 && (() => {
                 const checkedCount = Object.values(conceptsChecked).filter(Boolean).length;
                 const total = content.keyConcepts.length;
-                const isLocked = questionsComplete; // registrado al completar Comprobar
-                const recallOpen = recallRevealed || isLocked || checkedCount > 0 || conceptsAcknowledged;
+                // Registrado al revisar la primera respuesta: cambiarlo después
+                // desharía el plan de Comprobar que ya se está respondiendo.
+                const isLocked = questionsComplete || anyAnswerReviewed;
                 const level = confidence ? CONFIDENCE.find(c => c.id === confidence) ?? null : null;
                 const showPicker = !level || levelPickerOpen;
                 return (
@@ -4880,116 +5679,96 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                     </div>
                   )}
 
-                  {/* Recuerdo libre y comparación con las ideas clave (R6: recuperar antes de re-estudiar) */}
-                  {confidence && (
+                  {/* flowVersion 3 · ¿Lo recordabas? — pista (título) → «Lo sabía» / «No del todo» →
+                      el detalle. Las respuestas deciden el plan de Comprobar (y la 1.ª pregunta),
+                      las tarjetas que van primero en Anki, el historial y la nota (R6). */}
+                  {confidence && (() => {
+                    const answeredCount = content.keyConcepts.filter((_, i) => conceptsChecked[i] || recallUnsure[i]).length;
+                    const pending = total - answeredCount;
+                    // El plan REAL con estas respuestas: el mismo cálculo que usará Comprobar.
+                    const previewBase = anyAnswerReviewed && spotBase !== null ? spotBase : selfReportTrusted ? 0 : 1;
+                    const plannedCount = checkPlanState(content, [pickStartQuestion(confidence, content, checkedSet)], checkedSet, previewBase).total;
+                    const notes = recallNotes.trim();
+                    return (
                   <div ref={conceptsRef} className="kx-card bg-[var(--usb-bg-3)] border border-[var(--usb-border)] rounded-xl overflow-hidden" data-recall-card>
-                    <div className="flex items-center justify-between px-4 pt-4 pb-1">
-                      <StepHeader n={2} label={isLocked ? "Las ideas clave" : recallOpen ? "¿Cuáles recordaste?" : "¿Qué recuerdas de la lección?"} subLabel={isLocked ? "registrado" : recallOpen ? "compáralas con tu recuerdo" : "primero, sin mirar"} status={recallOpen ? "done" : "active"}/>
-                      {recallOpen && (
-                        <span
-                          className={`shrink-0 ml-2 mb-3.5 px-2 py-0.5 rounded-full text-[10px] font-mono border ${
-                            checkedCount > 0
-                              ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
-                              : "bg-[var(--usb-bg-2)] border-[var(--usb-border)] text-[var(--usb-fg-mid)]"
-                          }`}
-                          title={`${checkedCount} de ${total} ideas marcadas`}
-                        >
-                          {checkedCount}/{total}
-                        </span>
-                      )}
+                    <div className="flex items-start justify-between gap-2 px-4 pt-4">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-bold text-[var(--usb-fg-hi)] leading-tight">{isLocked ? "Tu autoevaluación" : "¿Puedes explicarlo sin mirar?"}</p>
+                        <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug mt-1" data-recall-instructions>
+                          {isLocked ? "Registrada al pasar a Comprobar." : "Intenta responder cada pregunta sin mirar antes de elegir."}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-mono border tabular-nums ${
+                          checkedCount > 0
+                            ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
+                            : "bg-[var(--usb-bg-2)] border-[var(--usb-border)] text-[var(--usb-fg-mid)]"
+                        }`}
+                        title={`Sabías ${checkedCount} de ${total} ideas`}
+                      >
+                        {checkedCount}/{total}
+                      </span>
                     </div>
 
-                    {!recallOpen ? (
-                      <div className="px-4 pb-4 space-y-3">
-                        <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">Escribe 2 o 3 ideas con tus palabras, sin mirar. Después las comparas con las ideas clave.</p>
-                        <textarea
-                          value={recallNotes}
-                          onChange={(e) => setRecallNotes(e.target.value)}
-                          rows={3}
-                          placeholder="Lo que recuerdo es…"
-                          className={textareaCls}
-                        />
-                        <button onClick={() => setRecallRevealed(true)}
-                          className="kx-on-solid kx-cta w-full h-10 rounded-xl text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
-                          {recallNotes.trim() ? "Comparar con las ideas clave" : "Ver las ideas clave"}<ArrowRight size={12}/>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="px-4 pb-4 space-y-3">
-                        {recallNotes.trim() && (
+                    <div className="px-4 pb-4 pt-3 space-y-3">
+                      {/* Recuerdo libre: opcional y plegado; si lo usas, va antes de leer las ideas. */}
+                      {isLocked ? (
+                        notes && (
                           <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] px-3 py-2.5" data-recall-notes>
                             <p className="kx-slate mb-1">Tu recuerdo</p>
-                            <p className="text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">{recallNotes.trim()}</p>
+                            <p className="text-[11.5px] text-[var(--usb-fg-mid)] leading-relaxed whitespace-pre-wrap">{notes}</p>
                           </div>
-                        )}
-                        {/* Qué significa marcar y qué provoca — sin premio implícito por marcarlo todo:
-                            lo NO marcado se refuerza en Anki (reinforcePlan). */}
-                        {isLocked ? (
-                          <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">
-                            Las ideas clave de la lección. Las marcadas son las que dijiste recordar.
-                          </p>
-                        ) : (
-                          <div className="space-y-1" data-recall-instructions>
-                            <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">
-                              Marca solo las que te vinieron a la mente sin mirar. Comprobar te pregunta por cada una que no marques (y confirma una de las que marques); las que no marques también se refuerzan en Anki.
-                              {doubtsAvailable ? " Si alguna no te quedó clara, pulsa «Duda»." : ""}
+                        )
+                      ) : freeRecallOpen || notes ? (
+                        <div className="space-y-1.5" data-free-recall>
+                          <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug">Antes de leerlas: lo que recuerdas, con tus palabras.</p>
+                          <textarea
+                            value={recallNotes}
+                            onChange={(e) => setRecallNotes(e.target.value)}
+                            rows={3}
+                            autoFocus={!notes}
+                            placeholder="Lo que recuerdo es…"
+                            className={textareaCls}
+                          />
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => setFreeRecallOpen(true)} data-free-recall-toggle
+                          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-[var(--usb-border)] text-left text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg)] hover:border-[var(--usb-border-mid)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
+                          <Edit3 size={12} className="shrink-0" aria-hidden="true" />
+                          <span className="text-[11px] font-semibold flex-1">Escribir primero lo que recuerdo</span>
+                          <span className="text-[10px] font-medium text-[var(--usb-fg-lo)]">opcional</span>
+                        </button>
+                      )}
+
+                      <RecallIdeas
+                        ideas={content.keyConcepts}
+                        marks={Object.fromEntries(content.keyConcepts.map((_, i) => [i, conceptsChecked[i] ? "knew" : recallUnsure[i] ? "unsure" : undefined]))}
+                        locked={isLocked}
+                        onMark={handleRecallMark}
+                        doubt={doubtsAvailable ? {
+                          isOpen: (i) => isDoubtOpen(doubtCtx("concepts", content.keyConcepts[i])),
+                          toggle: (i) => toggleDoubt(doubtCtx("concepts", content.keyConcepts[i])),
+                          render: (i) => renderDoubtPanel(doubtCtx("concepts", content.keyConcepts[i])),
+                        } : undefined}
+                      />
+
+                      {!isLocked && (
+                        <div className="space-y-2">
+                          {pending > 0 && (
+                            <p className="text-[10.5px] leading-snug text-[var(--usb-fg-lo)]" data-recall-pending>
+                              {pending === total ? "Las que dejes sin marcar pasan a practicarse en el siguiente paso." : `${pending} sin marcar · ${pending === 1 ? "pasa" : "pasan"} a practicarse en Comprobar.`}
                             </p>
-                          </div>
-                        )}
-                        <ul className="space-y-2" data-doubt-recall>
-                          {content.keyConcepts.map((c, i) => {
-                            const checked = Boolean(conceptsChecked[i]);
-                            const ctx = doubtCtx("concepts", c);
-                            const open = isDoubtOpen(ctx);
-                            return (
-                              <li key={i} className="space-y-2">
-                                <div className={`kx-row flex items-start rounded-xl border transition-all ${
-                                  checked ? "kx-row-on" : isLocked ? "border-transparent" : "border-[var(--usb-border)] hover:border-[var(--usb-border-mid)]"
-                                }`}>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleConceptToggle(i)}
-                                    disabled={isLocked}
-                                    aria-pressed={checked}
-                                    className={`flex-1 min-w-0 flex items-start gap-2.5 text-left px-3 py-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${isLocked ? "cursor-default" : ""}`}
-                                  >
-                                    <span className={`mt-0.5 w-[18px] h-[18px] rounded-md border flex items-center justify-center shrink-0 transition-all ${
-                                      checked ? "kx-check-on" : isLocked ? "border-[var(--usb-border)]" : "kx-check-off"
-                                    }`} aria-hidden="true">
-                                      {checked && <Check size={10} strokeWidth={2.4}/>}
-                                    </span>
-                                    <span className={`text-[11.5px] leading-relaxed ${checked ? "text-white/85" : "text-white/70"}`}>{c}</span>
-                                  </button>
-                                  {doubtsAvailable && (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleDoubt(ctx)}
-                                      aria-expanded={open}
-                                      aria-label="Tengo una duda sobre esta idea"
-                                      title="Tengo una duda sobre esta idea"
-                                      data-doubt-trigger
-                                      className={`m-1.5 h-7 px-2 rounded-lg inline-flex items-center gap-1 shrink-0 border text-[10.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${
-                                        open
-                                          ? "text-violet-300 border-violet-500/40 bg-violet-500/10"
-                                          : "text-[var(--usb-fg-mid)] border-[var(--usb-border)] hover:text-violet-300 hover:border-violet-500/30"
-                                      }`}
-                                    >
-                                      <HelpCircle size={12} aria-hidden="true" />Duda
-                                    </button>
-                                  )}
-                                </div>
-                                {renderDoubtPanel(ctx)}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                        {!isLocked && (
-                          <StepContinueButton label="Ponerme a prueba" onClick={handleGoVerify} />
-                        )}
-                      </div>
-                    )}
+                          )}
+                          <StepContinueButton label={`Ponerme a prueba · ${plannedCount} ${plannedCount === 1 ? "pregunta" : "preguntas"}`} onClick={handleGoVerify} />
+                        </div>
+                      )}
+                      {isLocked && !questionsComplete && (
+                        <StepContinueButton label="Seguir en Comprobar" onClick={() => goToStep(1)} />
+                      )}
+                    </div>
                   </div>
-                  )}
+                    );
+                  })()}
                 </div>
                 );
               })()}
@@ -5073,22 +5852,41 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             })}
                         </div>
                       </div>
-                      {/* Por qué esta pregunta: el plan sale de lo que marcaste en Recordar. */}
+                      {/* Por qué esta pregunta: el plan sale de lo que respondiste en Recordar.
+                          Nada se promete sin respaldo: «va a Anki» solo si esa idea tiene tarjeta. */}
                       {!challengeOpen && planState && (() => {
                         const kind = planState.kinds[currentQIdx];
                         const refs = queueQuestions[currentQIdx]?.conceptRefs ?? [];
+                        // Solo si una confirmación ANTERIOR falló (no la que se está respondiendo).
+                        const secondSpot = kind === "spot" && queueQuestions.slice(0, currentQIdx).some((q, k) => {
+                          const r = q.conceptRefs ?? [];
+                          return questionFeedbacks[k]?.status === "done" && r.length > 0 && r.every(x => checkedSet.has(x)) && !firstTryCorrectRef.current.has(q.q);
+                        });
                         const why = kind === "spot"
-                          ? "Sobre una idea que sí marcaste: confirma que la recuerdas."
+                          ? secondSpot
+                            ? "La anterior no salió: confirmamos otra idea que dijiste saber."
+                            : "Confirma una idea que dijiste saber."
                           : kind === "gap"
-                            ? "Sobre otra idea que no marcaste en Recordar."
+                            ? "Sobre otra idea que no tenías clara."
                             : refs.some(r => !checkedSet.has(r))
-                              ? "Sobre una idea que no marcaste, según lo claro que te quedó."
-                              : "Sobre una idea que marcaste, según lo claro que te quedó: confirma que la recuerdas.";
-                        const left = planState.uncovered.length;
+                              ? "Sobre una idea que no tenías clara, al nivel que elegiste."
+                              : "Sobre una idea que dijiste saber, al nivel que elegiste: confírmala.";
+                        const left = planState.uncovered;
+                        const lessonCards = allCardsWithReinforce.filter(c => !c.doubt);
+                        const withoutCard = new Set(ideasWithoutCard(content.keyConcepts, lessonCards));
+                        const allCarded = left.every(i => !withoutCard.has(i));
+                        const n = left.length;
+                        const leftText = n === 0 ? "" : n === 1
+                          ? ` Otra idea que no tenías clara no entra aquí, para no alargar: ${allCarded ? "su tarjeta irá primero en Anki." : "queda anotada en tu nota de la lección."}`
+                          : ` Otras ${n} ideas que no tenías claras no entran aquí, para no alargar: ${allCarded ? "sus tarjetas irán primero en Anki." : "quedan anotadas en tu nota de la lección."}`;
+                        const trustText = currentQIdx === 0 && spotBase === 0 && checkedSet.size > 0
+                          ? " Tus últimas autoevaluaciones fueron acertadas: hoy no te pedimos confirmar lo que sabías."
+                          : "";
                         return (
                           <p className="mt-1 text-[10.5px] leading-snug text-[var(--usb-fg-mid)]" data-plan-why>
                             {why}
-                            {currentQIdx === 0 && left > 0 ? ` ${left === 1 ? "La otra idea que no marcaste va" : `Las otras ${left} ideas que no marcaste van`} directo a Anki como refuerzo, para no alargar.` : ""}
+                            {currentQIdx === 0 ? leftText : ""}
+                            {trustText}
                           </p>
                         );
                       })()}
@@ -5105,7 +5903,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             const changed = reviewed && answer !== (evaluatedAnswers[i] ?? answer);
                             const needsWork = reviewed && !good;
                             const isChallenge = challengeOpen && i === queueQuestions.length - 1;
-                            // Siguiente del plan (otra idea que no marcaste), si queda.
+                            // Siguiente del plan (otra idea que no tenías clara, o una confirmación), si queda.
                             const nextPlanned = reviewed && !busy ? findNextPlanned(i) : undefined;
                             const focusAnswer = () => {
                               const el = document.getElementById(`kx-answer-${i}`) as HTMLTextAreaElement | null;
@@ -5189,7 +5987,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                                     isChallenge
                                       ? { id: "leave", icon: ArrowRight, label: "Dejar el reto", hint: "Vuelves al repaso de la comprobación.", onClick: closeChallenge }
                                       : nextPlanned
-                                        ? { id: "next", icon: ArrowRight, primary: !needsWork, label: `Siguiente pregunta (${i + 2} de ${planTotal})`, hint: `${nextPlanned.kind === "spot" ? "Sobre una idea que sí marcaste, para confirmarla." : "Sobre otra idea que no marcaste en Recordar."}${needsWork ? " Lo que falló aquí va a Anki como refuerzo." : ""}`, onClick: () => goNextQuestion(i) }
+                                        ? { id: "next", icon: ArrowRight, primary: !needsWork, label: `Siguiente pregunta (${i + 2} de ${planTotal})`, hint: `${nextPlanned.kind === "spot" ? "Sobre una idea que dijiste saber, para confirmarla." : "Sobre otra idea que no tenías clara."}${needsWork ? " Lo que falló aquí va a Anki como refuerzo." : ""}`, onClick: () => goNextQuestion(i) }
                                         : { id: "finish", icon: CheckCircle2, label: "Terminar y ver la respuesta esperada", onClick: completeQuestions },
                                   ]}
                                   help={doubtsAvailable ? <DoubtButton open={isDoubtOpen(questionDoubtCtx(i))} onClick={() => toggleDoubt(questionDoubtCtx(i))} /> : undefined}
@@ -5240,7 +6038,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                         <p className="text-[11px] font-semibold leading-snug text-[var(--usb-fg-hi)]">Elige cómo practicar <span className="font-medium text-[var(--usb-fg-mid)]">· cualquiera de las dos vale</span></p>
                         <div className="kx-seg" role="tablist" aria-label="Forma de practicar">
                           {([
-                            { id: "exercise", label: content.application.isCode ? "Escribir código" : "Resolver el caso", sub: content.application.isCode ? "Desafío práctico" : "Ejercicio práctico" },
+                            structuredPractice
+                              ? { id: "exercise" as const, label: practiceFormatMeta(structuredPractice.format, content.application.isCode).label, sub: "Se corrige al momento" }
+                              : { id: "exercise" as const, label: content.application.isCode ? "Escribir código" : "Resolver el caso", sub: content.application.isCode ? "Desafío práctico" : "Ejercicio práctico" },
                             { id: "explain", label: "Explicarlo", sub: oralPracticeMeta?.title ?? "Con tus palabras" },
                           ] as const).map((opt) => {
                             const on = mode === opt.id;
@@ -5263,7 +6063,62 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       </div>
                     )}
 
-                    {mode === "exercise" && (() => {
+                    {/* flowVersion 3 · ejercicio estructurado: se corrige contra su clave, sin IA. */}
+                    {mode === "exercise" && structuredPractice && practiceRunNow && (() => {
+                      const run = practiceRunNow;
+                      const good = Boolean(run.last?.correct);
+                      const closed = run.solutionSeen || good;
+                      const missed = run.last !== null && !run.last.correct && run.last.key === JSON.stringify(run.answer);
+                      const focusBoard = () => {
+                        const board = document.querySelector<HTMLElement>("[data-structured-practice]");
+                        if (!board) return;
+                        board.scrollIntoView({ block: "center", behavior: "smooth" });
+                        board.querySelector<HTMLElement>("input:not([readonly]), button:not(:disabled)")?.focus();
+                      };
+                      const doubtBtn = doubtsAvailable ? <DoubtButton open={isDoubtOpen(practiceDoubtCtx())} onClick={() => toggleDoubt(practiceDoubtCtx())} /> : undefined;
+                      return (<>
+                    <div className="mx-4 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
+                      <span className="shrink-0 mt-0.5 text-[var(--usb-accent-text)]"><Icon name="steps" size={14} /></span>
+                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{content.application.setup}</p>
+                    </div>
+                    <div className="px-4 space-y-3" data-practice-structured>
+                      <p className="text-[12px] font-semibold leading-snug text-[var(--usb-fg-hi)]">{content.application.challenge}</p>
+                      <StructuredPractice
+                        practice={structuredPractice}
+                        isCode={content.application.isCode}
+                        run={run}
+                        onChange={setPracticeRun}
+                        onCheck={handleStructuredCheck}
+                      />
+                      {missed && !closed && (
+                        <NextMoves
+                          moves={[
+                            { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Cambia lo marcado en rojo y vuelve a comprobar.", onClick: focusBoard },
+                            { id: "solution", icon: BookOpen, label: "Ver la solución", hint: "Después ya no podrás comprobar otro intento.", onClick: handleStructuredSolution },
+                          ]}
+                          help={doubtBtn}
+                        />
+                      )}
+                      {closed && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {good && <RevealButton open={showAppSolution} onClick={() => setShowAppSolution(v => !v)} label="Ver la solución explicada" openLabel="Ocultar la solución" />}
+                          {doubtBtn}
+                        </div>
+                      )}
+                      {run.solutionSeen && !good && (
+                        <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">Viste la solución, así que este intento queda cerrado.{content.ankiCards.some(c => !c.excluded && isPracticeCard(c)) ? " Sus tarjetas de aplicación irán primero en Anki, como refuerzo." : ""}</p>
+                      )}
+                      {closed && (run.solutionSeen || showAppSolution) && (
+                        <ReferenceAnswer label="Solución">
+                          {[!good && structuredPractice.explanation ? structuredPractice.explanation : "", content.application.solution].filter(Boolean).join("\n\n")}
+                        </ReferenceAnswer>
+                      )}
+                      {run.attempts > 0 && renderDoubtPanel(practiceDoubtCtx())}
+                    </div>
+                    </>);
+                    })()}
+
+                    {mode === "exercise" && !structuredPractice && (() => {
                       // Mismo patrón que Comprobar: escribir → revisar → «¿Cómo sigues?».
                       const reviewed = appFeedback.status === "done";
                       const busy = appFeedback.status === "loading" || appFeedback.status === "streaming";
@@ -5281,7 +6136,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       const openSolution = () => { setAppSolutionSeen(true); setShowAppSolution(true); };
                       return (<>
                     <div className="mx-4 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
-                      <span className="shrink-0"><Icon name="steps" size={14} /></span>
+                      <span className="shrink-0 mt-0.5 text-[var(--usb-accent-text)]"><Icon name="steps" size={14} /></span>
                       <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{content.application.setup}</p>
                     </div>
 
@@ -5429,6 +6284,93 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
               {/* ── Paso 3 (Fijar): resumen de cierre + tarjetas + Terminar (§1.4) ── */}
               {focusStep === 3 && (() => {
                 const selectedCards = allCardsWithReinforce.filter(c => !c.excluded);
+                // Fase 4: no queda nada nuevo porque TODO lo de hoy ya estaba en tu mazo (no porque se quitara a mano).
+                const allInDeck = selectedCards.length === 0 && (content.deckMatches ?? []).length > 0 && allCardsWithReinforce.every(c => c.inDeck);
+                // ── Fase 5 · el estado de cada destino, en una frase (no hay botones de exportar) ──
+                const cardsWord = (n: number) => (n === 1 ? "1 tarjeta" : `${n} tarjetas`);
+                const ankiOffline = Boolean(anki.status && !anki.status.available);
+                const ankiDenied = anki.status?.permission === "denied";
+                const openAnkiSettings = () => window.dispatchEvent(new CustomEvent("usb:open-settings", { detail: { section: "anki" } }));
+                const connectAnki = {
+                  label: "Conectar",
+                  onClick: () => { void anki.connect().then((s) => { if (!s) openAnkiSettings(); }); },
+                  disabled: anki.checking,
+                };
+                const ankiHeaderBadge = ankiExported && unsentCards === 0
+                  ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border text-[var(--usb-ok-text)] bg-emerald-500/10 border-emerald-500/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>En Anki</span>
+                  : anki.ready
+                    ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border text-[var(--usb-ok-text)] bg-emerald-500/10 border-emerald-500/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Conectado</span>
+                    : ankiOffline || ankiDenied
+                      ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border text-[var(--usb-warn-text)] bg-amber-500/10 border-amber-500/40 shrink-0">{ankiDenied ? "Sin permiso" : "No responde"}</span>
+                      : <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[var(--usb-fg-mid)] shrink-0">Sin conectar</span>;
+                const browseLesson = { label: "Ver en Anki", onClick: () => { void ankiBrowse(kinemaCardsQuery("lesson", { rootDeck: vocabCfg.rootDeck, course: courseName, lesson: lessonName })); } };
+                const ankiLine: { tone: SyncTone; sync: string; text: React.ReactNode; action?: { label: string; onClick: () => void; disabled?: boolean } } =
+                  selectedCards.length === 0
+                    ? allInDeck
+                      ? { tone: "ok", sync: "in-deck", text: "Todo lo de esta lección ya está en tu mazo." }
+                      : { tone: "info", sync: "empty", text: "No hay tarjetas para Anki: incluye alguna en «Ver tarjetas»." }
+                  : ankiSync.status === "sending"
+                    ? { tone: "busy", sync: "sending", text: ankiSync.progress || "Enviando a Anki…" }
+                  : ankiSync.status === "sent" && unsentCards === 0
+                    ? { tone: "ok", sync: "sent", text: <>{ankiSync.added > 0 ? `${ankiSync.added === 1 ? "1 tarjeta nueva" : `${ankiSync.added} tarjetas nuevas`} en Anki: lo confirmó Anki.` : "Ya estaban en Anki."}{ankiSync.tagged > 0 ? ` ${cardsWord(ankiSync.tagged)} del curso con la etiqueta de su programa.` : ""}</>, action: anki.ready ? browseLesson : undefined }
+                  : finishedAt !== null && ankiExported && unsentCards === 0
+                    ? { tone: "ok", sync: "sent", text: "Las tarjetas de esta lección ya están en Anki.", action: anki.ready ? browseLesson : undefined }
+                  : ankiSync.status === "error"
+                    ? { tone: "warn", sync: "error", text: `Error al enviar (${ankiSync.message}). Quedan en espera.`, action: { label: "Reintentar", onClick: () => setAnkiSync({ status: "waiting" }) } }
+                  : finishedAt !== null && !ankiArmed
+                    ? { tone: "info", sync: "unsent", text: `${cardsWord(selectedCards.length)} sin enviar a Anki.`, action: { label: "Enviar a Anki", onClick: () => setAnkiArmed(true) } }
+                  : finishedAt !== null && !anki.ready
+                    ? ankiDenied
+                      ? { tone: "warn", sync: "waiting", text: `Permiso pendiente en AnkiConnect · ${cardsWord(unsentCards)} en espera.`, action: { label: "Reintentar", onClick: () => void anki.connect(), disabled: anki.checking } }
+                      : ankiOffline
+                        ? { tone: "wait", sync: "waiting", text: `Anki no responde: ${unsentCards === 1 ? "la tarjeta espera y se envía sola" : `las ${unsentCards} tarjetas esperan y se envían solas`} en cuanto lo abras.`, action: { label: "Comprobar", onClick: () => void anki.connect(), disabled: anki.checking } }
+                        : { tone: "wait", sync: "waiting", text: `${cardsWord(unsentCards)} en espera · se enviarán solas al conectar Anki.`, action: connectAnki }
+                  : finishedAt !== null
+                    ? { tone: "busy", sync: "sending", text: "Enviando a Anki…" }
+                  : anki.ready
+                    ? { tone: "info", sync: "ready", text: `Al terminar la lección, sus ${cardsWord(selectedCards.length)} llegan solas a Anki.` }
+                  : ankiDenied
+                    ? { tone: "warn", sync: "denied", text: "Acepta el permiso en AnkiConnect para activar el envío automático.", action: { label: "Reintentar", onClick: () => void anki.connect(), disabled: anki.checking } }
+                  : ankiOffline
+                    ? { tone: "wait", sync: "offline", text: "Anki no responde. Puedes terminar igual: las tarjetas esperarán y se enviarán solas en cuanto lo abras.", action: { label: "Comprobar", onClick: () => void anki.connect(), disabled: anki.checking } }
+                    : { tone: "info", sync: "setup", text: "Conecta Anki para enviar las tarjetas al terminar (o termina y quedarán en espera).", action: connectAnki };
+                const obsidianNoteSaved = Boolean(vaultNote?.exists || obsidianExportedAt || isSessionExported(exportedNotes, obsidianCfg, courseName, lessonName, obsidianFolder.folder));
+                const obsidianParts = joinEs(["la nota", "el índice del curso", ...(dcCtx?.program && dcCtx.activeSlug ? ["el MOC del programa"] : []), ...(obsidianCfg.includeRawSrt ? ["la transcripción"] : [])]);
+                const obsidianLine: { tone: SyncTone; sync: string; text: React.ReactNode; action?: { label: string; onClick: () => void; disabled?: boolean } } =
+                  !obsidianRestConfigured
+                    ? { tone: "info", sync: "setup", text: obsidianCfg.vaultName.trim()
+                        ? <>Configura Local REST API en «Ajustar» para guardar automáticamente en «{obsidianCfg.vaultName.trim()}».</>
+                        : "Configura Local REST API en «Ajustar» para guardar cada nota automáticamente." }
+                  : obsidianStatus === "saving"
+                    ? { tone: "busy", sync: "saving", text: "Guardando en Obsidian…" }
+                  : obsidianStatus === "done"
+                    ? { tone: "ok", sync: "saved", text: `Guardado en tu vault: ${obsidianParts}.` }
+                  : obsidianStatus === "waiting"
+                    ? { tone: "wait", sync: "waiting", text: "Obsidian no responde: la nota espera y se guarda sola en cuanto lo abras.", action: { label: "Comprobar", onClick: () => void obsidian.connect(), disabled: obsidian.checking } }
+                  : obsidianStatus === "error"
+                    ? { tone: "warn", sync: "error", text: "No se pudo guardar en Obsidian.", action: { label: "Reintentar", onClick: () => { const d = getObsidianSessionData(); if (d) void saveLessonToObsidian(d, "auto"); } } }
+                  : finishedAt !== null && obsidianNoteSaved
+                    ? { tone: "ok", sync: "saved", text: "La nota de esta lección está en el vault." }
+                  : finishedAt !== null
+                    ? { tone: "info", sync: "unsaved", text: "Terminada sin nota en Obsidian.", action: { label: "Guardar nota", onClick: () => { const d = getObsidianSessionData(); if (d) void saveLessonToObsidian(d, "auto"); }, disabled: !obsidian.ready } }
+                  : obsidian.status?.available && !obsidian.status.authenticated
+                    ? { tone: "warn", sync: "denied", text: "Obsidian rechazó la clave · revísala en «Ajustar»." }
+                  : obsidian.status && !obsidian.status.available
+                    ? { tone: "wait", sync: "offline", text: "Obsidian no responde. Puedes terminar igual: la nota esperará y se guardará sola.", action: { label: "Comprobar", onClick: () => void obsidian.connect(), disabled: obsidian.checking } }
+                  : !obsidian.status
+                    ? { tone: "info", sync: "preview", text: "Clave guardada · la escritura automática en el vault funciona desde la extensión instalada." }
+                  : vaultNote?.exists
+                    ? { tone: "info", sync: "ready", text: "Al terminar se añadirá este repaso al final de su nota existente." }
+                    : { tone: "info", sync: "ready", text: `Al terminar, se guardan solos ${obsidianParts}.` };
+                const obsidianHeaderBadge = obsidianRestConfigured && obsidianNoteSaved
+                  ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border text-[var(--usb-ok-text)] bg-emerald-500/10 border-emerald-500/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>En el vault</span>
+                  : obsidian.ready
+                    ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border text-[var(--usb-ok-text)] bg-emerald-500/10 border-emerald-500/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Conectado</span>
+                    : obsidianRestConfigured && obsidian.status && (!obsidian.status.available || !obsidian.status.authenticated)
+                      ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border text-[var(--usb-warn-text)] bg-amber-500/10 border-amber-500/40 shrink-0">{obsidian.status.available ? "Clave incorrecta" : "No responde"}</span>
+                      : !obsidianRestConfigured
+                        ? <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full border border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[var(--usb-fg-mid)] shrink-0">Sin conectar</span>
+                        : undefined;
                 // §5: las de duda también son de refuerzo, pero se cuentan aparte (como en la nota).
                 const reinforceCount = selectedCards.filter(c => c.reinforce && !c.doubt).length;
                 const doubtCount = selectedCards.filter(c => c.doubt).length;
@@ -5467,7 +6409,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                   </div>
                   <div className="grid grid-cols-3 gap-2" role="list">
                     {([
-                      { id: "recordar", step: 0, value: `${conceptsMarkedCount}/${content.keyConcepts.length}`, caption: "ideas, según tú" },
+                      { id: "recordar", step: 0, value: `${conceptsMarkedCount}/${content.keyConcepts.length}`, caption: "claras al recordar" },
                       questionsSkipped
                         ? { id: "comprobar", step: 1, value: "—", caption: "saltada", action: { label: "Responder", onClick: handleUndoSkipQuestions } }
                         : { id: "comprobar", step: 1, value: `${firstTryCount}/${totalQFinal}`, caption: improvedCount > 0 ? `a la primera · ${improvedCount} corregida${improvedCount === 1 ? "" : "s"}` : "a la primera" },
@@ -5504,10 +6446,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       <span className="font-bold text-[var(--usb-fg-hi)]">Próximo paso: </span>
                       {ankiExported
                         ? "repasa en Anki mañana."
-                        : obsidianExportedAt
-                          ? "exporta también a Anki para repasar mañana."
-                          : "exporta las tarjetas a Anki y repásalas mañana."}
-                      {finishedAt !== null ? " Para seguir, pulsa «Ir a la siguiente lección» (abajo)." : ""}
+                        : allInDeck
+                          ? "lo de hoy ya está en tu mazo; Anki lo programará cuando toque."
+                          : finishedAt !== null
+                            ? "abre Anki para recibir las tarjetas pendientes."
+                            : anki.ready
+                              ? "termina la lección para enviar todo automáticamente."
+                              : "conecta Anki o termina la lección (quedará en espera)."}
                     </p>
                   </div>
                 </motion.div>
@@ -5520,38 +6465,71 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       icon={Package}
                       title="Tarjetas de la lección"
                       subtitle={`${selectedCards.length} tarjetas${cardsBreakdown.length > 0 ? ` · ${cardsBreakdown.join(" · ")}` : ""}`}
-                      badge={ankiExported ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
+                      configLabel="Ajustar"
+                      onToggleConfig={openAnkiSettings}
+                      badge={ankiHeaderBadge}
                     >
                       {/* Qué se convierte en tarjetas y por qué: datos reales de las tres fases. */}
-                      {(() => {
+                      {!(ankiExported && unsentCards === 0) && (() => {
                         const lessonCards = selectedCards.filter(c => !c.doubt);
                         const n = content.keyConcepts.length;
                         const withRefs = lessonCards.some(c => (c.conceptRefs ?? []).length > 0);
-                        const covered = n - conceptCoverage({ keyConcepts: content.keyConcepts, questions: content.questions, ankiCards: lessonCards }).ideasWithoutCard.length;
+                        // Fase 4: las ideas que ya estaban en el mazo cuentan como cubiertas (por la tarjeta que ya tienes).
+                        const inDeckIdeas = deckCoverage(content.deckMatches ?? []).ideas;
+                        const inDeckOnly = [...inDeckIdeas].filter(i => !lessonCards.some(c => (c.conceptRefs ?? []).includes(i))).length;
+                        const covered = n - conceptCoverage({ keyConcepts: content.keyConcepts, questions: content.questions, ankiCards: lessonCards }).ideasWithoutCard.filter(i => !inDeckIdeas.has(i)).length;
                         const unmarked = content.keyConcepts.filter((_, i) => !conceptsChecked[i]).length;
                         const failed = queueQuestions.filter((_, i) => questionFeedbacks[i]?.status === "done" && (questionFeedbacks[i]?.rating === "partial" || questionFeedbacks[i]?.rating === "wrong")).length;
                         const reasons = [
-                          unmarked > 0 ? "las ideas que no marcaste" : "",
-                          failed > 0 ? "lo que fallaste en Comprobar" : "",
+                          unmarked > 0 ? "pendientes en Recordar" : "",
+                          failed > 0 ? "fallos en Comprobar" : "",
                           // Solo si de verdad reforzó alguna tarjeta de aplicación/código/entrevista.
-                          practiceWeak && lessonCards.some(c => c.reinforce && isPracticeCard(c)) ? "la práctica que no salió" : "",
+                          practiceWeak && lessonCards.some(c => c.reinforce && isPracticeCard(c)) ? "práctica" : "",
                         ].filter(Boolean);
-                        const why = reasons.length > 1 ? `${reasons.slice(0, -1).join(", ")} y ${reasons[reasons.length - 1]}` : reasons[0];
+                        const why = reasons.join(", ");
                         if (!withRefs && reinforceCount === 0) return null;
                         return (
-                          <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]" data-cards-why>
-                            {withRefs ? (covered === n ? `Cubren las ${n} ideas clave de la lección.` : `Cubren ${covered} de las ${n} ideas clave de la lección.`) : ""}
-                            {reinforceCount > 0 && why ? `${withRefs ? " " : ""}Primero van ${reinforceCount === 1 ? "1 de refuerzo" : `${reinforceCount} de refuerzo`}: ${why}.` : ""}
+                          <p className="text-[10.5px] leading-snug text-[var(--usb-fg-mid)]" data-cards-why>
+                            {withRefs ? `${covered}/${n} ideas cubiertas${inDeckOnly > 0 ? ` (${inDeckOnly} ya en tu mazo)` : ""}` : ""}
+                            {reinforceCount > 0 && why ? `${withRefs ? " · " : ""}prioriza refuerzo (${why})` : ""}
                           </p>
                         );
                       })()}
+                      {/* Fase 4: lo que ya estaba en el mazo, dicho antes de exportar (y con la opción de añadirla igualmente). */}
+                      <DeckDuplicates
+                        rows={(content.deckMatches ?? []).filter(m => m.idea >= 0 && m.idea < content.keyConcepts.length).map((m): DeckDupRow => {
+                          const card = content.ankiCards.find(c => c.inDeck && (c.conceptRefs ?? []).includes(m.idea));
+                          return {
+                            idea: m.idea,
+                            title: splitIdea(content.keyConcepts[m.idea]).title,
+                            front: m.front,
+                            lesson: m.lesson,
+                            course: m.course,
+                            sameLesson: Boolean(m.sameLesson),
+                            weak: weakIdeas.has(m.idea),
+                            card: card ? { id: card.id, added: !card.excluded } : null,
+                            alsoInLesson: selectedCards.some(c => !c.inDeck && !c.doubt && (c.conceptRefs ?? []).includes(m.idea)),
+                            state: deckStateOf(m),
+                            rescheduled: Boolean(m.rescheduledAt),
+                            noteId: deckNoteIdOf(m),
+                          };
+                        })}
+                        extraCards={content.ankiCards.filter(c => c.inDeck && (c.conceptRefs ?? []).length === 0).length}
+                        source={(content.deckMatches ?? [])[0]?.source ?? "historial"}
+                        ankiReady={anki.ready}
+                        reviewable={deckReviewTargets.length}
+                        reviewBusy={deckReviewBusy}
+                        onToggleCard={handleToggleExcludeCard}
+                        onReviewToday={() => { void handleDeckReviewToday(); }}
+                        onBrowse={(noteId) => { void ankiBrowse(`nid:${noteId}`); }}
+                      />
                       {/* §5: última oportunidad, ANTES de exportar — la lección no se vuelve a abrir. */}
-                      {doubtsAvailable && savedDoubts < MAX_DOUBT_CARDS && unsavedDoubtProposals.length > 0 && (
+                      {doubtsAvailable && savedDoubts < maxDoubtCards && unsavedDoubtProposals.length > 0 && (
                         <div className="rounded-lg border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2.5 space-y-2" data-doubt-proposals>
                           <div className="flex items-center gap-1.5">
                             <HelpCircle size={12} className="text-violet-300 shrink-0" aria-hidden="true" />
                             <p className="kx-slate flex-1">Dudas resueltas sin guardar</p>
-                            <span className="text-[10px] font-mono tabular-nums text-[var(--usb-fg-lo)]">{savedDoubts}/{MAX_DOUBT_CARDS}</span>
+                            <span className="text-[10px] font-mono tabular-nums text-[var(--usb-fg-lo)]">{savedDoubts}/{maxDoubtCards}</span>
                           </div>
                           {unsavedDoubtProposals.slice(-3).map(({ thread, turn }) => (
                             <div key={`${thread.id}-${turn.at}`} className="flex items-start gap-2.5">
@@ -5570,74 +6548,29 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           ))}
                         </div>
                       )}
-                      <div className="grid grid-cols-1">
-                        <button onClick={handleExportApkg} disabled={!showApply || apkgStatus === "loading"}
-                          style={{ "--kx-btn": apkgStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
-                          className={exportPrimaryBtnCls}>
-                          {apkgStatus === "loading"
-                            ? <><Loader2 size={12} className="animate-spin"/><span className="truncate max-w-[85px]">{apkgProgress}</span></>
-                            : apkgStatus === "done"
-                              ? <><CheckCircle2 size={12}/>Exportado</>
-                              : apkgStatus === "error"
-                                ? <><RefreshCw size={12}/>Reintentar</>
-                                : <><Package size={12}/>Exportar .apkg</>}
-                        </button>
-                      </div>
-                      {(() => {
-                        // Tarjetas aceptadas que el último .apkg no llevaba (p. ej. una duda añadida después).
-                        const exported = lastExportGuids ? new Set(lastExportGuids) : null;
-                        const fresh = exported ? selectedCards.filter(c => !exported.has(stableAnkiGuid(courseName, lessonName, c))).length : 0;
-                        return fresh > 0 ? (
-                          <p role="status" className="flex items-start gap-1.5 text-[10.5px] leading-relaxed text-amber-300">
-                            <Info size={12} className="mt-px shrink-0" />
-                            {fresh === 1
-                              ? "1 tarjeta nueva desde tu última exportación: vuelve a exportar para llevarla a Anki."
-                              : `${fresh} tarjetas nuevas desde tu última exportación: vuelve a exportar para llevarlas a Anki.`}
-                          </p>
-                        ) : null;
-                      })()}
+                      {/* A dónde van, siempre a la vista (fuente única: ankiDestination; un mazo por curso). */}
+                      <AnkiDeckPicker
+                        key={`${slugify(courseName)}|${lessonDest.deck}`}
+                        deck={lessonDest.deck}
+                        defaultDeck={defaultConceptDeck(vocabCfg, courseName)}
+                        owned={lessonDest.owned}
+                        decks={anki.decks}
+                        canMove={anki.ready}
+                        onSave={handleChangeCourseDeck}
+                      />
+                      {/* Fase 5: sin exportar — llegan solas al terminar (o esperan a que Anki responda). */}
+                      <SyncStatus tone={ankiLine.tone} sync={ankiLine.sync} action={ankiLine.action}>{ankiLine.text}</SyncStatus>
                       <div className="flex items-center gap-4">
                         <button onClick={() => setShowCardPreview(v => !v)} aria-expanded={showCardPreview}
                           className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
                           <ChevronDown size={14} className={`transition-transform ${showCardPreview ? "rotate-180" : ""}`}/>{showCardPreview ? "Ocultar tarjetas" : "Ver tarjetas"}
                         </button>
-                        <button onClick={() => setShowAnkiGuide(v => !v)} aria-expanded={showAnkiGuide}
-                          className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
-                          <Info size={13}/>{showAnkiGuide ? "Ocultar guía" : "Guía de importación"}
-                        </button>
                       </div>
                       <AnimatePresence initial={false}>
                         {showCardPreview && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)] mb-2">Solo se exporta lo que aceptas: «Quitar» saca la tarjeta del paquete.</p>
+                            <p className="text-[10.5px] leading-snug text-[var(--usb-fg-mid)] mb-2">Usa «Quitar» para descartar cualquier tarjeta antes de enviar.</p>
                             <AnkiFlipPreview cards={allCardsWithReinforce} onToggleExclude={handleToggleExcludeCard}/>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                      <AnimatePresence initial={false}>
-                        {showAnkiGuide && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                            <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 space-y-3">
-                              {/* Al importar en Anki (primera vez) — honesto: los
-                                  presets SOLO llegan si el usuario activa la opción
-                                  «Importar cualquier configuración del mazo» (v1.5.3) */}
-                              <div className="space-y-1">
-                                <p className="text-[var(--usb-fg-hi)] text-[11px]" style={{ fontWeight: 600 }}>Al importar en Anki (primera vez)</p>
-                                {[
-                                  `Mazos bajo «${vocabCfg.rootDeck}»: Courses → curso → lección (conceptos) y Vocabulary → ${vocabCfg.targetLangLabel} → curso (vocabulario).`,
-                                  "En la pantalla de importación activa «Importar cualquier configuración del mazo» (en inglés: «Import any deck presets») para recibir los presets propios de estos mazos: Cursos 20 nuevas/día · Vocabulario 15/día · pasos 1 y 10 min · si la tarjeta falla conserva 30% del intervalo · a los 8 fallos se marca «leech» · retención objetivo 90%. Anki recuerda la opción; si no la activas, estos mazos usan tu preset Default.",
-                                  "Comprueba que FSRS esté activado: Opciones del mazo → FSRS (Anki 23.10+). Ese interruptor vale para toda tu colección; si ya lo estaba, no tienes que hacer nada. Opcional: tras unos días de reseñas, «Optimizar» afina los pesos a tu memoria.",
-                                  "Kinema no modifica tus demás mazos ni tu preset Default.",
-                                  "Audio del vocabulario: usa el archivo si tu sistema externo lo generó (HyperTTS / edge-tts) y la voz del sistema de Anki si no. La imagen puedes añadirla tú o con un add-on.",
-                                ].map((s, i) => (
-                                  <p key={i} className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{i + 1}. {s}</p>
-                                ))}
-                              </div>
-                              <div className="pt-2 border-t border-[var(--usb-divider)]" />
-                              <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                                Doble clic en el archivo .apkg → Anki importa el mazo con su configuración. Si algo sale mal, vuelve a descargar el .apkg: Anki añade lo que falte y nunca duplica ni pisa lo que ya tienes (tampoco lo que editaste allí).
-                              </p>
-                            </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -5645,74 +6578,57 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
 
                       {/* Destinos al mismo nivel que las tarjetas de la lección, visibles sin plegar;
                           el mazo de la lección va primero (regla 1: el vocabulario es secundario). */}
-                          <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)} />
+                          <VocabularyPanel course={courseName} lesson={lessonName} config={vocabCfg} onConfig={handleSaveVocabCfg} generate={generateVocabularyCandidates} aiReady={aiReady} aiNotice={aiBlockedMessage(aiState, aiEndpoint)}
+                            autoSend={finishedAt !== null && ankiArmed} lessonUrl={typeof window !== "undefined" ? window.location.href : undefined} />
 
-                          {/* ── Obsidian export ── */}
+                          {/* ── Obsidian (fase 3; fase 5: conectado, se guarda solo al terminar) ── */}
                           <ExportModule
                             icon={BookMarked}
-                            title="Obsidian"
-                            badge={isSessionExported(exportedNotes, obsidianCfg, courseName, lessonName) ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border text-[#059669] bg-[#059669]/12 border-[#059669]/35 flex items-center gap-1 shrink-0"><Check size={9} strokeWidth={3}/>Listo</span> : undefined}
-                            subtitle={obsidianCfg.vaultName.trim()
-                              ? <>Vault «{obsidianCfg.vaultName}» · nota de la lección</>
-                              : "Sin vault configurado"}
+                            title="Obsidian · opcional"
+                            badge={obsidianHeaderBadge}
+                            subtitle={!obsidianRestConfigured
+                              ? "Sin conectar"
+                              : obsidian.ready
+                                ? <>Conectado{obsidianCfg.vaultName.trim() ? ` · «${obsidianCfg.vaultName.trim()}»` : ""}</>
+                                : obsidian.status?.available && !obsidian.status.authenticated
+                                  ? "Obsidian rechazó la clave"
+                                  : obsidian.status && !obsidian.status.available
+                                    ? "Obsidian no responde"
+                                    : obsidianCfg.vaultName.trim() ? `«${obsidianCfg.vaultName.trim()}» · en vista previa` : "Solo en la extensión"}
                             configLabel="Ajustar"
                             onToggleConfig={openObsidianSettings}
                           >
                               <>
-                                {/* Sin vault: una sola acción principal (conectarlo) y los respaldos manuales. */}
-                                {!obsidianCfg.vaultName.trim() && (
-                                  <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">Conecta tu vault y Kinema crea la nota de la lección con un clic.</p>
+                                {/* Dónde va, siempre a la vista (fuente única: obsidianDestination + registro). */}
+                                {obsidianRestConfigured && (
+                                  <ObsidianFolderPicker
+                                    key={`${slugify(courseName)}|${obsidianFolder.folder}`}
+                                    folder={obsidianFolder.folder}
+                                    defaultFolder={obsidianFolder.defaultFolder}
+                                    fileName={sessionNoteFileName(courseName, lessonName)}
+                                    assigned={obsidianFolder.assigned}
+                                    notes={courseNoteCount}
+                                    canMove={obsidian.ready}
+                                    onSave={handleChangeCourseFolder}
+                                  />
                                 )}
-                                <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-1.5">
-                                  {!obsidianCfg.vaultName.trim() ? (
-                                    <button onClick={openObsidianSettings} className={exportGhostBtnCls}>
-                                      <Settings2 size={12}/>Conectar vault
+                                <SyncStatus tone={obsidianLine.tone} sync={obsidianLine.sync} action={obsidianLine.action}>{obsidianLine.text}</SyncStatus>
+                                {obsidian.ready && vaultNote?.exists && (
+                                  <div className="flex items-center gap-4" data-obsidian-note-state="present">
+                                    <button type="button" onClick={() => { void obsidianOpenNote(obsidianNotePath).catch(() => toast.error("Obsidian no respondió")); }}
+                                      className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] flex items-center gap-1 transition-colors">
+                                      <ExternalLink size={12}/>Abrir en Obsidian
                                     </button>
-                                  ) : (
-                                  <button onClick={handleExportObsidian} disabled={!showApply}
-                                    style={{ "--kx-btn": obsidianStatus === "done" ? "#059669" : "#6d4aff" } as React.CSSProperties}
-                                    className={exportPrimaryBtnCls}>
-                                    {obsidianStatus === "done"
-                                      ? <><CheckCircle2 size={12}/>Exportado</>
-                                      : <><BookMarked size={12}/>Exportar</>}
-                                  </button>
-                                  )}
-                                  <button onClick={handleCopyObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
-                                    <ClipboardCopy size={12}/>Copiar
-                                  </button>
-                                  <button onClick={handleDownloadObsidianMarkdown} disabled={!showApply} className={exportGhostBtnCls}>
-                                    <FileDown size={12}/>.md
-                                  </button>
-                                </div>
-                                {obsidianCfg.vaultName.trim() && (<>
-                                <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                                  Crea la nota en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.sourcesFolder}/</span> (y, la primera vez de cada curso, su índice en <span className="font-mono text-[var(--usb-fg-hi)]">{obsidianCfg.mocsFolder}/</span>). Si ya existe, le añade un «Repaso» al final sin tocar lo que escribiste.{obsidianCfg.autoExport ? " Se guarda sola al terminar la lección." : ""} Copiar y .md son respaldos.
-                                </p>
-                                <button onClick={() => setObsidianHelpOpen(v => !v)}
-                                  className="text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] text-[11px] flex items-center gap-1 transition-colors">
-                                  <Info size={13}/>{obsidianHelpOpen ? "Ocultar ayuda" : "¿No pasó nada al exportar?"}
-                                </button>
-                                {obsidianHelpOpen && (
-                                  <ol className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-2.5 space-y-1.5">
-                                    {[
-                                      "Instala Obsidian y abre tu vault al menos una vez (que aparezca en el selector de vaults).",
-                                      "Exporta de nuevo: Chrome pregunta «¿Abrir Obsidian?» → marca Siempre permitir. Si Kinema dice que la lección ya tiene nota, elige «Reemplazar»: la primera no llegó a crearse.",
-                                      "Si antes marcaste Bloquear: Chrome → Configuración → Privacidad → Configuración de sitios → Protocolos adicionales, y borra el bloqueo de obsidian.",
-                                      "Verifica el nombre con Probar vault (en Ajustar): Obsidian avisa si no existe.",
-                                      "Como respaldo siempre quedan Copiar (portapapeles) o .md (archivo).",
-                                    ].map((s, i) => (
-                                      <li key={i} className="flex gap-2 text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">
-                                        <span className="w-3.5 h-3.5 rounded-full bg-[#6d4aff]/15 text-[#6d4aff] text-[8px] flex items-center justify-center shrink-0 mt-px" style={{ fontWeight: 700 }}>{i + 1}</span>
-                                        <span>{s}</span>
-                                      </li>
-                                    ))}
-                                  </ol>
+                                    <button type="button" disabled={!showApply || obsidianStatus === "saving"} onClick={() => { const d = getObsidianSessionData(); if (d) askExistingObsidianNote(d); }}
+                                      className="text-[11px] font-medium text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] transition-colors disabled:opacity-50">
+                                      Reemplazar…
+                                    </button>
+                                  </div>
                                 )}
-                                </>)}
                               </>
                           </ExportModule>
 
-                      {/* §1.4: Terminar lección — siempre disponible, con o sin exportar */}
+                      {/* §1.4: Terminar lección — siempre disponible. Fase 5: no hay que exportar nada. */}
                       {/* Programa terminado según la propia plataforma: el siguiente
                           curso del programa, con deep-link (solo DataCamp + track). */}
                       {dcCtx?.program?.currentCourseDone === true && dcCtx.program.nextCourse ? (
@@ -5722,6 +6638,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                           Siguiente curso del programa: {dcCtx.program.nextCourse.title}
                         </a>
                       ) : null}
+                      {finishedAt === null && (
+                        <p className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed" data-finish-summary>
+                          Al terminar, sin exportar nada: {selectedCards.length > 0 ? `${cardsWord(selectedCards.length)} y las palabras que marques` : "las palabras que marques"} {anki.ready ? "van a Anki" : "esperan a Anki"}{obsidianRestConfigured ? ` · la nota ${obsidian.ready ? "va" : "espera"} a Obsidian` : ""}.
+                        </p>
+                      )}
                       <button
                         onClick={handleFinishLesson}
                         disabled={finishedAt !== null}
@@ -5740,7 +6661,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                       <div ref={nextLessonRef} className="space-y-1.5 scroll-mb-4">
                       {finishedAt !== null && (
                         <div className="space-y-1.5" data-next-lesson>
-                          {/* Secundario: no compite con «Exportar .apkg» (el mazo de la lección es lo primero). */}
+                          {/* Secundario: lo primero es que las tarjetas lleguen a Anki (arriba). */}
                           <button
                             type="button"
                             onClick={handleGoNextLesson}
@@ -5757,11 +6678,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount }: { sess
                             </p>
                           )}
                         </div>
-                      )}
-                      {!ankiExported && !obsidianExportedAt && finishedAt !== null && (
-                        <p className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
-                          Sin exportar: la lección queda en «Tarjetas por descargar» del historial.
-                        </p>
                       )}
                       </div>
                   </div>

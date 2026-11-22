@@ -6,8 +6,8 @@
  * - La duda aparece al intentar, no al mirar (la fluidez del vídeo da
  *   sensación de entender): se pregunta en Study tras el recuerdo libre o el
  *   feedback, anclada a la idea, la pregunta o el desafío.
- * - Se resuelve en la misma sesión y lo que perdura es la tarjeta (máx. 2 por
- *   lección, de refuerzo).
+ * - Se resuelve en la misma sesión y lo que perdura es la tarjeta (2 por
+ *   lección, 3 si tiene 6+ ideas — doubtCardLimit —, de refuerzo).
  * - La respuesta se apoya SOLO en la transcripción; las citas se verifican
  *   literalmente contra ella. Sin transcripción temporizada no hay minutos.
  * - Hilo acotado: 1 pregunta + 2 repreguntas, sin preguntas al estudiante (§4).
@@ -19,8 +19,18 @@ export type LessonDoubtKind = "concepts" | "question" | "practice";
 
 /** 1 pregunta + 2 repreguntas por duda. */
 export const MAX_DOUBT_TURNS = 3;
-/** Tarjetas de duda por lección (preferencia de diseño, como el máx. 2 de §3). */
+/** Tarjetas de duda por lección: 2 de base (preferencia de diseño). */
 export const MAX_DOUBT_CARDS = 2;
+/** Lecciones densas (6+ ideas, ~20 min o más) admiten una tercera. */
+export const MAX_DOUBT_CARDS_DENSE = 3;
+
+/**
+ * Cuántas tarjetas de duda admite una lección: escala con sus ideas (una
+ * lección de 30 min con 7 ideas deja más dudas legítimas que una de 3 min).
+ */
+export function doubtCardLimit(ideaCount: number): number {
+  return ideaCount >= 6 ? MAX_DOUBT_CARDS_DENSE : MAX_DOUBT_CARDS;
+}
 /** Mismo presupuesto de transcripción que la generación de la sesión. */
 export const DOUBT_TRANSCRIPT_CHARS = 22000;
 const MAX_QUOTES = 2;
@@ -468,7 +478,7 @@ function asSaved(value: unknown): LessonDoubtSaved | null {
   return front && back ? { front, back, quote: asString(raw.quote, 260) || undefined } : null;
 }
 
-export function sanitizeStoredDoubts(value: unknown): LessonDoubtThread[] {
+export function sanitizeStoredDoubts(value: unknown, maxCards: number = MAX_DOUBT_CARDS): LessonDoubtThread[] {
   if (!Array.isArray(value)) return [];
   const threads: LessonDoubtThread[] = [];
   for (const item of value.slice(-MAX_THREADS)) {
@@ -506,7 +516,7 @@ export function sanitizeStoredDoubts(value: unknown): LessonDoubtThread[] {
     turns: thread.turns.map((turn) => {
       if (!turn.saved) return turn;
       const key = cardFrontKey(turn.saved.front);
-      if (keptFronts.size >= MAX_DOUBT_CARDS || keptFronts.has(key)) return { ...turn, saved: null };
+      if (keptFronts.size >= maxCards || keptFronts.has(key)) return { ...turn, saved: null };
       keptFronts.add(key);
       return turn;
     }),

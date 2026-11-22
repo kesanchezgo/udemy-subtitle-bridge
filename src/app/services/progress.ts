@@ -16,7 +16,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "code1", title: "Ingeniero Activo", desc: "Resuelve tu primer reto de código", icon: "trophy", category: "mastery", progressMax: 1 },
   { id: "s1", title: "Primera lección terminada", desc: "Completa una lección de estudio", icon: "book", category: "mastery", progressMax: 1 },
   { id: "s10", title: "Constante", desc: "Completa 10 lecciones", icon: "book", category: "mastery", progressMax: 10 },
-  { id: "e1", title: "Coleccionista", desc: "Exporta tus tarjetas a Anki u Obsidian", icon: "award", category: "export", progressMax: 1 },
+  { id: "e1", title: "Coleccionista", desc: "Sincroniza tus tarjetas o notas con Anki u Obsidian", icon: "award", category: "export", progressMax: 1 },
   { id: "k3", title: "Racha de 3", desc: "3 días seguidos de estudio", icon: "flame", category: "streak", progressMax: 3 },
   { id: "k7", title: "Racha de 7", desc: "Una semana seguida de estudio", icon: "flame", category: "streak", progressMax: 7 },
   { id: "l5", title: "Estudiante Enfocado", desc: "Alcanza el rango Estudiante Enfocado (nivel 5)", icon: "trend", category: "mastery", progressMax: 5 },
