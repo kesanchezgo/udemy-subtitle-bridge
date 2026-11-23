@@ -2327,36 +2327,18 @@ let mainLayoutEls: HTMLElement[] = [];
  *  que el dock quede AL LADO del vídeo y no encima. Se guardan los elementos
  *  tocados para poder restaurarlos tal cual al destruir el dock. */
 function adjustMainLayout(effectiveWidth: number, liveResize = false) {
-	const targets: HTMLElement[] = [];
+	// Un solo ajuste: margin-right en <main>. Tanto DataCamp como master.dev
+	// tienen el reproductor dentro de <main>; reducir también el grid interno
+	// (.FMPlayer2) y el body era una doble/triple reducción que dejaba el
+	// <video> a 0px de ancho aunque el reproductor estuviera cargado.
 	const main = document.querySelector('main');
-	if (main) targets.push(main as HTMLElement);
-	if (isMasterCampusPage()) {
-		for (const sel of ['.FMPlayer2', '.player-container', 'body']) {
-			const el = document.querySelector(sel) as HTMLElement | null;
-			if (el && el !== main && !targets.includes(el)) targets.push(el);
-		}
-	}
-	if (!targets.length) return;
-	if (mainLayoutEls.some((e) => !targets.includes(e))) resetMainLayout();
-	mainLayoutEls = targets;
-	const transition = liveResize ? 'none' : 'margin-right 0.3s cubic-bezier(0.4,0,0.2,1), width 0.3s cubic-bezier(0.4,0,0.2,1)';
-	// DataCamp: SOLO margin-right (el <main> ya se ajusta solo; añadir width
-	// lo ensancha y termina solapando el dock). master.dev: además width/max-width
-	// porque su grid interno no se reduce con el margen.
-	const isMaster = isMasterCampusPage();
-	for (const el of targets) {
-		el.setAttribute(USB_LAYOUT_ATTR, '1');
-		if (el.tagName === 'BODY') {
-			el.style.paddingRight = `${effectiveWidth}px`;
-		} else {
-			el.style.marginRight = `${effectiveWidth}px`;
-			if (isMaster && el !== document.querySelector('main')) {
-				el.style.width = `calc(100% - ${effectiveWidth}px)`;
-				el.style.maxWidth = `calc(100% - ${effectiveWidth}px)`;
-			}
-		}
-		el.style.transition = transition;
-	}
+	if (!main || typeof (main as HTMLElement).style === 'undefined') return;
+	const el = main as HTMLElement;
+	if (mainLayoutEls.some((x) => x !== el)) resetMainLayout();
+	mainLayoutEls = [el];
+	el.setAttribute(USB_LAYOUT_ATTR, '1');
+	el.style.marginRight = `${effectiveWidth}px`;
+	el.style.transition = liveResize ? 'none' : 'margin-right 0.3s cubic-bezier(0.4,0,0.2,1)';
 }
 
 function resetMainLayout() {
