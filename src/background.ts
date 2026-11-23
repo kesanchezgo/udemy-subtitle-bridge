@@ -1060,9 +1060,22 @@ async function translateSrtWithLocal(blocks: SrtBlock[]) {
 	return normalizeTranslatedChunk(blocks, response);
 }
 
+const TRANSLATION_CHUNK = 30;
+
+/**
+ * Un SW de MV3 se destruye a los ~30 s de inactividad. Traducir una lección
+ * entera (150-200 bloques) en una sola llamada tarda >90 s y el canal muere
+ * antes de la respuesta. Se traduce en lotes pequenos; cada lote tarda ~20 s
+ * y el mensaje entrante (`USG_KEEPALIVE` del dock) mantiene vivo el worker.
+ */
 async function translateSrtWithProvider(blocks: SrtBlock[]) {
-	const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(blocks), 0.15, 32768);
-	return normalizeTranslatedChunk(blocks, response);
+	const out: SrtBlock[] = [];
+	for (let i = 0; i < blocks.length; i += TRANSLATION_CHUNK) {
+		const chunk = blocks.slice(i, i + TRANSLATION_CHUNK);
+		const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(chunk), 0.15, 16384, { reasoningOff: true });
+		out.push(...normalizeTranslatedChunk(chunk, response));
+	}
+	return out;
 }
 
 async function translateSrtWithGemini(blocks: SrtBlock[]) {

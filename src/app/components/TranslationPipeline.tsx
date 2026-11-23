@@ -211,6 +211,19 @@ export function TranslationPipeline({
   // rehabilita solo en cuanto el proveedor aparezca.
   const { ready: aiReady, notice: aiNotice } = useAiHealth();
 
+  // Un service worker MV3 se destruye tras ~30 s sin mensajes. Traducir una
+  // lección entera en lotes tarda varios minutos: cada 10 s le enviamos un
+  // keepalive mientras la traducción está en curso para que no muera a mitad.
+  useEffect(() => {
+    if (phase !== "building" && phase !== "sending" && phase !== "streaming") return;
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: (m: unknown, cb?: (r: unknown) => void) => void } } }).chrome?.runtime;
+    if (!runtime?.sendMessage) return;
+    const ping = () => { try { runtime.sendMessage?.({ type: "USG_KEEPALIVE" }, () => undefined); } catch { /* ignore */ } };
+    ping();
+    const iv = setInterval(ping, 10_000);
+    return () => clearInterval(iv);
+  }, [phase]);
+
   const abortRef     = useRef<AbortController | null>(null);
   const hasAutoRun   = useRef(false);
   const lastRequestedCountRef = useRef(0);
