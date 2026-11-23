@@ -57,7 +57,9 @@ const CAPTIONS = 'https://captions.master.dev/assets/courses/';
 
 // ── caché en memoria por slug (y por track de learning path) ─────────────────
 const courseCache = new Map<string, Promise<MasterCourse | null>>();
-const programCache = new Map<string, Promise<{ program: DataCampProgram; courseId: number | null } | null>>();
+// Solo el learning path es invariante: courseId/nextCourse dependen del curso
+// abierto, así que se calculan fuera de la promesa cacheada.
+const programCache = new Map<string, Promise<{ parsed: MasterLearningPath; courses: DataCampProgram['courses'] } | null>>();
 
 /** Solo para tests: vacía la caché en memoria. */
 export function clearMasterCourseCache(): void {
@@ -85,7 +87,7 @@ export async function fetchMasterCourse(slug: string): Promise<MasterCourse | nu
 	const task = (async () => {
 		try {
 			const res = await fetch(`${API}courses/${encodeURIComponent(key)}`, { credentials: 'omit' });
-			if (!res.ok) return null; // no cachear null: un fallo de red no es un dato
+			if (!res.ok) { courseCache.delete(key); return null; } // un 404/5xx temporal no se cachea
 			const raw = await res.json() as Record<string, unknown>;
 			const lessonData: Record<string, MasterLesson> = {};
 			const data = (raw.lessonData ?? {}) as Record<string, Record<string, unknown>>;
@@ -251,39 +253,44 @@ export async function fetchMasterProgram(
 ): Promise<{ program: DataCampProgram; courseId: number | null } | null> {
 	const key = String(trackSlug || '').trim();
 	if (!key) return null;
-	const cached = programCache.get(key);
-	if (cached) return cached;
-	const task = (async () => {
-		try {
-			const res = await fetch(`https://master.dev/learn/${encodeURIComponent(key)}/`, { credentials: 'include' });
-			if (!res.ok) return null;
-			const parsed = parseMasterLearningPathHtml(await res.text(), key);
-			if (!parsed) return null;
-			const courses = await Promise.all(parsed.coreSlugs.map(async (cSlug, index) => {
-				const known = parsed.courseTitles[cSlug];
-				let title = known;
-				if (!title) {
-					const c = await fetchMasterCourse(cSlug);
-					title = c?.title || cSlug.replace(/-/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
-				}
-				return { id: index + 1, title, slug: cSlug, position: index + 1, done: null };
-			}));
-			const currentIdx = currentCourseSlug ? parsed.coreSlugs.indexOf(currentCourseSlug) : -1;
-			const courseId = currentIdx >= 0 ? currentIdx + 1 : null;
-			const next = currentIdx >= 0 && currentIdx + 1 < courses.length ? courses[currentIdx + 1] : null;
-			return {
-				program: {
-					slug: key, title: parsed.title, description: parsed.description, timeNeeded: '',
-					completionRate: null, enrolled: null, courses,
-					currentCourseDone: null, nextCourse: next ? { title: next.title, slug: next.slug } : null,
-				},
-				courseId,
-			};
-		} catch {
-			programCache.delete(key);
-			return null;
-		}
-	})();
-	programCache.set(key, task);
-	return task;
+	let cached = programCache.get(key);
+	if (!cached) {
+		cached = (async () => {
+			try {
+				const res = await fetch(`https://master.dev/learn/${encodeURIComponent(key)}/`, { credentials: 'include' });
+				if (!res.ok) { programCache.delete(key); return null; }
+				const parsed = parseMasterLearningPathHtml(await res.text(), key);
+				if (!parsed) { programCache.delete(key); return null; }
+				const courses = await Promise.all(parsed.coreSlugs.map(async (cSlug, index) => {
+					const known = parsed.courseTitles[cSlug];
+					let title = known;
+					if (!title) {
+						const c = await fetchMasterCourse(cSlug);
+						title = c?.title || cSlug.replace(/-/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+					}
+					return { id: index + 1, title, slug: cSlug, position: index + 1, done: null };
+				}));
+				return { parsed, courses };
+			} catch {
+				programCache.delete(key);
+				return null;
+			}
+		})();
+		programCache.set(key, cached);
+	}
+	const data = await cached;
+	if (!data) return null;
+	const { parsed, courses } = data;
+	// Depende del curso abierto: se recalcula en cada llamada sin refetch.
+	const currentIdx = currentCourseSlug ? parsed.coreSlugs.indexOf(currentCourseSlug) : -1;
+	const courseId = currentIdx >= 0 ? currentIdx + 1 : null;
+	const next = currentIdx >= 0 && currentIdx + 1 < courses.length ? courses[currentIdx + 1] : null;
+	return {
+		program: {
+			slug: key, title: parsed.title, description: parsed.description, timeNeeded: '',
+			completionRate: null, enrolled: null, courses,
+			currentCourseDone: null, nextCourse: next ? { title: next.title, slug: next.slug } : null,
+		},
+		courseId,
+	};
 }

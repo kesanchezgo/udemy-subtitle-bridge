@@ -5243,7 +5243,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                   trae los datos; el flujo de estudio no cambia. */}
               {dcCtx?.tracks?.length ? (
                 <div className="space-y-1.5">
-                  <select value={dcCtx.activeSlug ?? ""} onChange={e => { void chromeStorage.set({ dc_active_track: e.target.value || null }); }}
+                  <select value={dcCtx.activeSlug ?? ""} onChange={e => { void chromeStorage.set({ dc_active_track: e.target.value }); }}
                     className={fieldCls} aria-label="Programa al que pertenece este curso">
                     <option value="">Sin programa (solo este curso)</option>
                     {dcCtx.tracks.map(t => <option key={t.slug} value={t.slug}>{t.title}</option>)}
@@ -5299,7 +5299,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       : transcriptState.status === "none"
                         ? "Activa los subtítulos en inglés y vuelve a comprobar"
                         : transcriptState.status === "unsupported"
-                          ? `Es un cuestionario o ejercicio: complétalo en ${platformName(aiPlatform)}`
+                          ? "Es un cuestionario o ejercicio: complétalo en " + platformName(aiPlatform)
                           : transcriptState.status === "preview"
                             ? "Se usará una sesión de ejemplo"
                             : "Un momento…"}
@@ -6678,7 +6678,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                           </button>
                           {nextLessonStatus === "failed" && (
                             <p role="status" className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
-                              No encontré el botón «Siguiente» de ${platformName(aiPlatform)}. Abre la próxima lección desde el temario: Kinema te ofrecerá estudiarla.
+                              No encontré el botón «Siguiente» de {platformName(aiPlatform)}. Abre la próxima lección desde el temario: Kinema te ofrecerá estudiarla.
                             </p>
                           )}
                         </div>

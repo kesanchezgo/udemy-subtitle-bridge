@@ -451,13 +451,13 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
     const lectureTitle = typeof context?.lectureTitle === "string" ? context.lectureTitle.trim() : "";
     if (courseTitle || courseDescription || lectureTitle) {
       void (async () => {
-        const existing = await chromeStorage.get(["agent_autofilled_course_slug", "agent_lesson_name", LESSON_AUTOFILL_KEY, LESSON_AUTOFILL_VALUE]);
+        const existing = await chromeStorage.get(["agent_autofilled_course_slug", "agent_lesson_name", LESSON_AUTOFILL_KEY, LESSON_AUTOFILL_VALUE, "agent_course_autofill_value", "agent_course_name"]);
         const lastFilledSlug = typeof existing.agent_autofilled_course_slug === "string" ? existing.agent_autofilled_course_slug : "";
         const lastLessonAutoKey = typeof existing[LESSON_AUTOFILL_KEY] === "string" ? String(existing[LESSON_AUTOFILL_KEY]) : "";
         const lastLessonAutoValue = typeof existing[LESSON_AUTOFILL_VALUE] === "string" ? String(existing[LESSON_AUTOFILL_VALUE]) : "";
         const isNewCourse = !!courseSlug && courseSlug !== lastFilledSlug;
-        const lastCourseAutoValue = (await chromeStorage.get(["agent_course_autofill_value"]))?.agent_course_autofill_value;
-        const storedCourse = (await chromeStorage.get(["agent_course_name"]))?.agent_course_name;
+        const lastCourseAutoValue = existing.agent_course_autofill_value;
+        const storedCourse = existing.agent_course_name;
         const courseUnedited = !storedCourse || !lastCourseAutoValue || storedCourse === lastCourseAutoValue;
         const sameCourseAutofill = !!courseSlug && courseSlug === lastFilledSlug && courseUnedited;
         const shouldFill = isNewCourse || sameCourseAutofill;

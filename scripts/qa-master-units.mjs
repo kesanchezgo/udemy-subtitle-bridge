@@ -127,4 +127,41 @@ await test("clearMasterCourseCache existe (tests pueden reiniciar caché)", () =
 	master.clearMasterCourseCache();
 });
 
+await test("fetchMasterProgram: courseId/nextCourse dependen del curso, no de la caché del path", async () => {
+	const slugs = ["prompt-engineering", "ai-agents-v2", "mcp", "ai-engineering", "ai-agent-workflows", "agent-harness"];
+	const html = `<html><head><title>AI Engineering Learning Path - Build Resilient Software | Master.dev</title></head><body>
+		<script>window._bs.learningPaths["ai-engineering"]={core:[${slugs.map((s) => `"${s}"`).join(",")}]}</script>
+		${slugs.map((s) => `<a href=/courses/${s}/><h2>Course ${s} title</h2></a>`).join("\n")}
+	</body></html>`;
+	const originalFetch = globalThis.fetch;
+	let calls = 0;
+	globalThis.fetch = async () => { calls += 1; return new Response(html, { status: 200 }); };
+	try {
+		master.clearMasterCourseCache();
+		const fourth = await master.fetchMasterProgram("ai-engineering", "ai-engineering");
+		assert.equal(fourth?.courseId, 4, 'cuarto curso del core');
+		assert.equal(fourth?.program.nextCourse?.slug, "ai-agent-workflows");
+		const first = await master.fetchMasterProgram("ai-engineering", "prompt-engineering");
+		assert.equal(first?.courseId, 1, 'mismo path, curso distinto, sin refetch');
+		assert.equal(first?.program.nextCourse?.slug, "ai-agents-v2");
+		assert.equal(calls, 1, 'el learning path se descarga una sola vez');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+await test("fetchMasterProgram: un HTTP temporal NO queda cacheado", async () => {
+	const originalFetch = globalThis.fetch;
+	let calls = 0;
+	globalThis.fetch = async () => { calls += 1; return new Response("", { status: 503 }); };
+	try {
+		master.clearMasterCourseCache();
+		assert.equal(await master.fetchMasterProgram("caido", "ai-engineering"), null);
+		assert.equal(await master.fetchMasterProgram("caido", "ai-engineering"), null);
+		assert.equal(calls, 2, 'un 503 no se recuerda: se reintenta');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 console.log(`QA unidades de master.dev: ${passed}/${passed} OK`);

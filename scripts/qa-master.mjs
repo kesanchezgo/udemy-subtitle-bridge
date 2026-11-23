@@ -160,18 +160,40 @@ check('programa con site masterdev y tracks reales', programCtx?.site === 'maste
 check('ambigüedad respetada: sin programa autoelegido', programCtx?.activeSlug === null && programCtx?.program === null,
 	`activeSlug=${String(programCtx?.activeSlug)} program=${String(programCtx?.program ?? null)}`);
 const chosen = programCtx?.tracks?.[0]?.slug ?? null;
+let pathCourses = null;
 if (chosen) {
 	await sw.evaluate((slug) => new Promise((done) => chrome.storage.sync.set({ dc_active_track: slug }, () => done(null))), chosen);
 	let program = null;
+	let programCourseId = null;
 	for (let i = 0; i < 16; i += 1) {
 		const c = (await syncGet(['dc_program_context'])).dc_program_context ?? null;
-		if (c?.program?.slug === chosen) { program = c.program; break; }
+		if (c?.program?.slug === chosen) { program = c.program; programCourseId = c.courseId; pathCourses = c.program?.courses ?? null; break; }
 		await page.waitForTimeout(1000);
 	}
 	check('la elección explícita carga el learning path', Boolean(program) && (program?.courses?.length ?? 0) > 0,
 		`${program?.slug ?? '?'} · ${program?.courses?.length ?? 0} cursos`);
+	check('courseId real del curso en el learning path', programCourseId === 4 && program?.nextCourse?.slug === 'ai-agent-workflows',
+		`courseId=${String(programCourseId)} · next=${String(program?.nextCourse?.slug)}`);
 	check('progreso NO inventado (done y completionRate en null)', program?.courses?.every((c) => c.done === null) === true && program?.completionRate === null,
 		`completionRate=${String(program?.completionRate)} · done=[${(program?.courses ?? []).map((c) => String(c.done)).join(',')}]`);
+	// El dock pinta el programa en Study → editar (mismo gesto que qa:datacamp).
+	await page.locator(`${OUTER} button:has-text("Study")`).first().evaluate((el) => el.click()).catch(() => {});
+	await page.waitForTimeout(1200);
+	await waitClickInShadowSafe(page, /Estudiar esta lección/);
+	await waitClickInShadowSafe(page, /Editar curso o lección/);
+	await page.waitForTimeout(800);
+	const dockTxt = await page.evaluate(() => {
+		const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+		if (!root) return '';
+		const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+			acceptNode: (n) => (n.parentElement?.tagName === 'STYLE' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+		});
+		let o = '';
+		while (w.nextNode()) o += w.currentNode.textContent ?? '';
+		return o.replace(/\s+/g, ' ');
+	});
+	check('el dock pinta Programa: AI Engineering · curso 4 de 6', /Programa:\s*AI Engineering\s*·\s*curso 4 de 6/.test(dockTxt),
+		(dockTxt.match(/Programa:[^.]*curso \d+ de \d+/) ?? ['(sin Programa en el dock)'])[0]);
 }
 
 // ── 5. Toggle del dock y navegación real a la siguiente lección ───────────────
@@ -207,6 +229,19 @@ for (let i = 0; i < 20; i += 1) {
 	await page.waitForTimeout(1000);
 }
 check('el contexto sigue a la lección nueva', Boolean(lesson2) && !/Connecting the Client-Side Tools/i.test(lesson2), lesson2);
+if (pathCourses?.length) {
+	// courseId depende del CURSO abierto (/courses/<curso>/<lección>/), no de la lección.
+	const courseSlugNow = new URL(after).pathname.split('/').filter(Boolean)[1];
+	const expectedId = pathCourses.findIndex((c) => c.slug === courseSlugNow) + 1;
+	let ctxAfter = null;
+	for (let i = 0; i < 16; i += 1) {
+		ctxAfter = (await syncGet(['dc_program_context'])).dc_program_context ?? null;
+		if (ctxAfter?.courseId === expectedId) break;
+		await page.waitForTimeout(1000);
+	}
+	check('courseId se recalcula desde el curso abierto, no de la lección', expectedId > 0 && ctxAfter?.courseId === expectedId,
+		`${courseSlugNow} → courseId=${String(ctxAfter?.courseId)} (esperado ${expectedId})`);
+}
 
 // ── 6. Fuera del área de lección: sin dock y layout recuperado ────────────────
 await page.goto(PATH_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -224,6 +259,22 @@ check('cero errores de runtime.lastError', lastErrors.length === 0, lastErrors.s
 // ── 7. Limpieza del perfil de QA ──────────────────────────────────────────────
 await sw.evaluate(() => new Promise((done) => chrome.storage.sync.clear(() => done(null))));
 await sw.evaluate(() => new Promise((done) => chrome.storage.local.clear(() => done(null))));
+
+async function waitClickInShadowSafe(page, match, ms = 6000) {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		const ok = await page.evaluate((m) => {
+			const root = document.querySelector('[id^="usb-dock-host-"]')?.shadowRoot;
+			const btn = [...(root?.querySelectorAll('button') ?? [])].find((b) => new RegExp(m).test((b.textContent ?? '').trim()) && !b.disabled);
+			if (!btn) return false;
+			btn.click();
+			return true;
+		}, match.source);
+		if (ok) return true;
+		await page.waitForTimeout(400);
+	}
+	return false;
+}
 
 console.log(`\n${failures === 0 ? '✅' : '❌'} master.dev: ${failures === 0 ? 'todo OK' : `${failures} fallos`}`);
 await context.close();

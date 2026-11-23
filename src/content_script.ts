@@ -194,6 +194,7 @@ let masterCourseDescription: string | null = null;
 let masterCourseSlug: string | null = null;
 let masterTracks: { slug: string; title: string }[] | null = null;
 let masterProgram: DataCampProgram | null = null;
+let masterCourseId: number | null = null;  // posición del curso en el learning path
 let masterSeededKey: string | null = null;
 let masterSeedInFlightKey: string | null = null;
 
@@ -2885,10 +2886,12 @@ async function refreshMasterProgram() {
 			else if (tracks.length > 1) active = null; // ambigüedad: decide el usuario
 		}
 		masterProgram = null;
+		masterCourseId = null;
 		if (active) {
 			const route = getMasterLessonRoute();
 			const result = await fetchMasterProgram(active, route?.courseSlug ?? null);
 			masterProgram = result?.program ?? null;
+			masterCourseId = result?.courseId ?? null;
 		}
 		writeMasterProgramContext();
 	} catch { /* sin storage: el dock no muestra programa */ }
@@ -2901,7 +2904,7 @@ function writeMasterProgramContext() {
 			dc_program_context: {
 				site: 'masterdev', tracks: masterTracks,
 				activeSlug: masterProgram ? masterProgram.slug : null,
-				program: masterProgram, courseId: null,
+				program: masterProgram, courseId: masterProgram ? masterCourseId : null,
 			},
 		});
 	} catch { /* sin storage */ }
@@ -2949,6 +2952,7 @@ function syncMasterRuntime() {
 	if (!route) {
 		if (masterKey) {
 			masterKey = null; masterMeta = null; masterSeededKey = null;
+			masterProgram = null; masterCourseId = null;
 			activeLectureKey = null;
 			resetRuntimeState(); destroyInPageDock(); destroyOverlay(); stopObserver();
 		}
@@ -2961,6 +2965,7 @@ function syncMasterRuntime() {
 		masterCourseDescription = null;
 		masterTracks = null;
 		masterProgram = null;
+		masterCourseId = null;
 	}
 	const key = `${route.courseSlug}/${route.lessonSlug}`;
 	if (masterKey !== key) {

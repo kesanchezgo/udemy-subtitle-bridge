@@ -114,8 +114,11 @@ function getConfiguredContentScriptFiles(tabUrl?: string): string[] {
 /** Compara un patrón de manifest (`https://*.udemy.com/course/*`) con una URL real. */
 function matchTabPattern(pattern: string, url: string): boolean {
 	try {
-		const re = new RegExp(`^${pattern.replace(/[.+?^${}()|[\\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
-		return re.test(url);
+		const escaped = pattern
+			.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+			.replace(/^([a-z]+:\/\/)\*\\\./i, '$1(?:[^/]+\\.)?')
+			.replace(/\*/g, '.*');
+		return new RegExp(`^${escaped}$`, 'i').test(url);
 	} catch {
 		return false;
 	}

@@ -382,7 +382,7 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
                                   aria-expanded={isOpen}
                                   data-library-course-toggle={course.courseId}
                                   title={course.progress.basis === "course"
-                                    ? `${course.progress.label} del curso: ${course.progress.done} de ${course.progress.of} lecciones (temario de ${platformName(course.progress.source)})`
+                                    ? course.progress.label + " del curso: " + course.progress.done + " de " + course.progress.of + " lecciones (temario de " + platformName(course.progress.source) + ")"
                                     : "Aún no conozco el temario completo de este curso: se lee al abrir una de sus lecciones con Kinema. Mientras, cuento lo que empezaste."}
                                   className="flex-1 flex items-center gap-2.5 min-w-0 px-3 py-2.5 text-left"
                                 >

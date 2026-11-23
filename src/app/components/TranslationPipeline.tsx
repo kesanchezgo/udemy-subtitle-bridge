@@ -234,6 +234,10 @@ export function TranslationPipeline({
   const apiKeysRef   = useRef(apiKeys);
   const localRef     = useRef(localConnected);
   const providerRef  = useRef(providerConfig);
+  // El intervalo de progreso vive en un useEffect de lectureKey: cerraría sobre
+  // la etiqueta del primer render. Un ref actualizado en cada render la mantiene
+  // fiel al backend que realmente está traduciendo.
+  const effectiveModelLabelRef = useRef("");
 
   useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { localRef.current = localConnected; }, [localConnected]);
@@ -330,7 +334,7 @@ export function TranslationPipeline({
 
         if (count <= 0) {
           setPhase("idle");
-          setErrorMessage("Esperando que Udemy exponga subtítulos EN para traducir.");
+          setErrorMessage("Esperando subtítulos EN de " + platformName(platformOf()) + " para traducir.");
         } else {
           setPhase("sending");
           sendingElapsed = 0;
@@ -347,9 +351,9 @@ export function TranslationPipeline({
             if (sendingElapsed <= 4) {
               setErrorMessage("Conectando con IA…");
             } else if (sendingElapsed <= 12) {
-              setErrorMessage(`Esperando respuesta de ${effectiveModelLabel}…`);
+              setErrorMessage(`Esperando respuesta de ${effectiveModelLabelRef.current}…`);
             } else {
-              setErrorMessage(`${effectiveModelLabel} procesando ${count} bloques… (${sendingElapsed}s)`);
+              setErrorMessage(`${effectiveModelLabelRef.current} procesando ${count} bloques… (${sendingElapsed}s)`);
             }
           }, 4000);
         }
@@ -550,6 +554,7 @@ export function TranslationPipeline({
         : actualBackend === "provider" ? (providerConfig ? PROVIDER_LABELS[providerConfig.kind] : "Proveedor")
           : MODEL_LABEL[modelUsed]
     : MODEL_LABEL[modelUsed];
+  effectiveModelLabelRef.current = effectiveModelLabel;
 
   // Parse streamed SRT into lines for rendering
   const srtLines = streamedSrt.split("\n");
@@ -607,7 +612,7 @@ export function TranslationPipeline({
           <div className="flex items-center gap-3">
             <StepNode index={1} state={step1} />
             <span className={`kx-slate flex-1 text-[12px] font-semibold ${phase !== "idle" ? "text-[var(--usb-fg)]" : "text-[var(--usb-fg-lo)]"}`}>
-              {isBuilding ? "Leyendo transcripción…" : phase !== "idle" ? `Transcripción .srt · ${platformName(platformOf())}` : "Transcripción"}
+              {isBuilding ? "Leyendo transcripción…" : phase !== "idle" ? "Transcripción .srt · " + platformName(platformOf()) : "Transcripción"}
             </span>
             {phase !== "idle" && (
               <span className="kx-num text-[10.5px] shrink-0 text-violet-400 font-bold">
