@@ -21,6 +21,14 @@ import {
 	resolveDataCampSubtitles
 } from './app/services/datacampLecture';
 import type { DataCampProgram, DataCampTrackRef, DataCampVideoMeta, DataCampVttLanguage } from './app/services/datacampLecture';
+import {
+	fetchMasterCourse,
+	getMasterLessonRoute,
+	isMasterCampusPage,
+	resolveMasterVideo,
+	type MasterCourse,
+	type MasterVideoMeta,
+} from './app/services/masterLecture';
 import { initAiProviderConfig } from './app/services/ai-providers';
 import { courseTotalKey, dataCampVideoTotal, isFreshTotal, readCourseTotals, saveCourseTotal, udemyLectureTotal, type CallbackStorage } from './app/services/courseTotals';
 import { vocabularyMatches } from './shared/vocabMatch';
@@ -70,7 +78,10 @@ const SUBTITLE_SELECTORS = [
 	'[class*="captions-display--captions-cue-text--"]',
 	'[class*="captions-display--captions-line--"]',
 	'[data-purpose="captions-cue-text"]',
-	'[data-purpose="transcript-cue"]'
+	'[data-purpose="transcript-cue"]',
+	'.vjs-text-track-details',
+	'.vjs-caption',
+	'.vjs-subtitles'
 ];
 
 const NATIVE_CAPTION_SELECTORS = [
@@ -81,7 +92,9 @@ const NATIVE_CAPTION_SELECTORS = [
 	'[class*="captions-display--captions-cue-container--"]',
 	'[class*="captions-display--captions-region--"]',
 	'[data-purpose="captions-cue-text"]',
-	'[data-purpose="captions-cue"]'
+	'[data-purpose="captions-cue"]',
+	'.vjs-text-track-details',
+	'.vjs-caption'
 ];
 
 const DEFAULT_CONFIG: OverlayConfig = {
@@ -168,6 +181,14 @@ let dcTracks: DataCampTrackRef[] | null = null;
 let dcProgram: DataCampProgram | null = null;
 let dcActiveTrackSlug: string | null = null;
 let dcCourseId: number | null = null;
+
+// ── Estado del sitio master.dev (Frontend Masters) ─────────────────────────────
+let masterKey: string | null = null;      // courseSlug/lessonSlug
+let masterMeta: MasterVideoMeta | null = null;
+let masterCourseTitle: string | null = null;
+let masterCourseDescription: string | null = null;
+let masterSeededKey: string | null = null;
+let masterSeedInFlight = false;
 
 // Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
 // el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
@@ -261,6 +282,10 @@ function getLectureKey() {
 	if (isDataCampCampusPage()) {
 		return dcLectureKey ?? getDataCampProjectorKey();
 	}
+	if (isMasterCampusPage()) {
+		const r = getMasterLessonRoute();
+		return r ? `${r.courseSlug}/${r.lessonSlug}` : null;
+	}
 	const match = window.location.pathname.match(/lecture\/(\d+)/);
 	return match ? match[1] : null;
 }
@@ -268,6 +293,9 @@ function getLectureKey() {
 function getCourseSlug() {
 	if (isDataCampCampusPage()) {
 		return getDataCampCourseSlug();
+	}
+	if (isMasterCampusPage()) {
+		return getMasterLessonRoute()?.courseSlug ?? null;
 	}
 	const match = window.location.pathname.match(/\/course\/([^/]+)/);
 	return match ? match[1] : null;
@@ -310,6 +338,11 @@ function getCourseTitle() {
 		if (dcCourseTitle) return dcCourseTitle;
 		const dcSlug = getDataCampCourseSlug();
 		return dcSlug ? dcSlug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
+	}
+	if (isMasterCampusPage()) {
+		if (masterCourseTitle) return masterCourseTitle;
+		const r = getMasterLessonRoute();
+		return r ? r.courseSlug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
 	}
 	const selectors = [
 		'[data-purpose="course-title"]',
@@ -390,6 +423,9 @@ function getCourseDescription(): string {
 	if (isDataCampCampusPage()) {
 		return dcCourseDescription ?? '';
 	}
+	if (isMasterCampusPage()) {
+		return masterCourseDescription ?? readMetaDescription();
+	}
 	const tagline = readMetaDescription();
 	if (tagline) return tagline;
 
@@ -442,6 +478,11 @@ function getLectureTitle() {
 	if (isDataCampCampusPage()) {
 		const fromMeta = getDataCampLectureTitleFromMeta(dcMeta);
 		if (fromMeta) return fromMeta;
+		const beforeBar = document.title.split('|')[0]?.trim();
+		return beforeBar && !isBadMetadataText(beforeBar) ? beforeBar : null;
+	}
+	if (isMasterCampusPage()) {
+		if (masterMeta?.lesson?.title) return masterMeta.lesson.title;
 		const beforeBar = document.title.split('|')[0]?.trim();
 		return beforeBar && !isBadMetadataText(beforeBar) ? beforeBar : null;
 	}
@@ -1768,10 +1809,10 @@ function adjustUdemyLayout(width: number, collapsed: boolean, liveResize = false
 		host.style.background = '#0d0e0f';
 	}
 
-	// DataCamp: el contenido vive en <main> — se le da un margen derecho igual
-	// al ancho del dock y el dock queda AL LADO, no encima.
-	if (isDataCampCampusPage()) {
-		adjustDataCampLayout(effectiveWidth, liveResize);
+	// DataCamp / master.dev: el contenido vive en <main> — se le da un margen
+	// derecho igual al ancho del dock y el dock queda AL LADO, no encima.
+	if (isDataCampCampusPage() || isMasterCampusPage()) {
+		adjustMainLayout(effectiveWidth, liveResize);
 		return;
 	}
 
@@ -2273,35 +2314,62 @@ function resetUdemyLayout() {
 	for (const target of getUdemyLayoutTargets()) {
 		clearDockLayoutStyles(target);
 	}
-	resetDataCampLayout();
+	resetMainLayout();
 }
 
 // ── Layout de DataCamp: el dock vive DENTRO de la página, no encima ──────────
 // Udemy estrecha su columna de contenido; en DataCamp el contenedor de la
 // lección es <main>, así que el mismo ajuste se hace con un margen derecho
 // igual al ancho del dock. Al destruirse el dock, el margen vuelve a 0.
-let dcLayoutMain: HTMLElement | null = null;
+let mainLayoutEls: HTMLElement[] = [];
 
-function adjustDataCampLayout(effectiveWidth: number, liveResize = false) {
+/** Ajusta <main> (DataCamp) y, en master.dev, el grid/reproductor interno para
+ *  que el dock quede AL LADO del vídeo y no encima. Se guardan los elementos
+ *  tocados para poder restaurarlos tal cual al destruir el dock. */
+function adjustMainLayout(effectiveWidth: number, liveResize = false) {
+	const targets: HTMLElement[] = [];
 	const main = document.querySelector('main');
-	if (!main || typeof (main as HTMLElement).style === 'undefined') return;
-	const el = main as HTMLElement;
-	if (dcLayoutMain && dcLayoutMain !== el) resetDataCampLayout();
-	dcLayoutMain = el;
-	el.setAttribute(USB_LAYOUT_ATTR, '1');
-	el.style.marginRight = `${effectiveWidth}px`;
-	el.style.transition = liveResize
-		? 'none'
-		: 'margin-right 0.3s cubic-bezier(0.4,0,0.2,1)';
+	if (main) targets.push(main as HTMLElement);
+	if (isMasterCampusPage()) {
+		for (const sel of ['.FMPlayer2', '.player-container', 'body']) {
+			const el = document.querySelector(sel) as HTMLElement | null;
+			if (el && el !== main && !targets.includes(el)) targets.push(el);
+		}
+	}
+	if (!targets.length) return;
+	if (mainLayoutEls.some((e) => !targets.includes(e))) resetMainLayout();
+	mainLayoutEls = targets;
+	const transition = liveResize ? 'none' : 'margin-right 0.3s cubic-bezier(0.4,0,0.2,1), width 0.3s cubic-bezier(0.4,0,0.2,1)';
+	// DataCamp: SOLO margin-right (el <main> ya se ajusta solo; añadir width
+	// lo ensancha y termina solapando el dock). master.dev: además width/max-width
+	// porque su grid interno no se reduce con el margen.
+	const isMaster = isMasterCampusPage();
+	for (const el of targets) {
+		el.setAttribute(USB_LAYOUT_ATTR, '1');
+		if (el.tagName === 'BODY') {
+			el.style.paddingRight = `${effectiveWidth}px`;
+		} else {
+			el.style.marginRight = `${effectiveWidth}px`;
+			if (isMaster && el !== document.querySelector('main')) {
+				el.style.width = `calc(100% - ${effectiveWidth}px)`;
+				el.style.maxWidth = `calc(100% - ${effectiveWidth}px)`;
+			}
+		}
+		el.style.transition = transition;
+	}
 }
 
-function resetDataCampLayout() {
-	if (dcLayoutMain && dcLayoutMain.isConnected) {
-		dcLayoutMain.style.marginRight = '';
-		dcLayoutMain.style.transition = '';
-		dcLayoutMain.removeAttribute(USB_LAYOUT_ATTR);
+function resetMainLayout() {
+	for (const el of mainLayoutEls) {
+		if (!el.isConnected) continue;
+		el.style.marginRight = '';
+		el.style.paddingRight = '';
+		el.style.width = '';
+		el.style.maxWidth = '';
+		el.style.transition = '';
+		el.removeAttribute(USB_LAYOUT_ATTR);
 	}
-	dcLayoutMain = null;
+	mainLayoutEls = [];
 }
 
 function destroyInPageDock() {
@@ -2781,9 +2849,70 @@ function syncDataCampRuntime() {
 	scanForSubtitleChanges();
 }
 
+/** Siembra el VTT oficial de master.dev en el mismo estado que usa el pipeline. */
+async function seedMasterSubtitles(key: string) {
+	if (masterSeededKey === key || masterSeedInFlight) return;
+	masterSeedInFlight = true;
+	try {
+		const route = getMasterLessonRoute();
+		if (!route || !key.endsWith(`/${route.lessonSlug}`)) return;
+		const resolved = await resolveMasterVideo(route);
+		if (masterKey !== key) return;
+		masterSeededKey = key;
+		if (!resolved) return;
+		masterMeta = resolved;
+		masterCourseTitle = resolved.course.title;
+		masterCourseDescription = resolved.course.description ?? null;
+		const vtt = await fetch(resolved.vttUrl, { credentials: 'omit' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+		if (vtt && masterKey === key) {
+			capturedEnVtt = vtt;
+			parseVttIntoCues(vtt);
+		}
+		scanForSubtitleChanges();
+		sendLectureContextUpdate();
+	} finally {
+		masterSeedInFlight = false;
+	}
+}
+
+/** Equivalente a syncUdemyRuntimeForUrl para master.dev ( vídeo en el mismo documento ). */
+function syncMasterRuntime() {
+	const route = getMasterLessonRoute();
+	if (!route) {
+		if (masterKey) {
+			masterKey = null; masterMeta = null; masterSeededKey = null;
+			activeLectureKey = null;
+			resetRuntimeState(); destroyInPageDock(); destroyOverlay(); stopObserver();
+		}
+		return;
+	}
+	const key = `${route.courseSlug}/${route.lessonSlug}`;
+	if (masterKey !== key) {
+		masterKey = key;
+		masterMeta = null; masterSeededKey = null;
+		activeLectureKey = key;
+		resetRuntimeState();
+		void seedMasterSubtitles(key);
+		window.setTimeout(sendLectureContextUpdate, 1200);
+		window.setTimeout(sendLectureContextUpdate, 3000);
+	}
+	initInPageDock();
+	if (!overlayEl) {
+		const container = findVideoContainer();
+		createOverlay(container || document.body || document.documentElement as HTMLElement);
+	}
+	startObserver();
+	scanForSubtitleChanges();
+	sendLectureContextUpdate();
+}
+
 function syncUdemyRuntimeForUrl() {
 	if (isDataCampCampusPage()) {
 		syncDataCampRuntime();
+		return;
+	}
+	if (isMasterCampusPage()) {
+		syncMasterRuntime();
 		return;
 	}
 	if (isUdemyLecturePage()) {
@@ -3804,7 +3933,7 @@ function watchUrlChanges() {
 		// (la SPA monta el reproductor tarde), y desaparece en ejercicios que no
 		// son vídeo. El sync es idempotente, así que en ese sitio se reevalúa
 		// cada tick aunque la URL siga igual; Udemy mantiene su comportamiento.
-		if (isDataCampCampusPage()) {
+		if (isDataCampCampusPage() || isMasterCampusPage()) {
 			syncUdemyRuntimeForUrl();
 		}
 	}, 1000);
@@ -3879,7 +4008,11 @@ function bootstrap() {
 		if (message.type === 'GO_TO_NEXT_LECTURE') {
 			// DataCamp: el botón de la SPA es [aria-label="Ir al siguiente
 			// ejercicio"]; en Udemy se queda la navegación de siempre.
-			const ok = isDataCampCampusPage() ? goToNextDataCampExercise() : goToNextLecture();
+			let ok: boolean;
+			if (isMasterCampusPage()) {
+				const next = document.querySelector<HTMLAnchorElement>('a[aria-label*="Next"], a[title*="Next"], .next-lesson a');
+				if (next?.href) { window.location.assign(next.href); ok = true; } else ok = false;
+			} else ok = isDataCampCampusPage() ? goToNextDataCampExercise() : goToNextLecture();
 			void sendToSidebar({ type: 'NEXT_LECTURE_RESULT', payload: { ok } }).catch(() => undefined);
 			return;
 		}

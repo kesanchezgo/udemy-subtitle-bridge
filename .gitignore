@@ -68,3 +68,4 @@ qa-sidebar-local.png
 # Cookies de sesión para la prueba contra DataCamp real. NUNCA versionar:
 # contienen el JWT de acceso y la sesión completa.
 .qa-datacamp-cookies.json
+.qa-master-cookies.json

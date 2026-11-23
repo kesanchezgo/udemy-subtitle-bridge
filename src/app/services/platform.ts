@@ -7,6 +7,7 @@
 const KNOWN: { test: RegExp; id: string; name: string }[] = [
 	{ test: /(^|\.)udemy\.com$/, id: 'udemy', name: 'Udemy' },
 	{ test: /(^|\.)datacamp\.com$/, id: 'datacamp', name: 'DataCamp' },
+	{ test: /(^|\.)master\.dev$/, id: 'masterdev', name: 'Frontend Masters' },
 ];
 
 export function platformOf(url?: string | null): string {
