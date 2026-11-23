@@ -5,6 +5,7 @@
 
 import { toast } from "sonner";
 import { useAiHealth } from "../hooks/useAiHealth";
+import { platformName, platformOf } from "../services/platform";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -216,9 +217,9 @@ export function TranslationPipeline({
   // keepalive mientras la traducción está en curso para que no muera a mitad.
   useEffect(() => {
     if (phase !== "building" && phase !== "sending" && phase !== "streaming") return;
-    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: (m: unknown, cb?: (r: unknown) => void) => void } } }).chrome?.runtime;
+    const runtime = (globalThis as typeof globalThis & { chrome?: { runtime?: { sendMessage?: (m: unknown, cb?: (r: unknown) => void) => void; lastError?: unknown } } }).chrome?.runtime;
     if (!runtime?.sendMessage) return;
-    const ping = () => { try { runtime.sendMessage?.({ type: "USG_KEEPALIVE" }, () => undefined); } catch { /* ignore */ } };
+    const ping = () => { try { runtime.sendMessage?.({ type: "USG_KEEPALIVE" }, () => { void runtime.lastError; }); } catch { /* ignore */ } };
     ping();
     const iv = setInterval(ping, 10_000);
     return () => clearInterval(iv);
@@ -346,9 +347,9 @@ export function TranslationPipeline({
             if (sendingElapsed <= 4) {
               setErrorMessage("Conectando con IA…");
             } else if (sendingElapsed <= 12) {
-              setErrorMessage("Esperando respuesta de Gemini…");
+              setErrorMessage(`Esperando respuesta de ${effectiveModelLabel}…`);
             } else {
-              setErrorMessage(`Gemini procesando ${count} bloques… (${sendingElapsed}s)`);
+              setErrorMessage(`${effectiveModelLabel} procesando ${count} bloques… (${sendingElapsed}s)`);
             }
           }, 4000);
         }
@@ -606,7 +607,7 @@ export function TranslationPipeline({
           <div className="flex items-center gap-3">
             <StepNode index={1} state={step1} />
             <span className={`kx-slate flex-1 text-[12px] font-semibold ${phase !== "idle" ? "text-[var(--usb-fg)]" : "text-[var(--usb-fg-lo)]"}`}>
-              {isBuilding ? "Leyendo transcripción…" : phase !== "idle" ? "Transcripción .srt · Udemy" : "Transcripción"}
+              {isBuilding ? "Leyendo transcripción…" : phase !== "idle" ? `Transcripción .srt · ${platformName(platformOf())}` : "Transcripción"}
             </span>
             {phase !== "idle" && (
               <span className="kx-num text-[10.5px] shrink-0 text-violet-400 font-bold">

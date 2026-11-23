@@ -1,5 +1,5 @@
 {
-  "version": "1.9.8",
+  "version": "1.9.9",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
@@ -19,7 +19,9 @@
     "qa:ai-health": "node scripts/qa-ai-health.mjs",
     "qa:udemy:real": "node scripts/qa-udemy-real.mjs",
     "qa:datacamp": "node scripts/qa-datacamp.mjs",
-    "qa:datacamp:flow": "node scripts/qa-datacamp-flow.mjs"
+    "qa:datacamp:flow": "node scripts/qa-datacamp-flow.mjs",
+    "qa:master": "node scripts/qa-master.mjs",
+    "qa:master:units": "node scripts/qa-master-units.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

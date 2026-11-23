@@ -27,11 +27,12 @@ const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 // síntomas son mensajes del panel que caen en 'port closed' y handlers que
 // parecen no existir. Con esta constante se verifica en un segundo qué código
 // corre de verdad: sw.evaluate(() => self.__KINEMA_SW_VERSION).
-const SW_VERSION = 'v2026-11-22-static-sw-imports';
+const SW_VERSION = 'v2026-11-23-masterdev-v1.9.9';
 (self as unknown as { __KINEMA_SW_VERSION?: string }).__KINEMA_SW_VERSION = SW_VERSION;
 if (import.meta.env.DEV) console.info('[USG] service worker iniciado, versión', SW_VERSION);
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const UDEMY_COURSE_MATCH = 'https://*.udemy.com/course/*';
+const LECTURE_TAB_URLS = ['https://*.udemy.com/course/*', 'https://app.datacamp.com/*', 'https://*.master.dev/courses/*'];
 const LOCAL_AI_HEALTH_ENDPOINTS = [
 	'http://127.0.0.1:8010/health',
 	'http://127.0.0.1:8010/v1/models',
@@ -80,7 +81,7 @@ function broadcastHostPermissionAdded(): void {
 		chrome?.permissions?.onAdded?.addListener((permissions) => {
 			const granted = permissions?.origins ?? [];
 			if (!granted.length) return;
-			chrome?.tabs?.query?.({ url: 'https://*.udemy.com/*' }, (tabs) => {
+			chrome?.tabs?.query?.({ url: LECTURE_TAB_URLS }, (tabs) => {
 				for (const tab of tabs ?? []) {
 					if (typeof tab.id !== 'number') continue;
 					try {
@@ -96,38 +97,39 @@ function broadcastHostPermissionAdded(): void {
 }
 broadcastHostPermissionAdded();
 
-function getConfiguredContentScriptFiles(): string[] {
+function getConfiguredContentScriptFiles(tabUrl?: string): string[] {
 	const manifest = chromeApi?.runtime?.getManifest?.();
 	const contentScripts = manifest?.content_scripts as Array<{ matches?: string[]; js?: string[] }> | undefined;
-	if (!Array.isArray(contentScripts)) {
-		return [];
+	if (!Array.isArray(contentScripts)) return [];
+	// Con URL de pestaña se elige el entry real de ese sitio; sin URL se usa el
+	// de Udemy (compatibilidad con los llamadores existentes).
+	const entries = tabUrl
+		? contentScripts.filter((entry) => Array.isArray(entry.matches) && entry.matches.some((m) => matchTabPattern(m, tabUrl)))
+		: contentScripts.filter((entry) => Array.isArray(entry.matches) && entry.matches.includes(UDEMY_COURSE_MATCH));
+	const files = entries.flatMap((entry) => Array.isArray(entry.js) ? entry.js : [])
+		.filter((file) => typeof file === 'string' && file.trim().length > 0);
+	return [...new Set(files)];
+}
+
+/** Compara un patrón de manifest (`https://*.udemy.com/course/*`) con una URL real. */
+function matchTabPattern(pattern: string, url: string): boolean {
+	try {
+		const re = new RegExp(`^${pattern.replace(/[.+?^${}()|[\\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
+		return re.test(url);
+	} catch {
+		return false;
 	}
-
-	const lectureScript = contentScripts.find((entry) =>
-		Array.isArray(entry.matches) && entry.matches.includes(UDEMY_COURSE_MATCH)
-	);
-
-	return Array.isArray(lectureScript?.js)
-		? lectureScript.js.filter((file) => typeof file === 'string' && file.trim().length > 0)
-		: [];
 }
 
 async function reinjectLatestContentScriptIntoOpenLectureTabs() {
 	if (!chromeApi?.tabs?.query || !chromeApi?.scripting?.executeScript) {
 		return;
 	}
-
-	const scriptFiles = getConfiguredContentScriptFiles();
-	if (!scriptFiles.length) {
-		return;
-	}
-
-	const tabs = await chromeApi.tabs.query({ url: [UDEMY_COURSE_MATCH] });
-	for (const tab of tabs as Array<{ id?: number }>) {
-		if (typeof tab.id !== 'number') {
-			continue;
-		}
-
+	const tabs = await chromeApi.tabs.query({ url: LECTURE_TAB_URLS });
+	for (const tab of tabs as Array<{ id?: number; url?: string }>) {
+		if (typeof tab.id !== 'number') continue;
+		const scriptFiles = getConfiguredContentScriptFiles(tab.url);
+		if (!scriptFiles.length) continue;
 		try {
 			await chromeApi.scripting.executeScript({
 				target: { tabId: tab.id, allFrames: false },
@@ -138,7 +140,6 @@ async function reinjectLatestContentScriptIntoOpenLectureTabs() {
 		}
 	}
 }
-
 function setDockActionState(tabId: number, enabled: boolean) {
 	chromeApi.action?.setBadgeText?.({ tabId, text: enabled ? '' : 'OFF' });
 	chromeApi.action?.setBadgeBackgroundColor?.({ tabId, color: enabled ? '#7c3aed' : '#52525b' });
@@ -176,12 +177,12 @@ function sendDockToggle(tabId: number): Promise<unknown> {
 	});
 }
 
-async function injectConfiguredContentScript(tabId: number) {
+async function injectConfiguredContentScript(tabId: number, tabUrl?: string) {
 	if (!chromeApi?.scripting?.executeScript) {
 		throw new Error('Chrome scripting API is not available.');
 	}
 
-	const scriptFiles = getConfiguredContentScriptFiles();
+	const scriptFiles = getConfiguredContentScriptFiles(tabUrl);
 	if (!scriptFiles.length) {
 		throw new Error('No content script files are configured.');
 	}
@@ -192,7 +193,7 @@ async function injectConfiguredContentScript(tabId: number) {
 	});
 }
 
-async function toggleDockForTab(tab: { id?: number }) {
+async function toggleDockForTab(tab: { id?: number; url?: string }) {
 	if (typeof tab?.id !== 'number') {
 		return;
 	}
@@ -210,7 +211,7 @@ async function toggleDockForTab(tab: { id?: number }) {
 	}
 
 	try {
-		await injectConfiguredContentScript(tab.id);
+		await injectConfiguredContentScript(tab.id, tab.url);
 		await new Promise((resolve) => setTimeout(resolve, 120));
 		const response = await sendDockToggle(tab.id);
 		const enabled = readDockEnabledFromResponse(response);
@@ -1072,9 +1073,10 @@ async function translateSrtWithProvider(blocks: SrtBlock[]) {
 	const out: SrtBlock[] = [];
 	for (let i = 0; i < blocks.length; i += TRANSLATION_CHUNK) {
 		const chunk = blocks.slice(i, i + TRANSLATION_CHUNK);
-		// 2560 tokens basta para 30 bloques (~1150 de salida medidos en este
-	// modelo); 16384 era 8x innecesario y solo alargaba cada lote.
-		const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(chunk), 0.15, 2560, { reasoningOff: true });
+		// 4096 deja holgura sobre los ~1150 tokens medidos por lote de 30bloques;
+		// si un proxy rechaza los campos anti-reasoning con HTTP 400, la capa
+		// inferior reintenta una vez a 16384 sin esos campos.
+		const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(chunk), 0.15, 4096, { reasoningOff: true });
 		out.push(...normalizeTranslatedChunk(chunk, response));
 	}
 	return out;
@@ -1173,7 +1175,7 @@ async function translateSrtToSpanish(sourceSrt: string): Promise<{ srt: string; 
 	return {
 		srt: `${formatSrtBlocks(translatedBlocks)}\n`,
 		blockCount: translatedBlocks.length,
-		chunkCount: 1,
+		chunkCount: usedBackend === 'provider' ? Math.ceil(blocks.length / TRANSLATION_CHUNK) : 1,
 		backend: usedBackend
 	};
 }
@@ -2092,19 +2094,28 @@ async function requestConfiguredProviderText(
 	const requestUrl = buildProviderChatUrl(cfg, false);
 	console.info(`[USG][provider] kind=${cfg.kind} url=${redactProviderUrl(requestUrl)} model=${cfg.model}`);
 
+	// Un proxy gratuito puede colgarse indefinidamente: 90 s por llamada y
+	// limpieza del temporizador para no dejar timers colgados en el SW.
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 90_000);
 	let response: Response;
 	try {
 		response = await fetch(requestUrl, {
 			method: 'POST',
 			headers: buildProviderHeaders(cfg),
 			body: JSON.stringify(buildBody(Boolean(extra))),
+			signal: controller.signal,
 		});
 		if (!response.ok && response.status === 400 && extra) {
 			// Servidor estricto con los campos anti-reasoning: reintenta sin ellos.
+			const strictBody = cfg.kind === 'anthropic'
+				? buildAnthropicBody(messages, Math.max(maxTokens, 16384), temperature, cfg.model, false)
+				: buildOpenAiCompatibleBody(messages, Math.max(maxTokens, 16384), temperature, cfg.model, false);
 			response = await fetch(requestUrl, {
 				method: 'POST',
 				headers: buildProviderHeaders(cfg),
-				body: JSON.stringify(buildBody(false)),
+				body: JSON.stringify(strictBody),
+				signal: controller.signal,
 			});
 		}
 	} catch (networkError) {
@@ -2120,6 +2131,8 @@ async function requestConfiguredProviderText(
 				: 'Verifica que el servidor esté corriendo y que el permiso del host esté concedido en chrome://extensions → Detalles de la extensión.') +
 			` (${toErrorMessage(networkError)})`
 		);
+	} finally {
+		clearTimeout(timeout);
 	}
 
 	const responseText = await response.text();

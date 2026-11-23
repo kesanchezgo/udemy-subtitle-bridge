@@ -13,6 +13,8 @@
  *          content script) → chapters[].exercises[].type === 'VideoExercise'
  *          (lo que Kinema estudia); respaldo: chapters[].number_of_videos.
  *          nb_exercises NO sirve: no cuadra con la lista de ejercicios.
+ * - master.dev GET api.master.dev/v2/kabuki/courses/{slug}
+ *          → lessonSlugs.length (49 en ai-engineering; verificado en vivo).
  *
  * Sin dependencias: lo importan el content script y la Biblioteca.
  */
@@ -23,7 +25,7 @@ export const COURSE_TOTAL_TTL_MS = 7 * 86_400_000;
 
 export interface CourseTotal {
 	total: number;
-	source: 'udemy' | 'datacamp';
+	source: 'udemy' | 'datacamp' | 'masterdev';
 	slug?: string;
 	at: number;
 }

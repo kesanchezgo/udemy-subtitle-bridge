@@ -456,9 +456,17 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
         const lastLessonAutoKey = typeof existing[LESSON_AUTOFILL_KEY] === "string" ? String(existing[LESSON_AUTOFILL_KEY]) : "";
         const lastLessonAutoValue = typeof existing[LESSON_AUTOFILL_VALUE] === "string" ? String(existing[LESSON_AUTOFILL_VALUE]) : "";
         const isNewCourse = !!courseSlug && courseSlug !== lastFilledSlug;
+        const lastCourseAutoValue = (await chromeStorage.get(["agent_course_autofill_value"]))?.agent_course_autofill_value;
+        const storedCourse = (await chromeStorage.get(["agent_course_name"]))?.agent_course_name;
+        const courseUnedited = !storedCourse || !lastCourseAutoValue || storedCourse === lastCourseAutoValue;
+        const sameCourseAutofill = !!courseSlug && courseSlug === lastFilledSlug && courseUnedited;
+        const shouldFill = isNewCourse || sameCourseAutofill;
         const updates: Record<string, unknown> = {};
-        if (isNewCourse && courseTitle) updates.agent_course_name = courseTitle;
-        if (isNewCourse && courseDescription) updates.agent_course_description = courseDescription;
+        if (shouldFill && courseTitle) {
+          updates.agent_course_name = courseTitle;
+          updates.agent_course_autofill_value = courseTitle;
+        }
+        if (shouldFill && courseDescription) updates.agent_course_description = courseDescription;
         if (isNewCourse) updates.agent_autofilled_course_slug = courseSlug;
         // El nombre de la lección sigue a la lección ABIERTA sin pisar lo que el
         // usuario escribió en «Nombre del video/clase actual» (ese campo es suyo).
@@ -1613,7 +1621,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[var(--usb-fg-mid)]")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.9.8"}</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[var(--usb-fg-mid)]")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "1.9.9"}</span>
         </div>
       </div>
 

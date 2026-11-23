@@ -311,11 +311,11 @@ await test(".apkg de conceptos: el destino decide los mazos; sin destino, como a
 await test("Plataforma: una sola regla para cualquier sitio (etiquetas, notas, historial)", () => {
 	const of = platform.platformOf;
 	assert.deepEqual(
-		["https://www.udemy.com/course/java/learn/lecture/1", "https://campus.datacamp.com/courses/x", "https://www.coursera.org/learn/ml", "https://app.pluralsight.com/a", "https://www.youtube.com/watch?v=1", "http://localhost:5173/", "no es una url"].map((u) => of(u)),
-		["udemy", "datacamp", "coursera", "pluralsight", "youtube", "udemy", "web"],
+		["https://www.udemy.com/course/java/learn/lecture/1", "https://campus.datacamp.com/courses/x", "https://www.coursera.org/learn/ml", "https://app.pluralsight.com/a", "https://www.youtube.com/watch?v=1", "https://master.dev/courses/ai-engineering/introduction/", "http://localhost:5173/", "no es una url"].map((u) => of(u)),
+		["udemy", "datacamp", "coursera", "pluralsight", "youtube", "masterdev", "udemy", "web"],
 		"las conocidas por su nombre; cualquier otra, por el sitio (la vista previa simula Udemy)",
 	);
-	assert.deepEqual(["udemy", "datacamp", "coursera", null].map((p) => platform.platformName(p)), ["Udemy", "DataCamp", "Coursera", "la plataforma"]);
+	assert.deepEqual(["udemy", "datacamp", "masterdev", "coursera", null].map((p) => platform.platformName(p)), ["Udemy", "DataCamp", "Frontend Masters", "Coursera", "la plataforma"]);
 	assert.equal(platform.isPlatformId("coursera"), true);
 	assert.equal(platform.isPlatformId("<script>"), false, "un valor guardado raro no llega a las etiquetas");
 });

@@ -2,7 +2,7 @@ import { fieldCls, textareaCls } from "./settings/SettingsKit";
 import { TIMED_TRANSCRIPT, bloomTaskLabel, vocabularyCandidateTarget } from "../../shared/prompts";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { isPlatformId, platformOf } from "../services/platform";
+import { isPlatformId, platformName, platformOf } from "../services/platform";
 import {
   Target, Sparkles, Wand2, Check, Edit3, ArrowRight, Brain,
   CheckCircle2, Circle, RotateCcw, X, Zap, FlipHorizontal,
@@ -745,7 +745,7 @@ function humanizeObjectivesError(error: string | null | undefined): string {
     return describeProviderFailure(error, ctx);
   }
   if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("err_")) return "Error de red: Kinema no pudo conectar con tu proveedor de IA. Revisa tu conexión y reintenta.";
-  if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página de Udemy.";
+  if (msg.includes("background")) return "No se pudo contactar con el background de la extensión. Recarga la página.";
   if (msg.includes("parse") || msg.includes("json") || msg.includes("formato no era válido")) return "La respuesta llegó con un formato no válido. Pulsa Regenerar para reintentar.";
   return describeProviderFailure(error, ctx);
 }
@@ -1192,6 +1192,8 @@ type DcProgram = {
   nextCourse: { title: string; slug: string } | null;
 };
 type DcProgramContext = {
+  /** Discriminador de sitio: los contextos de un sitio no deben colar en otro. */
+  site?: string;
   tracks: { slug: string; title: string }[] | null;
   activeSlug: string | null;
   program: DcProgram | null;
@@ -1830,9 +1832,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
   // Programa (career track) del sitio — null en Udemy o sin elección. El gate
   // es por SITIO, no solo por storage: si el usuario usa ambos, el contexto
   // guardado de DataCamp no debe aparecer ni colar tags en Udemy.
-  const isDataCampSite = typeof window !== "undefined" && window.location.hostname.includes("datacamp");
+  const aiPlatform = platformOf();
   const dcCtxRaw = useDcProgramContext();
-  const dcCtx = isDataCampSite ? dcCtxRaw : null;
+  const programSite = dcCtxRaw?.site ?? "datacamp";
+  const dcCtx = (aiPlatform === "datacamp" || aiPlatform === "masterdev") && programSite === aiPlatform ? dcCtxRaw : null;
   // Contexto del programa para la IA (objetivos y sesión): la posición real
   // del curso dentro del programa y la descripción del programa. En Udemy
   // queda undefined y los prompts no mencionan ningún programa.
@@ -1842,7 +1845,6 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     total: dcCtx.program.courses.length || undefined,
     description: dcCtx.program.description || undefined,
   } : undefined;
-  const aiPlatform = platformOf();
 
   // ── Fase 2 · el mazo de este curso en Anki (fuente única: ankiDestination) ──
   // Fijar, la exportación, la nota de Obsidian y los repasos usan este destino.
@@ -5297,7 +5299,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       : transcriptState.status === "none"
                         ? "Activa los subtítulos en inglés y vuelve a comprobar"
                         : transcriptState.status === "unsupported"
-                          ? "Es un cuestionario o ejercicio: complétalo en Udemy"
+                          ? `Es un cuestionario o ejercicio: complétalo en ${platformName(aiPlatform)}`
                           : transcriptState.status === "preview"
                             ? "Se usará una sesión de ejemplo"
                             : "Un momento…"}
@@ -6632,7 +6634,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       {/* Programa terminado según la propia plataforma: el siguiente
                           curso del programa, con deep-link (solo DataCamp + track). */}
                       {dcCtx?.program?.currentCourseDone === true && dcCtx.program.nextCourse ? (
-                        <a href={`https://app.datacamp.com/es/campus/courses/${dcCtx.program.nextCourse.slug}`}
+                        <a href={aiPlatform === "masterdev"
+                          ? `https://master.dev/courses/${dcCtx.program.nextCourse.slug}/`
+                          : `https://app.datacamp.com/es/campus/courses/${dcCtx.program.nextCourse.slug}`}
                           target="_blank" rel="noreferrer"
                           className="w-full h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1.5 border border-[var(--usb-border)] bg-[var(--usb-bg-2)] text-[var(--usb-fg-hi)] hover:bg-[var(--usb-bg-3)] transition-colors">
                           Siguiente curso del programa: {dcCtx.program.nextCourse.title}
@@ -6674,7 +6678,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                           </button>
                           {nextLessonStatus === "failed" && (
                             <p role="status" className="text-[10.5px] text-[var(--usb-fg-mid)] text-center leading-relaxed">
-                              No encontré el botón «Siguiente» de Udemy. Abre la próxima lección desde el temario: Kinema te ofrecerá estudiarla.
+                              No encontré el botón «Siguiente» de ${platformName(aiPlatform)}. Abre la próxima lección desde el temario: Kinema te ofrecerá estudiarla.
                             </p>
                           )}
                         </div>

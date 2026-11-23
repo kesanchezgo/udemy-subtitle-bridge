@@ -22,11 +22,13 @@ import {
 } from './app/services/datacampLecture';
 import type { DataCampProgram, DataCampTrackRef, DataCampVideoMeta, DataCampVttLanguage } from './app/services/datacampLecture';
 import {
-	fetchMasterCourse,
+	fetchMasterProgram,
 	getMasterLessonRoute,
+	goToNextMasterLesson,
 	isMasterCampusPage,
+	masterLectureTotal,
+	parseMasterCourseTracks,
 	resolveMasterVideo,
-	type MasterCourse,
 	type MasterVideoMeta,
 } from './app/services/masterLecture';
 import { initAiProviderConfig } from './app/services/ai-providers';
@@ -79,8 +81,9 @@ const SUBTITLE_SELECTORS = [
 	'[class*="captions-display--captions-line--"]',
 	'[data-purpose="captions-cue-text"]',
 	'[data-purpose="transcript-cue"]',
-	'.vjs-text-track-details',
-	'.vjs-caption',
+	'.vjs-text-track-cue',
+	'.vjs-tt-cue',
+	'.vjs-captions',
 	'.vjs-subtitles'
 ];
 
@@ -93,8 +96,9 @@ const NATIVE_CAPTION_SELECTORS = [
 	'[class*="captions-display--captions-region--"]',
 	'[data-purpose="captions-cue-text"]',
 	'[data-purpose="captions-cue"]',
-	'.vjs-text-track-details',
-	'.vjs-caption'
+	'.vjs-text-track-display',
+	'.vjs-text-track-cue',
+	'.vjs-tt-cue'
 ];
 
 const DEFAULT_CONFIG: OverlayConfig = {
@@ -187,8 +191,11 @@ let masterKey: string | null = null;      // courseSlug/lessonSlug
 let masterMeta: MasterVideoMeta | null = null;
 let masterCourseTitle: string | null = null;
 let masterCourseDescription: string | null = null;
+let masterCourseSlug: string | null = null;
+let masterTracks: { slug: string; title: string }[] | null = null;
+let masterProgram: DataCampProgram | null = null;
 let masterSeededKey: string | null = null;
-let masterSeedInFlight = false;
+let masterSeedInFlightKey: string | null = null;
 
 // Glosario de la lección actual (palabras exportadas al mazo de vocabulario):
 // el dock lo empuja vía bridge; el overlay lo usa para el chip de repaso.
@@ -340,8 +347,13 @@ function getCourseTitle() {
 		return dcSlug ? dcSlug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
 	}
 	if (isMasterCampusPage()) {
-		if (masterCourseTitle) return masterCourseTitle;
 		const r = getMasterLessonRoute();
+		if (masterCourseTitle && masterCourseSlug === r?.courseSlug) return masterCourseTitle;
+		const beforeBar = document.title.split('|')[0]?.trim() ?? '';
+		if (beforeBar.includes(' - ')) {
+			const fromTitle = beforeBar.slice(beforeBar.lastIndexOf(' - ') + 3).trim();
+			if (fromTitle && !isBadMetadataText(fromTitle)) return fromTitle;
+		}
 		return r ? r.courseSlug.replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : null;
 	}
 	const selectors = [
@@ -451,6 +463,11 @@ function getCourseDescription(): string {
 
 function getCourseAIContext(): string {
 	const parts: string[] = [];
+	// master.dev: enriquecer con los datos reales de kabuki ya descargados.
+	if (isMasterCampusPage() && masterMeta) {
+		if (masterMeta.course.description) parts.push(`Curso: ${masterMeta.course.description}`);
+		if (masterMeta.lesson.description) parts.push(`Lección: ${masterMeta.lesson.description.replace(/\s+/g, ' ').trim()}`);
+	}
 	const tagline = readMetaDescription();
 	if (tagline) parts.push(`Resumen: ${tagline}`);
 
@@ -484,7 +501,8 @@ function getLectureTitle() {
 	if (isMasterCampusPage()) {
 		if (masterMeta?.lesson?.title) return masterMeta.lesson.title;
 		const beforeBar = document.title.split('|')[0]?.trim();
-		return beforeBar && !isBadMetadataText(beforeBar) ? beforeBar : null;
+		if (!beforeBar || isBadMetadataText(beforeBar)) return null;
+		return beforeBar.includes(' - ') ? beforeBar.slice(0, beforeBar.lastIndexOf(' - ')).trim() : beforeBar;
 	}
 	const selectors = [
 		'li[aria-current="true"] [data-purpose="item-title"]',
@@ -1085,6 +1103,10 @@ async function writeCachedTranslation(
 
 function requestPipelineTranslation(expectedLectureKey?: string) {
 	const currentLectureKey = getLectureKey();
+	// Capturar el contexto al INICIO: si el usuario cambia de lección mientras
+	// la IA traduce, el resultado se guarda igual pero no se pinta sobre el vídeo nuevo.
+	const courseSlugAtStart = getCourseSlug();
+	const courseTitleAtStart = getCourseTitle();
 	if (expectedLectureKey && currentLectureKey && expectedLectureKey !== currentLectureKey) {
 		void sendToSidebar({
 			type: 'PIPELINE_TRANSLATION_RESULT',
@@ -1180,16 +1202,19 @@ function requestPipelineTranslation(expectedLectureKey?: string) {
 				error?: string;
 			};
 			if (result.ok && typeof result.srt === 'string' && result.srt.trim()) {
-				importedEsCues = parseTimedTextIntoCues(result.srt);
-				logImportedCueDiagnostics('pipeline SRT', importedEsCues);
-				currentSubtitle = '';
-				resetImportedSubtitleBridge();
-				ensureOverlayVisibleForImportedCues();
-				scanForSubtitleChanges();
+				const stillSameLecture = getLectureKey() === currentLectureKey;
+				if (stillSameLecture) {
+					importedEsCues = parseTimedTextIntoCues(result.srt);
+					logImportedCueDiagnostics('pipeline SRT', importedEsCues);
+					currentSubtitle = '';
+					resetImportedSubtitleBridge();
+					ensureOverlayVisibleForImportedCues();
+					scanForSubtitleChanges();
+				}
 				void writeCachedTranslation(
 					currentLectureKey,
-					getCourseSlug(),
-					getCourseTitle(),
+					courseSlugAtStart ?? '',
+					courseTitleAtStart ?? '',
 					{ srt: result.srt, blockCount: result.blockCount || 0 }
 				);
 			}
@@ -1922,6 +1947,7 @@ function initInPageDock() {
 			existingHost.style.pointerEvents = 'auto';
 			existingHost.style.transform = 'translateX(0)';
 			existingHost.style.opacity = '1';
+			attachDockViewportListeners();
 			applyDockViewportFrame();
 			adjustUdemyLayout(dockWidth, dockCollapsed);
 			startLayoutReconcileBurst();
@@ -2248,6 +2274,12 @@ function notifyDockVisibilityChanged() {
 	});
 }
 
+function isSupportedLectureArea(): boolean {
+	return isUdemyLecturePage()
+		|| (isDataCampCampusPage() && Boolean(getDataCampProjectorKey()))
+		|| (isMasterCampusPage() && Boolean(getMasterLessonRoute()));
+}
+
 function setDockVisibility(enabled: boolean) {
 	dockEnabled = enabled;
 
@@ -2277,7 +2309,7 @@ function setDockVisibility(enabled: boolean) {
 		return dockEnabled;
 	}
 
-	if (!isUdemyLecturePage()) {
+	if (!isSupportedLectureArea()) {
 		notifyDockVisibilityChanged();
 		return dockEnabled;
 	}
@@ -2525,7 +2557,7 @@ function localCallbackStorage(): CallbackStorage | null {
  * Biblioteca da el porcentaje del CURSO; sin eso, solo «terminadas de empezadas».
  */
 async function refreshUdemyCourseTotal() {
-	if (isDataCampCampusPage()) return;
+	if (isDataCampCampusPage() || isMasterCampusPage()) return;
 	const slug = getCourseSlug();
 	const title = getCourseTitle();
 	const storage = localCallbackStorage();
@@ -2733,12 +2765,13 @@ function writeDataCampProgramContext() {
 	try {
 		const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } } };
 		chromeApi.chrome?.storage?.sync?.set({
-			dc_program_context: {
-				tracks: dcTracks,
-				activeSlug: dcActiveTrackSlug,
-				program: dcProgram,
-				courseId: dcCourseId,
-			},
+				dc_program_context: {
+					site: 'datacamp',
+					tracks: dcTracks,
+					activeSlug: dcActiveTrackSlug,
+					program: dcProgram,
+					courseId: dcCourseId,
+				},
 		});
 	} catch { /* sin storage: el dock no muestra programa */ }
 }
@@ -2831,10 +2864,53 @@ function syncDataCampRuntime() {
 	scanForSubtitleChanges();
 }
 
+/** Programa (learning path) de master.dev, con la misma honestidad ante
+ *  ambigüedad que DataCamp: solo se autodetecta si hay UN candidato. */
+async function refreshMasterProgram() {
+	try {
+		// El DOM puede no estar listo en el primer tick: reintenta una vez.
+		let tracks = parseMasterCourseTracks(document);
+		if (!tracks.length) { await new Promise((r) => setTimeout(r, 600)); tracks = parseMasterCourseTracks(document); }
+		masterTracks = tracks.length ? tracks : null;
+
+		const stored = await new Promise<string | null | undefined>((done) => {
+			const api = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { get: (k: string[], cb: (r: Record<string, unknown>) => void) => void } } } };
+			api.chrome?.storage?.sync?.get(['dc_active_track'], (r) => done(r?.dc_active_track as string | null | undefined));
+		});
+		let active: string | null = null;
+		if (stored === '') active = null; // usuario eligió «Sin programa»
+		else if (typeof stored === 'string' && tracks.some((tr) => tr.slug === stored)) active = stored;
+		if (!active && stored !== '') {
+			if (tracks.length === 1) active = tracks[0].slug;
+			else if (tracks.length > 1) active = null; // ambigüedad: decide el usuario
+		}
+		masterProgram = null;
+		if (active) {
+			const route = getMasterLessonRoute();
+			const result = await fetchMasterProgram(active, route?.courseSlug ?? null);
+			masterProgram = result?.program ?? null;
+		}
+		writeMasterProgramContext();
+	} catch { /* sin storage: el dock no muestra programa */ }
+}
+
+function writeMasterProgramContext() {
+	try {
+		const api = globalThis as typeof globalThis & { chrome?: { storage?: { sync?: { set: (items: Record<string, unknown>, cb?: () => void) => void } } } };
+		api.chrome?.storage?.sync?.set({
+			dc_program_context: {
+				site: 'masterdev', tracks: masterTracks,
+				activeSlug: masterProgram ? masterProgram.slug : null,
+				program: masterProgram, courseId: null,
+			},
+		});
+	} catch { /* sin storage */ }
+}
+
 /** Siembra el VTT oficial de master.dev en el mismo estado que usa el pipeline. */
 async function seedMasterSubtitles(key: string) {
-	if (masterSeededKey === key || masterSeedInFlight) return;
-	masterSeedInFlight = true;
+	if (masterSeededKey === key || masterSeedInFlightKey === key) return;
+	masterSeedInFlightKey = key;
 	try {
 		const route = getMasterLessonRoute();
 		if (!route || !key.endsWith(`/${route.lessonSlug}`)) return;
@@ -2843,21 +2919,31 @@ async function seedMasterSubtitles(key: string) {
 		masterSeededKey = key;
 		if (!resolved) return;
 		masterMeta = resolved;
+		masterCourseSlug = route.courseSlug;
 		masterCourseTitle = resolved.course.title;
 		masterCourseDescription = resolved.course.description ?? null;
-		const vtt = await fetch(resolved.vttUrl, { credentials: 'omit' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
-		if (vtt && masterKey === key) {
-			capturedEnVtt = vtt;
-			parseVttIntoCues(vtt);
+		// Total del curso para la Biblioteca, con la fuente verificada de kabuki.
+		const total = masterLectureTotal(resolved.course);
+		const storage = localCallbackStorage();
+		if (total && storage) void saveCourseTotal(storage, [resolved.course.title], { total, source: 'masterdev', slug: route.courseSlug, at: Date.now() });
+		if (resolved.vttUrl) {
+			const vtt = await fetch(resolved.vttUrl, { credentials: 'omit' }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+			if (vtt && masterKey === key) {
+				capturedEnVtt = vtt;
+				parseVttIntoCues(vtt);
+			}
 		}
+		void refreshMasterProgram();
 		scanForSubtitleChanges();
 		sendLectureContextUpdate();
 	} finally {
-		masterSeedInFlight = false;
+		if (masterSeedInFlightKey === key) masterSeedInFlightKey = null;
+		// Si el usuario cambió de lección mientras llegaba, no pierde sus subtítulos.
+		if (masterKey && masterKey !== key && masterSeededKey !== masterKey) void seedMasterSubtitles(masterKey);
 	}
 }
 
-/** Equivalente a syncUdemyRuntimeForUrl para master.dev ( vídeo en el mismo documento ). */
+/** Equivalente a syncUdemyRuntimeForUrl para master.dev (vídeo en el mismo documento). */
 function syncMasterRuntime() {
 	const route = getMasterLessonRoute();
 	if (!route) {
@@ -2867,6 +2953,14 @@ function syncMasterRuntime() {
 			resetRuntimeState(); destroyInPageDock(); destroyOverlay(); stopObserver();
 		}
 		return;
+	}
+	// Un curso nuevo no debe heredar título/tracks del anterior.
+	if (route.courseSlug !== masterCourseSlug) {
+		masterCourseSlug = route.courseSlug;
+		masterCourseTitle = null;
+		masterCourseDescription = null;
+		masterTracks = null;
+		masterProgram = null;
 	}
 	const key = `${route.courseSlug}/${route.lessonSlug}`;
 	if (masterKey !== key) {
@@ -2885,7 +2979,7 @@ function syncMasterRuntime() {
 	}
 	startObserver();
 	scanForSubtitleChanges();
-	sendLectureContextUpdate();
+	// Sin sendLectureContextUpdate() suelto: watchUrlChanges() reevalúa cada 1 s.
 }
 
 function syncUdemyRuntimeForUrl() {
@@ -3953,7 +4047,7 @@ function bootstrap() {
 	// DataCamp: el VTT no pasa por la red de la página superior (se pide
 	// directo a la API pública del projector), así que el puente de red no
 	// hace falta; en Udemy sigue siendo la vía de captura.
-	if (!isDataCampCampusPage()) {
+	if (!isDataCampCampusPage() && !isMasterCampusPage()) {
 		injectNetworkBridge();
 	} else {
 		window.addEventListener('message', handleDataCampFrameMessage as EventListener);
@@ -3962,7 +4056,10 @@ function bootstrap() {
 		try {
 			const chromeApi = globalThis as typeof globalThis & { chrome?: { storage?: { onChanged?: { addListener?: (cb: (changes: Record<string, unknown>, area: string) => void) => void } } } };
 			chromeApi.chrome?.storage?.onChanged?.addListener?.((changes, area) => {
-				if (area === 'sync' && 'dc_active_track' in changes) void refreshDataCampProgram();
+				if (area === 'sync' && 'dc_active_track' in changes) {
+					if (isMasterCampusPage()) void refreshMasterProgram();
+					else if (isDataCampCampusPage()) void refreshDataCampProgram();
+				}
 			});
 		} catch { /* sin storage.onChanged: el selector no actualiza en vivo */ }
 	}
@@ -3991,10 +4088,8 @@ function bootstrap() {
 			// DataCamp: el botón de la SPA es [aria-label="Ir al siguiente
 			// ejercicio"]; en Udemy se queda la navegación de siempre.
 			let ok: boolean;
-			if (isMasterCampusPage()) {
-				const next = document.querySelector<HTMLAnchorElement>('a[aria-label*="Next"], a[title*="Next"], .next-lesson a');
-				if (next?.href) { window.location.assign(next.href); ok = true; } else ok = false;
-			} else ok = isDataCampCampusPage() ? goToNextDataCampExercise() : goToNextLecture();
+			if (isMasterCampusPage()) ok = goToNextMasterLesson(document, masterMeta);
+			else ok = isDataCampCampusPage() ? goToNextDataCampExercise() : goToNextLecture();
 			void sendToSidebar({ type: 'NEXT_LECTURE_RESULT', payload: { ok } }).catch(() => undefined);
 			return;
 		}

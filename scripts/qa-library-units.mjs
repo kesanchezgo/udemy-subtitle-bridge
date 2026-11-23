@@ -147,6 +147,14 @@ await test("Temario: clave por título (página y API), «C++» ≠ «C#», y es
 	assert.equal(totals.isFreshTotal({ total: 1, source: "udemy", at: Date.now() - 8 * 86400000 }), false, "a la semana se vuelve a leer");
 });
 
+await test("Temario master.dev: mismo contrato de total con source masterdev", async () => {
+	let store = {};
+	const storage = { get: (keys, cb) => cb(Object.fromEntries(keys.map((k) => [k, store[k]]))), set: (items, cb) => { store = { ...store, ...items }; cb?.(); } };
+	await totals.saveCourseTotal(storage, ["Applied AI Engineering Fundamentals"], { total: 34, source: "masterdev", at: 7 });
+	assert.deepEqual(await totals.readCourseTotals(storage), { "applied-ai-engineering-fundamentals": { total: 34, source: "masterdev", at: 7 } });
+	assert.equal(totals.courseProgress(2, 34, { total: 34, source: "masterdev", at: 7 }).source, "masterdev");
+});
+
 await test("Biblioteca: porcentaje del CURSO solo con temario coherente; si no, terminadas de empezadas", () => {
 	const courseTotals = {
 		...totals.withCourseTotal({}, [java], { total: 475, source: "udemy", at: 1 }),
