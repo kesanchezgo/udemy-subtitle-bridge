@@ -1072,7 +1072,9 @@ async function translateSrtWithProvider(blocks: SrtBlock[]) {
 	const out: SrtBlock[] = [];
 	for (let i = 0; i < blocks.length; i += TRANSLATION_CHUNK) {
 		const chunk = blocks.slice(i, i + TRANSLATION_CHUNK);
-		const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(chunk), 0.15, 16384, { reasoningOff: true });
+		// 2560 tokens basta para 30 bloques (~1150 de salida medidos en este
+	// modelo); 16384 era 8x innecesario y solo alargaba cada lote.
+		const response = await requestConfiguredProviderText(buildSrtTranslationPrompt(chunk), 0.15, 2560, { reasoningOff: true });
 		out.push(...normalizeTranslatedChunk(chunk, response));
 	}
 	return out;
