@@ -202,4 +202,29 @@ test("Obsidian: ideas con título, la práctica y su resultado en la nota", () =
 	assert(legacy.includes("> [!example]- Ver solución\n> sol") && !legacy.includes("**Formato:**"));
 });
 
+test("splitIdea: una pregunta larga sigue partiendo; la prosa de 10 palabras no", () => {
+	const question = "¿Qué tipo de código Python se va a escribir en el curso? — código idiomático";
+	assert(recall.splitIdea(question).detail === "código idiomático", "12 palabras con ¿…? se parten");
+	assert(recall.splitIdea("uno dos tres cuatro cinco seis siete ocho nueve diez — detalle").detail === "", "prosa larga intacta");
+});
+
+test("Prompts: filtro anti-logística y colocación dentro de la oración", () => {
+	const study = prompts.buildStudyPrompt("palabra ".repeat(200), { courseName: "C", lessonName: "L" });
+	assert(study.includes("FILTRO DE CONOCIMIENTO TRANSFERIBLE") && study.includes("Regla de los 6 meses"));
+	assert(study.includes("PROHIBIDO usar \"ordenar\" para instalaciones de herramientas"));
+	assert(study.includes("4-12 palabras"));
+	const vocab = prompts.buildVocabularyPrompt("texto", { targetLang: "English", baseLang: "Spanish", minLevel: "B2", words: [] });
+	assert(/DEBE usar esa misma colocación exacta/.test(vocab));
+	assert(/son C1 o C2, no B2/.test(vocab));
+});
+
+test("Obsidian: «1 de 2 a la primera» cuando el historial aporta el total", () => {
+	const note = obs.buildSessionNoteMarkdown({
+		courseName: "Java", lessonName: "JVM",
+		result: { title: "Lección completada", remembered: { count: 1, total: 2 }, check: { firstTry: 1, improved: 0, total: 2, skipped: false }, practice: "correct", cards: { total: 2, reinforce: 0, destination: "anki" } },
+		content: { relevance: { score: 80, reason: "r" }, keyConcepts: ["x"], questions: [], application: { isCode: false, setup: "s", challenge: "c", solution: "sol" }, interviewQ: null, nextAction: "n", ankiCards: [] },
+	}, obs.DEFAULT_OBSIDIAN_EXPORT_CONFIG);
+	assert(note.includes("Comprobación: 1 de 2 a la primera"), note.slice(0, 200));
+});
+
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

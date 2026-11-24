@@ -43,7 +43,7 @@ export function resultFromRecord(rec: LectureHistoryRecord, options: { includeCa
 	return {
 		title,
 		remembered: { count: knownIdeaIndexes(rec, total).size, total },
-		check: { firstTry, improved, skipped: Boolean(rec.questionsSkipped) },
+		check: { firstTry, improved, ...(answered.length > 0 ? { total: answered.length } : {}), skipped: Boolean(rec.questionsSkipped) },
 		practice,
 		cards: {
 			total: accepted.length,

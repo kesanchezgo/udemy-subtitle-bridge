@@ -43,6 +43,120 @@ function fnv1a(input: string): number {
 	return hash >>> 0;
 }
 
+// ── Procedencia discreta (campo Fuente / fuente) ────────────────────────────
+function escapeOriginHtml(value: string): string {
+	return String(value ?? '')
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const ORIGIN_PLATFORM_LABELS: Record<string, string> = {
+	udemy: 'Udemy',
+	datacamp: 'DataCamp',
+	masterdev: 'Frontend Masters',
+};
+
+function originPlatformLabel(value?: string): string {
+	const key = String(value ?? '').trim().toLowerCase();
+	if (!key) return '';
+	if (ORIGIN_PLATFORM_LABELS[key]) return ORIGIN_PLATFORM_LABELS[key];
+	return key.split(/[-_]/).filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+/**
+ * Migas compactas y seguras para el campo de procedencia de Anki.
+ * El `href="…"` se conserva tal cual (las suites lo comprueban) y todos los
+ * textos se escapan. Sin datos, devuelve '' para no pintar un pie vacío.
+ */
+export function buildOriginMetaHtml(opts: {
+	platform?: string; course?: string; lesson?: string; url?: string; time?: string;
+}): string {
+	const platform = originPlatformLabel(opts.platform);
+	const course = String(opts.course ?? '').trim();
+	const lesson = String(opts.lesson ?? '').trim();
+	const url = String(opts.url ?? '').trim();
+	const time = String(opts.time ?? '').trim();
+	if (!platform && !course && !lesson && !url) return '';
+	const parts: string[] = [];
+	if (platform) parts.push(`<span class="kx-origin-plat">${escapeOriginHtml(platform)}</span>`);
+	if (course) parts.push(`<span class="kx-origin-course">${escapeOriginHtml(course)}</span>`);
+	const lessonLabel = lesson || (time ? 'Lección' : '');
+	if (lessonLabel || url) {
+		const label = /^\d{1,2}:\d{2}$/.test(time)
+			? `${lessonLabel || 'Lección'} (${time})`
+			: lessonLabel || 'Abrir lección';
+		parts.push(url
+			? `<a class="kx-origin-link" href="${escapeOriginHtml(url)}">${escapeOriginHtml(label)} ↗</a>`
+			: `<span class="kx-origin-link">${escapeOriginHtml(label)}</span>`);
+	}
+	return `<span class="kx-origin">${parts.join('<span class="kx-origin-sep"> · </span>')}</span>`;
+}
+
+/** Pie de procedencia y detalles del rediseño; se añade al CSS de ambos modelos. */
+const ORIGIN_META_CSS = `
+/* Procedencia discreta al pie (mismo lenguaje visual en conceptos y vocabulario) */
+.kx-meta-foot {
+  margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--divider);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 0.72rem; line-height: 1.4; color: var(--text-dim);
+}
+.kx-origin { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.kx-origin-plat {
+  padding: 1px 7px; border-radius: 999px; background: var(--block-bg);
+  border: 1px solid var(--block-border); font-weight: 600; color: var(--text-muted);
+}
+.kx-origin-course { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kx-origin-link { color: var(--text-dim); text-decoration: none; font-weight: 500; }
+.kx-origin-link:hover { color: var(--accent); text-decoration: underline; }
+.kx-origin-sep { opacity: 0.7; }
+.front-header-left, .word-info .eyebrow-tag { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.collocation-chip {
+  background: var(--block-bg); border: 1px solid var(--block-border);
+  border-left: 3px solid var(--accent); border-radius: 10px;
+  padding: 8px 14px; font-size: 1.02rem; font-weight: 600; color: var(--text-main);
+  display: inline-block;
+}
+`;
+
+/** Adaptador en la propia tarjeta: notas antiguas sin .kx-origin se pintan igual. */
+function originAdapterJs(rawId: string, tagsId: string, footId: string, lessonId?: string): string {
+	const lessonLookup = lessonId ? `(lessonRaw && lessonRaw.textContent.trim()) || ` : '';
+	return `
+(function adaptKinemaOrigin() {
+  var foot = document.getElementById("${footId}");
+  if (!foot) return;
+  var raw = document.getElementById("${rawId}");
+  var tagsRaw = document.getElementById("${tagsId}");
+  var lessonRaw = ${lessonId ? `document.getElementById("${lessonId}")` : 'null'};
+  var origin = raw && raw.querySelector(".kx-origin");
+  if (origin) { foot.innerHTML = ""; foot.appendChild(origin); return; }
+  var tags = ((tagsRaw && tagsRaw.textContent) || "").split(/\\s+/);
+  function tagValue(prefix) {
+    for (var i = 0; i < tags.length; i++) if (tags[i].indexOf(prefix) === 0) return tags[i].slice(prefix.length);
+    return "";
+  }
+  function esc(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+  var platRaw = tagValue("kinema::plataforma::");
+  var course = tagValue("kinema::curso::");
+  var lesson = ${lessonLookup}tagValue("kinema::leccion::");
+  if (!platRaw && !course && !lesson) { foot.style.display = "none"; return; }
+  var labels = { udemy: "Udemy", datacamp: "DataCamp", masterdev: "Frontend Masters" };
+  var plat = labels[platRaw] || platRaw.replace(/[-_]/g, " ").replace(/\\b\\w/g, function (c) { return c.toUpperCase(); });
+  var link = raw && raw.querySelector("a[href]");
+  var parts = [];
+  if (plat) parts.push('<span class="kx-origin-plat">' + esc(plat) + "</span>");
+  if (course) parts.push('<span class="kx-origin-course">' + esc(course) + "</span>");
+  if (lesson || link) {
+    var label = esc(lesson || "Lección") + " ↗";
+    parts.push(link
+      ? '<a class="kx-origin-link" href="' + esc(link.getAttribute("href")) + '">' + label + "</a>"
+      : '<span class="kx-origin-link">' + label + "</span>");
+  }
+  foot.innerHTML = '<span class="kx-origin">' + parts.join('<span class="kx-origin-sep"> · </span>') + "</span>";
+})();`;
+}
+
 /** Tarjeta de concepto ya renderizada (HTML final de front/back). */
 export interface ConceptCardInput {
 	front: string;
@@ -85,20 +199,30 @@ export function buildConceptSpec(
 ): ApkgSpec {
 	const lessonPath = destination?.deck ?? conceptDeckPath(rootDeck, course, lesson);
 	const deckTree = conceptDeckTree(rootDeck, course, lesson);
-	const fuente = (card: { t?: string }) => {
-		// F2-1: con minuto, el enlace salta a ?start=<segundos> — el campo
-		// sigue siendo el mismo ('Fuente'), solo cambia el texto/enlace.
-		if (!lessonUrl) return '';
-		const base = `<a href="${lessonUrl}">▶ Repasar`;
-		if (card.t && /^\d{1,2}:\d{2}$/.test(card.t)) {
-			const [mm, ss] = card.t.split(':').map(Number);
-			const url = `${lessonUrl.split('#')[0].split('?')[0]}?start=${mm * 60 + ss}#overview`;
-			return `${base} este momento (${card.t})</a>`.replace('<a href="' + lessonUrl + '">', `<a href="${url}">`);
-		}
-		return lessonUrl ? `${base} esta lección</a>` : '';
-	};
 	const safeCourse = sanitizeDeckSegment(course);
 	const safeLesson = sanitizeDeckSegment(lesson);
+	const fuente = (card: ConceptCardInput) => {
+		// La plataforma va en la etiqueta de la tarjeta; si falta, se deduce de la URL.
+		const tagged = card.tags.find((tag) => tag.startsWith('kinema::plataforma::'));
+		const taggedPlatform = tagged ? tagged.slice('kinema::plataforma::'.length) : '';
+		const urlPlatform = /master\.dev/i.test(lessonUrl) ? 'masterdev'
+			: /datacamp/i.test(lessonUrl) ? 'datacamp'
+				: /udemy/i.test(lessonUrl) ? 'udemy' : '';
+		const base = lessonUrl.split('#')[0].split('?')[0];
+		const time = card.t && /^\d{1,2}:\d{2}$/.test(card.t) ? card.t : undefined;
+		let url = base;
+		if (time) {
+			const [mm, ss] = time.split(':').map(Number);
+			url = `${base}?start=${mm * 60 + ss}#overview`;
+		}
+		return buildOriginMetaHtml({
+			platform: taggedPlatform || urlPlatform,
+			course: safeCourse,
+			lesson: safeLesson,
+			url,
+			time,
+		});
+	};
 	// flowVersion 2 (§3): las de refuerzo encabezan la cola de nuevas — el
 	// orden de `notes` fija el due al importar, así que se ordenan AQUÍ.
 	const orderedCards = [...cards].sort((a, b) => Number(Boolean(b.reinforce)) - Number(Boolean(a.reinforce)));
@@ -800,10 +924,11 @@ ${PRISM_HEAD}
 
 <script>
 (function initDevFront() {
-  var pill = document.querySelector('.context-pill, .type-pill');
-  if (pill && pill.innerText) {
-    pill.innerText = pill.innerText.replace(/_/g, ' ').trim();
-  }
+  document.querySelectorAll('.context-pill').forEach(function (pill) {
+    if (pill && pill.innerText) {
+      pill.innerText = pill.innerText.replace(/_/g, ' ').trim();
+    }
+  });
 
   // Los innerHTML de este bloque SOLO reescriben HTML que ya está en el DOM
   // (quitando la etiqueta «CÓDIGO» y normalizando <br> dentro de <code>):
@@ -848,9 +973,10 @@ const CONCEPT_BACK_TEMPLATE = `<div class="anki-wrapper dev-card">
       {{Back}}
     </main>
 
-    {{#Fuente}}
-    <footer class="source-foot">{{Fuente}}</footer>
-    {{/Fuente}}
+    <div id="conceptFuenteRaw" style="display:none">{{Fuente}}</div>
+    <div id="conceptTagsRaw" style="display:none">{{Tags}}</div>
+    <div id="conceptLessonRaw" style="display:none">{{Leccion}}</div>
+    <footer class="kx-meta-foot source-foot" id="conceptMetaFoot"></footer>
 
   </div>
 </div>
@@ -870,6 +996,8 @@ ${PRISM_HEAD}
     el.innerHTML = el.innerHTML.replace(/<br\\s*\\/?>/gi, '\\n');
   });
 
+  ${originAdapterJs('conceptFuenteRaw', 'conceptTagsRaw', 'conceptMetaFoot', 'conceptLessonRaw')}
+
   setTimeout(function() {
     if (window.Prism) window.Prism.highlightAll();
   }, 30);
@@ -882,7 +1010,7 @@ export const CONCEPT_MODEL: import('./ankiApkgCore').ApkgModelSpec = {
 	sortf: 0,
 	fields: ['Front', 'Back', 'Leccion', 'Fuente', 'Tipo'],
 	templates: [{ name: 'Concepto', qfmt: CONCEPT_FRONT_TEMPLATE, afmt: CONCEPT_BACK_TEMPLATE }],
-	css: CONCEPT_MODEL_CSS,
+	css: `${CONCEPT_MODEL_CSS}\n${ORIGIN_META_CSS}`,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1537,9 +1665,12 @@ const VOCAB_FRONT_TEMPLATE = `<div class="anki-wrapper">
   <div class="card-box front-layout">
 
     <div class="front-header">
-      <div class="eyebrow-tag">
-        <span class="pulse-dot"></span>
-        <span>Palabra objetivo</span>
+      <div class="front-header-left">
+        <div class="eyebrow-tag">
+          <span class="pulse-dot"></span>
+          <span>Palabra objetivo</span>
+        </div>
+        {{#nivel}}<span class="cefr-chip">{{nivel}}</span>{{/nivel}}
       </div>
 
       {{AUDIO_WORD}}
@@ -1614,7 +1745,10 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     <!-- Header: Palabra, Fonética y Audio -->
     <header class="card-header">
       <div class="word-info">
-        <span class="eyebrow-tag">Vocabulario</span>
+        <div class="front-header-left">
+          <span class="eyebrow-tag">Vocabulario</span>
+          {{#nivel}}<span class="cefr-chip">{{nivel}}</span>{{/nivel}}
+        </div>
         <h1 class="main-word">{{word}}</h1>
         {{#phonetic}}
         <div class="ipa-box" id="ipaField">{{phonetic}}</div>
@@ -1655,17 +1789,9 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     {{#colocacion}}
     <section class="section-block">
       <div class="section-label">Colocación</div>
-      <div class="definition-text">{{colocacion}}</div>
+      <span class="collocation-chip">{{colocacion}}</span>
     </section>
     {{/colocacion}}
-
-    <!-- Fuente: volver al momento de la lección (fase 2 trae el minuto) -->
-    {{#fuente}}
-    <section class="section-block">
-      <div class="section-label">Fuente</div>
-      <div class="definition-text">{{fuente}}</div>
-    </section>
-    {{/fuente}}
 
     <!-- Ejemplo en Contexto -->
     {{#sentence}}
@@ -1689,6 +1815,10 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     </section>
     {{/sentence}}
 
+    <div id="vocabFuenteRaw" style="display:none">{{fuente}}</div>
+    <div id="vocabTagsRaw" style="display:none">{{Tags}}</div>
+    <footer class="kx-meta-foot" id="vocabMetaFoot"></footer>
+
   </div>
 </div>
 
@@ -1704,11 +1834,39 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
     }
   }
 
-  // 2. Limpieza de la oración (remueve saltos de línea internos y comillas rotas)
+  // 2. Oración entre comillas con la palabra objetivo resaltada por DOM.
   var sentence = document.getElementById("sentenceField");
   if (sentence) {
-    var rawText = sentence.innerText.replace(/^[\\s"“”'«»]+|[\\s"“”'«»]+$/g, '').trim();
-    sentence.innerText = "“" + rawText + "”";
+    var rawText = sentence.textContent.replace(/^[\\s"“”'«»]+|[\\s"“”'«»]+$/g, '').trim();
+    var wordEl = document.querySelector(".main-word");
+    var wordRaw = wordEl ? wordEl.textContent.trim() : "";
+    var marked = false;
+    var frag = document.createDocumentFragment();
+    frag.appendChild(document.createTextNode("“"));
+    if (wordRaw) {
+      ${VOCAB_WORD_REGEX_JS}
+      var wordRe = kxWordRegex(wordRaw);
+      var hit, last = 0;
+      while ((hit = wordRe.exec(rawText)) !== null) {
+        var start = hit.index + hit[1].length;
+        if (!hit[2]) { wordRe.lastIndex += 1; continue; }
+        marked = true;
+        if (start > last) frag.appendChild(document.createTextNode(rawText.slice(last, start)));
+        var mark = document.createElement("mark");
+        mark.className = "target";
+        mark.textContent = hit[2];
+        frag.appendChild(mark);
+        last = start + hit[2].length;
+      }
+      if (marked && last < rawText.length) frag.appendChild(document.createTextNode(rawText.slice(last)));
+    }
+    if (marked) {
+      frag.appendChild(document.createTextNode("”"));
+      sentence.textContent = "";
+      sentence.appendChild(frag);
+    } else {
+      sentence.textContent = "“" + rawText + "”";
+    }
   }
 
   // 3. Limpieza de paréntesis vacíos en la definición bilingüe ()
@@ -1717,6 +1875,8 @@ const VOCAB_BACK_TEMPLATE = `<div class="anki-wrapper">
   if (bilingual) {
     bilingual.innerHTML = bilingual.innerHTML.replace(/\\(\\s*\\)/g, '').trim();
   }
+
+  ${originAdapterJs('vocabFuenteRaw', 'vocabTagsRaw', 'vocabMetaFoot')}
 })();
 </script>`;
 
@@ -1740,7 +1900,7 @@ export function buildVocabModel(lang: string): import('./ankiApkgCore').ApkgMode
 				requires: [0],
 			},
 		],
-		css: VOCAB_MODEL_CSS,
+		css: `${VOCAB_MODEL_CSS}\n${ORIGIN_META_CSS}`,
 	};
 }
 

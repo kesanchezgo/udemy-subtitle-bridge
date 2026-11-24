@@ -404,4 +404,44 @@ await test("Compatibilidad e idiomas: detección por diseño de tarjeta (Note Ty
 	assert(vocabModel.templates[0].qfmt.includes("cloze-gap") && vocabModel.templates[0].afmt.includes("bilingualField"), "frente con cloze y reverso completo");
 });
 
+await test("Concepto: el script solo toca .context-pill y conserva data-tp", () => {
+	const qfmt = design.CONCEPT_MODEL.templates[0].qfmt;
+	assert(!qfmt.includes("querySelector('.context-pill, .type-pill')"), "no destruye la píldora de tipo");
+	assert(qfmt.includes("querySelectorAll('.context-pill')"), "normaliza solo la lección");
+});
+
+await test("buildOriginMetaHtml: migas seguras con href real, sin textos grandes", () => {
+	const html = design.buildOriginMetaHtml({
+		platform: "masterdev", course: "Python for Professional Developers",
+		lesson: "Introduction", url: "https://master.dev/courses/pro-python/introduction/", time: "01:35",
+	});
+	assert(html.includes("Frontend Masters") && html.includes("Python for Professional Developers"), html);
+	assert(html.includes('href="https://master.dev/courses/pro-python/introduction/"'), "href conservado");
+	assert(html.includes("Introduction (01:35) ↗"), "minuto en la miga");
+	assert(!/Escúchala en la lección|Repasar esta lección/.test(html));
+	assert.equal(design.buildOriginMetaHtml({}), "", "sin datos: pie vacío");
+	const escaped = design.buildOriginMetaHtml({ platform: '<img src=x>', course: 'a"b', lesson: "c" });
+	assert(!escaped.includes("<img") && escaped.includes("&quot;"), " HTML escapado");
+});
+
+await test("syncKinemaModels: actualiza solo los modelos de Kinema con plantilla única", async () => {
+	const names = [design.CONCEPT_MODEL_NAME, "Kinema · Vocab · English", "Kinema · Vocab · English-ef833"];
+	const calls = [];
+	const invoke = async (action, params = {}) => {
+		calls.push([action, params]);
+		if (action === "modelNames") return names;
+		if (action === "modelTemplates") {
+			return params.modelName === "Kinema · Vocab · English-ef833"
+				? { Vocabulario: { Front: "", Back: "" } }
+				: { Reconocer: { Front: "", Back: "" }, Producir: { Front: "", Back: "" } };
+		}
+		if (action === "updateModelTemplates" || action === "updateModelStyling") return {};
+		throw new Error("unsupported " + action);
+	};
+	const result = await ops.syncKinemaModels(invoke);
+	assert.deepEqual(result.updated, [design.CONCEPT_MODEL_NAME, "Kinema · Vocab · English-ef833"]);
+	const touched = calls.filter(([action]) => action === "updateModelTemplates").map(([, params]) => params.model.name);
+	assert(!touched.includes("Kinema · Vocab · English"), "el modelo viejo de 2 plantillas no se toca");
+});
+
 console.log(`QA unidades de Anki: ${passed}/${passed} OK`);

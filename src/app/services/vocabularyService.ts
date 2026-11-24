@@ -24,6 +24,7 @@ import {
 	DEFAULT_ROOT_DECK,
 	ROOT_DECK_DESCRIPTION,
 	VOCAB_PRESET,
+	buildOriginMetaHtml,
 	buildVocabModel,
 	kinemaTags,
 	platformTag,
@@ -327,6 +328,9 @@ export function buildVocabularySpec(
 	lessonUrl?: string
 ): VocabSpecResult {
 	const langLabel = config.targetLangLabel || 'English';
+	const originPlatform = /master\.dev/i.test(lessonUrl ?? '') ? 'masterdev'
+		: /datacamp/i.test(lessonUrl ?? '') ? 'datacamp'
+			: /udemy/i.test(lessonUrl ?? '') ? 'udemy' : '';
 	// Un mazo por idioma (o el que elegiste): cada palabra vive una sola vez.
 	const destination = vocabDestination(config, langLabel);
 	const deckPath = destination.deck;
@@ -350,16 +354,14 @@ export function buildVocabularySpec(
 			// ── Campos nuevos (B5): al final, los 9 primeros intactos ──
 			word.level || config.minLevel, // nivel — el CEFR llega por fin a la tarjeta
 			word.collocation ?? '', // colocación — B6
-			// Fuente con enlace real (contrarrevisión punto 2). El minuto solo
-			// con F2-1 activo (TIMED_TRANSCRIPT); sin él, enlace a la lección.
-			(() => {
-				if (!lessonUrl) return '';
-				const base = lessonUrl.split('#')[0].split('?')[0];
-				const href = TIMED_TRANSCRIPT && word.t && word.t.includes(':')
-					? `${base}?start=${Number(word.t.split(':')[0]) * 60 + Number(word.t.split(':')[1])}#overview`
-					: base;
-				return `<a href="${href.replace(/"/g, '&quot;')}">▶ Escúchala en la lección${TIMED_TRANSCRIPT && word.t ? ` (${word.t})` : ''}</a>`;
-			})(),
+			// Procedencia discreta y segura: plataforma · curso · lección ↗.
+			buildOriginMetaHtml({
+				platform: originPlatform,
+				course,
+				lesson,
+				url: lessonUrl ? lessonUrl.split('#')[0].split('?')[0] : undefined,
+				time: TIMED_TRANSCRIPT && word.t && word.t.includes(':') ? word.t : undefined,
+			}),
 			'', // campo legacy sin uso: siempre 1 tarjeta única por palabra
 		],
 		// A7: esquema jerárquico único; nada suelto en la raíz de tags.

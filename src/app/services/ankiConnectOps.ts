@@ -9,7 +9,7 @@
  * azar) no podría garantizar.
  */
 import { ankiSearchValue, cardsDirectlyIn, exactTagQuery, isOwnedDeck, kinemaVocabDeck, rootOf, type DeckMove, type TagRename } from './ankiDestination.ts';
-import { CONCEPT_MODEL_NAME, VOCAB_FIELDS_BASE, VOCAB_MODEL_NAME_LEGACY, vocabModelName } from './ankiDesign.ts';
+import { CONCEPT_MODEL, CONCEPT_MODEL_NAME, VOCAB_FIELDS_BASE, VOCAB_MODEL_NAME_LEGACY, buildVocabModel, vocabModelName } from './ankiDesign.ts';
 
 export type AnkiInvoke = (action: string, params?: Record<string, unknown>) => Promise<unknown>;
 
@@ -97,6 +97,54 @@ function enqueueAnkiImport<T>(task: () => Promise<T>): Promise<T> {
 	return run;
 }
 
+/**
+ * `importPackage` NO actualiza plantillas ni CSS de un note type que ya existe
+ * en la colección. Sincroniza los nuestros en caliente, respetando los modelos
+ * del estudiante: un modelo con más de una plantilla se deja intacto.
+ */
+export async function syncKinemaModels(
+	invoke: AnkiInvoke,
+	langCodes: string[] = ['en'],
+): Promise<{ updated: string[] }> {
+	const updated: string[] = [];
+	let names: unknown;
+	try { names = await invoke('modelNames'); } catch { return { updated }; }
+	if (!Array.isArray(names)) return { updated };
+	const existing = names.filter((name): name is string => typeof name === 'string');
+
+	if (existing.includes(CONCEPT_MODEL.name)) {
+		try {
+			const template = CONCEPT_MODEL.templates[0];
+			await invoke('updateModelTemplates', {
+				model: { name: CONCEPT_MODEL.name, templates: { Concepto: { Front: template.qfmt, Back: template.afmt } } },
+			});
+			await invoke('updateModelStyling', { model: { name: CONCEPT_MODEL.name, css: CONCEPT_MODEL.css } });
+			updated.push(CONCEPT_MODEL.name);
+		} catch { /* modelo bloqueado por Anki: la importación sigue */ }
+	}
+
+	for (const lang of langCodes) {
+		const expected = vocabModelName(lang);
+		const candidates = existing.filter((name) => name === expected || name.startsWith(`${expected}-`));
+		for (const name of candidates) {
+			try {
+				const raw = await invoke('modelTemplates', { modelName: name });
+				const templates = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+				const keys = Object.keys(templates);
+				if (keys.length !== 1 || keys[0] !== 'Vocabulario') continue;
+				const model = buildVocabModel(lang);
+				const template = model.templates[0];
+				await invoke('updateModelTemplates', {
+					model: { name, templates: { Vocabulario: { Front: template.qfmt, Back: template.afmt } } },
+				});
+				await invoke('updateModelStyling', { model: { name, css: model.css } });
+				updated.push(name);
+			} catch { /* modelo ajeno o sin permisos: no romper la importación */ }
+		}
+	}
+	return { updated };
+}
+
 /** Importa un .apkg usando el contrato oficial de AnkiConnect v6: ruta absoluta de medios. */
 export function importApkg(invoke: AnkiInvoke, input: { base64: string; filename: string; countQuery: string }): Promise<ImportResult> {
 	return enqueueAnkiImport(async () => {
@@ -118,6 +166,8 @@ export function importApkg(invoke: AnkiInvoke, input: { base64: string; filename
 				await invoke('deleteMediaFile', { filename }).catch(() => undefined);
 			}
 		}
+		// El .apkg instala modelos nuevos, pero NO refresca los ya existentes.
+		await syncKinemaModels(invoke, ['en', 'fr', 'de', 'pt', 'it']).catch(() => undefined);
 		const after = await countNotes(invoke, input.countQuery);
 		return { before, after, added: Math.max(0, after - before) };
 	});

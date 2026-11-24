@@ -22,8 +22,10 @@ export function splitIdea(idea: string): IdeaCue {
 	if (!match || match.index === undefined) return { title: raw, detail: "" };
 	const title = raw.slice(0, match.index).trim();
 	const detail = raw.slice(match.index + match[0].length).trim();
-	// Un «título» de más de 9 palabras no es una pista: es la idea entera.
-	if (!title || !detail || title.split(/\s+/).length > 9) return { title: raw, detail: "" };
+	// Una pregunta directa larga sigue siendo una pista; la prosa larga no.
+	const isQuestion = title.startsWith("¿") || title.endsWith("?") || QUESTION_START_RE.test(title);
+	const maxWords = isQuestion ? 16 : 9;
+	if (!title || !detail || title.split(/\s+/).length > maxWords) return { title: raw, detail: "" };
 	return { title: title.replace(/[.;:]+$/, ""), detail };
 }
 

@@ -509,7 +509,7 @@ function validateStudyPayload(payload: unknown): string[] {
   if (!asText(raw.nextAction)) issues.push("nextAction");
 
   const cards = Array.isArray(raw.ankiCards) ? raw.ankiCards : [];
-  if (cards.length < 3) issues.push("ankiCards[3]");
+  if (cards.length < 2) issues.push("ankiCards[2]");
   cards.slice(0, Math.min(cards.length, 8)).forEach((item, i) => {
     const card = isRecord(item) ? item : {};
     if (!asText(card.front)) issues.push(`ankiCards[${i}].front`);
@@ -1254,7 +1254,7 @@ async function buildLessonApkg(
   // la re-exportación desde Historial pintan estructuras, no etiquetas crudas.
 
   const here = typeof window !== "undefined" && /^https?:/.test(window.location.href) ? window.location.href : "";
-  // Desde la Biblioteca, el enlace «Repasar esta lección» es el de ESA lección (o ninguno si no consta).
+  // Desde la Biblioteca, el enlace de procedencia es el de ESA lección (o ninguno si no consta).
   const lessonUrl = origin ? (/^https?:/.test(origin.lessonUrl ?? "") ? String(origin.lessonUrl) : "") : here;
   const platform = isPlatformId(origin?.platform) ? origin!.platform! : platformOf(origin ? lessonUrl || null : here || null);
   const selected = cards.filter((c) => !c.excluded);
@@ -4320,12 +4320,19 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     const selected = accepted.filter(c => !c.doubt);
     const reinforceCount = selected.filter(c => c.reinforce).length;
     const doubtCount = accepted.filter(c => c.doubt).length;
-    // Si no fueron a Anki, viajan en esta misma nota (cuando la nota las incluye).
-    const destination: "anki" | "obsidian" | "none" = ankiExported ? "anki" : obsidianExportedAt || obsidianCfg.includeCards ? "obsidian" : "none";
+    const totalCards = selected.length + doubtCount;
+    const goingToAnki = totalCards > 0 && (ankiExported || ankiArmed || anki.ready);
+    // Mientras se arma el envío a Anki, la nota ya debe decir «en Anki».
+    const destination: "anki" | "obsidian" | "none" = goingToAnki || ankiExported ? "anki" : obsidianExportedAt || obsidianCfg.includeCards ? "obsidian" : "none";
     return {
       title: resultTitle,
       remembered: { count: conceptsMarkedCount, total: content?.keyConcepts.length ?? 0 },
-      check: { firstTry: firstTryCount, improved: Math.max(0, improvedCount), skipped: questionsSkipped },
+      check: {
+        firstTry: firstTryCount,
+        improved: Math.max(0, improvedCount),
+        total: queueQuestions.filter((_, i) => questionFeedbacks[i]?.status === "done").length || undefined,
+        skipped: questionsSkipped,
+      },
       practice: practiceStatus === "correct" ? "correct" : practiceStatus === "done" ? "done" : "later",
       calibration: calibration ? { said: calibration.said, shown: calibration.shown, message: calibration.message } : undefined,
       cards: { total: selected.length + doubtCount, reinforce: reinforceCount, destination, doubt: doubtCount || undefined },

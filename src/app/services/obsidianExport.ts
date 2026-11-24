@@ -100,7 +100,7 @@ export interface StudyResultSummary {
 	/** Título del cierre: «Lección dominada» / «Lección completada» / «Lección con pasos pendientes». */
 	title: string;
 	remembered: { count: number; total: number };
-	check: { firstTry: number; improved: number; skipped: boolean };
+	check: { firstTry: number; improved: number; total?: number; skipped: boolean };
 	practice: 'done' | 'correct' | 'later';
 	calibration?: { said: string; shown: string; message: string };
 	cards: { total: number; reinforce: number; destination: 'anki' | 'obsidian' | 'none'; /** §5: guardadas desde dudas. */ doubt?: number };
@@ -641,7 +641,7 @@ function sessionOutcomeLines(data: ObsidianSessionData, h: '##' | '###'): string
 				: []),
 			r.check.skipped
 				? 'Comprobación: saltada'
-				: `Comprobación: ${r.check.firstTry} a la primera${r.check.improved ? ` · ${r.check.improved} tras corregir` : ''}`,
+				: `Comprobación: ${r.check.firstTry}${r.check.total && r.check.total > 0 ? ` de ${r.check.total}` : ''} a la primera${r.check.improved ? ` · ${r.check.improved} tras corregir` : ''}`,
 			`Práctica: ${r.practice === 'correct' ? 'correcta' : r.practice === 'done' ? 'hecha' : 'pendiente'}${practiceHow}${pr ? ` (${practiceFormatMeta(pr.format, data.content.application.isCode).label})` : ''}`,
 			`Tarjetas: ${r.cards.total} (${r.cards.reinforce} de refuerzo${r.cards.doubt ? `, ${r.cards.doubt} de duda` : ''}) · ${r.cards.destination === 'anki' ? 'en Anki' : r.cards.destination === 'obsidian' ? 'en Obsidian' : 'sin exportar'}${(() => {
 				const k = deckIdeaMatches(data.content).length;
@@ -962,26 +962,47 @@ export function buildScaffoldNotes(options: { platform?: string } = {}): VaultNo
 		'3. Síntesis cuando haya 2+ fuentes que se crucen.',
 	].join('\n');
 
+	// Índice vivo: las tablas estáticas se quedaban en «0 páginas» para siempre.
 	const index = [
 		'# Índice de la Wiki',
 		'',
-		`Última actualización: ${todayIso()} | Total páginas: 0`,
+		`Última actualización: ${todayIso()} | índice vivo (Dataview)`,
 		'',
-		'## Cursos (0)',
-		'| Pagina | Plataforma | Estado |',
-		'|--------|------------|--------|',
+		'## Cursos',
+		'```dataview',
+		'TABLE platform AS "Plataforma", status AS "Estado"',
+		'FROM #kinema/moc/curso',
+		'SORT file.name ASC',
+		'```',
 		'',
-		'## Fuentes (0)',
-		'| Pagina | Resumen | Fecha | Tags |',
-		'|--------|---------|-------|------|',
+		'## Programas',
+		'```dataview',
+		'LIST',
+		'FROM #kinema/moc/programa',
+		'SORT file.name ASC',
+		'```',
 		'',
-		'## Conceptos (0)',
-		'| Pagina | Resumen breve | Fuentes |',
-		'|--------|---------------|---------|',
+		'## Últimas sesiones',
+		'```dataview',
+		'TABLE lesson AS "Lección", date AS "Fecha", relevance_score AS "Relevancia"',
+		'FROM "wiki/fuentes" OR #kinema/sesion',
+		'SORT date DESC',
+		'LIMIT 25',
+		'```',
 		'',
-		'## Síntesis (0)',
-		'| Pagina | Origen | Fecha |',
-		'|--------|--------|-------|',
+		'## Conceptos',
+		'```dataview',
+		'LIST',
+		'FROM "wiki/conceptos"',
+		'SORT file.name ASC',
+		'```',
+		'',
+		'## Síntesis',
+		'```dataview',
+		'LIST',
+		'FROM "wiki/sintesis"',
+		'SORT file.name ASC',
+		'```',
 		'',
 	].join('\n');
 

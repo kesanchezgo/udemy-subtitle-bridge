@@ -232,7 +232,7 @@ const record = {
 await test("Nota desde el historial: mismas secciones con lo que el historial guarda (sin inventar)", () => {
 	const d = session.sessionDataFromRecord(record, { includeCards: true });
 	assert.deepEqual(d.result.remembered, { count: 1, total: 2 });
-	assert.deepEqual(d.result.check, { firstTry: 1, improved: 0, skipped: false });
+	assert.deepEqual(d.result.check, { firstTry: 1, improved: 0, total: 2, skipped: false });
 	assert.equal(d.result.title, "Lección completada", "una fallada: no es «dominada»");
 	assert.deepEqual(d.result.cards, { total: 2, reinforce: 1, destination: "anki", doubt: 1 }, "lo quitado no cuenta; la duda aparte");
 	assert.deepEqual(d.weakPoints, [{ q: "¿Qué hace la JVM?", answer: "Ejecuta bytecode" }], "lo fallado, con su respuesta correcta");
