@@ -7,6 +7,7 @@ import { playSound } from "../services/sounds";
 import { claimStreakCelebration } from "../services/streak";
 import { Check, Flame, Cloud, Sparkles, Award, TrendingUp } from "./icons";
 import { recordActivity } from "../services/progress";
+import { claimRewardKey } from "../services/progressStore";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -44,15 +45,7 @@ export interface CelebrationConfig {
 
 let lastKey = "";
 let lastAt = 0;
-const REWARDED_KEY = "usb:rewarded-keys";
-function claimReward(key: string): boolean {
-  try {
-    const seen: string[] = JSON.parse(localStorage.getItem(REWARDED_KEY) || "[]");
-    if (seen.includes(key)) return false;
-    localStorage.setItem(REWARDED_KEY, JSON.stringify([...seen, key].slice(-500)));
-  } catch {}
-  return true;
-}
+const claimReward = claimRewardKey;
 
 export function celebrate(config: CelebrationConfig): void {
   const key = `${config.type}|${config.title}`;

@@ -247,6 +247,18 @@ export function kinemaCardsQuery(scope: DueScope, input: { rootDeck: string; cou
 
 export const dueQuery = (scope: DueScope, input: Parameters<typeof kinemaCardsQuery>[1]) => `${kinemaCardsQuery(scope, input)} is:due`;
 
+/** Todas las tarjetas de conceptos de Kinema, estén en el mazo que estén. */
+export const allConceptsQuery = (config: Pick<AnkiLayoutConfig, 'rootDeck'>): string =>
+	`${kinemaCardsQuery('all', { rootDeck: config.rootDeck })} ${NOT_VOCAB}`;
+
+/** Todas las tarjetas de vocabulario de Kinema, incluidos mazos propios del estudiante. */
+export const allVocabQuery = (_config?: Pick<AnkiLayoutConfig, 'rootDeck'>): string =>
+	`(note:"${ankiSearchValue(vocabModelName(''))}*" OR note:"${ankiSearchValue(VOCAB_MODEL_NAME_LEGACY)}")`;
+
+/** Vocabulario capturado desde un curso concreto. */
+export const courseVocabQuery = (course: string): string =>
+	`${allVocabQuery()} tag:kinema::curso::${kinemaSlug(course)}`;
+
 /**
  * Fase 4: las notas de conceptos de Kinema de los DEMÁS cursos (por tipo de
  * nota, en cualquier mazo). Con la del curso (kinemaCardsQuery('course')) es

@@ -27,7 +27,7 @@ const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 // síntomas son mensajes del panel que caen en 'port closed' y handlers que
 // parecen no existir. Con esta constante se verifica en un segundo qué código
 // corre de verdad: sw.evaluate(() => self.__KINEMA_SW_VERSION).
-const SW_VERSION = 'v2026-11-24-v2.0.2';
+const SW_VERSION = 'v2026-11-24-v2.0.3';
 (self as unknown as { __KINEMA_SW_VERSION?: string }).__KINEMA_SW_VERSION = SW_VERSION;
 if (import.meta.env.DEV) console.info('[USG] service worker iniciado, versión', SW_VERSION);
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -2407,7 +2407,7 @@ async function handleAnkiConnect(message: Record<string, unknown>): Promise<Reco
 	if (op === 'counts') {
 		// Biblioteca: total, nuevas, aprendiendo, reaprendiendo y pendientes de un curso y sus lecciones (solo lectura: findCards).
 		const queries = Array.isArray(message.queries) ? message.queries.map(String) : [];
-		return { counts: await ankiOps.countManyCards((a, p) => ankiInvokeBg(a, p ?? {}, 20000), queries) };
+		return { counts: await ankiOps.countManyCards((a, p) => ankiInvokeBg(a, p ?? {}, 20000), queries, { useMulti: true }) };
 	}
 	if (op === 'browse') {
 		const query = String(message.query || '');

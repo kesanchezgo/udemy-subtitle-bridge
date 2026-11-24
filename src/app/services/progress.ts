@@ -1,4 +1,9 @@
-import { getBestStreak, getStreak, touchStreak } from "./streak";
+import { getBestStreak, getStreak, touchStreak } from "./streak.ts";
+import {
+  getProgressState, setProgressState, localDayKey, claimRewardKey, emitXp, onHydrate,
+} from "./progressStore.ts";
+
+export { claimRewardKey } from "./progressStore.ts";
 
 export interface Achievement {
   id: string;
@@ -75,6 +80,7 @@ const XP: Record<string, number> = {
   practice_correct: 10,    // +20 extra (meta.bonus) si es reto de código correcto
   lesson_finished: 30,
   export_done: 10,         // una vez por lección (Anki u Obsidian)
+  vocab_exported: 10,      // palabras nuevas enviadas a Anki, una vez por lección/idioma
   reinforce_card: 0,       // no da XP: contabiliza puntos reforzados
   first_try_miss: 0,       // no da XP: alimenta el % de aciertos a la primera
 };
@@ -97,11 +103,9 @@ const empty = (): State => ({
   dailyGoalXp: 50,
 });
 
-const read = (): State => {
-  try { return { ...empty(), ...JSON.parse(localStorage.getItem(KEY) || "{}") }; } catch { return empty(); }
-};
+const read = (): State => getProgressState() as State;
 
-const dayKey = (d = new Date()) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+const dayKey = (d = new Date()) => localDayKey(d);
 
 export const levelOf = (xp: number) => Math.floor(Math.sqrt(xp / 60)) + 1;
 const floorXp = (level: number) => 60 * (level - 1) ** 2;
@@ -200,14 +204,39 @@ export function recordActivity(type: string, meta?: { bonus?: number }): { gaine
   };
   const unlocked = ACHIEVEMENTS.filter((a) => checks[a.id] && !s.unlocked.includes(a.id));
   s.unlocked.push(...unlocked.map((a) => a.id));
-  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch {}
-  window.dispatchEvent(new CustomEvent("usb:xp"));
+  setProgressState(s, false);
+  emitXp();
   return { gained: gain, levelUp: after > before ? after : null, unlocked };
 }
 
 export function setDailyGoal(xp: number) {
   const s = read();
   s.dailyGoalXp = xp;
-  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch {}
-  window.dispatchEvent(new CustomEvent("usb:xp"));
+  setProgressState(s, false);
+  emitXp();
 }
+
+// La hidratación multi-dominio puede desbloquear logros que ya cumplía el historial.
+onHydrate(() => {
+  const s = read();
+  const streak = getStreak();
+  const level = levelOf(s.xp);
+  const checks: Record<string, boolean> = {
+    first: (s.answered || 0) >= 1 || s.correct >= 1,
+    c25: s.correct >= 25,
+    c100: s.correct >= 100,
+    code1: (s.codeChallenges || 0) >= 1,
+    s1: s.sessions >= 1,
+    s10: s.sessions >= 10,
+    e1: s.exports >= 1,
+    k3: streak >= 3,
+    k7: streak >= 7,
+    l5: level >= 5,
+    l10: level >= 10,
+  };
+  const unlocked = ACHIEVEMENTS.filter((a) => checks[a.id] && !s.unlocked.includes(a.id));
+  if (unlocked.length) {
+    s.unlocked.push(...unlocked.map((a) => a.id));
+    setProgressState(s, false);
+  }
+});

@@ -147,8 +147,10 @@ export function prettifySlug(slug: string): string {
  * Una sola regla para «Sin descargar», «Descargar N», el aviso del menú y la
  * descarga de pendientes (antes contaban también las quitadas).
  */
-export function acceptedCardCount(rec: { ankiCards?: { excluded?: boolean }[] }): number {
-	return (rec.ankiCards ?? []).filter((c) => c && !c.excluded).length;
+export function acceptedCardCount(rec: { ankiCards?: { excluded?: boolean }[]; ankiCardsCount?: number }): number {
+	return Array.isArray(rec.ankiCards)
+		? rec.ankiCards.filter((c) => c && !c.excluded).length
+		: Math.max(0, rec.ankiCardsCount ?? 0);
 }
 
 /** Terminada, con tarjetas aceptadas guardadas y sin llegar a Anki: falta enviarlas. */
@@ -327,7 +329,7 @@ export function filterCounts<R extends LibraryRecord>(lessons: LibraryLesson<R>[
 }
 
 /** Lo que excluye el vocabulario de las búsquedas de conceptos (vive en ankiDestination). */
-export { NOT_VOCAB } from './ankiDestination.ts';
+export { NOT_VOCAB, allConceptsQuery, allVocabQuery, courseVocabQuery } from './ankiDestination.ts';
 
 export interface CourseAnkiQueries {
 	/** Todas sus tarjetas de conceptos (también suspendidas y enterradas). */
@@ -341,6 +343,8 @@ export interface CourseAnkiQueries {
 	/** Reaprendiendo, activas: olvidadas en un repaso (tipo «reaprendizaje»). */
 	relearning: string;
 	reinforce: string;
+	/** Tarjetas de duda (kinema::duda), incluidas dentro de `cards`. */
+	doubt: string;
 	suspended: string;
 }
 
@@ -361,8 +365,25 @@ export function courseAnkiQueries(course: Pick<LibraryCourse, 'courseName' | 'de
 		learning: `${active} is:learn -is:review`,
 		relearning: `${active} is:learn is:review`,
 		reinforce: `${cards} tag:kinema::reforzar`,
+		doubt: `${cards} tag:kinema::duda`,
 		suspended: `${cards} is:suspended`,
 	};
+}
+
+/**
+ * Tarjetas del curso en Anki que NO llevan la etiqueta de ninguna lección
+ * actualmente listada. `null` si no hay lecciones con slug fiable.
+ * Sigue excluyendo vocabulario porque parte de `kinemaCardsQuery('course')`.
+ */
+export function courseUntrackedCardsQuery(
+	course: Pick<LibraryCourse, 'courseName' | 'deck' | 'lessons'>,
+	config: AnkiLayoutConfig,
+): string | null {
+	const slugs = [...new Set(course.lessons.map((l) => kinemaSlug(l.rec.lectureName)).filter(Boolean))]
+		.slice(0, LESSON_QUERY_LIMIT);
+	if (!slugs.length) return null;
+	const cards = kinemaCardsQuery('course', { rootDeck: config.rootDeck, course: course.courseName, courseDeck: course.deck.deck });
+	return `${cards} ${slugs.map((slug) => `-tag:kinema::leccion::${slug}`).join(' ')}`;
 }
 
 /** Búsquedas de Anki de una lección. */
@@ -379,13 +400,20 @@ export interface CourseAnkiCounts {
 	learning: number;
 	relearning: number;
 	reinforce: number;
+	doubt: number;
 	suspended: number;
+	/** Tarjetas del mazo que no corresponden a ninguna lección listada. */
+	untracked: number;
+	/** Vocabulario del curso, consultado aparte para no mezclarlo con conceptos. */
+	vocabCards?: number;
+	/** lectureId → tarjetas reales en Anki (hasta LESSON_QUERY_LIMIT lecciones). */
+	lessonCards: Record<string, number>;
 	/** lectureId → pendientes hoy (solo las primeras lecciones, para no cargar a Anki). */
 	lessonDue: Record<string, number>;
 }
 
 /** Cuántas lecciones por curso se consultan una a una en Anki (el resto, solo el total del curso). */
-export const LESSON_QUERY_LIMIT = 40;
+export const LESSON_QUERY_LIMIT = 35;
 
 // ── Obsidian (fase 3): lo que hay de verdad en el vault ────────────────────
 

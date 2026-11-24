@@ -581,6 +581,13 @@ export const historyService = {
   },
 
   /** Course-level summaries derived from lecture records. */
+  /** Tarjetas aceptadas: el historial puede arrastrar `excluded: true` en `ankiCardsCount`. */
+  acceptedAnkiCount(l: LectureHistoryRecord): number {
+    return Array.isArray(l.ankiCards)
+      ? l.ankiCards.filter((c) => c && !c.excluded).length
+      : (l.ankiCardsCount || 0);
+  },
+
   async listCourses(): Promise<CourseHistorySummary[]> {
     const lectures = (await this.listLectures()).filter((l) => this.hasProgress(l));
     const map = new Map<string, CourseHistorySummary>();
@@ -590,7 +597,7 @@ export const historyService = {
       if (cur) {
         cur.lectureCount++;
         if (l.status === "completed") cur.completedCount++;
-        cur.totalAnkiCards += l.ankiCardsCount;
+        cur.totalAnkiCards += this.acceptedAnkiCount(l);
         if (l.startedAt < cur.firstSeenAt) cur.firstSeenAt = l.startedAt;
         if (l.updatedAt > cur.lastSeenAt) cur.lastSeenAt = l.updatedAt;
       } else {
@@ -599,7 +606,7 @@ export const historyService = {
           courseName: l.courseName,
           lectureCount: 1,
           completedCount: l.status === "completed" ? 1 : 0,
-          totalAnkiCards: l.ankiCardsCount,
+          totalAnkiCards: this.acceptedAnkiCount(l),
           firstSeenAt: l.startedAt,
           lastSeenAt: l.updatedAt,
         });
@@ -666,7 +673,7 @@ export const historyService = {
       totalCourses: courses.size,
       totalLectures: lectures.length,
       completedLectures: lectures.filter((l) => l.status === "completed").length,
-      totalAnkiCards: lectures.reduce((acc, l) => acc + l.ankiCardsCount, 0),
+      totalAnkiCards: lectures.reduce((acc, l) => acc + this.acceptedAnkiCount(l), 0),
       estimatedSizeKb: Math.max(1, Math.round(bytes / 1024)),
     };
   },

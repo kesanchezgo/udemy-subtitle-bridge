@@ -3,7 +3,7 @@ import { motion, useInView } from "motion/react";
 import { Icon, type IconName } from "./icons";
 import { DockSheet } from "./DockSheet";
 import { ACHIEVEMENTS, getProgress, setDailyGoal, MASTERY_TIERS } from "../services/progress";
-import { getStreak, studiedToday } from "../services/streak";
+import { getStreak, studiedToday, streakIsFrozen, streakFreezeAvailable } from "../services/streak";
 import { fetchAnkiDue } from "../services/ankiDue";
 import { useDockTheme } from "../contexts/ThemeContext";
 
@@ -188,7 +188,11 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const h = () => tick((n) => n + 1);
     window.addEventListener("usb:xp", h);
-    return () => window.removeEventListener("usb:xp", h);
+    window.addEventListener("usb:streak", h);
+    return () => {
+      window.removeEventListener("usb:xp", h);
+      window.removeEventListener("usb:streak", h);
+    };
   }, []);
 
   useEffect(() => {
@@ -215,10 +219,12 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
     ? { icon: "checkCircle2" as IconName, text: "Meta cumplida. Cada XP extra te acerca al siguiente nivel." }
     : toLevel <= 25
     ? { icon: "zap" as IconName, text: `Estás a ${toLevel} XP del nivel ${p.level + 1}. Una pregunta más.` }
+    : streakIsFrozen()
+    ? { icon: "flame" as IconName, text: `Tu descanso semanal salvó ayer tu racha de ${streak} ${streak === 1 ? "día" : "días"}. Estudia hoy para mantenerla.` }
     : streak > 0
     ? { icon: "flame" as IconName, text: studiedToday()
         ? `Racha de ${streak} ${streak === 1 ? "día" : "días"}: hoy ya cuenta. Vuelve mañana para seguirla.`
-        : `Racha de ${streak} ${streak === 1 ? "día" : "días"}. Estudia hoy para mantenerla.` }
+        : `Racha de ${streak} ${streak === 1 ? "día" : "días"}. Estudia hoy para sumar otro día${streakFreezeAvailable() ? " (1 descanso semanal disponible)" : ""}.` }
     : { icon: "target" as IconName, text: "Responde una pregunta hoy y empieza tu racha." };
 
   const shownAchievements = ACHIEVEMENTS
@@ -460,7 +466,7 @@ export function ProgressPanel({ onClose }: { onClose: () => void }) {
         {/* Constancia */}
         <Card
           i={4} tone="green" icon="flame" title="Constancia"
-          right={<span className="text-[11px] font-semibold text-[var(--usb-fg-mid)]"><strong className="text-[var(--usb-fg-hi)] tabular-nums">{activeDays}</strong> {activeDays === 1 ? "día" : "días"} · mejor racha {bestRun}d</span>}
+          right={<span className="text-[11px] font-semibold text-[var(--usb-fg-mid)]"><strong className="text-[var(--usb-fg-hi)] tabular-nums">{activeDays}</strong> {activeDays === 1 ? "día" : "días"} · mejor racha {bestRun}d · {streakFreezeAvailable() ? "escudo disponible" : "escudo usado esta semana"}</span>}
         >
           <div>
             <div className="grid grid-cols-7 gap-1.5 mb-1.5">

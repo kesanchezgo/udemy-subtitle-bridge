@@ -1,3 +1,12 @@
+## [2.0.3] — 2026-11-24
+
+Reconciliación en vivo de la Biblioteca con Anki/Obsidian y sistema unificado de rachas, niveles y XP entre plataformas. Versión 2.0.3 en `manifest.json` y `package.json`; `SW_VERSION` = `v2026-11-24-v2.0.3`.
+
+- **AnkiConnect**: `countManyCards(..., { useMulti: true })` agrupa todas las búsquedas en una sola llamada `multi`, normaliza `{result}` y cae al bucle secuencial si falla. `background.ts` activa `useMulti`. Nuevas queries puras `allConceptsQuery`, `allVocabQuery` y `courseVocabQuery`; `courseAnkiQueries` añade `doubt` y `courseUntrackedCardsQuery` marca tarjetas sin etiqueta de lección.
+- **Biblioteca**: panel de Anki único cuando Anki responde (Historial solo como respaldo honesto), recuento real por lección, aviso ámbar `0 en Anki · Reenviar N`, voice de vocabulario separado, y tarjeta de Obsidian con el mismo lenguaje visual y reparación silenciosa del historial cuando la nota existe en el vault. `HistoryPanel` usa una sola llamada de cabecera para conceptos, vocabulario y cursos visibles, y sus cifras coinciden con el detalle.
+- **Progreso unificado**: `progressStore.ts` centraliza XP/racha/recompensas en `chrome.storage.local` con caché síncrona, cola de escrituras, migración idempotente de los tres orígenes, suelo desde `historyService`, reconciliación de racha con escudo semanal y eventos `usb:xp`/`usb:streak`. `vocab_exported` da 10 XP una vez por lección/idioma. La UI reflexiona el escudo y la racha protegida al instante.
+- **Diagnóstico**: `tmp/inspect-pro-python-anki.mjs` documenta las 7 tarjetas reales de concepto frente a las 9 esperadas por el historial (3+4 vs 5+4); no se borró ninguna nota.
+
 ## [2.0.2] — 2026-11-24
 
 Cierre de consistencia en Dudas y Vocabulario. Versión 2.0.2 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.2`.

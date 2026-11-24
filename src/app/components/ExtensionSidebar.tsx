@@ -7,7 +7,7 @@ import {
 } from "./icons";
 import { motion, AnimatePresence } from "motion/react";
 import { getProgress } from "../services/progress";
-import { getStreak } from "../services/streak";
+import { getStreak, streakIsFrozen } from "../services/streak";
 import { Switch } from "./ui/switch";
 import { Slider } from "./ui/slider";
 import { StudyAgentTab } from "./StudyAgentTab";
@@ -234,7 +234,7 @@ function LevelBadge() {
         <span className="flex items-center justify-between gap-2">
           <span className="text-[12px] font-bold text-[var(--usb-fg)]">Nivel {p.level}</span>
           {streak > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-[10.5px] font-bold tabular-nums text-amber-600" title={`Racha de ${streak} días`}>
+            <span className="inline-flex items-center gap-0.5 text-[10.5px] font-bold tabular-nums text-amber-600" title={streakIsFrozen() ? `Racha de ${streak} días (protegida ayer por tu descanso semanal: estudia hoy para mantenerla)` : `Racha de ${streak} días`}>
               <Flame size={10} weight="fill" />{streak}
             </span>
           )}
@@ -1621,7 +1621,7 @@ export function ExtensionSidebar({ isOpen, onToggle, session, onRequestLogin, on
             )}
           </AnimatePresence>
           <span className={t("text-white/10","text-black/15")}>·</span>
-          <span className={`text-[10px] font-mono ${t("text-white/45","text-[var(--usb-fg-mid)]")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "2.0.2"}</span>
+          <span className={`text-[10px] font-mono ${t("text-white/45","text-[var(--usb-fg-mid)]")}`}>v{(globalThis as typeof globalThis & { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime?.getManifest?.().version ?? "2.0.3"}</span>
         </div>
       </div>
 

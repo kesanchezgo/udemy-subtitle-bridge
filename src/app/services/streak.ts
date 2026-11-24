@@ -1,72 +1,69 @@
-const KEY = "kinema-streak";
-interface State { last: string; count: number; best: number; freezeAt?: string }
+import {
+  getStreakState, setStreakState, localDayKey, normalizeDayKey,
+  LEGACY_STREAK_SHOWN_KEY,
+} from './progressStore.ts';
 
-const day = (d = new Date()) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return day(d); };
-const read = (): State => {
-  try { return JSON.parse(localStorage.getItem(KEY) || "") as State; } catch { return { last: "", count: 0, best: 0 }; }
-};
+const daysAgo = (n: number) => localDayKey(new Date(Date.now() - n * 86400000));
 
 /** Un día de descanso por semana: perder un solo día no rompe la racha. */
-function freezeAvailable(s: State): boolean {
+function freezeAvailable(s: { freezeAt?: string }): boolean {
   if (!s.freezeAt) return true;
-  for (let i = 0; i < 7; i++) if (s.freezeAt === daysAgo(i)) return false;
+  const frozen = normalizeDayKey(s.freezeAt);
+  if (!frozen) return true;
+  for (let i = 0; i < 7; i++) if (frozen === daysAgo(i)) return false;
   return true;
 }
 
+export function streakFreezeAvailable(): boolean {
+  return freezeAvailable(getStreakState());
+}
+
 export function getStreak(): number {
-  const s = read();
+  const s = getStreakState();
   if (!s.last) return 0;
-  if (s.last === day() || s.last === daysAgo(1)) return s.count;
+  if (s.last === localDayKey() || s.last === daysAgo(1)) return s.count;
   if (s.last === daysAgo(2) && freezeAvailable(s)) return s.count;
   return 0;
 }
 
-/** True si hoy ya se perdió un día y el descanso semanal está protegiendo la racha. */
+/** True si hoy ya se perdió un día y el descanso semanal está sosteniendo la racha. */
 export function streakIsFrozen(): boolean {
-  const s = read();
-  return s.last === daysAgo(2) && freezeAvailable(s) && s.count > 0;
+  const s = getStreakState();
+  return Boolean(s.last) && s.last === daysAgo(2) && freezeAvailable(s) && s.count > 0;
 }
 
-/** ¿Hoy ya cuenta para la racha? (hubo actividad de estudio). */
 export function studiedToday(): boolean {
-  return read().last === day();
+  return getStreakState().last === localDayKey();
 }
 
-/** Mejor racha de siempre (no solo la de los últimos 35 días del calendario). */
 export function getBestStreak(): number {
-  const s = read();
+  const s = getStreakState();
   return Math.max(s.best || 0, getStreak());
 }
 
-const SHOWN_KEY = "kinema-streak-shown";
-/**
- * La racha cuenta desde la PRIMERA actividad del día (responder ya estudia),
- * pero se celebra una sola vez al día y en el momento de cierre (lección o
- * exportación). Devuelve qué celebrar, o null si no toca.
- */
+const SHOWN_KEY = LEGACY_STREAK_SHOWN_KEY;
+/** Se celebra una sola vez al día, aunque la racha se cuente desde la primera actividad. */
 export function claimStreakCelebration(): { count: number; usedFreeze: boolean } | null {
-  const s = read();
+  const s = getStreakState();
   const count = getStreak();
-  if (count < 2 || s.last !== day()) return null;
+  if (count < 2 || s.last !== localDayKey()) return null;
   try {
-    if (localStorage.getItem(SHOWN_KEY) === day()) return null;
-    localStorage.setItem(SHOWN_KEY, day());
+    if (globalThis.localStorage?.getItem(SHOWN_KEY) === localDayKey()) return null;
+    globalThis.localStorage?.setItem(SHOWN_KEY, localDayKey());
   } catch { return null; }
-  return { count, usedFreeze: s.freezeAt === daysAgo(1) };
+  const frozen = s.freezeAt ? normalizeDayKey(s.freezeAt) : null;
+  return { count, usedFreeze: frozen === daysAgo(1) };
 }
 
-/** Registra actividad de hoy. Devuelve la racha y si hoy es un día nuevo. */
 export function touchStreak(): { count: number; isNewDay: boolean; usedFreeze: boolean } {
-  const s = read();
-  const today = day();
+  const s = getStreakState();
+  const today = localDayKey();
   if (s.last === today) return { count: s.count, isNewDay: false, usedFreeze: false };
   let count = 1;
   let usedFreeze = false;
   let freezeAt = s.freezeAt;
   if (s.last === daysAgo(1)) count = s.count + 1;
   else if (s.last === daysAgo(2) && freezeAvailable(s)) { count = s.count + 1; usedFreeze = true; freezeAt = daysAgo(1); }
-  try { localStorage.setItem(KEY, JSON.stringify({ last: today, count, best: Math.max(s.best || 0, count), freezeAt })); } catch {}
-  window.dispatchEvent(new CustomEvent("usb:streak"));
+  setStreakState({ ...s, last: today, count, best: Math.max(s.best || 0, count), freezeAt });
   return { count, isNewDay: true, usedFreeze };
 }

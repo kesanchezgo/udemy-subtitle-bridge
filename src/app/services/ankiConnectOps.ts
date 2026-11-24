@@ -58,11 +58,39 @@ export async function countCards(invoke: AnkiInvoke, query: string): Promise<num
 export const MAX_COUNT_QUERIES = 120;
 
 /** Varias búsquedas de tarjetas de una vez (solo lectura). Las que sobran del tope, -1. */
-export async function countManyCards(invoke: AnkiInvoke, queries: string[]): Promise<number[]> {
-	const out: number[] = [];
-	for (const [i, query] of queries.entries()) {
-		out.push(i < MAX_COUNT_QUERIES && query.trim() ? await countCards(invoke, query) : -1);
+export async function countManyCards(
+	invoke: AnkiInvoke,
+	queries: string[],
+	options?: { useMulti?: boolean },
+): Promise<number[]> {
+	const out: number[] = queries.map(() => -1);
+	const valid = queries
+		.map((query, index) => ({ query, index }))
+		.filter(({ query, index }) => index < MAX_COUNT_QUERIES && Boolean(query.trim()));
+	if (options?.useMulti && valid.length > 1) {
+		try {
+			const raw = await invoke('multi', {
+				actions: valid.map(({ query }) => ({ action: 'findCards', params: { query } })),
+			});
+			if (Array.isArray(raw) && raw.length === valid.length) {
+				const counts = raw.map((entry) => {
+					if (Array.isArray(entry)) return ids(entry).length;
+					if (entry && typeof entry === 'object' && 'result' in entry) {
+						const result = (entry as { result?: unknown }).result;
+						if (Array.isArray(result)) return ids(result).length;
+					}
+					return -1;
+				});
+				if (counts.every((count) => count >= 0)) {
+					valid.forEach(({ index }, i) => { out[index] = counts[i]; });
+					return out;
+				}
+			}
+		} catch {
+			// AnkiConnect sin `multi` o con un action fallbackido: bucle secuencial.
+		}
 	}
+	for (const { query, index } of valid) out[index] = await countCards(invoke, query);
 	return out;
 }
 

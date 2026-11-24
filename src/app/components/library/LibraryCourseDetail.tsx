@@ -12,10 +12,11 @@ import {
   BookMarked, Check, CheckCircle2, ChevronDown, Circle, Download, ExternalLink, Loader2, RefreshCw, Repeat2, Send, Trash2,
 } from "../icons";
 import { useDockTheme } from "../../contexts/ThemeContext";
-import type { LectureHistoryRecord } from "../../services/historyService";
+import { historyService, type LectureHistoryRecord } from "../../services/historyService";
 import type { AnkiLayoutConfig } from "../../services/ankiDestination";
 import {
-  LESSON_QUERY_LIMIT, courseAnkiQueries, filterCounts, filterLessons, lessonAnkiQueries,
+  LESSON_QUERY_LIMIT, courseAnkiQueries, courseUntrackedCardsQuery, courseVocabQuery,
+  filterCounts, filterLessons, lessonAnkiQueries,
   type CourseAnkiCounts, type LessonFilter, type LibraryCourse, type LibraryLesson,
 } from "../../services/library";
 import { ankiBrowse, ankiCounts } from "../../services/ankiBridge";
@@ -68,6 +69,7 @@ export function LibraryCourseDetail({
   const [filter, setFilter] = useState<LessonFilter>("all");
   const [counts, setCounts] = useState<CourseAnkiCounts | null>(null);
   const [countsState, setCountsState] = useState<"idle" | "loading" | "error">("idle");
+  const [vocabCount, setVocabCount] = useState<number>(0);
   const [nonce, setNonce] = useState(0);
   const [openLesson, setOpenLesson] = useState<string | null>(null);
   /** Lo que hay de verdad en el vault (solo con Obsidian conectado). */
@@ -107,20 +109,42 @@ export function LibraryCourseDetail({
     }
   };
   const missingRecs = (vault ? course.lessons.filter((l) => vault.notes[l.rec.lectureId] === "missing" && (l.obsidianSavable || (l.inObsidian && l.rec.studyContent))) : course.lessons.filter((l) => l.obsidianSavable)).map((l) => l.rec);
+  const presentCount = vault
+    ? course.lessons.filter((l) => vault.notes[l.rec.lectureId] === "present").length
+    : course.inObsidian;
 
   // Cifras reales de Anki: una sola llamada por curso abierto (y por «Actualizar»).
   useEffect(() => {
-    if (!ankiReady) { setCounts(null); setCountsState("idle"); return; }
+    if (!ankiReady) { setCounts(null); setCountsState("idle"); setVocabCount(0); return; }
     let alive = true;
     const q = courseAnkiQueries(course, config);
-    const counted = course.lessons.filter((l) => l.inAnki).slice(0, LESSON_QUERY_LIMIT);
+    const untrackedQuery = courseUntrackedCardsQuery(course, config);
+    const counted = course.lessons.slice(0, LESSON_QUERY_LIMIT);
+    const queries = [q.cards, q.due, q.fresh, q.learning, q.relearning, q.reinforce, q.doubt, q.suspended];
+    if (untrackedQuery) queries.push(untrackedQuery);
+    for (const l of counted) {
+      const lq = lessonAnkiQueries(l.rec, config);
+      queries.push(lq.cards, lq.due);
+    }
+    const vocabQuery = courseVocabQuery(course.courseName);
+    queries.push(vocabQuery);
     setCountsState("loading");
-    void ankiCounts([q.cards, q.due, q.fresh, q.learning, q.relearning, q.reinforce, q.suspended, ...counted.map((l) => lessonAnkiQueries(l.rec, config).due)]).then((res) => {
+    void ankiCounts(queries).then((res) => {
       if (!alive) return;
       // -1 = esa búsqueda no se pudo hacer: mejor «no respondió» que una cifra falsa.
-      if (!res || res.slice(0, 7).some((n) => n < 0)) { setCounts(null); setCountsState("error"); return; }
-      const [cards, due, fresh, learning, relearning, reinforce, suspended, ...perLesson] = res;
-      setCounts({ cards, due, fresh, learning, relearning, reinforce, suspended, lessonDue: Object.fromEntries(counted.map((l, i) => [l.rec.lectureId, perLesson[i] ?? -1])) });
+      if (!res || res.slice(0, 8).some((n) => n < 0)) { setCounts(null); setCountsState("error"); return; }
+      const [cards, due, fresh, learning, relearning, reinforce, doubt, suspended] = res;
+      let cursor = 8;
+      const untracked = untrackedQuery ? Math.max(0, res[cursor++] ?? 0) : 0;
+      const lessonCards: Record<string, number> = {};
+      const lessonDue: Record<string, number> = {};
+      for (const l of counted) {
+        lessonCards[l.rec.lectureId] = Math.max(0, res[cursor++] ?? 0);
+        lessonDue[l.rec.lectureId] = Math.max(0, res[cursor++] ?? 0);
+      }
+      const vocabCards = Math.max(0, res[cursor] ?? 0);
+      setVocabCount(vocabCards);
+      setCounts({ cards, due, fresh, learning, relearning, reinforce, doubt, suspended, untracked, vocabCards, lessonCards, lessonDue });
       setCountsState("idle");
     });
     return () => { alive = false; };
@@ -128,6 +152,7 @@ export function LibraryCourseDetail({
   }, [ankiReady, course.courseId, course.deck.deck, nonce]);
 
   const queries = courseAnkiQueries(course, config);
+  const untrackedQuery = courseUntrackedCardsQuery(course, config);
   const browse = (query: string) => { void ankiBrowse(query).then((ok) => { if (!ok) toast.error("Anki no respondió", { description: "Ábrelo en tu ordenador y vuelve a intentarlo." }); }); };
   const byFilter = filterCounts(course.lessons);
   const lessons = filterLessons(course.lessons, filter);
@@ -174,72 +199,82 @@ export function LibraryCourseDetail({
         </p>
       )}
 
-      {/* Cifras: las del historial siempre; las de Anki solo si Anki responde. */}
+      {/* Una sola verdad: con Anki respondiendo, SOLO el panel en vivo; si no, el historial y su aviso. */}
       <div className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] overflow-hidden" data-library-stats>
-        <div className="grid grid-cols-4 divide-x divide-[var(--usb-border)]">
-          {[
-            { label: "Tarjetas", value: course.cards.total },
-            { label: "Refuerzo", value: course.cards.reinforce },
-            { label: "Dudas", value: course.cards.doubt },
-            { label: "En Anki", value: course.cards.inAnki },
-          ].map((tile) => (
-            <div key={tile.label} className="px-1 py-2 text-center min-w-0">
-              <p className="text-[15px] leading-none font-bold tabular-nums text-[var(--usb-fg-hi)]">{tile.value}</p>
-              <p className="mt-1 text-[9.5px] font-medium text-[var(--usb-fg-mid)] truncate">{tile.label}</p>
+        {!ankiReady || !counts ? (
+          <>
+            <div className="grid grid-cols-4 divide-x divide-[var(--usb-border)]">
+              {[
+                { label: "Tarjetas", value: course.cards.total },
+                { label: "Refuerzo", value: course.cards.reinforce },
+                { label: "Dudas", value: course.cards.doubt },
+                { label: "En Anki", value: course.cards.inAnki },
+              ].map((tile) => (
+                <div key={tile.label} className="px-1 py-2 text-center min-w-0">
+                  <p className="text-[15px] leading-none font-bold tabular-nums text-[var(--usb-fg-hi)]">{tile.value}</p>
+                  <p className="mt-1 text-[9.5px] font-medium text-[var(--usb-fg-mid)] truncate">{tile.label}</p>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="border-t border-[var(--usb-border)] px-2.5 py-2 flex items-center gap-2" data-library-anki>
-          {!ankiReady ? (
-            <p className="flex-1 text-[10.5px] leading-snug text-[var(--usb-fg-mid)]">Cifras de tu historial. Con Anki abierto y conectado verás aquí las tarjetas reales del curso.</p>
-          ) : countsState === "loading" && !counts ? (
-            <p className="flex-1 text-[10.5px] text-[var(--usb-fg-mid)] inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" />Preguntando a Anki…</p>
-          ) : counts ? (
-            <div className="flex-1 min-w-0" data-library-anki-counts>
-              <div className="flex items-center gap-2">
-                <p className="flex-1 min-w-0 text-[10.5px] leading-snug text-[var(--usb-fg)]">
-                  En tu Anki
-                  {counts.reinforce > 0 ? <span className="text-[var(--usb-fg-mid)]"> · {counts.reinforce} de refuerzo</span> : null}
-                  {counts.suspended > 0 ? <span className="text-[var(--usb-fg-mid)]" title="Cuentan en el total, no en el desglose ni en «Para hoy»" data-anki-suspended> · {counts.suspended} {counts.suspended === 1 ? "suspendida" : "suspendidas"}</span> : null}
-                </p>
-                <button type="button" onClick={() => setNonce((n) => n + 1)} aria-label="Actualizar las cifras de Anki" title="Actualizar"
-                  className="w-7 h-7 -my-1 -mr-1 shrink-0 flex items-center justify-center rounded-lg text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-accent-soft)]">
-                  <RefreshCw size={11} className={countsState === "loading" ? "animate-spin" : ""} />
-                </button>
+            <div className="border-t border-[var(--usb-border)] px-2.5 py-2" data-library-anki>
+              <p className="text-[10.5px] leading-snug text-[var(--usb-fg-mid)]">
+                {countsState === "loading"
+                  ? "Preguntando a Anki…"
+                  : !ankiReady
+                    ? "Según tu historial · abre Anki para ver las tarjetas reales de tu mazo."
+                    : "Anki no respondió · se muestran las cifras de tu historial."}
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="border-b border-[var(--usb-border)] px-2.5 py-2 flex items-center gap-2" data-library-anki data-library-anki-counts>
+              <p className="flex-1 min-w-0 text-[10.5px] leading-snug text-[var(--usb-fg)]">
+                En tu Anki
+                {counts.reinforce > 0 ? <span className="text-[var(--usb-fg-mid)]"> · {counts.reinforce} de refuerzo</span> : null}
+                {counts.doubt > 0 ? <span className="text-[var(--usb-fg-mid)]"> · {counts.doubt} {counts.doubt === 1 ? "de duda" : "de dudas"}</span> : null}
+                {counts.suspended > 0 ? <span className="text-[var(--usb-fg-mid)]" title="Cuentan en el total, no en el desglose ni en «Para hoy»" data-anki-suspended> · {counts.suspended} {counts.suspended === 1 ? "suspendida" : "suspendidas"}</span> : null}
+                {course.cards.pending > 0 ? <span className="text-[var(--usb-fg-mid)]"> · {course.cards.pending} sin enviar</span> : null}
+              </p>
+              <button type="button" onClick={() => setNonce((n) => n + 1)} aria-label="Actualizar las cifras de Anki" title="Actualizar"
+                className="w-7 h-7 -my-1 -mr-1 shrink-0 flex items-center justify-center rounded-lg text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-accent-soft)]">
+                <RefreshCw size={11} className={countsState === "loading" ? "animate-spin" : ""} />
+              </button>
+            </div>
+            <dl className="p-2 grid grid-cols-6 gap-1">
+              {[
+                { label: "Total", value: counts.cards, key: "cards", hint: "Tarjetas de conceptos de este curso en Anki" },
+                { label: "Nuevas", value: counts.fresh, key: "fresh", hint: "Aún sin estudiar en Anki (sin contar suspendidas)" },
+                { label: "Para hoy", value: counts.due, key: "due", hint: "Repasos y pasos de aprendizaje que tocan hoy" },
+                { label: "Aprendiendo", value: counts.learning, key: "learning", hint: "En sus primeros pasos, antes de graduarse" },
+                { label: "Reaprendiendo", value: counts.relearning, key: "relearning", hint: "Olvidadas en un repaso; vuelven a aprenderse" },
+              ].map((cell, i) => {
+                const hot = cell.key === "due" && cell.value > 0;
+                const top = i < 3;
+                return (
+                  <div key={cell.key} data-anki-count={cell.key} title={cell.hint}
+                    className={`${top ? "col-span-2 flex-col-reverse text-center py-1" : "col-span-3 flex-row-reverse items-baseline justify-end gap-1.5 px-2 py-1"} flex rounded-md min-w-0 ${hot ? "bg-emerald-500/10" : "bg-[var(--usb-bg-2)]"}`}>
+                    <dt className={`${top ? "mt-0.5" : ""} text-[9.5px] font-medium text-[var(--usb-fg-mid)] truncate`}>{cell.label}</dt>
+                    <dd className={`${top ? "text-[13px]" : "text-[11.5px]"} leading-none font-bold tabular-nums ${hot ? "text-[var(--usb-ok-text)]" : "text-[var(--usb-fg-hi)]"}`}>{cell.value}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+            {counts.cards === 0 && course.cards.inAnki > 0 && (
+              <p className="px-2.5 pb-2 text-[10px] leading-snug text-[var(--usb-warn-text)]">Anki no tiene tarjetas de este curso. ¿Las borraste o estás en otro perfil?</p>
+            )}
+            {counts.untracked > 0 && untrackedQuery && (
+              <div className="px-2.5 pb-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--usb-fg-mid)]" data-anki-untracked>
+                <span>{counts.untracked === 1 ? "1 tarjeta en el mazo no corresponde a estas lecciones" : `${counts.untracked} tarjetas en el mazo no corresponden a estas lecciones`} · </span>
+                <button type="button" onClick={() => browse(untrackedQuery)} className={chipBtnCls}>Ver en Anki</button>
               </div>
-              {/* Arriba, lo que mira el estudiante cada día; abajo, el desglose de la cola de aprendizaje. */}
-              <dl className="mt-1.5 grid grid-cols-6 gap-1">
-                {[
-                  { label: "Total", value: counts.cards, key: "cards", hint: "Tarjetas de conceptos de este curso en Anki" },
-                  { label: "Nuevas", value: counts.fresh, key: "fresh", hint: "Aún sin estudiar en Anki (sin contar suspendidas)" },
-                  { label: "Para hoy", value: counts.due, key: "due", hint: "Repasos y pasos de aprendizaje que tocan hoy" },
-                  { label: "Aprendiendo", value: counts.learning, key: "learning", hint: "En sus primeros pasos, antes de graduarse" },
-                  { label: "Reaprendiendo", value: counts.relearning, key: "relearning", hint: "Olvidadas en un repaso; vuelven a aprenderse" },
-                ].map((cell, i) => {
-                  const hot = cell.key === "due" && cell.value > 0;
-                  const top = i < 3;
-                  return (
-                    <div key={cell.key} data-anki-count={cell.key} title={cell.hint}
-                      className={`${top ? "col-span-2 flex-col-reverse text-center py-1" : "col-span-3 flex-row-reverse items-baseline justify-end gap-1.5 px-2 py-1"} flex rounded-md min-w-0 ${hot ? "bg-emerald-500/10" : "bg-[var(--usb-bg-2)]"}`}>
-                      <dt className={`${top ? "mt-0.5" : ""} text-[9.5px] font-medium text-[var(--usb-fg-mid)] truncate`}>{cell.label}</dt>
-                      <dd className={`${top ? "text-[13px]" : "text-[11.5px]"} leading-none font-bold tabular-nums ${hot ? "text-[var(--usb-ok-text)]" : "text-[var(--usb-fg-hi)]"}`}>{cell.value}</dd>
-                    </div>
-                  );
-                })}
-              </dl>
-              {counts.cards === 0 && course.cards.inAnki > 0 && (
-                <p className="mt-1.5 text-[10px] leading-snug text-[var(--usb-warn-text)]">Anki no tiene tarjetas de este curso. ¿Las borraste o estás en otro perfil?</p>
-              )}
+            )}
+            <div className="border-t border-[var(--usb-border)] px-2.5 py-2 flex flex-wrap gap-1.5">
+              <button type="button" onClick={() => browse(queries.cards)} className={chipBtnCls}><ExternalLink size={11} />Abrir en Anki</button>
+              {counts.due > 0 && <button type="button" onClick={() => browse(queries.due)} className={chipBtnCls}><Repeat2 size={11} />Repasar hoy ({counts.due})</button>}
+              {vocabCount > 0 && <button type="button" onClick={() => browse(courseVocabQuery(course.courseName))} data-library-course-vocab className={chipBtnCls}><BookMarked size={11} />Vocabulario ({vocabCount})</button>}
             </div>
-          ) : (
-            <p className="flex-1 text-[10.5px] leading-snug text-[var(--usb-fg-mid)]">Anki no respondió. Las cifras son las de tu historial.</p>
-          )}
-        </div>
-        {ankiReady && counts && (
-          <div className="border-t border-[var(--usb-border)] px-2.5 py-2 flex flex-wrap gap-1.5">
-            <button type="button" onClick={() => browse(queries.cards)} className={chipBtnCls}><ExternalLink size={11} />Abrir en Anki</button>
-            {counts.due > 0 && <button type="button" onClick={() => browse(queries.due)} className={chipBtnCls}><Repeat2 size={11} />Repasar hoy ({counts.due})</button>}
-          </div>
+          </>
         )}
       </div>
 
@@ -258,48 +293,52 @@ export function LibraryCourseDetail({
             onSave={async (folder, move) => { await obsidian.onChangeFolder(course.courseName, folder, move, course.program?.slug ?? null); onObsidianChanged?.(); setVaultNonce((n) => n + 1); }}
           />
         )}
-        <div className="px-1 flex items-center gap-2">
-          <BookMarked size={12} className="shrink-0 text-[var(--usb-fg-mid)]" aria-hidden="true" />
-          <p className="flex-1 min-w-0 text-[10.5px] leading-snug text-[var(--usb-fg-mid)]" data-library-obsidian-count>
-            {course.inObsidian === 0 ? "Ninguna lección en Obsidian todavía." : `${course.inObsidian} de ${course.studied} ${course.studied === 1 ? "lección" : "lecciones"} en Obsidian.`}
-            {vault && (
-              <span className={vault.missing > 0 ? "text-[var(--usb-warn-text)]" : ""} data-library-vault-check>
-                {vault.missing > 0 ? ` ${vault.missing} ya no ${vault.missing === 1 ? "está" : "están"} en el vault.` : " Comprobado en el vault."}
-              </span>
-            )}
-            {obsidian?.ready && vaultState === "loading" && !vault && <span> Mirando el vault…</span>}
-            {obsidian?.ready && vaultState === "error" && <span> Obsidian no respondió.</span>}
-          </p>
-          {obsidian?.ready && course.obsidian && (
-            <button type="button" onClick={() => setVaultNonce((n) => n + 1)} aria-label="Volver a mirar el vault" title="Volver a mirar el vault"
-              className="w-7 h-7 -my-1 shrink-0 flex items-center justify-center rounded-lg text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-accent-soft)]">
-              <RefreshCw size={11} className={vaultState === "loading" ? "animate-spin" : ""} />
-            </button>
-          )}
-        </div>
-        {obsidian && course.obsidian && ((vault ? vault.mocExists : course.inObsidian > 0) || (obsidian.ready && missingRecs.length > 0)) && (
-          <div className="px-1 flex flex-wrap gap-1.5">
-            {(vault ? vault.mocExists : course.inObsidian > 0) && (
-              <button type="button" onClick={() => obsidian.openNote(course.obsidian!.mocPath)} className={chipBtnCls} data-library-open-index>
-                <ExternalLink size={11} />Abrir índice
-              </button>
-            )}
-            {obsidian.ready && missingRecs.length > 0 && (
-              <button type="button" onClick={() => void saveNotes(missingRecs, "course")} disabled={savingNotes !== null} className={chipBtnCls} data-library-save-notes>
-                {savingNotes === "course" ? <Loader2 size={11} className="animate-spin" /> : <BookMarked size={11} />}
-                {missingRecs.length === 1 ? "Guardar la nota que falta" : `Guardar las ${missingRecs.length} notas que faltan`}
+        <div className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] overflow-hidden">
+          <div className="px-2.5 py-2 flex items-center gap-2">
+            <BookMarked size={12} className="shrink-0 text-[var(--usb-fg-mid)]" aria-hidden="true" />
+            <p className="flex-1 min-w-0 text-[10.5px] leading-snug text-[var(--usb-fg-mid)]" data-library-obsidian-count>
+              {vault
+                ? presentCount === 0 && vault.missing === 0 && course.inObsidian === 0
+                  ? "Ninguna lección en Obsidian todavía."
+                  : <>{presentCount} de {course.studied} {course.studied === 1 ? "lección" : "lecciones"} en Obsidian.
+                      <span className={vault.missing > 0 ? "text-[var(--usb-warn-text)]" : ""} data-library-vault-check>
+                        {vault.missing > 0 ? ` ${vault.missing} ya no ${vault.missing === 1 ? "está" : "están"} en el vault.` : " Comprobado en el vault."}
+                      </span></>
+                : <>{course.inObsidian === 0 ? "Ninguna lección en Obsidian todavía." : `${course.inObsidian} de ${course.studied} ${course.studied === 1 ? "lección" : "lecciones"} en Obsidian.`}
+                    {obsidian?.ready && vaultState === "loading" && " Mirando el vault…"}
+                    {obsidian?.ready && vaultState === "error" && " Obsidian no respondió."}</>}
+            </p>
+            {obsidian?.ready && course.obsidian && (
+              <button type="button" onClick={() => setVaultNonce((n) => n + 1)} aria-label="Volver a mirar el vault" title="Volver a mirar el vault"
+                className="w-7 h-7 -my-1 shrink-0 flex items-center justify-center rounded-lg text-[var(--usb-fg-mid)] hover:text-[var(--usb-fg-hi)] hover:bg-[var(--usb-accent-soft)]">
+                <RefreshCw size={11} className={vaultState === "loading" ? "animate-spin" : ""} />
               </button>
             )}
           </div>
-        )}
-        {obsidian && course.obsidian && vault && !vault.mocExists && course.inObsidian > 0 && (
-          <p className="px-1 text-[10px] leading-snug text-[var(--usb-fg-mid)]">El índice del curso aún no está en el vault: se crea solo con la próxima nota.</p>
-        )}
-        {obsidian && course.obsidian && !obsidian.ready && course.obsidian.savable > 0 && (
-          <p className="px-1 text-[10px] leading-snug text-[var(--usb-fg-mid)]">
-            {course.obsidian.savable === 1 ? "1 lección terminada no tiene nota" : `${course.obsidian.savable} lecciones terminadas no tienen nota`}: guárdala desde su detalle (con Obsidian conectado, todas de una vez).
-          </p>
-        )}
+          {obsidian && course.obsidian && (((vault ? vault.mocExists : course.inObsidian > 0) || (obsidian.ready && missingRecs.length > 0))) && (
+            <div className="border-t border-[var(--usb-border)] px-2.5 py-2 flex flex-wrap gap-1.5">
+              {(vault ? vault.mocExists : course.inObsidian > 0) && (
+                <button type="button" onClick={() => obsidian.openNote(course.obsidian!.mocPath)} className={chipBtnCls} data-library-open-index>
+                  <ExternalLink size={11} />Abrir índice
+                </button>
+              )}
+              {obsidian.ready && missingRecs.length > 0 && (
+                <button type="button" onClick={() => void saveNotes(missingRecs, "course")} disabled={savingNotes !== null} className={chipBtnCls} data-library-save-notes>
+                  {savingNotes === "course" ? <Loader2 size={11} className="animate-spin" /> : <BookMarked size={11} />}
+                  {missingRecs.length === 1 ? "Guardar la nota que falta" : `Guardar las ${missingRecs.length} notas que faltan`}
+                </button>
+              )}
+            </div>
+          )}
+          {obsidian && course.obsidian && vault && !vault.mocExists && course.inObsidian > 0 && (
+            <p className="px-2.5 py-2 text-[10px] leading-snug text-[var(--usb-fg-mid)]">El índice del curso aún no está en el vault: se crea solo con la próxima nota.</p>
+          )}
+          {obsidian && course.obsidian && !obsidian.ready && course.obsidian.savable > 0 && (
+            <p className="px-2.5 py-2 text-[10px] leading-snug text-[var(--usb-fg-mid)]">
+              {course.obsidian.savable === 1 ? "1 lección terminada no tiene nota" : `${course.obsidian.savable} lecciones terminadas no tienen nota`}: guárdala desde su detalle (con Obsidian conectado, todas de una vez).
+            </p>
+          )}
+        </div>
       </div>
 
       {hasFilters && (
@@ -326,6 +365,7 @@ export function LibraryCourseDetail({
             accent={accent}
             ankiReady={ankiReady}
             due={counts?.lessonDue[lesson.rec.lectureId]}
+            liveCards={ankiReady && counts ? counts.lessonCards[lesson.rec.lectureId] : undefined}
             open={openLesson === lesson.rec.lectureId}
             onToggle={() => setOpenLesson((v) => (v === lesson.rec.lectureId ? null : lesson.rec.lectureId))}
             onBrowse={browse}
@@ -347,13 +387,15 @@ export function LibraryCourseDetail({
 }
 
 function LessonRow({
-  lesson, config, accent, ankiReady, due, open, onToggle, onBrowse, obsidian, noteState, onSaveNote, savingNote, onOpenLecture, onDownloadLecture, onDeleteLecture, busyId, armed, setArmed,
+  lesson, config, accent, ankiReady, due, liveCards, open, onToggle, onBrowse, obsidian, noteState, onSaveNote, savingNote, onOpenLecture, onDownloadLecture, onDeleteLecture, busyId, armed, setArmed,
 }: {
   lesson: LibraryLesson<LectureHistoryRecord>;
   config: AnkiLayoutConfig;
   accent: string;
   ankiReady: boolean;
   due?: number;
+  /** Recuento real de Anki para esta lección (undefined = Anki no conectado). */
+  liveCards?: number;
   open: boolean;
   onToggle: () => void;
   onBrowse: (query: string) => void;
@@ -378,6 +420,13 @@ function LessonRow({
   const waiting = isWaitingForAnki(rec);
   const answered = rec.questions.filter((a) => (a.answer ?? "").trim() || a.rating).length;
   const lq = lessonAnkiQueries(rec, config);
+  const inVault = noteState === "present" || (lesson.inObsidian && noteState !== "missing");
+  useEffect(() => {
+    if (noteState === "present" && !lesson.inObsidian && lesson.notePath) {
+      void historyService.markObsidianSaved(rec.courseId, rec.lectureId, lesson.notePath);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteState, lesson.inObsidian, lesson.notePath, rec.courseId, rec.lectureId]);
   return (
     <div data-library-lesson={rec.lectureId}>
       {/* Abrir la lección es un botón propio: las demás acciones son hermanas, no hijas. */}
@@ -402,9 +451,42 @@ function LessonRow({
               </button>
             ) : <div className="min-w-0">{body}</div>;
           })()}
-          {(cards.total > 0 || cards.reinforce > 0 || cards.doubt > 0 || cards.interview > 0 || lesson.inDeck.length > 0 || lesson.inObsidian || (due ?? 0) > 0) && (
+          {(cards.total > 0 || (liveCards !== undefined && liveCards >= 0) || cards.reinforce > 0 || cards.doubt > 0 || cards.interview > 0 || lesson.inDeck.length > 0 || lesson.inObsidian || (due ?? 0) > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1" data-library-badges>
-              {cards.total > 0 && (lesson.inAnki ? (
+              {liveCards !== undefined && liveCards >= 0 ? (
+                liveCards > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => { if (canDownload) onDownloadLecture?.(rec); }}
+                    disabled={!canDownload || busyId === `dl:${id}`}
+                    title={liveCards < cards.total
+                      ? `En Anki hay ${liveCards} (descartaste ${cards.total - liveCards} de las ${cards.total} generadas). Clic si quieres volver a enviar las que faltan.`
+                      : liveCards > cards.total
+                        ? `En Anki hay ${liveCards} (${cards.total} de la sesión actual y ${liveCards - cards.total} de una versión anterior). Abre «Ver en Anki» en el detalle para revisarlas.`
+                        : `${liveCards} tarjetas reales en Anki`}
+                    aria-label={`${liveCards} tarjetas en Anki`}
+                    className={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-opacity enabled:hover:opacity-80 disabled:cursor-default ${t("bg-emerald-400/10 text-emerald-300", "bg-emerald-600/10")}`}
+                    style={{ color: t("", "#065f46") || undefined }}
+                  >
+                    {busyId === `dl:${id}` ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}{liveCards} en Anki
+                  </button>
+                ) : lesson.inAnki ? (
+                  canDownload ? (
+                    <button
+                      type="button"
+                      onClick={() => onDownloadLecture?.(rec)}
+                      disabled={busyId === `dl:${id}`}
+                      data-anki-lesson-missing={rec.lectureId}
+                      title="Kinema las envió, pero ya no están en Anki. Clic para enviarlas de nuevo."
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-500/35 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-[var(--usb-warn-text)] hover:bg-amber-500/10"
+                    >
+                      {busyId === `dl:${id}` ? <Loader2 size={10} className="animate-spin" /> : <Send size={10} />}0 en Anki · Reenviar {cards.total}
+                    </button>
+                  ) : (
+                    <span className="shrink-0 rounded-md border border-amber-500/35 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--usb-warn-text)]" data-anki-lesson-missing={rec.lectureId} title="Kinema las envió, pero ya no están en Anki.">0 en Anki</span>
+                  )
+                ) : null
+              ) : cards.total > 0 && (lesson.inAnki ? (
                 <button
                   type="button"
                   onClick={() => { if (canDownload) onDownloadLecture?.(rec); }}
@@ -412,7 +494,6 @@ function LessonRow({
                   title={!canDownload ? "Ya están en Anki" : ankiReady ? "Ya están en Anki. ¿Borraste alguna? Clic para enviarlas otra vez (las que siguen allí no se duplican)." : "Ya están en Anki. Sin Anki conectado: clic para descargar el .apkg de nuevo."}
                   aria-label={`${cards.total} tarjetas ya en Anki. ${ankiReady ? "Enviar" : "Descargar"} de nuevo`}
                   className={`shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-opacity enabled:hover:opacity-80 disabled:cursor-default ${t("bg-emerald-400/10 text-emerald-300", "bg-emerald-600/10")}`}
-                  // Tema claro: tinta más oscura que el verde general (#047857 daba 4,2:1 sobre el fondo verde de la insignia).
                   style={{ color: t("", "#065f46") || undefined }}
                 >
                   {busyId === `dl:${id}` ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}{cards.total} en Anki
@@ -448,7 +529,7 @@ function LessonRow({
                   {lesson.inDeck.length} ya en tu mazo
                 </span>
               )}
-              {lesson.inObsidian && noteState !== "missing" && <span className="rounded px-1 text-[9.5px] font-semibold border border-[var(--usb-border)] text-[var(--usb-fg-mid)]" data-note-state={noteState ?? "recorded"}>en Obsidian</span>}
+              {inVault && <span className="rounded px-1 text-[9.5px] font-semibold border border-[var(--usb-border)] text-[var(--usb-fg-mid)]" data-note-state={noteState ?? "recorded"}>en Obsidian</span>}
               {lesson.inObsidian && noteState === "missing" && <span className="rounded px-1 text-[9.5px] font-semibold border border-amber-500/30 text-[var(--usb-warn-text)]" data-note-state="missing" title="Kinema la guardó, pero ya no está en esa carpeta del vault (¿la borraste o la moviste a mano?)">no está en el vault</span>}
               {(due ?? 0) > 0 && <span className="rounded px-1 text-[9.5px] font-semibold border border-emerald-500/30 text-[var(--usb-ok-text)] tabular-nums">{due} para hoy</span>}
             </div>
@@ -502,8 +583,8 @@ function LessonRow({
             </p>
           )}
           <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {ankiReady && lesson.inAnki && <button type="button" onClick={() => onBrowse(lq.cards)} className={chipBtnCls}><ExternalLink size={11} />Ver en Anki</button>}
-            {obsidian && lesson.notePath && lesson.inObsidian && noteState !== "missing" && <button type="button" onClick={() => obsidian.openNote(lesson.notePath!)} className={chipBtnCls}><BookMarked size={11} />Abrir nota</button>}
+            {ankiReady && ((liveCards ?? 0) > 0 || lesson.inAnki) && <button type="button" onClick={() => onBrowse(lq.cards)} className={chipBtnCls}><ExternalLink size={11} />Ver en Anki</button>}
+            {obsidian && lesson.notePath && inVault && <button type="button" onClick={() => obsidian.openNote(lesson.notePath!)} className={chipBtnCls}><BookMarked size={11} />Abrir nota</button>}
             {onSaveNote && Boolean(rec.studyContent) && (lesson.obsidianSavable || noteState === "missing") && (
               <button type="button" onClick={onSaveNote} disabled={savingNote} className={chipBtnCls} data-library-save-note>
                 {savingNote ? <Loader2 size={11} className="animate-spin" /> : <BookMarked size={11} />}{noteState === "missing" ? "Guardar otra vez" : "Guardar nota"}

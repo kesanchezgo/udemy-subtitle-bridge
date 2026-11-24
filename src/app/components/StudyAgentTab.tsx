@@ -1993,8 +1993,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
   // Mismo nivel/XP que la cabecera del dock: el cierre suma XP fuera de este componente.
   useEffect(() => {
     const sync = () => setUserProgress(getProgress());
+    const syncStreak = () => setStreakCount(getStreak());
     window.addEventListener("usb:xp", sync);
-    return () => window.removeEventListener("usb:xp", sync);
+    window.addEventListener("usb:streak", syncStreak);
+    return () => {
+      window.removeEventListener("usb:xp", sync);
+      window.removeEventListener("usb:streak", syncStreak);
+    };
   }, []);
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);
 

@@ -14,6 +14,9 @@ import { ExportModule } from "./ExportModule";
 import { KnownDecksField } from "./AnkiSettings";
 import { useAnkiConnection } from "../../hooks/useAnkiConnection";
 import { vocabDestination } from "../../services/ankiDestination";
+import { recordActivity } from "../../services/progress";
+import { claimRewardKey } from "../../services/progressStore";
+import { slugify } from "../../services/historyService";
 
 interface Props {
   course: string;
@@ -190,6 +193,10 @@ export function VocabularyPanel({
       const result = await sendVocabularySelection(key, { lessonUrl, live: config });
       failedKeyRef.current = null;
       setSendState({ status: "idle", result: result ?? undefined });
+      if (result?.added > 0) {
+        const rewardKey = `vocab::${slugify(course)}::${slugify(lesson)}::${slugify(config.targetLang)}`;
+        if (claimRewardKey(rewardKey)) recordActivity("vocab_exported");
+      }
       if (result) toast.success(result.added > 0 ? `${result.added} ${result.added === 1 ? "palabra nueva" : "palabras nuevas"} en Anki` : "Ya estaban en Anki", { description: `Mazo: ${result.deck}. Las que ya tenías no se duplican ni se pisan.` });
     } catch (error) {
       failedKeyRef.current = selectionKey;

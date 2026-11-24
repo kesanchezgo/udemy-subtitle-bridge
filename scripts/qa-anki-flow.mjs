@@ -71,7 +71,10 @@ const installFakeAnki = () => page.evaluate(async () => {
       fake.counts.push(msg.queries);
       return { ok: true, counts: msg.queries.map((q) => (
         / is:learn is:review$/.test(q) ? 1 : / is:learn -is:review$/.test(q) ? 2 : / is:new$/.test(q) ? 5
-          : / is:due$/.test(q) ? (/kinema::leccion::/.test(q) ? 1 : 3) : / tag:kinema::reforzar$/.test(q) ? 2 : / is:suspended$/.test(q) ? 1 : 12)) };
+          : / is:due$/.test(q) ? (/kinema::leccion::/.test(q) ? 1 : 3)
+            : /kinema::leccion::packages/.test(q) ? 0
+              : /kinema::leccion::variables/.test(q) && window.__forceZero ? 0
+              : / tag:kinema::reforzar$/.test(q) ? 2 : / is:suspended$/.test(q) ? 1 : 12)) };
     }
     if (msg.op === "browse") { fake.browses.push(msg.query); return { ok: true }; }
     return { ok: false, error: `op ${msg.op}` };
@@ -323,13 +326,17 @@ try {
     await py.waitFor();
     assert.equal(await py.locator("[data-anki-deck-name]").innerText(), "Kinema::Courses::Introduction to Python", "el mazo del curso, el mismo que usaría Fijar");
     assert.match(await py.locator("[data-library-programs]").innerText(), /Programa: Data Scientist in Python · también en Python Programming/);
-    assert.deepEqual(await py.locator("[data-library-stats] > .grid > div").evaluateAll((els) => els.map((el) => el.innerText.replace(/\s+/g, " ").trim())), ["4 Tarjetas", "1 Refuerzo", "1 Dudas", "3 En Anki"], "cifras del historial");
+    assert.equal(await py.locator("[data-library-stats] > .grid > div").count(), 0, "con Anki conectado no se apila la fila estática del historial");
+    assert.match(await py.locator("[data-library-anki-counts]").innerText(), /En tu Anki/, "un único panel en vivo");
     await py.locator("[data-anki-count=cards]").waitFor();
     const cells = await py.locator("[data-anki-count]").evaluateAll((els) => Object.fromEntries(els.map((el) => [el.getAttribute("data-anki-count"), el.querySelector("dd")?.innerText])));
     assert.deepEqual(cells, { cards: "12", fresh: "5", learning: "2", relearning: "1", due: "3" }, "total, nuevas, aprendiendo, reaprendiendo y para hoy, de Anki");
     const asked = (await fake()).counts.at(-1);
     assert(asked.length >= 7 && asked.every((q) => q.includes('-note:"Kinema · Vocab · *" -note:"Udemy Bridge Vocab"')), "solo conceptos: el vocabulario no cuenta");
     assert.equal(await py.locator("[data-anki-suspended]").innerText(), " · 1 suspendida", "las suspendidas se dicen aparte");
+    assert.match(await py.locator("[data-library-anki-counts]").innerText(), /2 de refuerzo · 12 de dudas/, "refuerzo y dudas vienen de Anki");
+    assert.match(await py.locator("[data-anki-untracked]").innerText(), /tarjetas en el mazo no corresponden a estas lecciones/, "aviso de tarjetas sin lección listada");
+    assert(asked.length >= 16 && asked.some((q) => q.includes("tag:kinema::duda")), "consulta de dudas y de tarjetas por lección");
     assert(asked[0].includes("tag:kinema::curso::introduction-to-python"), `por etiqueta del curso: ${asked[0]}`);
     assert.equal(await py.locator("[data-library-badges]").filter({ hasText: "1 para hoy" }).count(), 1, "pendientes por lección (la exportada)");
 
@@ -367,6 +374,13 @@ try {
     assert(uris[0].startsWith("obsidian://open?vault=Mi%20Vault&file=") && !uris[0].endsWith(".md") && /introduction-to-python---variables$/i.test(decodeURIComponent(uris[0])), `nota de la lección: ${uris[0]}`);
     assert(/introduction-to-python$/i.test(decodeURIComponent(uris[1])), `índice del curso: ${uris[1]}`);
     assert.match(await py.locator("[data-library-obsidian]").innerText(), /1 de 3 lecciones en Obsidian/);
+    // Una lección exportada que ya no tiene tarjetas en Anki: aviso ámbar con reenvío.
+    await page.evaluate(() => { window.__forceZero = true; });
+    await py.getByRole("button", { name: "Actualizar las cifras de Anki" }).click();
+    await py.locator('[data-anki-lesson-missing="variables"]').waitFor();
+    assert.match(await py.locator('[data-anki-lesson-missing="variables"]').innerText(), /^0 en Anki · Reenviar 3$/);
+    await page.evaluate(() => { window.__forceZero = false; });
+    await py.getByRole("button", { name: "Actualizar las cifras de Anki" }).click();
     await page.locator(".usb-dock").screenshot({ path: "/tmp/kinema-biblioteca.png" }).catch(() => {});
 
     // Hasta aquí, la Biblioteca solo ha leído.

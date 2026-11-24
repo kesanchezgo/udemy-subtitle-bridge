@@ -7,6 +7,7 @@ import { KinemaBrand } from "./AppLogo";
 import { ChevronLeft, ChevronRight, Moon, Sun, Flame, Volume2, VolumeX, Settings } from "./icons";
 import { getStreak } from "../services/streak";
 import { getProgress } from "../services/progress";
+import { hydrateUnifiedProgress } from "../services/progressStore";
 import { ProgressPanel } from "./ProgressPanel";
 import { playSound, soundForClick, installToastSounds, isSoundEnabled, setSoundEnabled, subscribeSound } from "../services/sounds";
 import { CelebrationOverlay } from "./CelebrationOverlay";
@@ -144,6 +145,8 @@ function InPageDockInner({ onSessionResolved, localAiConnected = true }: InPageD
   // (antes con OpenAI/Claude/Gemini decía «nube» aunque no respondiera).
   const [aiOk, setAiOk] = useState<boolean | null>(null);
   const [aiConfigured, setAiConfigured] = useState(true);
+  // Unifica XP/racha/nivel de los tres dominios contra chrome.storage.local.
+  useEffect(() => { void hydrateUnifiedProgress(); }, []);
   useEffect(() => {
     const onChange = (e: Event) => {
       const cfg = (e as CustomEvent<AiProviderConfig>).detail;

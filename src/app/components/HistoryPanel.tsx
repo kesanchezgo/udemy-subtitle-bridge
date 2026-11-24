@@ -11,11 +11,11 @@ import { browseAnkiDue, fetchAnkiDue } from "../services/ankiDue";
 import { PendingContentExports } from "./study/MemoryCard";
 import { DeleteConfirm } from "./library/DeleteConfirm";
 import { LibraryCourseDetail } from "./library/LibraryCourseDetail";
-import { acceptedCardCount, buildLibrary, isPendingExport } from "../services/library";
+import { acceptedCardCount, allConceptsQuery, allVocabQuery, buildLibrary, courseAnkiQueries, isPendingExport } from "../services/library";
 import { platformName } from "../services/platform";
 import { COURSE_TOTALS_KEY, type CourseProgress, type CourseTotals } from "../services/courseTotals";
 import { chromeLocalStorage } from "../services/chromeStorage";
-import { loadCourseDecks } from "../services/ankiBridge";
+import { ankiBrowse, ankiCounts, loadCourseDecks } from "../services/ankiBridge";
 import { defaultConceptDeck, type AnkiLayoutConfig, type CourseDeckRegistry } from "../services/ankiDestination";
 import type { CourseFolderRegistry, ObsidianLayoutConfig } from "../services/obsidianDestination";
 
@@ -145,6 +145,9 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
   const [armed, setArmed] = useState<string | null>(null);
   /** Repasos de hoy en Anki (AnkiConnect); null = Anki no responde. */
   const [ankiDue, setAnkiDue] = useState<number | null>(null);
+  const [liveOverview, setLiveOverview] = useState<{
+    conceptCards: number; conceptDue: number; vocabCards: number; vocabDue: number; courseCards: Record<string, number>;
+  } | null>(null);
   /** Mazo asignado a cada curso (el mismo registro que Fijar). */
   const [registry, setRegistry] = useState<CourseDeckRegistry>({});
   /** Total de lecciones de cada curso, leído de la plataforma (para el porcentaje del curso). */
@@ -210,10 +213,32 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
   );
   const withPrograms = groups.some(g => g.program);
 
-  const dueReviewLectures = useMemo(() => allLectures.filter(lecture => !lecture.deletedAt && lecture.exportedAt && lecture.ankiCardsCount > 0), [allLectures]);
+  // Una sola llamada de cabecera cuando Anki responde: conceptos + vocabulario + cursos visibles.
+  useEffect(() => {
+    if (!expanded || !library?.ankiReady) { setLiveOverview(null); return; }
+    let alive = true;
+    const conceptQ = allConceptsQuery(libraryConfig);
+    const vocabQ = allVocabQuery(libraryConfig);
+    const coursesSlice = groups.flatMap(g => g.courses).slice(0, 30);
+    void ankiCounts([
+      conceptQ, `${conceptQ} is:due`, vocabQ, `${vocabQ} is:due`,
+      ...coursesSlice.map(c => courseAnkiQueries(c, libraryConfig).cards),
+    ]).then((res) => {
+      if (!alive || !res || res.length < 4 || res.slice(0, 4).some(n => n < 0)) return;
+      const [conceptCards, conceptDue, vocabCards, vocabDue, ...perCourse] = res;
+      setLiveOverview({
+        conceptCards, conceptDue, vocabCards, vocabDue,
+        courseCards: Object.fromEntries(coursesSlice.map((c, i) => [c.courseId, Math.max(0, perCourse[i] ?? 0)])),
+      });
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, library?.ankiReady, libraryConfig.rootDeck, groups]);
+
+  const dueReviewLectures = useMemo(() => allLectures.filter(lecture => !lecture.deletedAt && lecture.exportedAt && acceptedCardCount(lecture) > 0), [allLectures]);
 
   const totalDueCards = useMemo(() => {
-    return dueReviewLectures.reduce((acc, l) => acc + (l.ankiCardsCount || 0), 0);
+    return dueReviewLectures.reduce((acc, l) => acc + acceptedCardCount(l), 0);
   }, [dueReviewLectures]);
 
   const dueByCourse = useMemo(() => {
@@ -221,7 +246,7 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
     for (const l of dueReviewLectures) {
       const entry = map.get(l.courseId) ?? { courseName: l.courseName, lectures: [], totalCards: 0 };
       entry.lectures.push(l);
-      entry.totalCards += l.ankiCardsCount || 0;
+      entry.totalCards += acceptedCardCount(l);
       map.set(l.courseId, entry);
     }
     return Array.from(map.values());
@@ -343,7 +368,7 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
                     { label: "Cursos", value: stats?.totalCourses, dot: "#8b6dff" },
                     { label: "Lecciones", value: stats?.totalLectures, dot: "#8b6dff" },
                     { label: "Terminadas", value: stats?.completedLectures, dot: "#10b981" },
-                    { label: "Tarjetas", value: totalDueCards, dot: "#10b981", hint: "Tarjetas de lección en Anki" },
+                    { label: "En Anki", value: liveOverview ? liveOverview.conceptCards : totalDueCards, dot: "#10b981", hint: liveOverview ? "Tarjetas de conceptos reales en Anki" : "Tarjetas enviadas según tu historial (abre Anki para el recuento en vivo)" },
                   ].map(({ label, value, dot, hint }) => (
                     <div key={label} className="min-w-0 px-1 py-3 text-center" title={hint}>
                       <p className="text-[19px] leading-none font-bold tabular-nums tracking-tight text-[var(--usb-fg-hi)]">{stats ? value : "–"}</p>
@@ -390,7 +415,11 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
                                   <span className="flex-1 min-w-0">
                                     <span className="block text-[12.5px] font-semibold truncate text-[var(--usb-fg)]">{course.courseName}</span>
                                     <span className="block text-[11px] mt-0.5 text-[var(--usb-fg-mid)] tabular-nums truncate">
-                                      {progressText(course)} · {course.cards.total} {course.cards.total === 1 ? "tarjeta" : "tarjetas"} · {formatDate(course.lastSeenAt)}
+                                      {progressText(course)} · {liveOverview?.courseCards[course.courseId] !== undefined
+                                        ? (liveOverview.courseCards[course.courseId] > 0
+                                          ? `${liveOverview.courseCards[course.courseId]} en Anki`
+                                          : course.cards.pending > 0 ? `${course.cards.pending} sin enviar` : "0 en Anki")
+                                        : `${course.cards.total} ${course.cards.total === 1 ? "tarjeta" : "tarjetas"}`} · {formatDate(course.lastSeenAt)}
                                     </span>
                                   </span>
                                   <motion.span animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.15 }} className="shrink-0">
@@ -468,27 +497,45 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
                 <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] divide-y divide-[var(--usb-border)]">
                   <div className="flex items-center justify-between gap-3 px-3 py-2.5 min-h-[52px]">
                     <div className="min-w-0 flex-1">
-                      {/* La misma cifra que «Tu progreso» (AnkiConnect, mazo raíz configurado). */}
                       <p className="text-[12.5px] font-semibold text-[var(--usb-fg)] tabular-nums">
-                        {ankiDue === null
-                          ? `${totalDueCards} ${totalDueCards === 1 ? "tarjeta en Anki" : "tarjetas en Anki"}`
-                          : ankiDue === 0 ? "Sin repasos pendientes hoy" : `${ankiDue} ${ankiDue === 1 ? "repaso pendiente" : "repasos pendientes"} hoy`}
+                        {liveOverview || ankiDue !== null
+                          ? (() => {
+                            const totalDue = liveOverview ? liveOverview.conceptDue + liveOverview.vocabDue : (ankiDue ?? 0);
+                            return totalDue === 0 ? "Sin repasos pendientes hoy" : `${totalDue} ${totalDue === 1 ? "repaso pendiente" : "repasos pendientes"} hoy`;
+                          })()
+                          : `${totalDueCards} ${totalDueCards === 1 ? "tarjeta en Anki" : "tarjetas en Anki"}`}
                       </p>
                       <p className="text-[11px] leading-snug text-[var(--usb-fg-mid)]">
-                        {dueReviewLectures.length} {dueReviewLectures.length === 1 ? "lección en Anki" : "lecciones en Anki"} · {dueByCourse.length} {dueByCourse.length === 1 ? "curso" : "cursos"}.{" "}
-                        {ankiDue === null ? "Abre Anki para repasar (con AnkiConnect, Kinema te muestra aquí los pendientes)." : "Los repasos se hacen en Anki."}
+                        {liveOverview
+                          ? <>{liveOverview.conceptCards} {liveOverview.conceptCards === 1 ? "tarjeta de cursos" : "tarjetas de cursos"}{liveOverview.vocabCards > 0 ? ` · ${liveOverview.vocabCards} de vocabulario` : ""} en Anki.
+                              {liveOverview.conceptDue > 0 && liveOverview.vocabDue > 0 ? ` (${liveOverview.conceptDue} de cursos · ${liveOverview.vocabDue} de vocabulario para hoy).` : ""}</>
+                          : ankiDue !== null
+                            ? "Los repasos se hacen en Anki."
+                            : <>{totalDueCards} tarjetas enviadas · {dueReviewLectures.length} lecciones · {dueByCourse.length} cursos. Abre Anki para ver tus repasos de hoy.</>}
                       </p>
                     </div>
-                    {/* Solo si Anki responde: abre sus repasos de hoy. Antes, «Abrir Anki» usaba
-                        anki:// (Anki de escritorio no lo registra) y celebraba un «logro» igual. */}
-                    {ankiDue !== null && ankiDue > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => { void browseAnkiDue().then((ok) => { if (!ok) toast.error("Anki no respondió", { description: "Ábrelo en tu ordenador y vuelve a intentarlo." }); }); }}
-                        className="kx-chip shrink-0 h-8 px-3 rounded-lg text-[11.5px] font-semibold inline-flex items-center gap-1.5"
-                      >
-                        <Repeat2 size={12} />Repasar en Anki
-                      </button>
+                    {(liveOverview || ankiDue !== null) && (
+                      <div className="shrink-0 flex flex-wrap gap-1.5">
+                        {((liveOverview ? liveOverview.conceptDue + liveOverview.vocabDue : (ankiDue ?? 0)) > 0) && (
+                          <button
+                            type="button"
+                            onClick={() => { void browseAnkiDue().then((ok) => { if (!ok) toast.error("Anki no respondió", { description: "Ábrelo en tu ordenador y vuelve a intentarlo." }); }); }}
+                            className="kx-chip h-8 px-3 rounded-lg text-[11.5px] font-semibold inline-flex items-center gap-1.5"
+                          >
+                            <Repeat2 size={12} />Repasar en Anki
+                          </button>
+                        )}
+                        {liveOverview && liveOverview.vocabCards > 0 && (
+                          <button
+                            type="button"
+                            data-library-vocab-browse
+                            onClick={() => { void ankiBrowse(allVocabQuery(libraryConfig)).then((ok) => { if (!ok) toast.error("Anki no respondió", { description: "Ábrelo en tu ordenador y vuelve a intentarlo." }); }); }}
+                            className="kx-chip h-8 px-3 rounded-lg text-[11.5px] font-semibold inline-flex items-center gap-1.5"
+                          >
+                            <BookOpen size={12} />Ver vocabulario
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

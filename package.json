@@ -1,5 +1,5 @@
 {
-  "version": "2.0.2",
+  "version": "2.0.3",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
@@ -21,7 +21,8 @@
     "qa:datacamp": "node scripts/qa-datacamp.mjs",
     "qa:datacamp:flow": "node scripts/qa-datacamp-flow.mjs",
     "qa:master": "node scripts/qa-master.mjs",
-    "qa:master:units": "node scripts/qa-master-units.mjs"
+    "qa:master:units": "node scripts/qa-master-units.mjs",
+    "qa:progress:units": "node scripts/qa-progress-units.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

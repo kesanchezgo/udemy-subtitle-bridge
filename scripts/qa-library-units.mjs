@@ -171,4 +171,46 @@ await test("Biblioteca: porcentaje del CURSO solo con temario coherente; si no, 
 	assert.deepEqual(lib.buildLibrary(records, { config, registry: {} }).flatMap((g) => g.courses).find((c) => c.courseId === "java").progress.label, "2/2", "sin temario: fracción de lo empezado");
 });
 
+await test("countManyCards: una sola llamada multi y fallback secuencial", async () => {
+	const calls = [];
+	const multi = await ops.countManyCards(async (action, params) => {
+		calls.push(action);
+		if (action === "multi") return params.actions.map((_, i) => i === 1 ? { result: [1, 2, 3] } : i === 0 ? [] : [2, 3]);
+		throw new Error("no esperado");
+	}, ["a", "b", "c"], { useMulti: true });
+	assert.deepEqual(multi, [0, 3, 2]);
+	assert.deepEqual(calls, ["multi"], "sin bucle findCards cuando multi responde");
+
+	const fallbackCalls = [];
+	const fallback = await ops.countManyCards(async (action, params) => {
+		fallbackCalls.push(action);
+		if (action === "multi") throw new Error("unsupported");
+		return Array.from({ length: params.query.length }, (_, i) => i);
+	}, ["aa", "bbb"], { useMulti: true });
+	assert.deepEqual(fallback, [2, 3]);
+	assert.deepEqual(fallbackCalls, ["multi", "findCards", "findCards"]);
+	const sequential = await ops.countManyCards(async (action) => { assert.equal(action, "findCards"); return [1]; }, ["a", "b"]);
+	assert.deepEqual(sequential, [1, 1]);
+});
+
+await test("búsquedas globales: conceptos, vocabulario, duda y untracked sin vocabulario", () => {
+	const conceptQ = lib.allConceptsQuery(config);
+	const vocabQ = lib.allVocabQuery(config);
+	assert(conceptQ.includes('-note:"Kinema · Vocab · *"'), "conceptos sin vocabulario");
+	assert(vocabQ.includes('note:"Kinema · Vocab · *"') && vocabQ.includes('note:"Udemy Bridge Vocab"'));
+	assert(lib.courseVocabQuery("Java").includes("tag:kinema::curso::java"));
+	const course = lib.buildLibrary(records, { config, registry: {} }).flatMap((g) => g.courses).find((c) => c.courseId === "java");
+	const q = lib.courseAnkiQueries(course, config);
+	assert(q.doubt.endsWith("tag:kinema::duda") && q.doubt.includes(lib.NOT_VOCAB));
+	const untracked = lib.courseUntrackedCardsQuery(course, config);
+	assert(untracked && untracked.includes(lib.NOT_VOCAB) && untracked.includes("-tag:kinema::leccion::"));
+	assert.equal(lib.LESSON_QUERY_LIMIT, 35);
+});
+
+await test("conteos del historial excluyen tarjetas descartadas", () => {
+	const legacy = { ankiCardsCount: 5 };
+	assert.equal(lib.acceptedCardCount(legacy), 5, "sin array: respeta el campo guardado");
+	assert.equal(lib.acceptedCardCount({ ankiCardsCount: 3, ankiCards: [{}, {}, {}, { excluded: true }] }), 3);
+});
+
 console.log(`QA unidades de la Biblioteca: ${passed}/${passed} OK`);
