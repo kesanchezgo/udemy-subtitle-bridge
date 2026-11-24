@@ -1,9 +1,9 @@
 import {
-  getStreakState, setStreakState, localDayKey, normalizeDayKey,
-  LEGACY_STREAK_SHOWN_KEY,
+  getStreakState, setStreakState, localDayKey, normalizeDayKey, shiftDay,
+  hasExtensionStorage, LEGACY_STREAK_SHOWN_KEY,
 } from './progressStore.ts';
 
-const daysAgo = (n: number) => localDayKey(new Date(Date.now() - n * 86400000));
+const daysAgo = (n: number) => shiftDay(localDayKey(), -n);
 
 /** Un día de descanso por semana: perder un solo día no rompe la racha. */
 function freezeAvailable(s: { freezeAt?: string }): boolean {
@@ -46,11 +46,14 @@ const SHOWN_KEY = LEGACY_STREAK_SHOWN_KEY;
 export function claimStreakCelebration(): { count: number; usedFreeze: boolean } | null {
   const s = getStreakState();
   const count = getStreak();
-  if (count < 2 || s.last !== localDayKey()) return null;
-  try {
-    if (globalThis.localStorage?.getItem(SHOWN_KEY) === localDayKey()) return null;
-    globalThis.localStorage?.setItem(SHOWN_KEY, localDayKey());
-  } catch { return null; }
+  const today = localDayKey();
+  if (count < 2 || s.last !== today) return null;
+  const alreadyShown = hasExtensionStorage()
+    ? s.celebratedAt === today
+    : normalizeDayKey(globalThis.localStorage?.getItem(SHOWN_KEY) ?? '') === today;
+  if (alreadyShown) return null;
+  try { globalThis.localStorage?.setItem(SHOWN_KEY, today); } catch { /* sin preview storage */ }
+  setStreakState({ ...s, celebratedAt: today }, false);
   const frozen = s.freezeAt ? normalizeDayKey(s.freezeAt) : null;
   return { count, usedFreeze: frozen === daysAgo(1) };
 }

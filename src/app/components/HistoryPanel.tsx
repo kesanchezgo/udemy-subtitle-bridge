@@ -510,8 +510,8 @@ export function HistoryPanel({ onOpenLecture, onSendLesson, onExportLesson, defa
                           ? <>{liveOverview.conceptCards} {liveOverview.conceptCards === 1 ? "tarjeta de cursos" : "tarjetas de cursos"}{liveOverview.vocabCards > 0 ? ` · ${liveOverview.vocabCards} de vocabulario` : ""} en Anki.
                               {liveOverview.conceptDue > 0 && liveOverview.vocabDue > 0 ? ` (${liveOverview.conceptDue} de cursos · ${liveOverview.vocabDue} de vocabulario para hoy).` : ""}</>
                           : ankiDue !== null
-                            ? "Los repasos se hacen en Anki."
-                            : <>{totalDueCards} tarjetas enviadas · {dueReviewLectures.length} lecciones · {dueByCourse.length} cursos. Abre Anki para ver tus repasos de hoy.</>}
+                            ? `${dueReviewLectures.length} ${dueReviewLectures.length === 1 ? "lección en Anki" : "lecciones en Anki"} · ${dueByCourse.length} ${dueByCourse.length === 1 ? "curso" : "cursos"}. Los repasos se hacen en Anki.`
+                            : `${dueReviewLectures.length} ${dueReviewLectures.length === 1 ? "lección en Anki" : "lecciones en Anki"} · ${dueByCourse.length} ${dueByCourse.length === 1 ? "curso" : "cursos"}. Abre Anki para repasar (con AnkiConnect, Kinema te muestra aquí los pendientes).`}
                       </p>
                     </div>
                     {(liveOverview || ankiDue !== null) && (

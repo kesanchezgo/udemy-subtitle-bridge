@@ -70,11 +70,13 @@ const installFakeAnki = () => page.evaluate(async () => {
     if (msg.op === "counts") {
       fake.counts.push(msg.queries);
       return { ok: true, counts: msg.queries.map((q) => (
-        / is:learn is:review$/.test(q) ? 1 : / is:learn -is:review$/.test(q) ? 2 : / is:new$/.test(q) ? 5
+        /^\(note:"Kinema · Vocab/.test(q) ? (/ is:due$/.test(q) ? 1 : 4)
+          : / is:learn is:review$/.test(q) ? 1 : / is:learn -is:review$/.test(q) ? 2 : / is:new$/.test(q) ? 5
+          : /-tag:kinema::leccion::/.test(q) ? 2
+          : /tag:kinema::leccion::(functions|packages)/.test(q) ? 0
+          : /tag:kinema::leccion::variables/.test(q) && window.__forceZero ? 0
           : / is:due$/.test(q) ? (/kinema::leccion::/.test(q) ? 1 : 3)
-            : /kinema::leccion::packages/.test(q) ? 0
-              : /kinema::leccion::variables/.test(q) && window.__forceZero ? 0
-              : / tag:kinema::reforzar$/.test(q) ? 2 : / is:suspended$/.test(q) ? 1 : 12)) };
+          : / tag:kinema::reforzar$/.test(q) ? 2 : / is:suspended$/.test(q) ? 1 : 12)) };
     }
     if (msg.op === "browse") { fake.browses.push(msg.query); return { ok: true }; }
     return { ok: false, error: `op ${msg.op}` };
@@ -310,7 +312,8 @@ try {
     assert(/Programa · Data Scientist in Python/.test(groups[0][1]) && /Otros cursos/.test(groups[1][1]), `títulos de los grupos: ${JSON.stringify(groups)}`);
     const pyRows = list.locator("button[aria-expanded]").filter({ hasText: pyCourse });
     assert.equal(await pyRows.count(), 1, "un curso en varios programas no se duplica");
-    assert.match(await pyRows.innerText(), /2 de 11 lecciones · 1 en curso · 4 tarjetas/, "con temario: lecciones del CURSO");
+    await pyRows.filter({ hasText: "12 en Anki" }).waitFor();
+    assert.match(await pyRows.innerText(), /2 de 11 lecciones · 1 en curso · 12 en Anki/, "con temario: lecciones del CURSO y recuento en vivo de Anki");
     assert.equal(await pyRows.locator("[data-course-pct]").innerText(), "18%", "y su porcentaje del curso en el anillo");
     const javaRowEarly = list.locator("[data-library-group=none] button[aria-expanded]").filter({ hasText: "Java In-Depth" });
     assert.match(await javaRowEarly.innerText(), /\d+ terminadas? de \d+ empezadas?/, "sin temario: terminadas de empezadas, sin porcentaje");
@@ -326,13 +329,15 @@ try {
     await py.waitFor();
     assert.equal(await py.locator("[data-anki-deck-name]").innerText(), "Kinema::Courses::Introduction to Python", "el mazo del curso, el mismo que usaría Fijar");
     assert.match(await py.locator("[data-library-programs]").innerText(), /Programa: Data Scientist in Python · también en Python Programming/);
-    assert.equal(await py.locator("[data-library-stats] > .grid > div").count(), 0, "con Anki conectado no se apila la fila estática del historial");
-    assert.match(await py.locator("[data-library-anki-counts]").innerText(), /En tu Anki/, "un único panel en vivo");
     await py.locator("[data-anki-count=cards]").waitFor();
+    assert.equal(await py.locator("[data-library-history-stats]").count(), 0, "con Anki conectado no se apila la fila estática del historial");
+    assert.match(await py.locator("[data-library-anki-counts]").innerText(), /En tu Anki/, "un único panel en vivo");
+    await py.locator("[data-library-course-vocab]").filter({ hasText: "Vocabulario (4)" }).waitFor();
     const cells = await py.locator("[data-anki-count]").evaluateAll((els) => Object.fromEntries(els.map((el) => [el.getAttribute("data-anki-count"), el.querySelector("dd")?.innerText])));
     assert.deepEqual(cells, { cards: "12", fresh: "5", learning: "2", relearning: "1", due: "3" }, "total, nuevas, aprendiendo, reaprendiendo y para hoy, de Anki");
     const asked = (await fake()).counts.at(-1);
-    assert(asked.length >= 7 && asked.every((q) => q.includes('-note:"Kinema · Vocab · *" -note:"Udemy Bridge Vocab"')), "solo conceptos: el vocabulario no cuenta");
+    assert(asked.length >= 15 && asked.some((q) => q.includes("tag:kinema::duda")), "consulta de dudas, untracked y tarjetas por lección");
+    assert(asked.every((q) => q.includes('-note:"Kinema · Vocab · *" -note:"Udemy Bridge Vocab"')), "solo conceptos: el vocabulario no cuenta");
     assert.equal(await py.locator("[data-anki-suspended]").innerText(), " · 1 suspendida", "las suspendidas se dicen aparte");
     assert.match(await py.locator("[data-library-anki-counts]").innerText(), /2 de refuerzo · 12 de dudas/, "refuerzo y dudas vienen de Anki");
     assert.match(await py.locator("[data-anki-untracked]").innerText(), /tarjetas en el mazo no corresponden a estas lecciones/, "aviso de tarjetas sin lección listada");

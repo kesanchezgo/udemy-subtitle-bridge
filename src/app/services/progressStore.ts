@@ -41,6 +41,7 @@ export interface StreakState {
   count: number;
   best: number;
   freezeAt?: string;
+  celebratedAt?: string;
   originsMigrated?: Record<string, number>;
 }
 
@@ -66,6 +67,23 @@ export function normalizeDayKey(raw: string): string | null {
   const month = Number(mo), day = Number(da);
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** Desplaza una fecha YYYY-MM-DD por días de calendario local (sin deriva por cambio horario DST). */
+export function shiftDay(isoDay: string, deltaDays: number): string {
+  const norm = normalizeDayKey(isoDay) ?? localDayKey();
+  const [y, m, d] = norm.split('-').map(Number);
+  return localDayKey(new Date(y, m - 1, d + deltaDays));
+}
+
+/** Diferencia exacta en días de calendario entre dos fechas YYYY-MM-DD (to - from). */
+export function daysBetween(fromIso: string, toIso: string): number {
+  const a = normalizeDayKey(fromIso);
+  const b = normalizeDayKey(toIso);
+  if (!a || !b) return 9999;
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
 }
 
 export function hasExtensionStorage(): boolean {
@@ -123,21 +141,29 @@ function normalizeStreak(raw: Partial<StreakState> | null): StreakState {
     ...base, ...raw,
     last: normalizeDayKey(raw.last ?? '') ?? '',
     freezeAt: raw.freezeAt ? (normalizeDayKey(raw.freezeAt) ?? undefined) : undefined,
+    celebratedAt: raw.celebratedAt ? (normalizeDayKey(raw.celebratedAt) ?? undefined) : undefined,
     originsMigrated: raw.originsMigrated ?? {},
   };
 }
 
 export function getProgressState(): ProgressState {
-  if (memProgress) return memProgress;
-  if (hasExtensionStorage()) { memProgress = emptyProgress(); return memProgress; }
-  memProgress = normalizeProgress(legacyGet(LEGACY_PROGRESS_KEY) as Partial<ProgressState> | null);
-  return memProgress;
+  if (hasExtensionStorage()) return memProgress ?? emptyProgress();
+  // Preview/tests: siempre leer de localStorage para ver cambios directos de la page.
+  const raw = legacyGet(LEGACY_PROGRESS_KEY) as Partial<ProgressState> | null;
+  const rewarded = legacyGet(REWARDED_KEY);
+  const merged = normalizeProgress(raw);
+  if (Array.isArray(rewarded)) merged.rewardedKeys = [...new Set([...merged.rewardedKeys, ...rewarded.slice(-800)])].slice(-800);
+  memProgress = merged;
+  return merged;
 }
 export function getStreakState(): StreakState {
-  if (memStreak) return memStreak;
-  if (hasExtensionStorage()) { memStreak = emptyStreak(); return memStreak; }
-  memStreak = normalizeStreak(legacyGet(LEGACY_STREAK_KEY) as Partial<StreakState> | null);
-  return memStreak;
+  if (hasExtensionStorage()) return memStreak ?? emptyStreak();
+  const raw = legacyGet(LEGACY_STREAK_KEY) as Partial<StreakState> | null;
+  const normalized = normalizeStreak(raw);
+  const shown = normalizeDayKey(String(globalThis.localStorage?.getItem(LEGACY_STREAK_SHOWN_KEY) ?? ''));
+  if (shown && !normalized.celebratedAt) normalized.celebratedAt = shown;
+  memStreak = normalized;
+  return normalized;
 }
 
 export function emitXp() {
@@ -159,13 +185,25 @@ function persist(items: Record<string, unknown>) {
 }
 
 export function setProgressState(next: ProgressState, emit = true) {
-  memProgress = normalizeProgress(next);
-  persist({ [PROGRESS_KEY]: memProgress });
+  const normalized = normalizeProgress(next);
+  if (hasExtensionStorage()) {
+    memProgress = normalized;
+    persist({ [PROGRESS_KEY]: normalized });
+  } else {
+    legacySet(LEGACY_PROGRESS_KEY, normalized);
+    legacySet(REWARDED_KEY, normalized.rewardedKeys);
+  }
   if (emit) emitXp();
 }
 export function setStreakState(next: StreakState, emit = true) {
-  memStreak = normalizeStreak(next);
-  persist({ [STREAK_KEY]: memStreak });
+  const normalized = normalizeStreak(next);
+  if (hasExtensionStorage()) {
+    memStreak = normalized;
+    persist({ [STREAK_KEY]: normalized });
+  } else {
+    legacySet(LEGACY_STREAK_KEY, normalized);
+    if (normalized.celebratedAt) legacySet(LEGACY_STREAK_SHOWN_KEY, normalized.celebratedAt);
+  }
   if (emit) emitStreak();
 }
 
@@ -178,70 +216,112 @@ export function claimRewardKey(key: string): boolean {
   return true;
 }
 
-/** Racha vigente aplicando un día de descanso semanal. */
+/** Racha vigente aplicando exactamente un día de descanso semanal por ventana de 7 días. */
 export function recomputeStreakFromDays(days: Record<string, number>, prev: StreakState, today = localDayKey()): StreakState {
-  const active = Object.keys(normalizeDays(days)).filter((d) => Number(days[d]) > 0);
-  if (prev.last) active.push(normalizeDayKey(prev.last) ?? prev.last);
+  const normDays = normalizeDays(days);
+  const active = Object.keys(normDays).filter((d) => Number(normDays[d]) > 0 && daysBetween(d, today) >= 0);
+  const prevLast = normalizeDayKey(prev.last ?? '');
+  if (prevLast && daysBetween(prevLast, today) >= 0) active.push(prevLast);
   const sorted = [...new Set(active)].sort();
   if (!sorted.length) return { ...prev, count: 0, best: Math.max(prev.best || 0, 0) };
-  let best = 0;
+
+  let best = prev.best || 0;
   let run = 0;
-  let previous: Date | null = null;
+  let freezeAt: string | undefined = undefined;
+  let previous: string | null = null;
   for (const day of sorted) {
-    const current = new Date(`${day}T00:00:00`);
-    const gap = previous ? Math.round((current.getTime() - previous.getTime()) / 86400000) : 1;
-    run = gap === 1 || gap === 2 ? run + 1 : 1;
+    if (!previous) {
+      run = 1;
+    } else {
+      const gap = daysBetween(previous, day);
+      if (gap === 1) {
+        run += 1;
+      } else if (gap === 2) {
+        const missedDay = shiftDay(previous, 1);
+        if (!freezeAt || daysBetween(freezeAt, missedDay) >= 7) {
+          run += 1;
+          freezeAt = missedDay;
+        } else {
+          run = 1;
+        }
+      } else if (gap > 2) {
+        run = 1;
+      }
+    }
     best = Math.max(best, run);
-    previous = current;
+    previous = day;
   }
-  // Racha vigente: se cuenta hoy hacia atrás; un solo día sin actividad es el descanso semanal.
-  let current = 0;
-  let graceUsed = false;
-  const todayDate = new Date(`${today}T00:00:00`);
-  for (let i = 0; i < 400; i++) {
-    const day = localDayKey(new Date(todayDate.getTime() - i * 86400000));
-    if (sorted.includes(day)) current++;
-    else if (!graceUsed) graceUsed = true;
-    else break;
+
+  const lastActive = sorted[sorted.length - 1];
+  const gapToToday = daysBetween(lastActive, today);
+  if (prevLast && prevLast === lastActive && (prev.count || 0) > run && gapToToday <= 2) {
+    run = prev.count;
+    best = Math.max(best, run);
   }
-  const last = sorted.includes(today) ? today
-    : sorted.includes(prev.last) ? prev.last
-      : sorted[sorted.length - 1];
-  return { ...prev, last, count: current, best: Math.max(prev.best || 0, best) };
+  if (prev.freezeAt) {
+    const prevFreeze = normalizeDayKey(prev.freezeAt);
+    if (prevFreeze && (!freezeAt || prevFreeze > freezeAt) && daysBetween(prevFreeze, today) >= 0 && daysBetween(prevFreeze, today) < 7) {
+      freezeAt = prevFreeze;
+    }
+  }
+  return { ...prev, last: lastActive, count: run, best: Math.max(best, run), freezeAt };
 }
 
 function addDaysMap(target: Record<string, number>, source: Record<string, number>) {
   for (const [day, xp] of Object.entries(normalizeDays(source))) target[day] = (target[day] ?? 0) + xp;
 }
 
+/** Base del disco + cualquier escritura en vuelo que ocurrió antes de resolver la lectura. */
+function mergeInFlightProgress(disk: ProgressState, inFlight: ProgressState | null): ProgressState {
+  if (!inFlight) return disk;
+  const out = normalizeProgress(disk);
+  for (const key of COUNTERS) out[key] = Math.max(out[key] || 0, inFlight[key] || 0);
+  for (const [day, xp] of Object.entries(inFlight.days)) out.days[day] = Math.max(out.days[day] ?? 0, xp);
+  for (const [day, n] of Object.entries(inFlight.finishedDays)) out.finishedDays[day] = Math.max(out.finishedDays[day] ?? 0, n);
+  out.unlocked = [...new Set([...out.unlocked, ...inFlight.unlocked])];
+  out.rewardedKeys = [...new Set([...(out.rewardedKeys ?? []), ...(inFlight.rewardedKeys ?? [])])].slice(-800);
+  out.originsMigrated = { ...(out.originsMigrated ?? {}), ...(inFlight.originsMigrated ?? {}) };
+  return out;
+}
+
 /** Ingesta idempotente de un origen + suelo desde el historial + racha reconstruida. */
 export async function hydrateUnifiedProgress(): Promise<void> {
-  let loadedProgress: unknown;
-  let loadedStreak: unknown;
-  if (hasExtensionStorage()) {
+  const inExtension = hasExtensionStorage();
+  let p: ProgressState;
+  let s: StreakState;
+  if (inExtension) {
+    let loadedProgress: unknown;
+    let loadedStreak: unknown;
     try {
       const values = await chromeLocalStorage.get([PROGRESS_KEY, STREAK_KEY]);
       loadedProgress = values[PROGRESS_KEY];
       loadedStreak = values[STREAK_KEY];
     } catch { /* sin almacenamiento: seguimos con la caché */ }
+    p = mergeInFlightProgress(normalizeProgress(loadedProgress as Partial<ProgressState> | null), memProgress);
+    s = normalizeStreak((loadedStreak ?? memStreak) as Partial<StreakState> | null);
+    if (!s.celebratedAt && memStreak?.celebratedAt) s.celebratedAt = memStreak.celebratedAt;
+  } else {
+    // En preview LEGACY_PROGRESS_KEY YA ES el almacén: no lo sumamos sobre sí mismo.
+    p = normalizeProgress(legacyGet(LEGACY_PROGRESS_KEY) as Partial<ProgressState> | null);
+    s = normalizeStreak(legacyGet(LEGACY_STREAK_KEY) as Partial<StreakState> | null);
   }
-  // Ojo: en preview getProgressState() lee la MISMA clave legacy que vamos a
-  // migrar; usar la caché (o vacío) evita contar dos veces el primer origen.
-  let p = normalizeProgress(memProgress ?? (loadedProgress as Partial<ProgressState> | null));
-  let s = normalizeStreak(memStreak ?? (loadedStreak as Partial<StreakState> | null));
   const origin = typeof location !== 'undefined' ? location.origin : 'preview';
   p.originsMigrated = p.originsMigrated ?? {};
 
-  // A) origen aún no migrado: suma una sola vez sus contadores y días.
+  // A) origen aún no migrado: suma una sola vez los datos legacy de ese dominio.
   if (!p.originsMigrated[origin]) {
     const legacyProgress = legacyGet(LEGACY_PROGRESS_KEY) as Partial<ProgressState> | null;
     const legacyStreak = legacyGet(LEGACY_STREAK_KEY) as Partial<StreakState> | null;
-    for (const key of COUNTERS) p[key] = (p[key] || 0) + Number(legacyProgress?.[key] || 0);
-    addDaysMap(p.days, legacyProgress?.days);
-    addDaysMap(p.finishedDays, legacyProgress?.finishedDays);
-    p.unlocked = [...new Set([...p.unlocked, ...(legacyProgress?.unlocked ?? [])])];
-    p.recentFirstTry = [...(legacyProgress?.recentFirstTry ?? []), ...p.recentFirstTry].slice(-20);
+    if (inExtension) {
+      for (const key of COUNTERS) p[key] = (p[key] || 0) + Number(legacyProgress?.[key] || 0);
+      addDaysMap(p.days, legacyProgress?.days);
+      addDaysMap(p.finishedDays, legacyProgress?.finishedDays);
+      p.unlocked = [...new Set([...p.unlocked, ...(legacyProgress?.unlocked ?? [])])];
+      p.recentFirstTry = [...(legacyProgress?.recentFirstTry ?? []), ...p.recentFirstTry].slice(-20);
+    }
     if (legacyStreak?.best) s.best = Math.max(s.best || 0, Number(legacyStreak.best));
+    const shown = normalizeDayKey(String(globalThis.localStorage?.getItem(LEGACY_STREAK_SHOWN_KEY) ?? ''));
+    if (shown && !s.celebratedAt) s.celebratedAt = shown;
     p.originsMigrated[origin] = Date.now();
   }
   const rewarded = legacyGet(REWARDED_KEY);

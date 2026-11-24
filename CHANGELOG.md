@@ -1,3 +1,12 @@
+## [2.0.4] — 2026-11-24
+
+Correcciones P0 del almacén unificado y ajustes exactos de arneses offline detectados al auditar `554bf74`. Versión 2.0.4 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.4`.
+
+- **Progreso**: las lecturas síncronas iniciales ya no siembran una caché vacía que borraba `chrome.storage.local`; la hidratación fusiona con `Math.max` cualquier escritura en vuelo. En preview se lee siempre `localStorage`, para que las mutaciones directas de los tests surtan efecto. `shiftDay`/`daysBetween` eliminan la deriva DST; `celebratedAt` hace única la celebración de racha entre plataformas.
+- **Racha**: `recomputeStreakFromDays` usa simulación cronológica con una ventana estricta de un descanso semanal cada 7 días; no permite descansos alternos ilimitados y conserva la racha protegida antes de estudiar hoy.
+- **Biblioteca**: la consulta de vocabulario va en su propia llamada; la cuadrícula del historial solo aparece con Anki desconectado o tras error, con estados de carga limpios; el aviso de tarjetas sin lección no deja un ` · ` colgante; una lección en curso con `0` tarjetas reales vuelve a mostrar `Enviar N`.
+- **QA**: `qa-anki-flow` y `qa-progress-units` incorporan los casos verificados en el entorno con servidor local (disk de 200 XP + 100 + 50 = 350, descanso semanal, recuentos en vivo y vocabulario separado).
+
 ## [2.0.3] — 2026-11-24
 
 Reconciliación en vivo de la Biblioteca con Anki/Obsidian y sistema unificado de rachas, niveles y XP entre plataformas. Versión 2.0.3 en `manifest.json` y `package.json`; `SW_VERSION` = `v2026-11-24-v2.0.3`.

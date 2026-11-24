@@ -127,8 +127,11 @@ export function LibraryCourseDetail({
       queries.push(lq.cards, lq.due);
     }
     const vocabQuery = courseVocabQuery(course.courseName);
-    queries.push(vocabQuery);
     setCountsState("loading");
+    void ankiCounts([vocabQuery]).then((vRes) => {
+      if (!alive) return;
+      setVocabCount(vRes && vRes[0] >= 0 ? vRes[0] : 0);
+    });
     void ankiCounts(queries).then((res) => {
       if (!alive) return;
       // -1 = esa búsqueda no se pudo hacer: mejor «no respondió» que una cifra falsa.
@@ -142,9 +145,7 @@ export function LibraryCourseDetail({
         lessonCards[l.rec.lectureId] = Math.max(0, res[cursor++] ?? 0);
         lessonDue[l.rec.lectureId] = Math.max(0, res[cursor++] ?? 0);
       }
-      const vocabCards = Math.max(0, res[cursor] ?? 0);
-      setVocabCount(vocabCards);
-      setCounts({ cards, due, fresh, learning, relearning, reinforce, doubt, suspended, untracked, vocabCards, lessonCards, lessonDue });
+      setCounts({ cards, due, fresh, learning, relearning, reinforce, doubt, suspended, untracked, lessonCards, lessonDue });
       setCountsState("idle");
     });
     return () => { alive = false; };
@@ -201,9 +202,13 @@ export function LibraryCourseDetail({
 
       {/* Una sola verdad: con Anki respondiendo, SOLO el panel en vivo; si no, el historial y su aviso. */}
       <div className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] overflow-hidden" data-library-stats>
-        {!ankiReady || !counts ? (
+        {ankiReady && !counts && countsState !== "error" ? (
+          <div className="px-2.5 py-3 flex items-center gap-1.5 text-[10.5px] text-[var(--usb-fg-mid)]" data-library-anki>
+            <Loader2 size={11} className="animate-spin" />Preguntando a Anki…
+          </div>
+        ) : !ankiReady || countsState === "error" ? (
           <>
-            <div className="grid grid-cols-4 divide-x divide-[var(--usb-border)]">
+            <div className="grid grid-cols-4 divide-x divide-[var(--usb-border)]" data-library-history-stats>
               {[
                 { label: "Tarjetas", value: course.cards.total },
                 { label: "Refuerzo", value: course.cards.reinforce },
@@ -218,11 +223,9 @@ export function LibraryCourseDetail({
             </div>
             <div className="border-t border-[var(--usb-border)] px-2.5 py-2" data-library-anki>
               <p className="text-[10.5px] leading-snug text-[var(--usb-fg-mid)]">
-                {countsState === "loading"
-                  ? "Preguntando a Anki…"
-                  : !ankiReady
-                    ? "Según tu historial · abre Anki para ver las tarjetas reales de tu mazo."
-                    : "Anki no respondió · se muestran las cifras de tu historial."}
+                {!ankiReady
+                  ? "Cifras de tu historial. Con Anki abierto y conectado verás aquí las tarjetas reales del curso."
+                  : "Anki no respondió. Cifras de tu historial."}
               </p>
             </div>
           </>
@@ -264,8 +267,8 @@ export function LibraryCourseDetail({
               <p className="px-2.5 pb-2 text-[10px] leading-snug text-[var(--usb-warn-text)]">Anki no tiene tarjetas de este curso. ¿Las borraste o estás en otro perfil?</p>
             )}
             {counts.untracked > 0 && untrackedQuery && (
-              <div className="px-2.5 pb-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--usb-fg-mid)]" data-anki-untracked>
-                <span>{counts.untracked === 1 ? "1 tarjeta en el mazo no corresponde a estas lecciones" : `${counts.untracked} tarjetas en el mazo no corresponden a estas lecciones`} · </span>
+              <div className="px-2.5 pb-2 flex flex-wrap items-center justify-between gap-1.5 text-[10px] text-[var(--usb-fg-mid)]" data-anki-untracked>
+                <span className="min-w-0">{counts.untracked === 1 ? "1 tarjeta en el mazo no corresponde a estas lecciones." : `${counts.untracked} tarjetas en el mazo no corresponden a estas lecciones.`}</span>
                 <button type="button" onClick={() => browse(untrackedQuery)} className={chipBtnCls}>Ver en Anki</button>
               </div>
             )}
@@ -451,7 +454,7 @@ function LessonRow({
               </button>
             ) : <div className="min-w-0">{body}</div>;
           })()}
-          {(cards.total > 0 || (liveCards !== undefined && liveCards >= 0) || cards.reinforce > 0 || cards.doubt > 0 || cards.interview > 0 || lesson.inDeck.length > 0 || lesson.inObsidian || (due ?? 0) > 0) && (
+          {(cards.total > 0 || (liveCards !== undefined && liveCards > 0) || cards.reinforce > 0 || cards.doubt > 0 || cards.interview > 0 || lesson.inDeck.length > 0 || inVault || (lesson.inObsidian && noteState === "missing") || (due ?? 0) > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1" data-library-badges>
               {liveCards !== undefined && liveCards >= 0 ? (
                 liveCards > 0 ? (
@@ -484,6 +487,29 @@ function LessonRow({
                     </button>
                   ) : (
                     <span className="shrink-0 rounded-md border border-amber-500/35 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--usb-warn-text)]" data-anki-lesson-missing={rec.lectureId} title="Kinema las envió, pero ya no están en Anki.">0 en Anki</span>
+                  )
+                ) : cards.total > 0 ? (
+                  lesson.finished && canDownload && (ankiReady || !waiting) ? (
+                    <button
+                      type="button"
+                      onClick={() => onDownloadLecture?.(rec)}
+                      disabled={busyId === `dl:${id}`}
+                      data-library-send={rec.lectureId}
+                      title={ankiReady ? "Envía sus tarjetas a Anki (las que ya tengas no se duplican)" : "Sin Anki conectado: descarga el .apkg y ábrelo con doble clic para importarlo"}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md border border-[#6d4aff]/35 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors hover:bg-[color-mix(in_srgb,#6d4aff_12%,transparent)]"
+                      style={{ color: accent }}
+                    >
+                      {busyId === `dl:${id}` ? <Loader2 size={10} className="animate-spin" /> : ankiReady ? <Send size={10} /> : <Download size={10} />}
+                      {ankiReady ? `Enviar ${cards.total}` : `Descargar ${cards.total}`}
+                    </button>
+                  ) : (
+                    <span
+                      title={waiting ? "Terminaste la lección sin Anki abierto: sus tarjetas se envían solas en cuanto Anki responda" : lesson.finished ? "Las tarjetas de esta lección ya no están guardadas; vuelve a abrirla para generarlas" : "Llegan a Anki solas al terminar la lección"}
+                      className="shrink-0 rounded-md bg-[var(--usb-bg-3)] px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-[var(--usb-fg-mid)]"
+                      data-library-waiting={waiting ? rec.lectureId : undefined}
+                    >
+                      {cards.total} {waiting ? "esperan a Anki" : lesson.finished ? "tarjetas" : "al terminar"}
+                    </span>
                   )
                 ) : null
               ) : cards.total > 0 && (lesson.inAnki ? (
