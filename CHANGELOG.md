@@ -1,3 +1,14 @@
+## [2.0.1] — 2026-11-23
+
+Excelencia pedagógica en Study: hilo de dudas realmente conversacional, tarjetas de duda destiladas (también fuera de la lección), feedback formativo que no penaliza sinónimos y respuestas interactivas inmediatas. Versión 2.0.1 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-23-v2.0.1`.
+
+- **Dudas**: `buildDoubtMessages` coloca la transcripción antes del hilo y este JUSTO antes de la repregunta, para que «dame un ejemplo» resuelva la elipsis sin miles de tokens de por medio. `SYSTEM_RULES` distingue dentro/fuera de la lección (`FUERA DE LA LECCIÓN:`), exige responder todas las partes de preguntas compuestas, andamia sin entregar el hueco en práctica abierta, cita literal solo dentro y destila el frente/back de Anki (autocontenido, atómico, 15-40 palabras) en vez de copiar el enunciado crudo. `parseDoubtAnswer` ya conserva tarjetas válidas en respuestas fuera de la lección (la demo de Kotlin sigue sin tarjeta); el back admite 340 caracteres y `doubtCardHtml` pone solo la primera oración en negrita, dejando el mecanismo en un párrafo normal.
+- **Recordar**: el detalle de cada keyConcept pasa a ser autoexplicativo (1-2 oraciones: qué es + por qué importa o cómo actúa).
+- **Evaluación formativa**: `[EXCELENTE]` se añade a las tres rúbricas; aceptan paráfrasis, sinónimos, términos en inglés/español y sintaxis equivalente sin penalizar brevedad ni ortografía. Con «no sé» o todo erróneo, `BIEN: (nada)`; en `FALTO:` se explica la confusión y el PORQUÉ con mini-ejemplo, no se repite la respuesta esperada; `PARA RECORDAR:` es una heurística corta no literal. En código, `MEJORAR: (nada)` cuando la solución ya es limpia. Los tres textos residuales de Udemy pasan a «cursos online».
+- **Latencia**: `reasoningOff` se activa también en `doubt`, `eval-question`, `eval-code` y `feynman`; el reintento por HTTP 400 usa `Math.max(maxTokens, 8192)` y un stream vacío devuelve `success:false` para que actúe la cadena de respaldo. `evaluateCodeSolution` pasa el contexto `eval-code`.
+- **Explicarlo**: el botón «Tengo una duda» aparece solo después de recibir la revisión oral (nunca antes del intento), junto a las siguientes acciones o al lado de la respuesta correcta, con su panel de hilo debajo.
+- **QA/validación**: nuevas aserciones en `qa-doubts.mjs` para orden del hilo, tarjeta fuera de lección y HTML de dos oraciones; pruebas reales con el proveedor sobre el VTT público de `pro-python/introduction` (hilo de 2 turnos y pregunta informal sobre 3.14 vs 3.15). Sin cambios en campos de Anki ni en `.mock/`.
+
 ## [2.0.0] — 2026-11-23
 
 Acabado de producción: filtro anti-ruido logístico en Study/Vault/Anki, rediseño de las dos plantillas de Anki con sincronización en caliente, e índice del vault siempre vivo. Versión 2.0.0 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-23-v2.0.0`.

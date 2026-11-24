@@ -174,7 +174,7 @@ function capitalizeFirst(value: string): string {
 function parseCardLine(value: string): LessonDoubtCard | null {
   const [frontRaw, ...rest] = value.split("||");
   const front = clip(stripQuoteMarks(frontRaw ?? ""), 180);
-  const back = clip(stripQuoteMarks(rest.join("||")), 260);
+  const back = clip(stripQuoteMarks(rest.join("||")), 340);
   if (front.length < 8 || back.length < 3) return null;
   return { front, back };
 }
@@ -205,7 +205,7 @@ export function parseDoubtAnswer(raw: string, transcript: string): ParsedDoubtAn
     answer,
     quotes: outside ? [] : verifyQuotes(quotes, transcript),
     outside,
-    card: outside ? null : card,
+    card,
   };
 }
 
@@ -236,15 +236,21 @@ export function visibleDoubtText(accumulated: string): { text: string; outside: 
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 const SYSTEM_RULES = [
-  "Eres el tutor de Kinema para UNA lección concreta de un curso en vídeo. Resuelves la duda del estudiante usando SOLO la transcripción de esa lección.",
+  "Rol: tutor experto de Kinema para una lección concreta. Prioridad: 1) la transcripción de la lección es la fuente de verdad sobre lo que enseña el curso; 2) cuando la transcripción menciona un término de pasada o el estudiante pregunta un prerrequisito/concepto vecino necesario para entender de verdad, no lo dejes aislado ni bloqueado: resuélvelo con rigor técnico.",
   "",
-  "Reglas:",
-  "1. Responde en español, claro y directo, en 120 palabras como máximo: primero la explicación y, si ayuda, un ejemplo breve.",
-  "2. Básate solo en la transcripción. Si no cubre la duda, empieza con «FUERA DE LA LECCIÓN:» y da una orientación general breve (60 palabras como máximo) sin atribuirle nada al instructor.",
-  "3. Después de la explicación añade 1 o 2 líneas «CITA: «…»» con frases COPIADAS LITERALMENTE de la transcripción, en su idioma original (sin traducir ni resumir), que respalden la respuesta. Si la duda está fuera de la lección, no pongas citas.",
-  "4. Si la duda está dentro de la lección, termina con UNA línea «TARJETA: pregunta || respuesta»: una pregunta de repaso atómica (una sola idea) y su respuesta en 25 palabras como máximo, en español.",
-  "5. No hagas preguntas al estudiante, no lo califiques y no uses porcentajes ni minutos del vídeo.",
-  "6. Texto plano: puedes usar **negrita** para el término clave y `código` para código. Sin encabezados ni listas largas.",
+  "Regla 1 (Claridad y extensión): Responde en español, claro, directo y pedagógico. Hasta 150 palabras si la duda está cubierta por la transcripción; si no está cubierta por la transcripción, empieza exactamente con FUERA DE LA LECCIÓN: y responde en hasta 130 palabras explicando el concepto con un ejemplo breve concreto y conectándolo en una frase con la lección o el objetivo del estudiante, sin atribuir afirmaciones externas al instructor.",
+  "Regla 2 (Continuidad del hilo y preguntas compuestas):",
+  "Si hay «Conversación previa sobre esta duda», resuelve cualquier referencia implícita o elíptica («dame un ejemplo», «¿por qué?», «¿y cómo afecta eso?», «¿cuál es la diferencia?») respecto al concepto principal explicado en el turno inmediatamente anterior, salvo que el estudiante nombre otro explícitamente.",
+  "Si el estudiante formula dos o más preguntas en el mismo mensaje (p. ej. «dame un ejemplo y qué es bytecode»), responde TODAS las partes en ese mismo orden (primero el ejemplo concreto de lo anterior y después la segunda pregunta); prohibido fusionarlas u omitir una parte.",
+  "Regla 3 (Andamiaje en práctica abierta): Si la duda surge en un desafío de aplicación cuyo intento sigue abierto («aún puede intentarlo: no le des la respuesta»), explica el principio, el mecanismo o la pista conceptual sin entregar literalmente el valor exacto del hueco ni la opción correcta.",
+  "Regla 4 (Citas verificables): Solo cuando la duda esté cubierta por la transcripción (sin FUERA DE LA LECCIÓN:), añade después de la explicación 1 o 2 líneas CITA: «…» con frases copiadas literalmente de la transcripción en su idioma original (mínimo 4 palabras, sin traducir ni resumir). Si es FUERA DE LA LECCIÓN:, no incluyas líneas CITA:.",
+  "Regla 5 (Tarjeta opcional TARJETA: pregunta || respuesta — estándar Anki / Regla de los 6 meses):",
+  "Cuándo SÍ incluirla (tanto dentro como en FUERA DE LA LECCIÓN:): cuando la duda trate un concepto técnico o del dominio real, mecanismo, trade-off, sintaxis o criterio profesional reutilizable que aporte valor al curso y al Objetivo del estudiante dentro de 6 meses.",
+  "Cuándo OMITIR la línea TARJETA:: si la duda es logística/administrativa del curso (instalación particular, nombre del proyecto de ejemplo, duración), ajena al dominio de estudio o trivial (p. ej. una comparativa suelta con otra tecnología no relacionada si no enseña un principio transferible).",
+  "Destilación experta (a prueba de preguntas informales, vagas o confusas del estudiante): PROHIBIDO copiar el enunciado crudo del estudiante («¿por qué puso eso ahí?», «no entendí lo segundo», «¿entonces sí o no?», «dame un ejemplo y qué es X»). Identifica la laguna conceptual real detrás de su duda y construye:",
+  "pregunta (FRONT, una sola línea): 100 % autocontenida fuera de contexto (debe entenderse sola en Anki meses después sin ver el chat ni la lección; nombra explícitamente el lenguaje, herramienta o concepto; prohibido usar «esto», «eso», «ahí», «en la lección», empezar con «¿Y…?» o formular preguntas de sí/no). Si el estudiante preguntó dos cosas, dedica la tarjeta a la más nuclear para su objetivo (1 tarjeta = 1 sola idea atómica).",
+  "respuesta (BACK, 15 a 40 palabras, una sola línea después de ||): 1.ª oración con la respuesta directa; 2.ª oración breve opcional con la causa, mecanismo o criterio práctico (usa `código` para identificadores/comandos).",
+  "Regla 6: No hagas preguntas al estudiante, no lo califiques y no inventes porcentajes ni minutos del vídeo. Texto plano con **negrita** y `código`, sin encabezados #.",
 ].join("\n");
 
 function contextBlock(ctx: LessonDoubtContext): string[] {
@@ -280,20 +286,20 @@ export function buildDoubtMessages(
   ];
   if (ctx.objective?.trim()) user.push(`Objetivo del estudiante: ${clip(ctx.objective, 240)}`);
   user.push("", ...contextBlock(ctx));
-  const previous = history.slice(-2);
-  if (previous.length) {
-    user.push("", "Conversación previa sobre esta duda:");
-    for (const turn of previous) user.push(`Estudiante: ${clip(turn.q, 400)}`, `Tutor: ${clip(turn.answer, 700)}`);
-  }
   user.push(
     "",
     `Transcripción de la lección${transcript.truncated ? " (recortada)" : ""}:`,
     '"""',
     transcript.text.slice(0, DOUBT_TRANSCRIPT_CHARS),
     '"""',
-    "",
-    `Duda del estudiante: ${clip(question, 600)}`,
   );
+  // El hilo va JUSTO antes de la repregunta: no lo separes miles de tokens de ella.
+  const previous = history.slice(-2);
+  if (previous.length) {
+    user.push("", "Conversación previa sobre esta duda:");
+    for (const turn of previous) user.push(`Estudiante: ${clip(turn.q, 400)}`, `Tutor: ${clip(turn.answer, 700)}`);
+  }
+  user.push("", `Duda del estudiante: ${clip(question, 600)}`);
   return [
     { role: "system", content: SYSTEM_RULES },
     { role: "user", content: user.join("\n") },
@@ -450,13 +456,21 @@ function inlineHtml(value: string): string {
 }
 
 /**
- * HTML del vocabulario permitido en el mazo: respuesta en <b> + cita en
- * <blockquote>. La respuesta ya va entera en negrita: un **x** interior
- * anidaría <b> y el paso a Markdown cerraría la negrita en el primer </b>.
+ * HTML del vocabulario permitido en el mazo: respuesta directa en <b> + cita
+ * en <blockquote>. Con dos oraciones, solo la primera va en negrita y el
+ * mecanismo queda en un <p> normal. Un **x** interior se desenvuelve antes
+ * para no anidar <b> ni cerrar la negrita en el primer </b>.
  */
 export function doubtCardHtml(saved: LessonDoubtSaved): { front: string; back: string } {
   const quote = saved.quote ? `<blockquote>${escapeHtml(saved.quote)}</blockquote>` : "";
-  return { front: inlineHtml(saved.front), back: `<p><b>${inlineHtml(saved.back.replace(/\*\*([^*]+)\*\*/g, "$1"))}</b></p>${quote}` };
+  const clean = saved.back.replace(/\*\*([^*]+)\*\*/g, "$1");
+  const sentences = clean.split(/(?<=\.)\s+(?=[A-ZÁÉÍÓÚÑ¿¡])/);
+  if (sentences.length === 1) {
+    return { front: inlineHtml(saved.front), back: `<p><b>${inlineHtml(clean)}</b></p>${quote}` };
+  }
+  const first = sentences[0];
+  const rest = sentences.slice(1).join(" ");
+  return { front: inlineHtml(saved.front), back: `<p><b>${inlineHtml(first)}</b></p><p>${inlineHtml(rest)}</p>${quote}` };
 }
 
 /** Instantánea que se guarda al pulsar «Guardar como tarjeta». */
@@ -474,7 +488,7 @@ function asSaved(value: unknown): LessonDoubtSaved | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   const front = asString(raw.front, 180);
-  const back = asString(raw.back, 260);
+  const back = asString(raw.back, 340);
   return front && back ? { front, back, quote: asString(raw.quote, 260) || undefined } : null;
 }
 

@@ -6220,6 +6220,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       const busy = oralFeedback.status === "loading" || oralFeedback.status === "streaming";
                       const good = reviewed && (oralFeedback.rating === "correct" || oralFeedback.rating === "excellent");
                       const changed = reviewed && oralAnswer !== (oralEvaluated || oralAnswer);
+                      const oralDoubtCtx = () => doubtCtx("practice", oralQ?.q ?? "", { studentAnswer: oralAnswer, feedback: oralFeedback.content });
+                      const oralDoubtBtn = doubtsAvailable
+                        ? <DoubtButton open={isDoubtOpen(oralDoubtCtx())} onClick={() => toggleDoubt(oralDoubtCtx())} />
+                        : undefined;
                       const focusOral = () => {
                         const el = document.getElementById("kx-oral-answer") as HTMLTextAreaElement | null;
                         if (!el) return;
@@ -6259,8 +6263,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                                 ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: handleEvaluateOral, disabled: !oralAnswer.trim() }
                                 : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Completa tu explicación con lo que faltó.", onClick: focusOral },
                             ]}
+                            help={oralDoubtBtn}
                           />
                         )}
+                        {reviewed && !busy && good && (
+                          <div className="flex flex-wrap items-center gap-2">{oralDoubtBtn}</div>
+                        )}
+                        {reviewed && renderDoubtPanel(oralDoubtCtx())}
                       </div>
                       );
                     })()}

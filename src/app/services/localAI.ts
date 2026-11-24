@@ -27,6 +27,8 @@ import {
 const LOCAL_AI_URL = "http://127.0.0.1:8010";
 const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
 const LOCAL_AI_RETRY_AFTER_MS = 45_000;
+// Interacciones en vivo: traducir, dudas y las tres evaluaciones formativas.
+const INTERACTIVE_FAST_CONTEXTS = new Set(["translate", "doubt", "eval-question", "eval-code", "feynman"]);
 // Marks errors raised by the configurable provider transport so the UI can
 // distinguish them from local-server / Gemini failures.
 const PROVIDER_ERROR_PREFIX = "[provider] ";
@@ -350,7 +352,7 @@ async function callConfiguredProvider(
       raw = await proxyChat(
         buildProviderChatUrl(cfg, false),
         buildProviderHeaders(cfg),
-        JSON.stringify(buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, false)),
+        JSON.stringify(buildOpenAiCompatibleBody(chatMessages, Math.max(maxTokens, 8192), temperature, cfg.model, false)),
       );
     }
 
@@ -406,12 +408,12 @@ async function streamConfiguredProvider(
   try {
     let buffer = '';
 
-    const pump = (extraBody: Record<string, unknown> | undefined) => streamProviderViaPort(
+    const pump = (extraBody: Record<string, unknown> | undefined, retryMaxTokens = maxTokens) => streamProviderViaPort(
       buildProviderChatUrl(cfg, true),
       buildProviderHeaders(cfg),
       JSON.stringify(cfg.kind === 'anthropic'
         ? body
-        : buildOpenAiCompatibleBody(chatMessages, maxTokens, temperature, cfg.model, true, extraBody)),
+        : buildOpenAiCompatibleBody(chatMessages, retryMaxTokens, temperature, cfg.model, true, extraBody)),
       (chunk) => {
         buffer += chunk;
         const lines = buffer.split('\n');
@@ -441,12 +443,16 @@ async function streamConfiguredProvider(
       const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
       if (extra && /\bHTTP 400\b/i.test(msg)) {
         buffer = '';
-        await pump(undefined);
+        await pump(undefined, Math.max(maxTokens, 8192));
       } else {
         throw streamErr;
       }
     }
 
+    if (!accumulated.trim()) {
+      debugStore.endRequest(reqId, false);
+      return { success: false, content: '', error: 'El proveedor devolvió un stream vacío.' };
+    }
     debugStore.endRequest(reqId, true);
     return { success: true, content: accumulated };
   } catch (err) {
@@ -745,7 +751,7 @@ async function fallbackNonStreamingAI(
 ): Promise<AIResponse> {
   // 1) Configured provider (OpenAI-compatible / Anthropic / local-with-custom-base).
   const configured = await callConfiguredProvider(messages, maxTokens, temperature, {
-    reasoningOff: debugContext === "translate",
+    reasoningOff: INTERACTIVE_FAST_CONTEXTS.has(debugContext),
   });
   if (configured?.success) return configured;
 
@@ -811,7 +817,7 @@ async function callLocalAI(
         temperature,
         max_tokens: maxTokens,
         stream: false,
-        ...(debugContext === "translate" ? REASONING_OFF_FIELDS : {}),
+        ...(INTERACTIVE_FAST_CONTEXTS.has(debugContext) ? REASONING_OFF_FIELDS : {}),
       }),
     );
 
@@ -920,7 +926,7 @@ export async function streamLocalAI(
         temperature,
         max_tokens: maxTokens,
         stream: true,
-        ...(debugContext === "translate" ? REASONING_OFF_FIELDS : {}),
+        ...(INTERACTIVE_FAST_CONTEXTS.has(debugContext) ? REASONING_OFF_FIELDS : {}),
       }),
       (chunk) => {
         buffer += chunk;
@@ -986,7 +992,7 @@ export async function streamLocalAI(
         onToken,
         signal,
         debugContext,
-        { reasoningOff: debugContext === "translate" },
+        { reasoningOff: INTERACTIVE_FAST_CONTEXTS.has(debugContext) },
       );
       if (configured?.success) return configured;
 
@@ -1072,9 +1078,12 @@ export async function evaluateFeynman(
         "Eres un experto en ensenanza y evaluación formativa para cursos online.\n" +
         "Evaluas si el estudiante realmente entendio el concepto usando la Tecnica Feynman.\n" +
         "Adapta el feedback al tema real del curso, la leccion y el objetivo del estudiante.\n" +
-        "RUBRICA: CORRECTO si la explicacion captura la idea central del concepto, aunque falten detalles secundarios. " +
-        "No penalices la redaccion, la ortografia ni la brevedad.\n" +
-        "El feedback debe ser concreto y no introducir demandas nuevas (no hagas preguntas).\n" +
+        "RUBRICA: EXCELENTE si capta la idea central con precision y conecta mecanismo, trade-off o aplicacion al objetivo; CORRECTO si expresa la idea central con sus propias palabras, sinonimos, terminos tecnicos en ingles/espanol o razonamiento equivalente aunque no coincida literalmente con la respuesta esperada. Nunca penalices brevedad, ortografia ni redaccion coloquial.\n" +
+        "Comprension real sobre literalidad: no exijas las mismas palabras que la respuesta modelo.\n" +
+        "Si el estudiante responde «no se» o todo es erroneo, escribe BIEN: (nada).\n" +
+        "En FALTO: (PARCIAL o INCORRECTO), no repitas la respuesta esperada de memoria: aclara la confusion concreta del estudiante explicando el PORQUE o mecanismo en 2-3 frases claras, con un mini-ejemplo breve si el concepto es abstracto.\n" +
+        "En PARA RECORDAR: da una regla mental o heuristica corta (1 frase) conectada con el dominio/objetivo, sin repetir literalmente FALTO:.\n" +
+        "El feedback debe ser concreto y no introducir demandas nuevas (no hagas preguntas, no califiques a la persona, sin porcentajes).\n" +
         "Se especifico, pedagogico y directo. Responde SIEMPRE en espanol.\n" +
         "NO repitas la respuesta modelo al estudiante directamente.",
     },
@@ -1086,10 +1095,10 @@ export async function evaluateFeynman(
         `RESPUESTA MODELO (referencia interna, no la copies textualmente):\n${modelAnswer}\n\n` +
         `EXPLICACION DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
         "Responde con este formato EXACTO (sin texto extra antes o despues):\n" +
-        "[CORRECTO|PARCIAL|INCORRECTO]\n" +
-        "BIEN: [lo que explico bien en 1 frase concreta]\n" +
-        "FALTO: [solo si PARCIAL o INCORRECTO: el concepto clave que no menciono, en 1-2 frases. Si es CORRECTO escribe: (nada)]\n" +
-        "PARA RECORDAR: [1 frase clave para fijar el concepto]",
+        "[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n" +
+        "BIEN: [lo que explico bien en 1 frase concreta; si respondio «no se» o esta todo mal, escribe: (nada)]\n" +
+        "FALTO: [solo si PARCIAL o INCORRECTO: explica la confusion concreta y el PORQUE o mecanismo en 2-3 frases claras, con mini-ejemplo si ayuda. Si es EXCELENTE o CORRECTO escribe: (nada)]\n" +
+        "PARA RECORDAR: [regla mental o heuristica corta de 1 frase conectada con el dominio/objetivo, sin repetir literalmente FALTO:]",
     },
   ];
 
@@ -1113,9 +1122,12 @@ function buildEvalQuestionMessages(
         `Eres un profesor senior evaluando respuestas de estudiantes en un curso online.\n` +
         `El objetivo cognitivo de esta pregunta es nivel "${bloomLevel}" segun la Taxonomia de Bloom.\n` +
         `Evalua usando el tema real del curso y de la leccion; no asumas Java, Spring ni programacion si el curso no trata de eso.\n` +
-        `RUBRICA: CORRECTO si la respuesta captura la idea central de la respuesta esperada, aunque falten detalles secundarios. ` +
-        `No penalices la redaccion, la ortografia ni la brevedad: compara con la idea de la respuesta esperada, nunca con su longitud.\n` +
-        `El feedback debe ser concreto, apuntar a la tarea y no introducir demandas nuevas (no hagas preguntas).\n` +
+        `RUBRICA: EXCELENTE si capta la idea central con precision y conecta mecanismo, trade-off o aplicacion al objetivo; CORRECTO si expresa la idea central con sus propias palabras, sinonimos, terminos tecnicos en ingles/espanol o razonamiento equivalente aunque no coincida literalmente con la respuesta esperada. Nunca penalices brevedad, ortografia ni redaccion coloquial.\n` +
+        `Comprension real sobre literalidad: compara con la idea de la respuesta esperada, nunca con su longitud.\n` +
+        `Si el estudiante responde «no se» o todo es erroneo, escribe BIEN: (nada).\n` +
+        `En FALTO: (PARCIAL o INCORRECTO), no repitas la respuesta esperada de memoria: aclara la confusion concreta explicando el PORQUE o mecanismo en 2-3 frases claras, con un mini-ejemplo breve si el concepto es abstracto.\n` +
+        `En PARA RECORDAR: da una regla mental o heuristica corta de 1 frase conectada con el dominio/objetivo, sin repetir literalmente FALTO:.\n` +
+        `El feedback debe ser concreto, apuntar a la tarea y no introducir demandas nuevas (no hagas preguntas, no califiques a la persona, sin porcentajes).\n` +
         `Se preciso, constructivo y directo. Responde SIEMPRE en espanol.`,
     },
     {
@@ -1126,10 +1138,10 @@ function buildEvalQuestionMessages(
         `RESPUESTA ESPERADA (referencia interna):\n${expectedAnswer}\n\n` +
         `RESPUESTA DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
         "Evalua con este formato EXACTO:\n" +
-        "[CORRECTO|PARCIAL|INCORRECTO]\n" +
-        "BIEN: [que estuvo correcto en 1 frase concreta]\n" +
-        "FALTO: [solo si PARCIAL o INCORRECTO: el concepto correcto en 1-2 frases. Si es CORRECTO escribe: (nada)]\n" +
-        "PARA RECORDAR: [1 frase clave para fijar el concepto]",
+        "[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n" +
+        "BIEN: [que estuvo correcto en 1 frase concreta; si respondio «no se» o esta todo mal, escribe: (nada)]\n" +
+        "FALTO: [solo si PARCIAL o INCORRECTO: explica la confusion concreta y el PORQUE o mecanismo en 2-3 frases claras, con mini-ejemplo si ayuda. Si es EXCELENTE o CORRECTO escribe: (nada)]\n" +
+        "PARA RECORDAR: [regla mental o heuristica corta de 1 frase conectada con el dominio/objetivo, sin repetir literalmente FALTO:]",
     },
   ];
 }
@@ -1180,8 +1192,9 @@ function buildCodeReviewMessages(
       content:
         "Eres un mentor senior haciendo revisión educativa de ejercicios prácticos.\n" +
         "Si el desafío es código, adapta el review al lenguaje, framework y dominio del curso; si no es código, evalúa la solución práctica con el mismo rigor.\n" +
-        "RUBRICA: CORRECTO si la solución cumple lo que pide el desafío, aunque pueda mejorarse en estilo. No penalices la brevedad.\n" +
+        "RUBRICA: EXCELENTE si resuelve el desafio con criterio y ademas explica o generaliza; CORRECTO si la solucion es funcional y cumple lo que pide el desafio, aunque use otros nombres, estructura o sintaxis equivalente a la solucion de referencia. No penalices brevedad, redaccion ni diferencias superficiales.\n" +
         "Tu objetivo es que el estudiante entienda sus errores y mejore.\n" +
+        "En MEJORAR: si el veredicto es EXCELENTE o CORRECTO y la solucion ya es limpia, escribe (nada) en lugar de inventar criticas artificiales; si es PARCIAL o INCORRECTO, explica exactamente que falla y por que con un snippet breve correctivo.\n" +
         "Se especifico, usa ejemplos concretos cuando sea necesario. Responde en espanol.",
     },
     {
@@ -1193,11 +1206,11 @@ function buildCodeReviewMessages(
         `SOLUCION DE REFERENCIA:\n${expectedSolution}\n\n` +
         `RESPUESTA DEL ESTUDIANTE:\n${studentCode}\n\n` +
         "Revision educativa con este formato EXACTO:\n" +
-        "[CORRECTO|PARCIAL|INCORRECTO]\n" +
+        "[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n" +
         "DIAGNOSTICO: [1 frase que resume la calidad de la solucion]\n" +
         "BIEN: [que hizo correctamente, 1-2 puntos concretos]\n" +
-        "MEJORAR: [que cambiaria y por que, con snippet si aplica]\n" +
-        "SIGUIENTE NIVEL: [solo si el veredicto es CORRECTO y el nivel declarado es clear o mastered: una sugerencia para llevar la solucion al siguiente nivel. En otro caso escribe: (nada)]",
+        "MEJORAR: [si EXCELENTE o CORRECTO y la solucion ya es limpia: (nada). Si PARCIAL o INCORRECTO: que falla exactamente y por que, con snippet breve correctivo]\n" +
+        "SIGUIENTE NIVEL: [solo si el veredicto es EXCELENTE o CORRECTO y el nivel declarado es clear o mastered: una sugerencia para llevar la solucion al siguiente nivel. En otro caso escribe: (nada)]",
     },
   ];
 }
@@ -1214,7 +1227,7 @@ export async function evaluateCodeSolution(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu solucion primero." };
 
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  return callLocalAI(messages, 2000, 0.2);
+  return callLocalAI(messages, 2000, 0.2, "eval-code");
 }
 
 // ─── Code review — STREAMING ─────────────────────────────────────────────────
@@ -1273,7 +1286,7 @@ function buildTranslateMessages(en: string): AIMessage[] {
     {
       role: "system",
       content:
-        "Eres un traductor especializado en cursos online de Udemy en ingles. " +
+        "Eres un traductor especializado en cursos online para estudiantes de cursos online. " +
         "Traduce el texto al espanol de forma natural y precisa conservando terminos " +
         "tecnicos, nombres propios, comandos, marcas y APIs en ingles cuando sea mas claro. " +
         "Responde UNICAMENTE con la traduccion, sin comillas ni explicaciones.",
@@ -1431,7 +1444,7 @@ export async function generateCourseObjectives(
 
   // Direct Gemini fallback (only reached if background is unavailable, e.g. browser preview).
   const sys = [
-    "Eres un asesor pedagógico para estudiantes de Udemy.",
+    "Eres un asesor pedagógico para estudiantes de cursos online.",
     "Genera 4 objetivos de aprendizaje concretos y motivantes para el siguiente curso.",
     "Devuelve ESTRICTAMENTE un array JSON sin texto extra, con esta forma:",
     `[{"id":"slug","icon":"🚀","title":"Texto corto","sub":"clarificador"}, ...]`,
@@ -1499,7 +1512,7 @@ export async function refineCustomObjective(
 
   // Direct fallback via callLocalAI (browser preview path).
   const sys = [
-    "Eres un coach pedagógico para estudiantes de Udemy.",
+    "Eres un coach pedagógico para estudiantes de cursos online.",
     "Convierte el objetivo libre del estudiante en un objetivo de aprendizaje personalizado y de alta calidad.",
     "Debe mantener la intención original del estudiante y adaptarse al curso real.",
     "Criterios: resultado observable, acción concreta, contexto del curso, tono motivador y profesional.",

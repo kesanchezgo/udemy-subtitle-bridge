@@ -211,8 +211,27 @@ try {
       result: { title: "Lección completada", remembered: { count: 1, total: 3 }, check: { firstTry: 1, improved: 0, skipped: false }, practice: "done", cards: { total: 4, reinforce: 1, destination: "anki", doubt: 2 } },
       content: { relevance: { score: 1, reason: "" }, keyConcepts: ["JVM"], quickWin: "", questions: [], application: { isCode: false, setup: "", challenge: "", solution: "" }, interviewQ: null, nextAction: "", ankiCards: [{ front: noteCard.front, back: noteCard.back, type: "concepto" }] },
     }, o.DEFAULT_OBSIDIAN_EXPORT_CONFIG);
+    const threaded = s.buildDoubtMessages(
+      { course: "Java", lesson: "JVM", kind: "concepts", anchor: "La JVM ejecuta bytecode" },
+      { text: transcript },
+      [{ q: "¿Por qué compila?", answer: "Porque javac genera bytecode." }],
+      "dame un ejemplo y qué es bytecode",
+    )[1].content;
+    const order = {
+      transcript: threaded.indexOf("Transcripción de la lección"),
+      history: threaded.indexOf("Conversación previa sobre esta duda"),
+      question: threaded.indexOf("Duda del estudiante:"),
+    };
+    const outsideCard = s.parseDoubtAnswer(
+      "FUERA DE LA LECCIÓN: explicación técnica.\nTARJETA: ¿Qué es el bytecode en CPython? || **Instrucciones intermedias** que compila Python antes de ejecutarlas. El intérprete las recorre una a una.",
+      transcript,
+    );
+    const twoSentenceHtml = s.doubtCardHtml({
+      front: "¿Qué hace javac?", back: "Compila a bytecode. El intérprete lo ejecuta después.", quote: "",
+    });
     return {
       parsed, outside, streaming, html, demoChecks, demoOutside, local, localMiss, upserted, prompt, note,
+      order, outsideCard, twoSentenceHtml,
       exportsList: Object.keys(s),
       restored: restored.map((t) => ({ id: t.id, saved: t.turns.filter((x) => x.saved).length, quotes: t.turns[0].quotes.length })),
       // Lección densa (6+ ideas): una 3.ª tarjeta de duda; al restaurar se respeta su tope.
@@ -235,6 +254,12 @@ try {
   assert.deepEqual(service.streaming.map((v) => v.text), ["", "La JVM ejecuta.", "La JVM ejecuta.", "No se cubre"], "el streaming no enseña prefijos ni CITA/TARJETA a medias");
   assert.equal(service.html.front, "¿Qué hace <code>&lt;T&gt;</code> en <b>genéricos</b>?");
   assert.equal(service.html.back, "<p><b>Usa &lt;b&gt;tipos&lt;/b&gt; &amp; &quot;más&quot;</b></p><blockquote>a &lt; b</blockquote>", "HTML escapado una sola vez");
+  assert(service.order.transcript >= 0 && service.order.transcript < service.order.history
+    && service.order.history < service.order.question, "el hilo va después de la transcripción y justo antes de la repregunta");
+  assert(service.outsideCard.outside && service.outsideCard.quotes.length === 0 && service.outsideCard.card,
+    "FUERA DE LA LECCIÓN puede proponer tarjeta válida y sigue sin citas");
+  assert.equal(service.twoSentenceHtml.back,
+    "<p><b>Compila a bytecode.</b></p><p>El intérprete lo ejecuta después.</p>", "respuesta directa en negrita, mecanismo en párrafo normal");
   assert.deepEqual(service.restored, [{ id: "t1", saved: 1, quotes: 2 }, { id: "t2", saved: 0, quotes: 2 }, { id: "t3", saved: 1, quotes: 2 }, { id: "t4", saved: 0, quotes: 2 }], "restaurar: 2 tarjetas, sin frentes repetidos, 2 citas; sin hilos de «marcas»");
   assert(!service.exportsList.some((name) => /Mark|videoSeconds/.test(name)), "sin API de marcas de vídeo");
   assert.deepEqual(service.limits, [2, 2, 3, 3], "tope de dudas: 2, o 3 con 6+ ideas");
