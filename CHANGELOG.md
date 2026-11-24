@@ -1,3 +1,12 @@
+## [2.0.2] — 2026-11-24
+
+Cierre de consistencia en Dudas y Vocabulario. Versión 2.0.2 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.2`.
+
+- **Dudas**: el historial marca los turnos previos externos con `Tutor [FUERA DE LA LECCIÓN — explicación externa previa, NO pertenece a la transcripción y NO puede citarse]:`, y el prompt excluye explícitamente esas respuestas al decidir dentro/fuera y al citar. `SYSTEM_RULES` se sustituye por la versión literal con continuidad exacta del hilo, ejemplo nativo real frente al intérprete, citas solo de la transcripción y tarjetas universales de dominio.
+- **Conceptos**: el FRONT y el BACK del prompt de Anki prohíben «en esta lección», «en este curso», «según el instructor» y atar la respuesta al proyecto de juguete; exigen mecanismo o criterio universal.
+- **Vocabulario**: las frases deben ser escenarios reales autónomos (nunca «For this course» / «In this lesson») y respetar mayúsculas de nombres propios, lenguajes y siglas (`Python`, `API`, `SQL`, `Swagger UI`).
+- **QA y texto**: errata del traductor corregida; `qa-doubts.mjs` verifica el tag de turnos outside/inside y espera la procedencia `.kx-origin` con el título de la lección sin minutos inventados. Pruebas reales A/B/C guardadas en `tmp/qa-live-v202.mjs` y `tmp/qa-live-v202.json` (no se borran; `tmp/` está ignorado).
+
 ## [2.0.1] — 2026-11-23
 
 Excelencia pedagógica en Study: hilo de dudas realmente conversacional, tarjetas de duda destiladas (también fuera de la lección), feedback formativo que no penaliza sinónimos y respuestas interactivas inmediatas. Versión 2.0.1 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-23-v2.0.1`.

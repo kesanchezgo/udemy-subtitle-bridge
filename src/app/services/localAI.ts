@@ -1286,7 +1286,7 @@ function buildTranslateMessages(en: string): AIMessage[] {
     {
       role: "system",
       content:
-        "Eres un traductor especializado en cursos online para estudiantes de cursos online. " +
+        "Eres un traductor experto de subtítulos en inglés para cursos online. " +
         "Traduce el texto al espanol de forma natural y precisa conservando terminos " +
         "tecnicos, nombres propios, comandos, marcas y APIs en ingles cuando sea mas claro. " +
         "Responde UNICAMENTE con la traduccion, sin comillas ni explicaciones.",

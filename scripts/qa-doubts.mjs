@@ -222,6 +222,16 @@ try {
       history: threaded.indexOf("Conversación previa sobre esta duda"),
       question: threaded.indexOf("Duda del estudiante:"),
     };
+    const taggedThreads = [true, false].map((isOutside) => s.buildDoubtMessages(
+      { course: "Java", lesson: "JVM", kind: "concepts", anchor: "La JVM ejecuta bytecode" },
+      { text: transcript },
+      [{ q: "¿Qué es?", answer: "Respuesta.", outside: isOutside }],
+      "¿Y eso?",
+    )[1].content);
+    const historyTag = {
+      outside: taggedThreads[0].includes("Tutor [FUERA DE LA LECCIÓN"),
+      inside: taggedThreads[1].includes("Tutor: Respuesta.") && !taggedThreads[1].includes("Tutor [FUERA"),
+    };
     const outsideCard = s.parseDoubtAnswer(
       "FUERA DE LA LECCIÓN: explicación técnica.\nTARJETA: ¿Qué es el bytecode en CPython? || **Instrucciones intermedias** que compila Python antes de ejecutarlas. El intérprete las recorre una a una.",
       transcript,
@@ -231,7 +241,7 @@ try {
     });
     return {
       parsed, outside, streaming, html, demoChecks, demoOutside, local, localMiss, upserted, prompt, note,
-      order, outsideCard, twoSentenceHtml,
+      order, outsideCard, twoSentenceHtml, historyTag,
       exportsList: Object.keys(s),
       restored: restored.map((t) => ({ id: t.id, saved: t.turns.filter((x) => x.saved).length, quotes: t.turns[0].quotes.length })),
       // Lección densa (6+ ideas): una 3.ª tarjeta de duda; al restaurar se respeta su tope.
@@ -256,6 +266,8 @@ try {
   assert.equal(service.html.back, "<p><b>Usa &lt;b&gt;tipos&lt;/b&gt; &amp; &quot;más&quot;</b></p><blockquote>a &lt; b</blockquote>", "HTML escapado una sola vez");
   assert(service.order.transcript >= 0 && service.order.transcript < service.order.history
     && service.order.history < service.order.question, "el hilo va después de la transcripción y justo antes de la repregunta");
+  assert(service.historyTag.outside && service.historyTag.inside,
+    "el historial marca los turnos outside y deja Tutor: en los internos");
   assert(service.outsideCard.outside && service.outsideCard.quotes.length === 0 && service.outsideCard.card,
     "FUERA DE LA LECCIÓN puede proponer tarjeta válida y sigue sin citas");
   assert.equal(service.twoSentenceHtml.back,
@@ -939,7 +951,7 @@ try {
       assert(note.tags.includes("kinema::reforzar"), "las de duda son de refuerzo");
       assert(!/&lt;|&amp;lt;/.test(note.fields[0] + note.fields[1]), "HTML sin doble escape");
       assert(note.fields[1].startsWith("<p><b>") && note.fields[1].includes("<blockquote>"), "reverso con respuesta y cita");
-      assert(note.fields[3].includes("esta lección") && !/\d\d:\d\d/.test(note.fields[3]), "sin minutos inventados");
+      assert(note.fields[3].includes('class="kx-origin"') && note.fields[3].includes("What is Java &amp; JVM?") && !/\d\d:\d\d/.test(note.fields[3]), "procedencia discreta y sin minutos inventados");
     }
     assert.equal(new Set(firstExport.map((n) => n.guid)).size, firstExport.length, "GUID únicos");
     assert.equal(await page.evaluate(() => window.__imports.length), 1, "un solo envío");
