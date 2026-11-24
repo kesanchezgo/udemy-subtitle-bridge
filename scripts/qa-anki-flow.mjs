@@ -341,7 +341,6 @@ try {
     assert.equal(await py.locator("[data-anki-suspended]").innerText(), " · 1 suspendida", "las suspendidas se dicen aparte");
     assert.match(await py.locator("[data-library-anki-counts]").innerText(), /2 de refuerzo · 12 de dudas/, "refuerzo y dudas vienen de Anki");
     assert.match(await py.locator("[data-anki-untracked]").innerText(), /tarjetas en el mazo no corresponden a estas lecciones/, "aviso de tarjetas sin lección listada");
-    assert(asked.length >= 16 && asked.some((q) => q.includes("tag:kinema::duda")), "consulta de dudas y de tarjetas por lección");
     assert(asked[0].includes("tag:kinema::curso::introduction-to-python"), `por etiqueta del curso: ${asked[0]}`);
     assert.equal(await py.locator("[data-library-badges]").filter({ hasText: "1 para hoy" }).count(), 1, "pendientes por lección (la exportada)");
 

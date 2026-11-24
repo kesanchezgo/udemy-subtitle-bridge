@@ -61,7 +61,7 @@ export function localDayKey(d = new Date()): string {
 
 /** Acepta el formato viejo `2026-4-5` y lo convierte a `2026-04-05`. */
 export function normalizeDayKey(raw: string): string | null {
-  const m = String(raw ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const m = String(raw ?? '').trim().replace(/^"+|"+$/g, '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (!m) return null;
   const [, y, mo, da] = m;
   const month = Number(mo), day = Number(da);
@@ -202,7 +202,9 @@ export function setStreakState(next: StreakState, emit = true) {
     persist({ [STREAK_KEY]: normalized });
   } else {
     legacySet(LEGACY_STREAK_KEY, normalized);
-    if (normalized.celebratedAt) legacySet(LEGACY_STREAK_SHOWN_KEY, normalized.celebratedAt);
+    if (normalized.celebratedAt) {
+      try { globalThis.localStorage?.setItem(LEGACY_STREAK_SHOWN_KEY, normalized.celebratedAt); } catch { /* ignore */ }
+    }
   }
   if (emit) emitStreak();
 }
