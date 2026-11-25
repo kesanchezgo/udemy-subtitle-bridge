@@ -256,9 +256,9 @@ const SYSTEM_RULES = [
   "- Cuándo OMITIRLA: si la duda es logística/administrativa del curso (instalación local, horarios, nombre de la app de juguete), ajena al dominio o trivial.",
   "- Destilación obligatoria (nunca copies preguntas vagas, coloquiales o «tontas» del chat): transforma la laguna real del estudiante en una tarjeta universal de ingeniería/dominio:",
   "  · pregunta (FRONT, una línea): 100 % autocontenida fuera de contexto; nombra explícitamente lenguaje/herramienta/concepto; PROHIBIDO usar «esto», «eso», «ahí», «en la lección», «en este curso», «según el instructor», empezar por «¿Y…?» o hacer preguntas de sí/no. Si hubo dos preguntas en el turno, dedica la tarjeta a la más valiosa para el Objetivo del estudiante (1 sola idea atómica).",
-  "  · respuesta (BACK, 15 a 40 palabras, una línea tras «||»): 1.ª oración con la respuesta directa; 2.ª oración breve con el mecanismo, causa o criterio práctico (ilustra con casos técnicos reales como «p. ej., fijar Python 3.14 si el driver de Postgres aún no soporta 3.15», PROHIBIDO escribir «en la lección», «en el curso» o «el profesor usa»). Usa `código` para identificadores/comandos.",
+  "  · respuesta (BACK, 15 a 40 palabras, una línea tras «||»): 1.ª oración con la respuesta directa; 2.ª oración breve con el mecanismo, causa o criterio práctico (ilustra con casos técnicos reales como «p. ej., fijar Python 3.14 si el driver de Postgres aún no soporta 3.15», PROHIBIDO escribir «en la lección», «en el curso» o «el profesor usa»). Usa `código` para identificadores/comandos. Revisa con rigor la ortografía en español (p. ej., «omite», nunca «omitte») y evita centrar la tarjeta en un flag accesorio si la duda tocaba el flujo principal.",
   "",
-  "Regla 6: No hagas preguntas al estudiante, no lo califiques y no inventes porcentajes ni minutos del vídeo. Usa texto plano con **negrita** y `código`, sin encabezados #.",
+  "Regla 6: No hagas preguntas al estudiante, no lo califiques y no inventes porcentajes ni minutos del vídeo. Usa texto plano con **negrita** y `código`, sin encabezados #. En la explicación, refiérete a «la lección» o «la demostración en terminal» en lugar de usar el nombre de pila de quien imparte la clase.",
 ].join("\n");
 
 function contextBlock(ctx: LessonDoubtContext): string[] {

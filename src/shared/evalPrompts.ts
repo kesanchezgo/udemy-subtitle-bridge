@@ -122,7 +122,7 @@ export function buildEvalQuestionMessages(
 				'- Si ocurre eso (y NO es simplemente «no sé la respuesta» a una pregunta clara), devuelve EXCLUSIVAMENTE el veredicto `[ACLARACION]` con estas dos líneas y NADA MÁS:',
 				'  [ACLARACION]',
 				'  ACLARACION: [explica en 1-2 frases llanas y directas qué significa exactamente ese término o expresión dentro de la pregunta, validando en media frase cualquier intuición inicial si la dio]',
-				'  PISTA: [reformula la pregunta en lenguaje cotidiano y concreto apuntando a lo visto en la lección para que ahora sí pueda responderla, PROHIBIDO revelar la solución o respuesta final]',
+				'  PISTA: [reformula en lenguaje cotidiano y completo TODAS las partes de la pregunta original que deberá responder (incluyendo cualquier condición o criterio pedido, como «sin romper X» o «qué cambia y qué se mantiene»), sin desviarte del foco original y PROHIBIDO revelar la solución]',
 				'',
 				'REGLA DE VERDAD Y JUSTICIA TÉCNICA (CRÍTICA):',
 				'- La «RESPUESTA DE REFERENCIA» es una guía mínima resumida, NUNCA una lista cerrada ni excluyente.',
@@ -145,8 +145,10 @@ export function buildEvalQuestionMessages(
 				'ESTRUCTURA PEDAGÓGICA (cuando NO es [ACLARACION]):',
 				'- BIEN: reconoce en 1 frase concreta lo que sí acertó o intuyó bien (poniendo el nombre técnico exacto si lo describió por su función). Si dijo solo «no sé» o todo es erróneo, escribe exactamente: (nada)',
 				'- FALTO: si es EXCELENTE o CORRECTO, escribe exactamente: (nada). Si es PARCIAL o INCORRECTO, aplica la regla de ANDAMIAJE PROGRESIVO correspondiente a este intento en 1-3 frases claras.',
-				'- PARA RECORDAR: 1 frase corta con una regla mental fácil de retener (en el intento #1 con [PARCIAL]/[INCORRECTO], que oriente el criterio sin regalar literalmente los datos que faltan).',
-				'- Sin preguntas abiertas innecesarias al final, sin porcentajes, sin sermones. Responde SIEMPRE en español.',
+				attempt === 1
+					? '- PARA RECORDAR: si el veredicto es EXCELENTE o CORRECTO, escribe 1 frase corta con una regla mental fácil de retener; si en este INTENTO #1 es PARCIAL o INCORRECTO (salvo que haya dicho únicamente «no sé»), escribe exactamente: (nada) — para NO destripar aquí la respuesta que `FALTO:` dejó abierta para su reintento.'
+					: '- PARA RECORDAR: 1 frase corta con una regla mental fácil de retener conectada con el tema real, sin repetir literalmente FALTO:.',
+				'- Refiérete a «la demostración de la lección» en vez de usar el nombre propio del instructor. Sin preguntas abiertas innecesarias al final, sin porcentajes, sin sermones. Responde SIEMPRE en español.',
 			].join('\n'),
 		},
 		{
@@ -163,7 +165,7 @@ export function buildEvalQuestionMessages(
 				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
 				'BIEN: [en 2.ª persona, qué acertaste o intuiste bien en 1 frase concreta; si no hubo ningún acierto, escribe: (nada)]\n' +
 				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona y respetando la regla del intento actual. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
-				'PARA RECORDAR: [regla mental breve de 1 frase conectada con el tema real, sin repetir literalmente FALTO:]',
+				'PARA RECORDAR: [si es INTENTO #1 con PARCIAL o INCORRECTO escribe: (nada). Si es EXCELENTE/CORRECTO o INTENTO #2+, regla mental breve de 1 frase sin repetir FALTO:]',
 		},
 	];
 }
@@ -190,7 +192,7 @@ export function buildFeynmanMessages(
 				'- Si quien estudia pregunta qué significa un término o parte de la consigna porque no la entendió (p. ej., «¿a qué te refieres con X?», «¿qué significa X?»), devuelve EXCLUSIVAMENTE:',
 				'  [ACLARACION]',
 				'  ACLARACION: [explica en 1-2 frases llanas qué significa ese término en la consigna]',
-				'  PISTA: [reformula en lenguaje cotidiano qué idea debe explicar con sus palabras, PROHIBIDO revelar la explicación resuelta]',
+				'  PISTA: [reformula en lenguaje cotidiano y completo TODAS las partes de la pregunta original que deberá responder (incluyendo cualquier condición o criterio pedido, como «sin romper X» o «qué cambia y qué se mantiene»), sin desviarte del foco original y PROHIBIDO revelar la solución]',
 				'',
 				'REGLA DE VERDAD Y PUENTE SEMÁNTICO:',
 				'- La «GUÍA DE ESTRUCTURA / REFERENCIA» es orientativa; la «TRANSCRIPCIÓN DE LA LECCIÓN» (si está presente) y el funcionamiento real del dominio mandan.',
@@ -204,10 +206,13 @@ export function buildFeynmanMessages(
 				'- [INCORRECTO]: escribe solo «no sé» o invierte el mecanismo central.',
 				'',
 				'ANDAMIAJE PROGRESIVO EN `FALTO:`:',
-				attempt === 1
-					? '- INTENTO #1: si es [PARCIAL] o [INCORRECTO] y hubo un intento real (no solo «no sé»), en `FALTO:` indica qué eslabón lógico o contraste le falta conectar apuntando al ejemplo de la lección, SIN redactarle la explicación completa hecha para que pueda completarla al reintentar.'
-					: '- INTENTO #2 o posterior: si sigue en [PARCIAL] o [INCORRECTO], da ya el cierre explicativo completo y claro en `FALTO:` para consolidar el concepto.',
-				'- No hagas preguntas finales ni des porcentajes. Responde SIEMPRE en español.',
+					attempt === 1
+						? '- INTENTO #1: si es [PARCIAL] o [INCORRECTO] y hubo un intento real (no solo «no sé»), en `FALTO:` indica qué eslabón lógico o contraste le falta conectar apuntando al ejemplo de la lección, SIN redactarle la explicación completa hecha para que pueda completarla al reintentar.'
+						: '- INTENTO #2 o posterior: si sigue en [PARCIAL] o [INCORRECTO], da ya el cierre explicativo completo y claro en `FALTO:` para consolidar el concepto.',
+					attempt === 1
+						? '- PARA RECORDAR: si el veredicto es EXCELENTE o CORRECTO, escribe 1 frase corta con una regla mental fácil de retener; si en este INTENTO #1 es PARCIAL o INCORRECTO (salvo que haya dicho únicamente «no sé»), escribe exactamente: (nada) — para NO destripar aquí la respuesta que `FALTO:` dejó abierta para su reintento.'
+						: '- PARA RECORDAR: 1 frase corta con una regla mental fácil de retener conectada con el tema real, sin repetir literalmente FALTO:.',
+					'- Refiérete a «la demostración de la lección» en vez de usar el nombre propio del instructor. No hagas preguntas finales ni des porcentajes. Responde SIEMPRE en español.',
 			].join('\n'),
 		},
 		{
@@ -224,7 +229,7 @@ export function buildFeynmanMessages(
 				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
 				'BIEN: [en 2.ª persona, qué explicaste bien en 1 frase concreta; si está todo mal o en blanco, escribe: (nada)]\n' +
 				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona y respetando la regla del intento actual. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
-				'PARA RECORDAR: [heurística o imagen mental de 1 frase para fijar el concepto, sin repetir literalmente FALTO:]',
+				'PARA RECORDAR: [si es INTENTO #1 con PARCIAL o INCORRECTO escribe: (nada). Si es EXCELENTE/CORRECTO o INTENTO #2+, regla mental breve de 1 frase sin repetir FALTO:]',
 		},
 	];
 }
@@ -252,7 +257,7 @@ export function buildCodeReviewMessages(
 				'- Si quien estudia pregunta qué significa un término, requisito o parte del desafío antes de poder resolverlo, devuelve EXCLUSIVAMENTE:',
 				'  [ACLARACION]',
 				'  ACLARACION: [explica en 1-2 frases llanas qué pide o significa esa parte del desafío]',
-				'  PISTA: [indica por qué paso o comando empezar según la lección, PROHIBIDO entregar la solución resuelta]',
+				'  PISTA: [reformula en lenguaje cotidiano qué pide exactamente el desafío completo y por qué paso empezar, sin recortar requisitos y PROHIBIDO entregar la solución resuelta]',
 				'',
 				'REGLA DE VERDAD Y DOMINIO:',
 				'- Adapta la revisión al lenguaje, herramienta o dominio real del curso (código o caso práctico no técnico) y acepta cualquier variante válida respaldada por la «TRANSCRIPCIÓN DE LA LECCIÓN» o por el estándar real del dominio, aunque difiera de la solución de referencia.',

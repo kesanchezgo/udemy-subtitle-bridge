@@ -82,6 +82,7 @@ import { spotBudgetFor, splitIdea, trustsSelfReport } from "../services/recallCu
 import { gradePractice, parsePractice, practiceBonus, practiceFormatMeta, practiceSolutionText, summarizePracticeAnswer, type StructuredPractice as StructuredPracticeSpec, type PracticeSpec } from "../services/practiceFormats";
 import { StructuredPractice, answerFits, initialRun, type PracticeRun } from "./study/StructuredPractice";
 import { RecallIdeas } from "./study/RecallIdeas";
+import { renderStudyInline } from "./study/inlineFormat";
 import type { RecallMark } from "../services/historyService";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { kinemaSlug, kinemaTags } from "../services/ankiDesign";
@@ -1015,7 +1016,7 @@ function AIFeedback({
           <div key={i} data-feedback-section={sec.label || "resumen"}>
             {sec.label && <p className={`text-[10.5px] font-bold leading-tight mb-0.5 ${sec.color}`}>{sec.label}</p>}
             <p className={`text-[11.5px] leading-relaxed whitespace-pre-line ${sec.label ? "text-[var(--usb-fg)]" : "text-[var(--usb-fg-hi)] font-medium"}`}>
-              {renderInline(sec.text)}
+              {renderStudyInline(sec.text)}
               {isStreaming && i === sections.length - 1 && (
                 <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70" />
               )}
@@ -1028,11 +1029,11 @@ function AIFeedback({
           return isBullet ? (
             <div key={i} className="flex items-start gap-2">
               <span className="mt-[7px] h-1 w-1 rounded-full bg-violet-400/70 shrink-0" aria-hidden="true" />
-              <p className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed">{renderInline(textOnly)}</p>
+              <p className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed">{renderStudyInline(textOnly)}</p>
             </div>
           ) : (
             <p key={i} className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed whitespace-pre-line">
-              {renderInline(textOnly)}
+              {renderStudyInline(textOnly)}
               {isStreaming && i === paragraphs.length - 1 && (
                 <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70" />
               )}
@@ -1150,18 +1151,6 @@ function ReferenceAnswer({ label, children, mono }: { label: string; children: R
       <div className={`px-3 pb-3 pt-1 text-[11.5px] leading-relaxed text-[var(--usb-fg)] whitespace-pre-wrap overflow-x-auto ${mono ? "font-mono text-[10.5px]" : ""}`}>{children}</div>
     </div>
   );
-}
-
-function renderInline(text: string): React.ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={i} className="text-white/90" style={{ fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
-      return <code key={i} className="px-1 py-0.5 rounded bg-white/8 text-violet-300 text-[10.5px] font-mono">{part.slice(1, -1)}</code>;
-    }
-    return <React.Fragment key={i}>{part}</React.Fragment>;
-  });
 }
 
 // ─── Utility helpers ──────────────────────────────────────────────────────────
@@ -1508,7 +1497,7 @@ function VerifyDoneReview({
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
             >
               <span className={`h-2 w-2 rounded-full shrink-0 ${tone}`} aria-hidden="true" />
-              <span className="flex-1 min-w-0 text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{q.q}</span>
+              <span className="flex-1 min-w-0 text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{renderStudyInline(q.q)}</span>
               <span className="text-[10px] font-semibold text-[var(--usb-fg-mid)] shrink-0">{RATING_LABEL[rating] ?? ""}</span>
               <ChevronDown size={13} className={`text-[var(--usb-fg-lo)] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
             </button>
@@ -1529,7 +1518,7 @@ function VerifyDoneReview({
                       <RevealButton open={Boolean(shownAnswers[i])} onClick={() => setShownAnswers(p => ({ ...p, [i]: !p[i] }))} label="Ver la respuesta esperada" openLabel="Ocultar la respuesta esperada" />
                       {onAskDoubt && <DoubtButton open={Boolean(isDoubtOpen?.(i))} onClick={() => onAskDoubt(i)} />}
                     </div>
-                    {shownAnswers[i] && <ReferenceAnswer label="Respuesta esperada">{q.answer}</ReferenceAnswer>}
+                    {shownAnswers[i] && <ReferenceAnswer label="Respuesta esperada">{renderStudyInline(q.answer)}</ReferenceAnswer>}
                     {renderDoubt?.(i)}
                   </div>
                 </motion.div>
@@ -6007,11 +5996,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                                 <span className={`text-[9.5px] px-1.5 py-0.5 rounded-md border ${BLOOM_STYLE(q.bloom)}`}>{bloomTaskLabel(q.bloom)}</span>
                               </div>
 
-                              <p className="text-[var(--usb-fg-hi)] text-[12.5px] font-medium leading-relaxed whitespace-pre-line">{q.q}</p>
+                              <p className="text-[var(--usb-fg-hi)] text-[12.5px] font-medium leading-relaxed whitespace-pre-line">{renderStudyInline(q.q)}</p>
 
                               {/* Ayuda: la pista no cuenta como intento */}
                               <HelpToggle open={showHint} onToggle={() => setShowHint(v => !v)} label="Ver pista" openLabel="Ocultar pista">
-                                {q.hint}
+                                {renderStudyInline(q.hint)}
                               </HelpToggle>
 
                               <div className="relative">
@@ -6149,10 +6138,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       return (<>
                     <div className="mx-4 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
                       <span className="shrink-0 mt-0.5 text-[var(--usb-accent-text)]"><Icon name="steps" size={14} /></span>
-                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{content.application.setup}</p>
+                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{renderStudyInline(content.application.setup)}</p>
                     </div>
                     <div className="px-4 space-y-3" data-practice-structured>
-                      <p className="text-[12px] font-semibold leading-snug text-[var(--usb-fg-hi)]">{content.application.challenge}</p>
+                      <p className="text-[12px] font-semibold leading-snug text-[var(--usb-fg-hi)]">{renderStudyInline(content.application.challenge)}</p>
                       <StructuredPractice
                         practice={structuredPractice}
                         isCode={content.application.isCode}
@@ -6209,13 +6198,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       return (<>
                     <div className="mx-4 mb-2.5 bg-violet-500/7 border border-violet-500/14 rounded-xl p-2.5 flex items-start gap-2">
                       <span className="shrink-0 mt-0.5 text-[var(--usb-accent-text)]"><Icon name="steps" size={14} /></span>
-                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{content.application.setup}</p>
+                      <p className="text-[var(--usb-fg-mid)] text-[11px] leading-relaxed">{renderStudyInline(content.application.setup)}</p>
                     </div>
 
                     {content.application.isCode ? (
                       <pre className="mx-4 mb-3 bg-black/50 border border-[var(--usb-border)] rounded-xl p-3 text-[10px] text-emerald-300/80 overflow-x-auto leading-relaxed font-mono whitespace-pre-wrap shadow-inner">{content.application.challenge}</pre>
                     ) : (
-                      <div className="mx-4 mb-3 bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 text-[11.5px] text-[var(--usb-fg-hi)] overflow-x-auto leading-relaxed whitespace-pre-wrap">{content.application.challenge}</div>
+                      <div className="mx-4 mb-3 bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 text-[11.5px] text-[var(--usb-fg-hi)] overflow-x-auto leading-relaxed whitespace-pre-wrap">{renderStudyInline(content.application.challenge)}</div>
                     )}
 
                     <div className="px-4 space-y-3">
@@ -6223,7 +6212,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                         <HelpToggle open={showAppHint} onToggle={() => setShowAppHint(v => !v)} label="Ver pista" openLabel="Ocultar pista">
                           {(() => {
                             const generated = content.application.hint?.trim();
-                            if (generated) return generated;
+                            if (generated) return renderStudyInline(generated);
                             const first = content.application.solution.split(/\n|(?<=[.!?])\s/)[0].trim();
                             const looksRawCode = content.application.isCode && (/[{}();=]/.test(first) || /`/.test(first) || first.length > 110);
                             if (looksRawCode) return "Revisa los conceptos clave de la lección antes de escribir tu solución.";
@@ -6304,11 +6293,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       return (
                       <div className="px-4 space-y-3" data-practice-explain>
                         <div className="rounded-xl border border-[var(--usb-border)] bg-[var(--usb-bg-2)] p-3">
-                          <p className="text-[var(--usb-fg-hi)] text-[12px] leading-relaxed font-medium">{oralQ.q}</p>
+                          <p className="text-[var(--usb-fg-hi)] text-[12px] leading-relaxed font-medium">{renderStudyInline(oralQ.q)}</p>
                           <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-relaxed mt-1.5">Sin mirar la lección, como si se lo contaras a alguien. Kinema revisa si es clara y completa.</p>
                         </div>
                         <HelpToggle open={showInterviewAnswer} onToggle={() => setShowInterviewAnswer(v => !v)} label={oralPracticeMeta?.answerLabel ?? "Ver una buena estructura"} openLabel="Ocultar la estructura">
-                          {oralQ.idealAnswer}
+                          {renderStudyInline(oralQ.idealAnswer)}
                         </HelpToggle>
                         <textarea
                           id="kx-oral-answer"

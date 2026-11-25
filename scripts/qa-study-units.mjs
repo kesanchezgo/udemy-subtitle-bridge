@@ -308,4 +308,34 @@ test("v2.0.7: Recordar, Aplicar (Feynman y código) y Anki alineados", () => {
 	assert(c1.includes("RESPUESTA DEL ESTUDIANTE:\n") && c2.includes("RESPUESTA DEL ESTUDIANTE:\n"));
 });
 
+test("v2.0.8: foco 80/20, concisión, PARA RECORDAR sin spoiler, Scope Lock y código HTML", () => {
+	const p = prompts.buildStudyPrompt("palabra ".repeat(400), { courseName: "C", lessonName: "L" });
+	assert(p.includes("MÁXIMO 35 palabras"));
+	assert(p.includes("Prioridad 80/20") && p.includes("PROHIBIDA la trivia de menciones de pasada"));
+	assert(p.includes("Escenarios de transferencia anclados a la lección"));
+	const ctx = { courseName: "Python", lessonName: "Setup", lessonTranscript: "uv init y .python-version", attemptNumber: 1 };
+	const builders = [
+		{ build: evalPrompts.buildEvalQuestionMessages, args: ["¿Diferencia?", "referencia", "respuesta parcial", "aplicar"] },
+		{ build: evalPrompts.buildFeynmanMessages, args: ["¿Diferencia?", "referencia", "respuesta parcial"] },
+	];
+	for (const { build, args } of builders) {
+		const first = build(...args, ctx).map((m) => m.content).join("\n");
+		const second = build(...args, { ...ctx, attemptNumber: 2 }).map((m) => m.content).join("\n");
+		assert(first.includes("escribe exactamente: (nada)") && first.includes("#1"));
+		assert(first.includes("TODAS las partes de la pregunta original"), "scope lock en aclaración");
+		assert(second.includes("#2") && second.includes("INTENTO #2 o posterior"), "intento #2 con cierre");
+	}
+	const codeCtx = { ...ctx, attemptNumber: 1 };
+	const code = evalPrompts.buildCodeReviewMessages("Reto", "solucion", "intento", codeCtx)
+		.map((m) => m.content).join("\n");
+	assert(code.includes("sin recortar requisitos"));
+	assert.equal(cov.inlineCodeHtml('Usa `uv init` y <img onerror="x">'), "Usa <code>uv init</code> y &lt;img onerror=&quot;x&quot;&gt;");
+	const cards = cov.ensureConceptCards(["¿Qué hace `uv init`? — Crea el proyecto"], [
+		{ q: "¿Qué hace `uv init`?", answer: "Inicializa <b>uv</b>", conceptRefs: [0] },
+	], [], (c) => c);
+	assert.equal(cards.length, 1, "la idea sin cobertura propia se genera");
+	const generated = cov.ensureConceptCards(["¿Qué hace `uv init`? — Crea el proyecto"], [], [], (c) => c);
+	assert(generated[0].front.includes("<code>uv init</code>") && !generated[0].front.includes("`"));
+});
+
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

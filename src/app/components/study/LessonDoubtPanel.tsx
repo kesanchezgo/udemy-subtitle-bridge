@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, Check, HelpCircle, Plus, RotateCcw, Send, X, Icon } from "../icons";
 import { textareaCls } from "../settings/SettingsKit";
+import { renderStudyInline, stripInlineMarkdown } from "./inlineFormat";
 import {
   MAX_DOUBT_TURNS,
   appendDoubtTurn,
@@ -116,7 +117,7 @@ export function LessonDoubtPanel({
   };
 
   const anchorLabel = ctx.kind === "question"
-    ? `Sobre la pregunta: «${ctx.anchor}»`
+    ? `Sobre la pregunta: «${stripInlineMarkdown(ctx.anchor)}»`
     : ctx.kind === "practice"
       ? `Sobre el desafío: «${ctx.anchor}»`
       : `Sobre la idea: «${ctx.anchor}»`;
@@ -189,7 +190,7 @@ export function LessonDoubtPanel({
               ) : partial.text ? (
                 <div className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-3 py-2.5 space-y-2">
                   {partial.outside && <Badges outside local={false} />}
-                  <p className="text-white/70 text-[11.5px] leading-relaxed whitespace-pre-line">
+                  <p className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed whitespace-pre-line">
                     {partial.text}
                     <span className="inline-block w-[5px] h-[12px] ml-0.5 align-middle bg-violet-400/70" aria-hidden="true" />
                   </p>
@@ -296,7 +297,7 @@ function DoubtTurnView({
       <div className="rounded-lg border border-[var(--usb-border)] bg-[var(--usb-bg-3)] px-3 py-2.5 space-y-2">
         <Badges outside={turn.outside} local={turn.source === "local"} />
         {paragraphs.map((p, i) => (
-          <p key={i} className="text-white/70 text-[11.5px] leading-relaxed whitespace-pre-line">{renderDoubtInline(p)}</p>
+          <p key={i} className="text-[var(--usb-fg)] text-[11.5px] leading-relaxed whitespace-pre-line">{renderStudyInline(p)}</p>
         ))}
         {turn.quotes.length > 0 && (
           <div className="space-y-1.5 pt-0.5">
@@ -322,8 +323,8 @@ function DoubtTurnView({
             <Icon name="layers" size={12} className="text-violet-300" />
             <p className="kx-slate">{turn.saved ? "Tarjeta en tu mazo" : "Tarjeta de repaso propuesta"}</p>
           </div>
-          <p className="text-[11.5px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{card.front}</p>
-          <p className="text-[11px] text-[var(--usb-fg-mid)] leading-relaxed">{card.back}</p>
+          <p className="text-[11.5px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{renderStudyInline(card.front)}</p>
+          <p className="text-[11px] text-[var(--usb-fg-mid)] leading-relaxed">{renderStudyInline(card.back)}</p>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             {turn.saved ? (
               <>
@@ -364,17 +365,6 @@ function DoubtTurnView({
   );
 }
 
-function renderDoubtInline(text: string): React.ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={i} className="text-white/90" style={{ fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
-      return <code key={i} className="px-1 py-0.5 rounded bg-white/8 text-violet-300 text-[10.5px] font-mono">{part.slice(1, -1)}</code>;
-    }
-    return <React.Fragment key={i}>{part}</React.Fragment>;
-  });
-}
 
 /** Cargador con pasos finitos (no hay bucle): mismo lenguaje que AIAnalyzingLoader. */
 function DoubtLoader() {

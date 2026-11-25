@@ -1,3 +1,12 @@
+## [2.0.8] — 2026-11-25
+
+Foco 80/20, concisión en Recordar, cero spoiler en el `PARA RECORDAR` del primer intento, fidelidad de alcance en `[ACLARACION]` y renderizado inline de `` `código` `` en UI y Anki. Versión 2.0.8 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.8`.
+
+- **Prompts**: detalle de `keyConcepts` con tope de 35 palabras; prioridad 80/20 sobre el núcleo troncal (nada de flags accesorios); escenarios de transferencia anclados a las herramientas de la lección; `lessonDoubts` refuerza ortografía y evita el nombre del instructor.
+- **Evaluación**: `PISTA:` de `[ACLARACION]` cubre TODAS las partes de la pregunta original sin desviarse; `PARA RECORDAR:` es `(nada)` en el intento #1 con `[PARCIAL]`/`[INCORRECTO]` para no destripar lo que `FALTO:` dejó abierto.
+- **UI y Anki**: helper `renderStudyInline` con contraste AA en oscuro/sepia para `**negrita**` y `` `código` `` en Comprobar, Recordar, Dudas, Aplicar y Explicarlo; `inlineCodeHtml` convierte esos marcadores en `<b>`/`<code>` en las tarjetas de cobertura sin cambiar `frontKey` ni GUIDs.
+- **QA**: nuevo test unitario de alineación en `qa-study-units` (20/20).
+
 ## [2.0.7] — 2026-11-25
 
 Alineación pedagógica de Recordar, Aplicar (clásico y «Explicarlo») y las tarjetas Anki: claridad léxica compartida, pistas sin spoiler y evaluadores con aclaración y andamiaje por intento. Versión 2.0.7 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.7`.

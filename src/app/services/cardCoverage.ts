@@ -57,6 +57,13 @@ export function isStudyCard(id: string | undefined): boolean {
 const escapeHtml = (s: string) => s
 	.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+/** Escapa HTML y convierte `` `código` `` / `**negrita**` en etiquetas limpias para Anki. */
+export function inlineCodeHtml(s: string): string {
+	return escapeHtml(String(s ?? ""))
+		.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+		.replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
 /** Clave de frente: sin HTML, sin acentos, solo letras y números. */
 export function frontKey(front: string): string {
 	return String(front || "")
@@ -96,7 +103,7 @@ export function mergeDuplicateCards<C extends CoverageCard>(cards: C[]): C[] {
 
 /** El dorso de una tarjeta creada desde una pregunta (el de las antiguas de refuerzo). */
 export function questionCardBack(answer: string): string {
-	return `<p><b>${escapeHtml(answer)}</b></p>`;
+	return `<p><b>${inlineCodeHtml(answer)}</b></p>`;
 }
 
 /**
@@ -158,7 +165,7 @@ function addCoverageCards<C extends CoverageCard>(
 		for (const { q, qi, refs } of candidates) {
 			const id = `${COVERAGE_PREFIX}q${qi}`;
 			if (ids.has(id) || ids.has(`${REINFORCE_PREFIX}q${qi}`) || fronts.has(frontKey(q.q))) continue;
-			card = { id, type: "concepto", front: q.q, back: questionCardBack(q.answer), tags: [], conceptRefs: refs, isHtml: true };
+			card = { id, type: "concepto", front: inlineCodeHtml(q.q), back: questionCardBack(q.answer), tags: [], conceptRefs: refs, isHtml: true };
 			break;
 		}
 		// 2. Sin pregunta: la propia idea si trae pista y detalle.
@@ -167,7 +174,7 @@ function addCoverageCards<C extends CoverageCard>(
 			const front = `¿Qué hay que saber de «${cue.title}»?`;
 			const id = `${COVERAGE_PREFIX}i${idea}`;
 			if (cue.detail && !ids.has(id) && !fronts.has(frontKey(front))) {
-				card = { id, type: "concepto", front, back: `<p>${escapeHtml(cue.detail)}</p>`, tags: [], conceptRefs: [idea], isHtml: true };
+				card = { id, type: "concepto", front: inlineCodeHtml(front), back: `<p>${inlineCodeHtml(cue.detail)}</p>`, tags: [], conceptRefs: [idea], isHtml: true };
 			}
 		}
 		if (!card) continue;
