@@ -29,7 +29,7 @@ export function knownIdeaIndexes(rec: Pick<LectureHistoryRecord, 'recallMarks' |
 export function resultFromRecord(rec: LectureHistoryRecord, options: { includeCards?: boolean } = {}): StudyResultSummary {
 	const content = rec.studyContent;
 	const total = content?.keyConcepts.length ?? 0;
-	const answered = (rec.questions ?? []).filter((q) => q.rating);
+	const answered = (rec.questions ?? []).filter((q) => q.rating && q.rating !== "clarification");
 	const firstTry = answered.filter((q) => q.firstTryCorrect).length;
 	const improved = answered.filter((q) => GOOD.has(String(q.rating)) && !q.firstTryCorrect).length;
 	const practice: StudyResultSummary['practice'] = rec.practiceStatus === 'correct' ? 'correct' : rec.practiceStatus === 'done' ? 'done' : 'later';

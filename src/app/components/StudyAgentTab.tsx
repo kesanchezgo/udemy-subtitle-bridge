@@ -897,6 +897,8 @@ function SkipStepButton({ onClick, title }: { onClick: () => void; title: string
 // con rótulos legibles en vez del texto crudo con etiquetas en mayúsculas.
 const FEEDBACK_SECTIONS: { key: RegExp; label: string; color: string }[] = [
   { key: /^DIAGN[OÓ]STICO$/, label: "", color: "" },
+  { key: /^ACLARACI[OÓ]N$/, label: "Qué significa en la pregunta", color: "text-[var(--usb-accent-text)]" },
+  { key: /^PISTA$/, label: "Cómo enfocar tu respuesta", color: "text-[var(--usb-fg-mid)]" },
   { key: /^BIEN$/, label: "Lo que está bien", color: "text-[var(--usb-ok-text)]" },
   { key: /^FALT[OÓ]$/, label: "Lo que faltó", color: "text-[var(--usb-warn-text)]" },
   { key: /^MEJORAR$/, label: "Qué mejorar", color: "text-[var(--usb-warn-text)]" },
@@ -905,8 +907,8 @@ const FEEDBACK_SECTIONS: { key: RegExp; label: string; color: string }[] = [
 ];
 
 function parseFeedbackSections(content: string): { label: string; color: string; text: string }[] | null {
-  const body = content.replace(/^\s*\[(?:CORRECTO|PARCIAL|INCORRECTO|EXCELENTE)\]\s*/i, "");
-  const marker = /(?:^|\n)[ \t]*(DIAGN[OÓ]STICO|BIEN|FALT[OÓ]|MEJORAR|PARA RECORDAR|SIGUIENTE NIVEL)[ \t]*:[ \t]*/g;
+  const body = content.replace(/^\s*\[(?:CORRECTO|PARCIAL|INCORRECTO|EXCELENTE|ACLARACI[OÓ]N)\]\s*/i, "");
+  const marker = /(?:^|\n)[ \t]*(DIAGN[OÓ]STICO|ACLARACI[OÓ]N|PISTA|BIEN|FALT[OÓ]|MEJORAR|PARA RECORDAR|SIGUIENTE NIVEL)[ \t]*:[ \t]*/g;
   const hits = [...body.matchAll(marker)];
   if (hits.length === 0) return null;
   const clean = (t: string) => t.replace(/^[\s\u2705\u274C\u26A0\uFE0F\u{1F4A1}\u{1F680}]+/u, "").trim();
@@ -962,6 +964,7 @@ function AIFeedback({
   const VERDICT = {
     correct:   { heroText: "text-emerald-300", heroBg: "bg-emerald-500/10", heroBorder: "border-emerald-500/20", heroIconBg: "bg-emerald-500/18 border-emerald-500/30", icon: "checkCircle2" as IconName, label: "Correcto",    sublabel: "Captaste la idea central.",                 ring: "border-emerald-500/22", cardBg: "bg-emerald-500/[0.04]" },
     excellent: { heroText: "text-violet-300",  heroBg: "bg-violet-500/10",  heroBorder: "border-violet-500/20",  heroIconBg: "bg-violet-500/18 border-violet-500/30",  icon: "target" as IconName,       label: "Excelente",   sublabel: "Respuesta completa y precisa.",              ring: "border-violet-500/22",  cardBg: "bg-violet-500/[0.05]"  },
+    clarification: { heroText: "text-violet-300", heroBg: "bg-violet-500/10", heroBorder: "border-violet-500/20", heroIconBg: "bg-violet-500/18 border-violet-500/30", icon: "helpCircle" as IconName, label: "Aclaración", sublabel: "Te aclaro el enunciado · tu 1.er intento sigue intacto.", ring: "border-violet-500/22", cardBg: "bg-violet-500/[0.05]" },
     partial:   { heroText: "text-amber-300",   heroBg: "bg-amber-500/8",    heroBorder: "border-amber-500/18",   heroIconBg: "bg-amber-500/15 border-amber-500/28",    icon: "zap" as IconName,          label: "A medias",    sublabel: "Vas bien, pero falta una parte.",            ring: "border-amber-500/20",   cardBg: "bg-amber-500/[0.04]"   },
     wrong:     { heroText: "text-rose-300",    heroBg: "bg-rose-500/7",     heroBorder: "border-rose-500/16",    heroIconBg: "bg-rose-500/14 border-rose-500/25",      icon: "messageSquare" as IconName, label: "Todavía no", sublabel: "Abajo tienes qué faltó para llegar.",       ring: "border-rose-500/18",    cardBg: "bg-rose-500/[0.04]"    },
     unknown:   { heroText: "text-violet-300",  heroBg: "bg-violet-500/7",   heroBorder: "border-violet-500/15",  heroIconBg: "bg-violet-500/14 border-violet-500/25",  icon: "sparkles" as IconName,     label: "Revisando…",  sublabel: "",                                           ring: "border-violet-500/15",  cardBg: "bg-violet-500/[0.04]"  },
@@ -969,7 +972,7 @@ function AIFeedback({
   const v = VERDICT[isStreaming ? "unknown" : (rating as keyof typeof VERDICT)] ?? VERDICT.unknown;
 
   const sections = parseFeedbackSections(fb.content || "");
-  const paragraphs = sections ? [] : (fb.content || "").replace(/^\s*\[(?:CORRECTO|PARCIAL|INCORRECTO|EXCELENTE)\]\s*/i, "").split(/\n{2,}|\n(?=\s*[-*•]\s)/).map(p => p.trim()).filter(Boolean);
+  const paragraphs = sections ? [] : (fb.content || "").replace(/^\s*\[(?:CORRECTO|PARCIAL|INCORRECTO|EXCELENTE|ACLARACI[OÓ]N)\]\s*/i, "").split(/\n{2,}|\n(?=\s*[-*•]\s)/).map(p => p.trim()).filter(Boolean);
 
   return (
     <motion.div
@@ -3216,7 +3219,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     setEvaluatedAnswers(p => ({ ...p, [idx]: userAns }));
     setQuestionFeedbacks(p => ({ ...p, [idx]: { status: "loading", content: "", rating: "unknown" } }));
     const q = queueQuestions[idx];
-    const aiContext = await resolveEvalAIContext(content);
+    const attemptNumber = qRewardedRef.current.has(q.q) ? 2 : 1;
+    const aiContext = { ...(await resolveEvalAIContext(content)), attemptNumber };
 
     // Attempt streaming evaluation first
     const res = await evaluateActiveAnswerStream(
@@ -3235,7 +3239,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
       const fallback = await evaluateActiveAnswer(q.q, q.answer, userAns, q.bloom, aiContext);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
-      persistQuestionProgress(idx, fb);
+      if (fb.rating !== "clarification") persistQuestionProgress(idx, fb);
       if (fb.status === "done") applyEvalOutcome(idx, q, fb, userAns, prevRating);
       // No auto-advance on fallback path either
       setTimeout(() => scrollToBottom(), 120);
@@ -3244,7 +3248,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
 
     const fb: FeedbackState = { status: "done", content: res.content, rating: res.rating, isMock: res.isMock };
     setQuestionFeedbacks(p => ({ ...p, [idx]: fb }));
-    persistQuestionProgress(idx, fb);
+    if (fb.rating !== "clarification") persistQuestionProgress(idx, fb);
     applyEvalOutcome(idx, q, fb, userAns, prevRating);
 
     // NO auto-advance — the user reads the feedback and clicks "Siguiente" manually
@@ -3253,6 +3257,10 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
 
   // §2/§1.2: XP por esfuerzo y completado del paso — común a streaming y fallback.
   const applyEvalOutcome = (idx: number, q: StudyContent["questions"][number], fb: FeedbackState, userAns: string, prevRating?: AIRating) => {
+    if (fb.rating === "clarification") {
+      setTimeout(() => scrollToBottom(), 120);
+      return;
+    }
     const isGoodNow = fb.rating === "correct" || fb.rating === "excellent";
     const firstAttempt = !qRewardedRef.current.has(q.q);
     const improved = isGoodNow && (prevRating === "partial" || prevRating === "wrong");
@@ -3305,7 +3313,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
   // Comprobar) y +1 si la primera no salió a la primera (recallCue).
   const spotFailed = useMemo(() => spotBase !== null && (challengeUsed ? queueQuestions.slice(0, -1) : queueQuestions).some((q, i) => {
     const refs = q.conceptRefs ?? [];
-    return questionFeedbacks[i]?.status === "done" && refs.length > 0 && refs.every((r) => checkedSet.has(r)) && !firstTryCorrectRef.current.has(q.q);
+    return questionFeedbacks[i]?.status === "done" && questionFeedbacks[i]?.rating !== "clarification" && refs.length > 0 && refs.every((r) => checkedSet.has(r)) && !firstTryCorrectRef.current.has(q.q);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [spotBase, queueQuestions, questionFeedbacks, checkedSet, challengeUsed]);
   const spotBudget = spotBudgetFor(spotBase ?? 1, spotFailed);
@@ -5868,11 +5876,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                               const isCurrent = i === currentQIdx;
                               const rating = fb?.rating;
                               const dotColor = isDone
-                                ? rating === "correct" || rating === "excellent"
-                                  ? "bg-emerald-400"
-                                  : rating === "partial"
-                                    ? "bg-amber-400"
-                                    : "bg-red-400"
+                                ? rating === "clarification"
+                                  ? "bg-violet-400"
+                                  : rating === "correct" || rating === "excellent"
+                                    ? "bg-emerald-400"
+                                    : rating === "partial"
+                                      ? "bg-amber-400"
+                                      : "bg-red-400"
                                 : isCurrent
                                   ? "bg-violet-400"
                                   : "bg-white/15";
@@ -5894,7 +5904,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                         // Solo si una confirmación ANTERIOR falló (no la que se está respondiendo).
                         const secondSpot = kind === "spot" && queueQuestions.slice(0, currentQIdx).some((q, k) => {
                           const r = q.conceptRefs ?? [];
-                          return questionFeedbacks[k]?.status === "done" && r.length > 0 && r.every(x => checkedSet.has(x)) && !firstTryCorrectRef.current.has(q.q);
+                          return questionFeedbacks[k]?.status === "done" && questionFeedbacks[k]?.rating !== "clarification" && r.length > 0 && r.every(x => checkedSet.has(x)) && !firstTryCorrectRef.current.has(q.q);
                         });
                         const why = kind === "spot"
                           ? secondSpot
@@ -5936,6 +5946,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                             const answer = questionAnswers[i] ?? "";
                             const changed = reviewed && answer !== (evaluatedAnswers[i] ?? answer);
                             const needsWork = reviewed && !good;
+                            const isClarification = reviewed && qfb.rating === "clarification";
                             const isChallenge = challengeOpen && i === queueQuestions.length - 1;
                             // Siguiente del plan (otra idea que no tenías clara, o una confirmación), si queda.
                             const nextPlanned = reviewed && !busy ? findNextPlanned(i) : undefined;
@@ -5944,11 +5955,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                               if (!el) return;
                               el.scrollIntoView({ block: "center", behavior: "smooth" });
                               el.focus();
-                              el.setSelectionRange(el.value.length, el.value.length);
+                              if (qfb.rating === "clarification") el.select();
+                              else el.setSelectionRange(el.value.length, el.value.length);
                             };
                             const ratingBorder =
                               reviewed && good ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
                               : reviewed && qfb.rating === "partial" ? "border-amber-500/40 ring-1 ring-amber-500/20"
+                              : reviewed && qfb.rating === "clarification" ? "border-violet-500/35 ring-1 ring-violet-500/18"
                               : reviewed ? "border-rose-500/40 ring-1 ring-rose-500/20"
                               : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20";
                             return (
@@ -6016,12 +6029,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                                 <NextMoves
                                   moves={[
                                     ...(needsWork ? [changed
-                                      ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: () => handleEvalQuestion(i), disabled: !answer.trim() }
-                                      : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Edita tu respuesta con lo que faltó.", onClick: focusAnswer }] : []),
+                                      ? { id: "retry", icon: Send, primary: true, label: isClarification ? "Revisar mi respuesta" : "Revisar de nuevo", onClick: () => handleEvalQuestion(i), disabled: !answer.trim() }
+                                      : { id: "improve", icon: Edit3, primary: true, label: isClarification ? "Responder ahora" : "Intentarlo de nuevo", hint: isClarification ? "Tu primer intento sigue intacto: responde con esta aclaración." : "Edita tu respuesta con lo que faltó.", onClick: focusAnswer }] : []),
                                     isChallenge
                                       ? { id: "leave", icon: ArrowRight, label: "Dejar el reto", hint: "Vuelves al repaso de la comprobación.", onClick: closeChallenge }
                                       : nextPlanned
-                                        ? { id: "next", icon: ArrowRight, primary: !needsWork, label: `Siguiente pregunta (${i + 2} de ${planTotal})`, hint: `${nextPlanned.kind === "spot" ? "Sobre una idea que dijiste saber, para confirmarla." : "Sobre otra idea que no tenías clara."}${needsWork ? " Lo que falló aquí va a Anki como refuerzo." : ""}`, onClick: () => goNextQuestion(i) }
+                                        ? { id: "next", icon: ArrowRight, primary: !needsWork, label: `Siguiente pregunta (${i + 2} de ${planTotal})`, hint: `${nextPlanned.kind === "spot" ? "Sobre una idea que dijiste saber, para confirmarla." : "Sobre otra idea que no tenías clara."}${needsWork && !isClarification ? " Lo que falló aquí va a Anki como refuerzo." : ""}`, onClick: () => goNextQuestion(i) }
                                         : { id: "finish", icon: CheckCircle2, label: "Terminar y ver la respuesta esperada", onClick: completeQuestions },
                                   ]}
                                   help={doubtsAvailable ? <DoubtButton open={isDoubtOpen(questionDoubtCtx(i))} onClick={() => toggleDoubt(questionDoubtCtx(i))} /> : undefined}

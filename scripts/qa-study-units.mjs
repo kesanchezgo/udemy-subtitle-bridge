@@ -275,4 +275,19 @@ test("buildStudyPrompt: anti-inventario y reconstrucción ASR", () => {
 	assert(p.includes("Subtítulos automáticos (ASR)") && p.includes(".python-version"));
 });
 
+test("v2.0.6: claridad léxica y andamiaje por intento", () => {
+	const p = prompts.buildStudyPrompt("palabra ".repeat(400), { courseName: "C", lessonName: "L" });
+	assert(p.includes("Claridad léxica en `questions` (PROHIBIDA la jerga sintética no enseñada)"));
+	const ctx = { courseName: "Python", lessonName: "Setup", lessonTranscript: "Activa .venv o usa uv run." };
+	const first = evalPrompts.buildEvalQuestionMessages("¿Diferencia?", "referencia", "respuesta intentada", "aplicar", { ...ctx, attemptNumber: 1 })
+		.map((m) => m.content).join("\n");
+	const second = evalPrompts.buildEvalQuestionMessages("¿Diferencia?", "referencia", "respuesta intentada", "aplicar", { ...ctx, attemptNumber: 2 })
+		.map((m) => m.content).join("\n");
+	assert(first.includes("INTENTO ACTUAL EN ESTA PREGUNTA: intento #1"));
+	assert(first.includes("ANDAMIAJE SIN SPOILER") && first.includes("[ACLARACION]"));
+	assert(second.includes("INTENTO ACTUAL EN ESTA PREGUNTA: intento #2"));
+	assert(second.includes("INTENTO #2 o posterior") && second.includes("CIERRE EXPLICATIVO COMPLETO"));
+	assert(first.includes("RESPUESTA DEL ESTUDIANTE:\n") && second.includes("RESPUESTA DEL ESTUDIANTE:\n"));
+});
+
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

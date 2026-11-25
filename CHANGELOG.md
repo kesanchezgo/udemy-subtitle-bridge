@@ -1,3 +1,12 @@
+## [2.0.6] — 2026-11-25
+
+Lenguaje natural sin jerga sintética, modo `[ACLARACION]` sin penalización y andamiaje progresivo entre intentos. Versión 2.0.6 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.6`.
+
+- **Prompts**: `buildStudyPrompt` prohíbe la jerga sintética no enseñada en `questions`. `buildEvalQuestionMessages` incorpora `attemptNumber`, Regla 0 `[ACLARACION]` con `ACLARACION:`/`PISTA:` y andamiaje sin spoiler en el intento #1 frente a cierre explicativo en el #2+.
+- **Sin penalización**: `AIRating` y `AnswerRating` incluyen `clarification`; `parseRating` la detecta; Obsidian ignora esas respuestas; Study no persiste progreso ni XP ni refuerzo para una aclaración del enunciado y mantiene el primer intento intacto.
+- **UI**: secciones y veredicto violeta para aclaración, barra de progreso, borde del textarea, selección cómoda del texto y botones «Responder ahora» / «Revisar mi respuesta» sin prometer refuerzo a Anki.
+- **QA**: nuevas unidades en `qa-study-units` y verificación real de tres casos (`tmp/qa-eval-clarification.mjs`).
+
 ## [2.0.5] — 2026-11-25
 
 Anclaje de transcripción en las evaluaciones formativas, voz directa en 2.ª persona y pedagogía anti-inventario. Versión 2.0.5 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.5`.

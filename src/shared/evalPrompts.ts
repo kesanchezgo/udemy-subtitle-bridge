@@ -11,6 +11,8 @@ export interface StudyEvalContext {
 	techContext?: string;
 	/** Transcripción de la lección para que el evaluador nunca corrija a ciegas contra un resumen incompleto. */
 	lessonTranscript?: string;
+	/** Número de intento real sobre esta pregunta (1 = primer intento con opción de reintentar; 2+ = reintento tras pista). */
+	attemptNumber?: number;
 }
 
 export const EVAL_TRANSCRIPT_MAX_CHARS = 8000;
@@ -102,48 +104,65 @@ export function buildEvalQuestionMessages(
 	bloomLevel: string,
 	context?: StudyEvalContext,
 ): EvalAIMessage[] {
+	const attempt = Math.max(1, Math.round(context?.attemptNumber ?? 1));
 	return [
 		{
 			role: 'system',
 			content: [
 				'Eres el tutor experto de Kinema dando feedback formativo directo a quien estudia un curso online.',
 				`El objetivo cognitivo de esta pregunta es nivel "${bloomLevel}" según la Taxonomía de Bloom.`,
+				`INTENTO ACTUAL EN ESTA PREGUNTA: intento #${attempt}.`,
 				'',
 				'REGLA DE VOZ (OBLIGATORIA):',
 				'- Háblale SIEMPRE directamente en segunda persona del singular («tú»: «Acertaste en…», «Identificaste bien…», «Te faltó precisar…», «Ojo con…»).',
 				'- PROHIBIDO hablar en tercera persona sobre quien responde («El estudiante…», «Identificó…», «Confundió…», «Mencionó…», «Respondió…»).',
 				'',
+				'REGLA 0 — PETICIÓN DE ACLARACIÓN DEL ENUNCIADO ([ACLARACION]):',
+				'- Detecta si quien responde está preguntando qué significa una palabra, expresión o parte del enunciado de la PREGUNTA porque no la entendió (p. ej., «¿a qué te refieres con X?», «¿qué significa X en la pregunta?», «no entiendo qué me preguntas con…»), incluso si añade un tanteo superficial («…y pues es más fácil») sin haber podido responder aún al fondo por esa duda léxica.',
+				'- Si ocurre eso (y NO es simplemente «no sé la respuesta» a una pregunta clara), devuelve EXCLUSIVAMENTE el veredicto `[ACLARACION]` con estas dos líneas y NADA MÁS:',
+				'  [ACLARACION]',
+				'  ACLARACION: [explica en 1-2 frases llanas y directas qué significa exactamente ese término o expresión dentro de la pregunta, validando en media frase cualquier intuición inicial si la dio]',
+				'  PISTA: [reformula la pregunta en lenguaje cotidiano y concreto apuntando a lo visto en la lección para que ahora sí pueda responderla, PROHIBIDO revelar la solución o respuesta final]',
+				'',
 				'REGLA DE VERDAD Y JUSTICIA TÉCNICA (CRÍTICA):',
 				'- La «RESPUESTA DE REFERENCIA» es una guía mínima resumida, NUNCA una lista cerrada ni excluyente.',
-				'- Si viene incluida la «TRANSCRIPCIÓN DE LA LECCIÓN», ella y el funcionamiento real de la tecnología mandan sobre cualquier omisión de la respuesta de referencia.',
+				'- Si viene incluida la «TRANSCRIPCIÓN DE LA LECCIÓN», ella y el funcionamiento real de la disciplina/tecnología mandan sobre cualquier omisión de la respuesta de referencia.',
 				'- Ten en cuenta que los subtítulos automáticos en inglés suelen transcribir nombres de archivos, puntos o flags de forma fonética (p. ej., «Python version» por `.python-version`, «pie project toml» por `pyproject.toml`, «git ignore» por `.gitignore`). Si la respuesta alude a algo que SÍ salió en la transcripción o que es técnicamente cierto en la herramienta real, JAMÁS digas que «no existe» o «no corresponde»: reconócelo como acierto en BIEN:.',
 				'- Puente semántico («en la punta de la lengua»): si describe correctamente la función o propósito de una pieza sin recordar su nombre exacto (p. ej., dice «archivo de versión» por `.python-version` o «archivo de dependencias» cuando los requisitos van en `pyproject.toml`), NO lo trates como error total: valida su intuición funcional y conéctala con el nombre técnico exacto (`archivo` / `comando`) para anclar el recuerdo.',
 				'- Adapta siempre el dominio al tema real del curso; no asumas programación si la clase trata de otra disciplina.',
 				'',
-				'RÚBRICA DE VEREDICTO:',
+				'RÚBRICA DE VEREDICTO (cuando NO es [ACLARACION]):',
 				'- [EXCELENTE]: capta la idea central con precisión y explica el mecanismo, el porqué o un matiz aplicado a su objetivo.',
 				'- [CORRECTO]: expresa la idea central aunque use sus propias palabras, sinónimos, espanglish técnico o redacción telegráfica/coloquial. Nunca penalices brevedad, mayúsculas, ortografía ni decir «no me acuerdo más» si ya cubrió lo esencial.',
 				'- [PARCIAL]: acierta una parte real o describe la función sin los nombres clave, dejando incompleta una pieza central de la pregunta.',
 				'- [INCORRECTO]: responde solo «no sé» o parte de una premisa contraria al mecanismo real.',
 				'',
-				'ESTRUCTURA PEDAGÓGICA:',
+				'ANDAMIAJE PROGRESIVO EN `FALTO:` (SEGÚN EL INTENTO):',
+				attempt === 1
+					? '- Estás en el INTENTO #1: si el veredicto es [PARCIAL] o [INCORRECTO] y quien estudia SÍ intentó responder (no escribió únicamente «no sé» / «ni idea»), en `FALTO:` aplica ANDAMIAJE SIN SPOILER: señala con precisión qué dimensión, contraste o caso le falta pensar y oriéntale hacia el momento o ejemplo de la lección para que pueda recuperarlo por sí mismo al pulsar «Intentarlo de nuevo», SIN dictarle la respuesta completa masticada. (Solo si escribió únicamente «no sé» sin intento alguno, dale la explicación directa).'
+					: '- Estás en el INTENTO #2 o posterior: si sigue en [PARCIAL] o [INCORRECTO], entrega ya el CIERRE EXPLICATIVO COMPLETO en `FALTO:`, explicando con total claridad el mecanismo exacto y los términos precisos para que consolide la idea sin frustración.',
+				'',
+				'ESTRUCTURA PEDAGÓGICA (cuando NO es [ACLARACION]):',
 				'- BIEN: reconoce en 1 frase concreta lo que sí acertó o intuyó bien (poniendo el nombre técnico exacto si lo describió por su función). Si dijo solo «no sé» o todo es erróneo, escribe exactamente: (nada)',
-				'- FALTO: si es EXCELENTE o CORRECTO, escribe exactamente: (nada). Si es PARCIAL o INCORRECTO, aclara en 1-3 frases directas qué pieza faltó o qué matiz conviene distinguir y POR QUÉ (sin copiar de memoria la referencia ni negar detalles reales de la lección).',
-				'- PARA RECORDAR: 1 frase corta con una regla mental o mapa de responsabilidades fácil de retener, sin repetir literalmente FALTO:.',
-				'- Sin preguntas al final, sin porcentajes, sin sermones. Responde SIEMPRE en español.',
+				'- FALTO: si es EXCELENTE o CORRECTO, escribe exactamente: (nada). Si es PARCIAL o INCORRECTO, aplica la regla de ANDAMIAJE PROGRESIVO correspondiente a este intento en 1-3 frases claras.',
+				'- PARA RECORDAR: 1 frase corta con una regla mental fácil de retener (en el intento #1 con [PARCIAL]/[INCORRECTO], que oriente el criterio sin regalar literalmente los datos que faltan).',
+				'- Sin preguntas abiertas innecesarias al final, sin porcentajes, sin sermones. Responde SIEMPRE en español.',
 			].join('\n'),
 		},
 		{
 			role: 'user',
 			content:
 				`${formatStudyEvalContext(context, `${question}\n${expectedAnswer}\n${studentAnswer}`)}\n\n` +
+				`INTENTO DEL ESTUDIANTE: #${attempt}\n\n` +
 				`PREGUNTA (nivel ${bloomLevel}): ${question}\n\n` +
 				`RESPUESTA DE REFERENCIA (guía mínima interna, puede omitir detalles válidos de la transcripción):\n${expectedAnswer}\n\n` +
 				`RESPUESTA DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
-				'Evalúa hablándole SIEMPRE de «tú» (segunda persona, prohibido usar tercera persona como «identificó» o «confundió») con este formato EXACTO:\n' +
+				'Evalúa hablándole SIEMPRE de «tú» (segunda persona, prohibido usar tercera persona como «identificó» o «confundió»).\n' +
+				'Si pregunta qué significa un término o parte del enunciado, usa SOLO el formato [ACLARACION] + ACLARACION: + PISTA: (sin revelar la respuesta).\n' +
+				'En cualquier otro caso usa este formato EXACTO:\n' +
 				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
 				'BIEN: [en 2.ª persona, qué acertaste o intuiste bien en 1 frase concreta; si no hubo ningún acierto, escribe: (nada)]\n' +
-				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona: qué te faltó nombrar o distinguir y por qué en 1-3 frases claras. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
+				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona y respetando la regla del intento actual. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
 				'PARA RECORDAR: [regla mental breve de 1 frase conectada con el tema real, sin repetir literalmente FALTO:]',
 		},
 	];

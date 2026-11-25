@@ -54,7 +54,7 @@ export interface AIMessage {
   content: string;
 }
 
-export type AIRating = "correct" | "excellent" | "partial" | "wrong" | "unknown";
+export type AIRating = "correct" | "excellent" | "partial" | "wrong" | "clarification" | "unknown";
 
 export interface AIResponse {
   success: boolean;
@@ -847,6 +847,11 @@ async function callLocalAI(
 function parseRating(content: string): AIRating {
   const upper = content.toUpperCase();
   const firstLine = upper.split(/\r?\n/).find(line => line.trim())?.trim() ?? "";
+  if (
+    upper.includes("[ACLARACION]") ||
+    upper.includes("[ACLARACIÓN]") ||
+    /^\[?\s*ACLARACI[OÓ]N\s*\]?(\s*[-:—]|$)/.test(firstLine)
+  ) return "clarification";
   if (
     upper.includes("[EXCELENTE]") ||
     /^\[?\s*EXCELENTE\s*\]?(\s*[-:—]|$)/.test(firstLine) ||

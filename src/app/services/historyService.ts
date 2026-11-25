@@ -82,7 +82,7 @@ async function getAllKeys(): Promise<string[]> {
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 export type ConfidenceLevel = "confused" | "partial" | "clear" | "mastered";
-export type AnswerRating = "correct" | "excellent" | "partial" | "wrong" | "unknown";
+export type AnswerRating = "correct" | "excellent" | "partial" | "wrong" | "clarification" | "unknown";
 export type LectureStatus = "in_progress" | "completed";
 
 export interface QuestionAttempt {
