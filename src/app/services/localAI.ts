@@ -9,7 +9,7 @@ import {
   type StudyEvalContext,
 } from "../../shared/evalPrompts";
 
-export { buildEvalQuestionMessages, buildCodeReviewMessages } from "../../shared/evalPrompts";
+export { buildEvalQuestionMessages, buildFeynmanMessages, buildCodeReviewMessages } from "../../shared/evalPrompts";
 export type StudyAIContext = StudyEvalContext;
 import {
   buildAnthropicBody,
@@ -1070,7 +1070,22 @@ export async function evaluateFeynman(
 
   // 2000: los modelos reasoning (deepseek-v4.1...) gastan el presupuesto en
 // reasoning_content antes del veredicto; 260 se quedaba vacio a menudo.
-return callLocalAI(messages, 2000, 0.3, "feynman");
+	return callLocalAI(messages, 2000, 0.3, "feynman");
+}
+
+// ─── Feynman evaluation — STREAMING ───────────────────────────────────────────
+export async function evaluateFeynmanStream(
+  topic: string,
+  modelAnswer: string,
+  studentAnswer: string,
+  onToken: (token: string, accumulated: string) => void,
+  context?: StudyAIContext,
+): Promise<{ success: boolean; content: string; rating: AIRating; isMock?: boolean }> {
+  if (!studentAnswer.trim())
+    return { success: false, content: "", rating: "unknown" };
+  const messages = buildFeynmanMessages(topic, modelAnswer, studentAnswer, context) as AIMessage[];
+  const result = await streamLocalAI(messages, 2000, 0.3, onToken, undefined, "feynman");
+  return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
 }
 
 // ─── Active question evaluation — non-streaming ───────────────────────────────

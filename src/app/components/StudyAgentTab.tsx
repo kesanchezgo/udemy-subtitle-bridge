@@ -15,7 +15,7 @@ import {
 import type { IconName } from "./icons";
 import { FrameMarks } from "./AppLogo";
 import { motion, AnimatePresence } from "motion/react";
-import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, type AIRating, type StudyAIContext } from "../services/localAI";
+import { evaluateActiveAnswer, evaluateCodeSolution, evaluateActiveAnswerStream, evaluateCodeSolutionStream, evaluateFeynman, evaluateFeynmanStream, type AIRating, type StudyAIContext } from "../services/localAI";
 import { buildAnkiApkg, downloadApkg, PRISM_MEDIA_FILES } from "../services/ankiApkg";
 import { buildConceptSpec } from "../services/ankiDesign";
 import { cacheService } from "../services/cacheService";
@@ -172,6 +172,8 @@ interface StudyContent {
   questions: { q: string; bloom: string; difficulty: ConfidenceLevel; hint: string; answer: string; conceptRefs?: number[] }[];
   application: {
     setup: string; challenge: string; solution: string; isCode: boolean;
+    /** Pista breve de arranque sin revelar la solución (v2.0.7). */
+    hint?: string;
     /** flowVersion 3: el mismo ejercicio en un formato corregible al momento (practiceFormats). */
     practice?: StructuredPracticeSpec;
   };
@@ -651,6 +653,7 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: 
       setup: asText(app.setup, fallback.application.setup),
       challenge: asText(app.challenge, fallback.application.challenge),
       solution: asText(app.solution, fallback.application.solution),
+      ...(typeof app.hint === "string" && app.hint.trim() ? { hint: app.hint.trim() } : {}),
       ...(practice ? { practice } : {}),
     },
     interviewQ: raw.interviewQ === null
@@ -1725,6 +1728,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
   const [showAppSolution, setShowAppSolution]       = useState(false);
   const [ankiExported, setAnkiExported]             = useState(false);
   const appRewardedRef = useRef(false);
+  const appAttemptedRef = useRef(false);
+  const oralAttemptedRef = useRef(false);
   const [showAppHint, setShowAppHint]               = useState(false);
   const [showCardPreview, setShowCardPreview]       = useState(false);
   // Fase 5 · sin exportar: al terminar, las tarjetas van solas a Anki. Estado
@@ -2823,6 +2828,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     const hasCodeChallenge = Boolean(rec.codeChallenge);
     // La práctica (caso, código o explicación) se premia una vez por lección, también tras recargar.
     appRewardedRef.current = hasCodeChallenge || rec.practiceStatus === "done" || rec.practiceStatus === "correct";
+    if (hasCodeChallenge && rec.codeChallenge?.rating && rec.codeChallenge.rating !== "clarification") appAttemptedRef.current = true;
     setPracticeStatus(rec.practiceStatus ?? (hasCodeChallenge ? "done" : null));
     setQuestionsComplete(Boolean(rec.questionsDone));
     setQuestionsSkipped(Boolean(rec.questionsSkipped));
@@ -3067,7 +3073,9 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     setConceptsChecked({}); setAppAnswer(""); setAppFeedback(IDLE_FB);
     setRecallUnsure({}); setSpotBase(null); spotOutcomeRef.current = null; setPracticeRun(null);
     setConceptsAcknowledged(false);
-    setShowAppSolution(false); setShowAppHint(false); appRewardedRef.current = false; setQuestionAnswers({}); setQuestionFeedbacks({});
+    setShowAppSolution(false); setShowAppHint(false); appRewardedRef.current = false;
+    appAttemptedRef.current = false; oralAttemptedRef.current = false;
+    setQuestionAnswers({}); setQuestionFeedbacks({});
     setCurrentQIdx(0); setQuestionsComplete(false); setQuestionsSkipped(false); setChallengeUsed(false);
     setQuestionQueue([]); setPracticeStatus(null); setFinishedAt(null); setPracticeMode("exercise");
     setPendingLevelUp(null); setPendingUnlocked([]);
@@ -3434,9 +3442,13 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     setAppFeedback({ status: "loading", content: "", rating: "unknown" });
 
     // Attempt streaming code review first
-    const aiContext = await resolveEvalAIContext(content);
+    const attemptNumber = appAttemptedRef.current ? 2 : 1;
+    const challengeText = content.application.challenge
+      ? `${content.application.setup}\n${content.application.challenge}`
+      : content.application.setup;
+    const aiContext = { ...(await resolveEvalAIContext(content)), attemptNumber };
     const res = await evaluateCodeSolutionStream(
-      content.application.setup, content.application.solution, appAnswer,
+      challengeText, content.application.solution, appAnswer,
       (_, accumulated) => {
         setAppFeedback(prev => ({ status: "streaming", content: accumulated, rating: "unknown", isMock: prev.isMock }));
       },
@@ -3470,10 +3482,12 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     };
 
     if (!res.success || !res.content.trim()) {
-      const fallback = await evaluateCodeSolution(content.application.setup, content.application.solution, appAnswer, aiContext, confidence ?? undefined);
+      const fallback = await evaluateCodeSolution(challengeText, content.application.solution, appAnswer, aiContext, confidence ?? undefined);
       const fb: FeedbackState = { status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock };
       setAppFeedback(fb);
+      if (fb.rating === "clarification") { setTimeout(() => scrollToBottom(), 120); return; }
       if (fb.status === "done") {
+        appAttemptedRef.current = true;
         markAttempted();
         const isGood = fallback.rating === "correct" || fallback.rating === "excellent";
         setPracticeStatus(prev => (prev === "correct" ? prev : isGood ? "correct" : "done"));
@@ -3484,6 +3498,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     }
 
     setAppFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
+    if (res.rating === "clarification") { setTimeout(() => scrollToBottom(), 120); return; }
+    appAttemptedRef.current = true;
     markAttempted();
     const isGood = res.rating === "correct" || res.rating === "excellent";
     setPracticeStatus(prev => (prev === "correct" ? prev : isGood ? "correct" : "done"));
@@ -3591,21 +3607,28 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
   const handleEvaluateOral = async () => {
     if (!content?.interviewQ || !oralAnswer.trim() || oralFeedback.status === "loading" || oralFeedback.status === "streaming") return;
     const q = content.interviewQ;
-    const aiContext = await resolveEvalAIContext(content);
+    const attemptNumber = oralAttemptedRef.current ? 2 : 1;
+    const aiContext = { ...(await resolveEvalAIContext(content)), attemptNumber };
     setOralEvaluated(oralAnswer);
     setOralFeedback({ status: "loading", content: "", rating: "unknown" });
-    const res = await evaluateActiveAnswerStream(
-      q.q, q.idealAnswer, oralAnswer, "aplicar",
+    const res = await evaluateFeynmanStream(
+      q.q, q.idealAnswer, oralAnswer,
       (_, acc) => setOralFeedback({ status: "streaming", content: acc, rating: "unknown" }),
       aiContext,
     );
     if (res.success && res.content.trim()) {
       setOralFeedback({ status: "done", content: res.content, rating: res.rating, isMock: res.isMock });
+      if (res.rating === "clarification") { setTimeout(() => scrollToBottom(), 120); return; }
+      oralAttemptedRef.current = true;
       markOralPracticed(res.rating);
       return;
     }
-    const fallback = await evaluateActiveAnswer(q.q, q.idealAnswer, oralAnswer, "aplicar", aiContext);
-    if (fallback.success) markOralPracticed(fallback.rating);
+    const fallback = await evaluateFeynman(q.q, q.idealAnswer, oralAnswer, aiContext);
+    if (fallback.success) {
+      if (fallback.rating === "clarification") { setTimeout(() => scrollToBottom(), 120); return; }
+      oralAttemptedRef.current = true;
+      markOralPracticed(fallback.rating);
+    }
     setOralFeedback({ status: fallback.success ? "done" : "error", content: fallback.success ? fallback.content : (fallback.error ?? "Error"), rating: fallback.rating, isMock: fallback.isMock });
   };
 
@@ -6170,6 +6193,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       const reviewed = appFeedback.status === "done";
                       const busy = appFeedback.status === "loading" || appFeedback.status === "streaming";
                       const good = reviewed && (appFeedback.rating === "correct" || appFeedback.rating === "excellent");
+                      const isClarification = reviewed && appFeedback.rating === "clarification";
                       const changed = reviewed && appAnswer !== (appEvaluated || appAnswer);
                       // Ver la solución cierra los intentos: lo que salga después no sería tuyo.
                       const closed = appSolutionSeen;
@@ -6178,7 +6202,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                         if (!el) return;
                         el.scrollIntoView({ block: "center", behavior: "smooth" });
                         el.focus();
-                        el.setSelectionRange(el.value.length, el.value.length);
+                        if (appFeedback.rating === "clarification") el.select();
+                        else el.setSelectionRange(el.value.length, el.value.length);
                       };
                       const openSolution = () => { setAppSolutionSeen(true); setShowAppSolution(true); };
                       return (<>
@@ -6197,7 +6222,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       {!closed && (
                         <HelpToggle open={showAppHint} onToggle={() => setShowAppHint(v => !v)} label="Ver pista" openLabel="Ocultar pista">
                           {(() => {
+                            const generated = content.application.hint?.trim();
+                            if (generated) return generated;
                             const first = content.application.solution.split(/\n|(?<=[.!?])\s/)[0].trim();
+                            const looksRawCode = content.application.isCode && (/[{}();=]/.test(first) || /`/.test(first) || first.length > 110);
+                            if (looksRawCode) return "Revisa los conceptos clave de la lección antes de escribir tu solución.";
                             return `Por dónde empezar: ${first.length > 110 ? first.slice(0, 110).trimEnd() + "…" : first}`;
                           })()}
                         </HelpToggle>
@@ -6212,6 +6241,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                           changed ? "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
                           : reviewed && good ? "border-emerald-500/40 ring-1 ring-emerald-500/20"
                           : reviewed && appFeedback.rating === "partial" ? "border-amber-500/40 ring-1 ring-amber-500/20"
+                          : reviewed && appFeedback.rating === "clarification" ? "border-violet-500/35 ring-1 ring-violet-500/18"
                           : reviewed ? "border-rose-500/40 ring-1 ring-rose-500/20"
                           : "border-[var(--usb-border)] focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
                         }`}/>
@@ -6228,8 +6258,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                         <NextMoves
                           moves={[
                             changed
-                              ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: handleEvalApp, disabled: !appAnswer.trim() }
-                              : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Edita tu respuesta con lo que faltó.", onClick: focusApp },
+                              ? { id: "retry", icon: Send, primary: true, label: isClarification ? "Revisar mi respuesta" : "Revisar de nuevo", onClick: handleEvalApp, disabled: !appAnswer.trim() }
+                              : { id: "improve", icon: Edit3, primary: true, label: isClarification ? "Responder ahora" : "Intentarlo de nuevo", hint: isClarification ? "Tu primer intento sigue intacto: resuelve el ejercicio con esta aclaración." : "Edita tu respuesta con lo que faltó.", onClick: focusApp },
                             { id: "solution", icon: BookOpen, label: "Ver la solución", hint: "Después ya no podrás revisar otro intento.", onClick: openSolution },
                           ]}
                           help={doubtsAvailable ? <DoubtButton open={isDoubtOpen(practiceDoubtCtx())} onClick={() => toggleDoubt(practiceDoubtCtx())} /> : undefined}
@@ -6257,6 +6287,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       const reviewed = oralFeedback.status === "done";
                       const busy = oralFeedback.status === "loading" || oralFeedback.status === "streaming";
                       const good = reviewed && (oralFeedback.rating === "correct" || oralFeedback.rating === "excellent");
+                      const isClarification = reviewed && oralFeedback.rating === "clarification";
                       const changed = reviewed && oralAnswer !== (oralEvaluated || oralAnswer);
                       const oralDoubtCtx = () => doubtCtx("practice", oralQ?.q ?? "", { studentAnswer: oralAnswer, feedback: oralFeedback.content });
                       const oralDoubtBtn = doubtsAvailable
@@ -6267,7 +6298,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                         if (!el) return;
                         el.scrollIntoView({ block: "center", behavior: "smooth" });
                         el.focus();
-                        el.setSelectionRange(el.value.length, el.value.length);
+                        if (oralFeedback.rating === "clarification") el.select();
+                        else el.setSelectionRange(el.value.length, el.value.length);
                       };
                       return (
                       <div className="px-4 space-y-3" data-practice-explain>
@@ -6298,8 +6330,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                           <NextMoves
                             moves={[
                               changed
-                                ? { id: "retry", icon: Send, primary: true, label: "Revisar de nuevo", onClick: handleEvaluateOral, disabled: !oralAnswer.trim() }
-                                : { id: "improve", icon: Edit3, primary: true, label: "Intentarlo de nuevo", hint: "Completa tu explicación con lo que faltó.", onClick: focusOral },
+                                ? { id: "retry", icon: Send, primary: true, label: isClarification ? "Revisar mi explicación" : "Revisar de nuevo", onClick: handleEvaluateOral, disabled: !oralAnswer.trim() }
+                                : { id: "improve", icon: Edit3, primary: true, label: isClarification ? "Responder ahora" : "Intentarlo de nuevo", hint: isClarification ? "Tu intento sigue intacto: explica la idea con esta aclaración." : "Completa tu explicación con lo que faltó.", onClick: focusOral },
                             ]}
                             help={oralDoubtBtn}
                           />

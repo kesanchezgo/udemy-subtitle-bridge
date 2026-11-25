@@ -277,7 +277,7 @@ test("buildStudyPrompt: anti-inventario y reconstrucción ASR", () => {
 
 test("v2.0.6: claridad léxica y andamiaje por intento", () => {
 	const p = prompts.buildStudyPrompt("palabra ".repeat(400), { courseName: "C", lessonName: "L" });
-	assert(p.includes("Claridad léxica en `questions` (PROHIBIDA la jerga sintética no enseñada)"));
+	assert(p.includes("Claridad léxica transversal en `keyConcepts`"));
 	const ctx = { courseName: "Python", lessonName: "Setup", lessonTranscript: "Activa .venv o usa uv run." };
 	const first = evalPrompts.buildEvalQuestionMessages("¿Diferencia?", "referencia", "respuesta intentada", "aplicar", { ...ctx, attemptNumber: 1 })
 		.map((m) => m.content).join("\n");
@@ -288,6 +288,24 @@ test("v2.0.6: claridad léxica y andamiaje por intento", () => {
 	assert(second.includes("INTENTO ACTUAL EN ESTA PREGUNTA: intento #2"));
 	assert(second.includes("INTENTO #2 o posterior") && second.includes("CIERRE EXPLICATIVO COMPLETO"));
 	assert(first.includes("RESPUESTA DEL ESTUDIANTE:\n") && second.includes("RESPUESTA DEL ESTUDIANTE:\n"));
+});
+
+test("v2.0.7: Recordar, Aplicar (Feynman y código) y Anki alineados", () => {
+	const p = prompts.buildStudyPrompt("palabra ".repeat(400), { courseName: "C", lessonName: "L" });
+	assert(p.includes("Claridad léxica transversal en `keyConcepts`, `questions`, `application`, `interviewQ` y `ankiCards.front`"));
+	assert(p.includes("interviewQ.idealAnswer") && p.includes("SIN escribir las conclusiones"));
+	assert(p.includes("`application.hint`: 1 frase breve"));
+	const ctx = { courseName: "Python", lessonName: "Setup", lessonTranscript: "uv run activa el entorno.", attemptNumber: 1 };
+	const f1 = evalPrompts.buildFeynmanMessages("Tema", "Guia", "Explicacion", ctx).map((m) => m.content).join("\n");
+	const f2 = evalPrompts.buildFeynmanMessages("Tema", "Guia", "Explicacion", { ...ctx, attemptNumber: 2 }).map((m) => m.content).join("\n");
+	assert(f1.includes("[ACLARACION]") && f1.includes("INTENTO #1") && f1.includes("SIN redactarle la explicación completa"));
+	assert(f2.includes("INTENTO #2 o posterior") && f2.includes("cierre explicativo completo"));
+	assert(f1.includes("EXPLICACION DEL ESTUDIANTE:\n") && f2.includes("EXPLICACION DEL ESTUDIANTE:\n"));
+	const c1 = evalPrompts.buildCodeReviewMessages("Reto", "solucion", "intento", ctx).map((m) => m.content).join("\n");
+	const c2 = evalPrompts.buildCodeReviewMessages("Reto", "solucion", "intento", { ...ctx, attemptNumber: 2 }).map((m) => m.content).join("\n");
+	assert(c1.includes("[ACLARACION]") && c1.includes("INTENTO #1") && c1.includes("SIN regalar la solución completa"));
+	assert(c2.includes("INTENTO #2 o posterior") && c2.includes("snippet breve correctivo"));
+	assert(c1.includes("RESPUESTA DEL ESTUDIANTE:\n") && c2.includes("RESPUESTA DEL ESTUDIANTE:\n"));
 });
 
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

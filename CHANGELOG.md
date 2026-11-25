@@ -1,3 +1,12 @@
+## [2.0.7] — 2026-11-25
+
+Alineación pedagógica de Recordar, Aplicar (clásico y «Explicarlo») y las tarjetas Anki: claridad léxica compartida, pistas sin spoiler y evaluadores con aclaración y andamiaje por intento. Versión 2.0.7 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.7`.
+
+- **Prompts**: `application.hint` en el esquema y reglas transversales de claridad léxica para `keyConcepts`, `questions`, `application`, `interviewQ` y `ankiCards.front`; `interviewQ.idealAnswer` pasa a ser guion de 2-3 puntos sin conclusiones.
+- **Evaluadores**: `buildFeynmanMessages` y `buildCodeReviewMessages` comparten `[ACLARACION]`, puente semántico/ASR y andamiaje: intento #1 sin spoiler, #2+ con cierre completo.
+- **Study**: `Explicarlo` usa ahora `evaluateFeynmanStream`/`evaluateFeynman`; `application.hint` se muestra en la pista con fallback enmascarado para sesiones antiguas; aclaraciones no marcan intentos ni practican y conservan el botón de respuesta.
+- **QA**: nuevo test unitario de alineación y verificación real en `tmp/qa-eval-apply-v207.mjs`.
+
 ## [2.0.6] — 2026-11-25
 
 Lenguaje natural sin jerga sintética, modo `[ACLARACION]` sin penalización y andamiaje progresivo entre intentos. Versión 2.0.6 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.6`.

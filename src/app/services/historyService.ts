@@ -150,7 +150,7 @@ export interface StoredStudyContent {
   keyConcepts: string[];
   quickWin?: string;
   questions: StoredStudyQuestion[];
-  application: { setup: string; challenge: string; solution: string; isCode: boolean; practice?: StructuredPractice };
+  application: { setup: string; challenge: string; solution: string; isCode: boolean; hint?: string; practice?: StructuredPractice };
   interviewQ: { q: string; idealAnswer: string } | null;
   nextAction: string;
   ankiCards: StoredAnkiCard[];

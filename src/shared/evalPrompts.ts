@@ -174,28 +174,56 @@ export function buildFeynmanMessages(
 	studentAnswer: string,
 	context?: StudyEvalContext,
 ): EvalAIMessage[] {
+	const attempt = Math.max(1, Math.round(context?.attemptNumber ?? 1));
 	return [
 		{
 			role: 'system',
 			content: [
 				'Eres el tutor experto de Kinema evaluando si quien estudia entendió el concepto al explicarlo con sus propias palabras (Técnica Feynman).',
-				'REGLA DE VOZ (OBLIGATORIA): Háblale SIEMPRE en segunda persona («tú»: «Explicaste con claridad…», «Te faltó conectar…»). PROHIBIDO usar tercera persona («El estudiante…», «Explicó…», «Confundió…»).',
-				'REGLA DE VERDAD: La «RESPUESTA MODELO» es orientativa; la «TRANSCRIPCIÓN DE LA LECCIÓN» (si está presente) y el funcionamiento real del dominio mandan. Reconoce detalles reales de la lección aunque los subtítulos automáticos hayan deformado nombres técnicos o aunque los describa por su función antes de recordar el término exacto.',
-				'RÚBRICA: [EXCELENTE] si explica la idea con claridad, sencillez y causa/efecto o trade-off; [CORRECTO] si transmite la idea central con sus propias palabras o ejemplos equivalentes sin exigir literalidad; [PARCIAL] si acierta parte pero deja un salto lógico importante; [INCORRECTO] si no responde o invierte el mecanismo.',
-				'Nunca penalices brevedad, tono oral/coloquial ni ortografía. No hagas preguntas, no des porcentajes y responde SIEMPRE en español.',
+				`INTENTO ACTUAL EN ESTA EXPLICACIÓN: intento #${attempt}.`,
+				'',
+				'REGLA DE VOZ (OBLIGATORIA):',
+				'- Háblale SIEMPRE en segunda persona («tú»: «Explicaste con claridad…», «Te faltó conectar…»).',
+				'- PROHIBIDO usar tercera persona («El estudiante…», «Explicó…», «Confundió…», «Mencionó…»).',
+				'',
+				'REGLA 0 — PETICIÓN DE ACLARACIÓN DEL ENUNCIADO ([ACLARACION]):',
+				'- Si quien estudia pregunta qué significa un término o parte de la consigna porque no la entendió (p. ej., «¿a qué te refieres con X?», «¿qué significa X?»), devuelve EXCLUSIVAMENTE:',
+				'  [ACLARACION]',
+				'  ACLARACION: [explica en 1-2 frases llanas qué significa ese término en la consigna]',
+				'  PISTA: [reformula en lenguaje cotidiano qué idea debe explicar con sus palabras, PROHIBIDO revelar la explicación resuelta]',
+				'',
+				'REGLA DE VERDAD Y PUENTE SEMÁNTICO:',
+				'- La «GUÍA DE ESTRUCTURA / REFERENCIA» es orientativa; la «TRANSCRIPCIÓN DE LA LECCIÓN» (si está presente) y el funcionamiento real del dominio mandan.',
+				'- Reconoce detalles reales de la lección aunque los subtítulos automáticos hayan deformado nombres técnicos o aunque describa la función de una pieza sin recordar aún su término exacto (valida su intuición y nómbrale el término preciso).',
+				'- Adapta siempre el dominio al tema real del curso; nunca penalices brevedad, tono oral/coloquial ni ortografía.',
+				'',
+				'RÚBRICA (cuando NO es [ACLARACION]):',
+				'- [EXCELENTE]: explica la idea con claridad, sencillez y causa/efecto o criterio práctico.',
+				'- [CORRECTO]: transmite la idea central con sus propias palabras o ejemplos equivalentes sin exigir literalidad.',
+				'- [PARCIAL]: acierta parte pero deja un salto lógico o pieza clave sin explicar.',
+				'- [INCORRECTO]: escribe solo «no sé» o invierte el mecanismo central.',
+				'',
+				'ANDAMIAJE PROGRESIVO EN `FALTO:`:',
+				attempt === 1
+					? '- INTENTO #1: si es [PARCIAL] o [INCORRECTO] y hubo un intento real (no solo «no sé»), en `FALTO:` indica qué eslabón lógico o contraste le falta conectar apuntando al ejemplo de la lección, SIN redactarle la explicación completa hecha para que pueda completarla al reintentar.'
+					: '- INTENTO #2 o posterior: si sigue en [PARCIAL] o [INCORRECTO], da ya el cierre explicativo completo y claro en `FALTO:` para consolidar el concepto.',
+				'- No hagas preguntas finales ni des porcentajes. Responde SIEMPRE en español.',
 			].join('\n'),
 		},
 		{
 			role: 'user',
 			content:
 				`${formatStudyEvalContext(context, `${topic}\n${modelAnswer}\n${studentAnswer}`)}\n\n` +
+				`INTENTO DEL ESTUDIANTE: #${attempt}\n\n` +
 				`Evalúa esta explicación con propias palabras sobre: "${topic}"\n\n` +
-				`RESPUESTA MODELO (referencia orientativa, no exigir sus mismas palabras):\n${modelAnswer}\n\n` +
+				`GUÍA DE ESTRUCTURA / REFERENCIA (orientativa, no exigir sus mismas palabras):\n${modelAnswer}\n\n` +
 				`EXPLICACION DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
-				'Responde hablándole SIEMPRE de «tú» con este formato EXACTO (sin texto extra antes o después):\n' +
+				'Responde hablándole SIEMPRE de «tú».\n' +
+				'Si pregunta qué significa un término de la consigna, usa SOLO [ACLARACION] + ACLARACION: + PISTA: (sin revelar la respuesta).\n' +
+				'En cualquier otro caso usa este formato EXACTO (sin texto extra antes o después):\n' +
 				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
 				'BIEN: [en 2.ª persona, qué explicaste bien en 1 frase concreta; si está todo mal o en blanco, escribe: (nada)]\n' +
-				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona: qué matiz o mecanismo te faltó aclarar en 1-3 frases claras. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
+				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona y respetando la regla del intento actual. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
 				'PARA RECORDAR: [heurística o imagen mental de 1 frase para fijar el concepto, sin repetir literalmente FALTO:]',
 		},
 	];
@@ -208,30 +236,57 @@ export function buildCodeReviewMessages(
 	context?: StudyEvalContext,
 	declaredLevel?: string,
 ): EvalAIMessage[] {
+	const attempt = Math.max(1, Math.round(context?.attemptNumber ?? 1));
 	return [
 		{
 			role: 'system',
 			content: [
 				'Eres un mentor senior revisando un ejercicio práctico directamente con quien estudia.',
-				'REGLA DE VOZ (OBLIGATORIA): Háblale SIEMPRE en segunda persona («tú»: «Resolviste bien…», «Necesitas ajustar…»). PROHIBIDO hablar en tercera persona («La solución del estudiante…», «Identificó…», «Olvidó…»).',
-				'Adapta la revisión al lenguaje, herramienta o dominio real del curso y respeta cualquier variante válida respaldada por la «TRANSCRIPCIÓN DE LA LECCIÓN» o por el estándar real del lenguaje, aunque difiera de la solución de referencia.',
-				'RÚBRICA: [EXCELENTE] si resuelve con criterio limpio o contempla casos borde; [CORRECTO] si funciona y resuelve lo pedido aunque use otra sintaxis, nombres o enfoque equivalente; [PARCIAL] si encamina bien la solución pero falla un paso o caso clave; [INCORRECTO] si no resuelve el problema planteado.',
-				'En MEJORAR: si es EXCELENTE o CORRECTO y la solución ya es sólida, escribe exactamente (nada) sin inventar pegas artificiales; si es PARCIAL o INCORRECTO, señala qué falla y por qué con una corrección breve. Responde SIEMPRE en español.',
+				`INTENTO ACTUAL EN ESTE EJERCICIO: intento #${attempt}.`,
+				'',
+				'REGLA DE VOZ (OBLIGATORIA):',
+				'- Háblale SIEMPRE en segunda persona («tú»: «Resolviste bien…», «Necesitas ajustar…»).',
+				'- PROHIBIDO hablar en tercera persona («La solución del estudiante…», «Identificó…», «Olvidó…», «Confundió…»).',
+				'',
+				'REGLA 0 — PETICIÓN DE ACLARACIÓN DEL ENUNCIADO ([ACLARACION]):',
+				'- Si quien estudia pregunta qué significa un término, requisito o parte del desafío antes de poder resolverlo, devuelve EXCLUSIVAMENTE:',
+				'  [ACLARACION]',
+				'  ACLARACION: [explica en 1-2 frases llanas qué pide o significa esa parte del desafío]',
+				'  PISTA: [indica por qué paso o comando empezar según la lección, PROHIBIDO entregar la solución resuelta]',
+				'',
+				'REGLA DE VERDAD Y DOMINIO:',
+				'- Adapta la revisión al lenguaje, herramienta o dominio real del curso (código o caso práctico no técnico) y acepta cualquier variante válida respaldada por la «TRANSCRIPCIÓN DE LA LECCIÓN» o por el estándar real del dominio, aunque difiera de la solución de referencia.',
+				'',
+				'RÚBRICA (cuando NO es [ACLARACION]):',
+				'- [EXCELENTE]: resuelve con criterio limpio o contempla casos borde.',
+				'- [CORRECTO]: funciona y cumple lo pedido aunque use otra sintaxis, nombres o enfoque equivalente.',
+				'- [PARCIAL]: encamina bien la solución pero falla un paso, comando o condición clave.',
+				'- [INCORRECTO]: no resuelve el problema planteado.',
+				'',
+				'ANDAMIAJE PROGRESIVO EN `MEJORAR:`:',
+				'- Si es [EXCELENTE] o [CORRECTO] y ya es limpia, escribe exactamente: (nada)',
+				attempt === 1
+					? '- INTENTO #1 con [PARCIAL] o [INCORRECTO]: señala con precisión QUÉ paso, flag o condición falla y POR QUÉ para que pueda corregirlo por su cuenta al pulsar «Intentarlo de nuevo», SIN regalar la solución completa lista para copiar (salvo que haya escrito únicamente «no sé»).'
+					: '- INTENTO #2 o posterior con [PARCIAL] o [INCORRECTO]: explica exactamente qué falla y muestra la corrección clara o snippet breve correctivo para cerrar el ejercicio.',
+				'- Responde SIEMPRE en español.',
 			].join('\n'),
 		},
 		{
 			role: 'user',
 			content:
 				`${formatStudyEvalContext(context, `${challengeTitle}\n${expectedSolution}\n${studentCode}`)}\n\n` +
+				`INTENTO DEL ESTUDIANTE: #${attempt}\n\n` +
 				`CLARIDAD DECLARADA: ${declaredLevel ?? '(desconocida)'}\n\n` +
 				`DESAFIO: ${challengeTitle}\n\n` +
 				`SOLUCION DE REFERENCIA (una vía válida, no la única):\n${expectedSolution}\n\n` +
 				`RESPUESTA DEL ESTUDIANTE:\n${studentCode}\n\n` +
-				'Revisa hablándole SIEMPRE de «tú» con este formato EXACTO:\n' +
+				'Revisa hablándole SIEMPRE de «tú».\n' +
+				'Si pregunta qué significa un término o requisito del desafío, usa SOLO [ACLARACION] + ACLARACION: + PISTA: (sin entregar la solución).\n' +
+				'En cualquier otro caso usa este formato EXACTO:\n' +
 				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
 				'DIAGNOSTICO: [1 frase directa en 2.ª persona sobre el resultado de tu solución]\n' +
 				'BIEN: [en 2.ª persona, qué resolviste bien en 1-2 puntos concretos; si no aplica, escribe: (nada)]\n' +
-				'MEJORAR: [si EXCELENTE o CORRECTO y ya es limpia: (nada). Si PARCIAL o INCORRECTO, en 2.ª persona: qué falla exactamente y cómo corregirlo]\n' +
+				'MEJORAR: [si EXCELENTE o CORRECTO y ya es limpia: (nada). Si PARCIAL o INCORRECTO, en 2.ª persona y respetando la regla del intento actual]\n' +
 				'SIGUIENTE NIVEL: [solo si es EXCELENTE o CORRECTO y la claridad declarada es clear o mastered: una idea breve para ir un paso más allá. En otro caso escribe: (nada)]',
 		},
 	];
