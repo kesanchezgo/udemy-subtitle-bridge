@@ -2269,6 +2269,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     return combined.length > 8000 ? `${combined.slice(0, 7999).trimEnd()}…` : combined;
   }, [courseName, courseDescription, courseAIContext, courseAIContextSlug, courseAIContextTitle]);
 
+  const lessonTranscriptRef = useRef<{ key: string; text: string }>({ key: "", text: "" });
+  const evalLessonKey = () => `${slugify(courseName)}::${slugify(lessonName)}`;
+  const rememberLessonTranscript = (text: string | undefined) => {
+    if (text?.trim()) lessonTranscriptRef.current = { key: evalLessonKey(), text };
+  };
   const getStudyAIContext = useCallback((currentContent?: StudyContent | null): StudyAIContext => ({
     courseName,
     courseDescription: effectiveCourseDescription,
@@ -2296,6 +2301,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
         const resolvedGeminiKeys = await resolveGeminiKeysForStudy(apiKeys);
         const transcript = await requestStudyTranscript(22000);
         if (!transcript.ok || !transcript.transcriptText?.trim()) { pre.status = "idle"; return; }
+        rememberLessonTranscript(transcript.transcriptText);
         const courseSlug = transcript.courseSlug || slugify(courseName);
         const lectureId = transcript.lectureKey || slugify(lessonName);
         const cacheKey = preGenCacheKey(courseSlug, lectureId, objective.text);
@@ -2490,6 +2496,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
       let generationError = "";
 
       if (transcript.ok && transcript.transcriptText?.trim()) {
+        rememberLessonTranscript(transcript.transcriptText);
         const detected = detectTranscriptLang(transcript.transcriptText);
         setVocabLangOk(detected === "en" ? true : detected === "es" ? false : null);
         if (resolvedGeminiKeys.length > 0) {
@@ -3209,7 +3216,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     setEvaluatedAnswers(p => ({ ...p, [idx]: userAns }));
     setQuestionFeedbacks(p => ({ ...p, [idx]: { status: "loading", content: "", rating: "unknown" } }));
     const q = queueQuestions[idx];
-    const aiContext = getStudyAIContext(content);
+    const aiContext = await resolveEvalAIContext(content);
 
     // Attempt streaming evaluation first
     const res = await evaluateActiveAnswerStream(
@@ -3419,7 +3426,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     setAppFeedback({ status: "loading", content: "", rating: "unknown" });
 
     // Attempt streaming code review first
-    const aiContext = getStudyAIContext(content);
+    const aiContext = await resolveEvalAIContext(content);
     const res = await evaluateCodeSolutionStream(
       content.application.setup, content.application.solution, appAnswer,
       (_, accumulated) => {
@@ -3576,7 +3583,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
   const handleEvaluateOral = async () => {
     if (!content?.interviewQ || !oralAnswer.trim() || oralFeedback.status === "loading" || oralFeedback.status === "streaming") return;
     const q = content.interviewQ;
-    const aiContext = getStudyAIContext(content);
+    const aiContext = await resolveEvalAIContext(content);
     setOralEvaluated(oralAnswer);
     setOralFeedback({ status: "loading", content: "", rating: "unknown" });
     const res = await evaluateActiveAnswerStream(
@@ -4393,6 +4400,19 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     const text = res.transcriptText ?? res.text ?? "";
     return res.ok && text.trim() ? { text, truncated: Boolean(res.transcriptTruncated ?? res.truncated) } : null;
   }, [doubtDemo]);
+
+  const resolveEvalAIContext = useCallback(async (currentContent?: StudyContent | null): Promise<StudyAIContext> => {
+    const key = evalLessonKey();
+    let text = lessonTranscriptRef.current.key === key ? lessonTranscriptRef.current.text : "";
+    if (!text) {
+      const transcript = await getDoubtTranscript().catch(() => null);
+      if (transcript?.text?.trim()) {
+        text = transcript.text;
+        lessonTranscriptRef.current = { key, text };
+      }
+    }
+    return { ...getStudyAIContext(currentContent), lessonTranscript: text || undefined };
+  }, [evalLessonKey, getDoubtTranscript, getStudyAIContext]);
 
   // Los hilos son la fuente de verdad: se guardan con la lección de la sesión
   // (solo para sobrevivir a una recarga a mitad de la sesión).

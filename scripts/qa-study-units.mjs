@@ -10,6 +10,7 @@ const plan = await load("app/services/checkPlan.ts");
 const cov = await load("app/services/cardCoverage.ts");
 const pf = await load("app/services/practiceFormats.ts");
 const prompts = await load("shared/prompts.ts");
+const evalPrompts = await load("shared/evalPrompts.ts");
 const obs = await load("app/services/obsidianExport.ts");
 
 let passed = 0;
@@ -225,6 +226,53 @@ test("Obsidian: «1 de 2 a la primera» cuando el historial aporta el total", ()
 		content: { relevance: { score: 80, reason: "r" }, keyConcepts: ["x"], questions: [], application: { isCode: false, setup: "s", challenge: "c", solution: "sol" }, interviewQ: null, nextAction: "n", ankiCards: [] },
 	}, obs.DEFAULT_OBSIDIAN_EXPORT_CONFIG);
 	assert(note.includes("Comprobación: 1 de 2 a la primera"), note.slice(0, 200));
+});
+
+test("evalPrompts: extracto de transcripción íntegro y ventanas relevantes", () => {
+	const short = "uv init crea .python-version y pyproject.toml.";
+	assert.equal(evalPrompts.selectEvalTranscriptExcerpt(short, short), short);
+	const long = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(220)
+		+ "\nAhora ejecuta uv init: observa .python-version y pyproject.toml en el proyecto.";
+	const excerpt = evalPrompts.selectEvalTranscriptExcerpt(long, "uv init .python-version pyproject.toml");
+	assert(excerpt.length <= evalPrompts.EVAL_TRANSCRIPT_MAX_CHARS);
+	assert(excerpt.includes("uv init"), "selecciona la ventana con uv init");
+	assert(/python-version|Python version/.test(excerpt), "selecciona la ventana del archivo de versión");
+});
+
+test("evalPrompts: voces, puente semántico, ASR y encabezados intactos", () => {
+	const context = {
+		courseName: "Python", lessonName: "Setup", objective: "Backend profesional",
+		lessonTranscript: "If you take a look at Python version here, it is set at 3.14.",
+	};
+	const q = evalPrompts.buildEvalQuestionMessages("¿Qué hace uv init?", ".python-version y pyproject.toml", "ARCHIVO DE VERSION Y DEPENDENCIAS", "aplicar", context);
+	const f = evalPrompts.buildFeynmanMessages("uv init", "crea archivos", "crea archivos de version", context);
+	const c = evalPrompts.buildCodeReviewMessages("Inicializa uv", "uv init", "uv init", context, "clear");
+	for (const [name, messages, header] of [
+		["pregunta", q, "RESPUESTA DEL ESTUDIANTE:\n"],
+		["Feynman", f, "EXPLICACION DEL ESTUDIANTE:\n"],
+		["código", c, "RESPUESTA DEL ESTUDIANTE:\n"],
+	]) {
+		const all = messages.map((m) => m.content).join("\n");
+		assert(all.includes("TRANSCRIPCIÓN DE LA LECCIÓN"), `${name}: transcripción anclada`);
+		assert(all.includes("segunda persona") && all.includes("«tú»"), `${name}: voz directa`);
+		assert(all.includes("tercera persona"), `${name}: prohíbe tercera persona`);
+		assert(all.includes(header), `${name}: encabezado intacto`);
+		assert(all.includes("[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]"), `${name}: veredicto`);
+	}
+	const allQ = q.map((m) => m.content).join("\n");
+	const allF = f.map((m) => m.content).join("\n");
+	const allC = c.map((m) => m.content).join("\n");
+	assert(allQ.includes("identificó") && allQ.includes("confundió"));
+	assert(allF.includes("Explicó") && allF.includes("Confundió"));
+	assert(allC.includes("Identificó") && allC.includes("Olvidó"));
+	assert(allQ.includes("Puente semántico") && allQ.includes("subtítulos automáticos"));
+	assert(allQ.includes("BIEN:") && allQ.includes("FALTO:") && allQ.includes("PARA RECORDAR:"));
+});
+
+test("buildStudyPrompt: anti-inventario y reconstrucción ASR", () => {
+	const p = prompts.buildStudyPrompt("palabra ".repeat(400), { courseName: "C", lessonName: "L" });
+	assert(p.includes("PROHIBIDO el inventario mecánico"));
+	assert(p.includes("Subtítulos automáticos (ASR)") && p.includes(".python-version"));
 });
 
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

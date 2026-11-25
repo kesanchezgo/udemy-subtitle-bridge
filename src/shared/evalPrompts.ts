@@ -1,0 +1,219 @@
+export interface EvalAIMessage {
+	role: 'system' | 'user' | 'assistant';
+	content: string;
+}
+
+export interface StudyEvalContext {
+	courseName?: string;
+	courseDescription?: string;
+	lessonName?: string;
+	objective?: string;
+	techContext?: string;
+	/** Transcripción de la lección para que el evaluador nunca corrija a ciegas contra un resumen incompleto. */
+	lessonTranscript?: string;
+}
+
+export const EVAL_TRANSCRIPT_MAX_CHARS = 8000;
+
+/**
+ * Selecciona hasta `maxChars` de la transcripción de la lección para anclar la
+ * evaluación formativa. Si cabe entera (lecciones de hasta ~10 min), viaja
+ * íntegra; si es más larga, prioriza las ventanas donde aparecen términos de la
+ * pregunta, la respuesta de referencia y la respuesta del estudiante.
+ */
+export function selectEvalTranscriptExcerpt(
+	transcript: string | undefined,
+	focusText: string,
+	maxChars = EVAL_TRANSCRIPT_MAX_CHARS,
+): string {
+	const clean = String(transcript ?? '').trim();
+	if (!clean) return '';
+	if (clean.length <= maxChars) return clean;
+
+	const tokens = [...new Set(
+		String(focusText ?? '')
+			.toLowerCase()
+			.normalize('NFKD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.split(/[^a-z0-9._-]+/)
+			.filter((t) => t.length >= 3),
+	)];
+
+	if (tokens.length === 0) return `${clean.slice(0, maxChars - 1).trimEnd()}…`;
+
+	const windowSize = 1400;
+	const step = 700;
+	const windows: { start: number; end: number; score: number }[] = [];
+	for (let start = 0; start < clean.length; start += step) {
+		const end = Math.min(clean.length, start + windowSize);
+		const sliceLower = clean.slice(start, end).toLowerCase();
+		let score = 0;
+		for (const tok of tokens) {
+			if (sliceLower.includes(tok)) score += tok.length >= 6 ? 2 : 1;
+		}
+		windows.push({ start, end, score });
+		if (end >= clean.length) break;
+	}
+
+	const picked = windows
+		.filter((w) => w.score > 0)
+		.sort((a, b) => b.score - a.score || a.start - b.start)
+		.slice(0, 6)
+		.sort((a, b) => a.start - b.start);
+
+	if (picked.length === 0) return `${clean.slice(0, maxChars - 1).trimEnd()}…`;
+
+	const merged: { start: number; end: number }[] = [];
+	for (const w of picked) {
+		const prev = merged[merged.length - 1];
+		if (prev && w.start <= prev.end + 120) prev.end = Math.max(prev.end, w.end);
+		else merged.push({ start: w.start, end: w.end });
+	}
+
+	const parts: string[] = [];
+	let budget = maxChars;
+	for (const seg of merged) {
+		if (budget <= 120) break;
+		const chunk = clean.slice(seg.start, Math.min(seg.end, seg.start + budget)).trim();
+		if (!chunk) continue;
+		parts.push(`${seg.start > 0 ? '…' : ''}${chunk}${seg.end < clean.length ? '…' : ''}`);
+		budget -= chunk.length + 6;
+	}
+	return parts.join('\n\n').slice(0, maxChars);
+}
+
+export function formatStudyEvalContext(ctx?: StudyEvalContext, focusText = ''): string {
+	if (!ctx) return 'Contexto del curso: no especificado.';
+	const excerpt = selectEvalTranscriptExcerpt(ctx.lessonTranscript, focusText);
+	return [
+		`Curso: ${ctx.courseName?.trim() || 'No especificado'}`,
+		`Lección: ${ctx.lessonName?.trim() || 'No especificada'}`,
+		`Objetivo de aprendizaje: ${ctx.objective?.trim() || 'No especificado'}`,
+		ctx.courseDescription?.trim() ? `Descripción del curso: ${ctx.courseDescription.trim().slice(0, 1000)}` : '',
+		ctx.techContext?.trim() ? `Ideas clave de la lección: ${ctx.techContext.trim().slice(0, 700)}` : '',
+		excerpt ? `\nTRANSCRIPCIÓN DE LA LECCIÓN (fuente de verdad sobre lo explicado y mostrado en clase):\n"""\n${excerpt}\n"""` : '',
+	].filter(Boolean).join('\n');
+}
+
+export function buildEvalQuestionMessages(
+	question: string,
+	expectedAnswer: string,
+	studentAnswer: string,
+	bloomLevel: string,
+	context?: StudyEvalContext,
+): EvalAIMessage[] {
+	return [
+		{
+			role: 'system',
+			content: [
+				'Eres el tutor experto de Kinema dando feedback formativo directo a quien estudia un curso online.',
+				`El objetivo cognitivo de esta pregunta es nivel "${bloomLevel}" según la Taxonomía de Bloom.`,
+				'',
+				'REGLA DE VOZ (OBLIGATORIA):',
+				'- Háblale SIEMPRE directamente en segunda persona del singular («tú»: «Acertaste en…», «Identificaste bien…», «Te faltó precisar…», «Ojo con…»).',
+				'- PROHIBIDO hablar en tercera persona sobre quien responde («El estudiante…», «Identificó…», «Confundió…», «Mencionó…», «Respondió…»).',
+				'',
+				'REGLA DE VERDAD Y JUSTICIA TÉCNICA (CRÍTICA):',
+				'- La «RESPUESTA DE REFERENCIA» es una guía mínima resumida, NUNCA una lista cerrada ni excluyente.',
+				'- Si viene incluida la «TRANSCRIPCIÓN DE LA LECCIÓN», ella y el funcionamiento real de la tecnología mandan sobre cualquier omisión de la respuesta de referencia.',
+				'- Ten en cuenta que los subtítulos automáticos en inglés suelen transcribir nombres de archivos, puntos o flags de forma fonética (p. ej., «Python version» por `.python-version`, «pie project toml» por `pyproject.toml`, «git ignore» por `.gitignore`). Si la respuesta alude a algo que SÍ salió en la transcripción o que es técnicamente cierto en la herramienta real, JAMÁS digas que «no existe» o «no corresponde»: reconócelo como acierto en BIEN:.',
+				'- Puente semántico («en la punta de la lengua»): si describe correctamente la función o propósito de una pieza sin recordar su nombre exacto (p. ej., dice «archivo de versión» por `.python-version` o «archivo de dependencias» cuando los requisitos van en `pyproject.toml`), NO lo trates como error total: valida su intuición funcional y conéctala con el nombre técnico exacto (`archivo` / `comando`) para anclar el recuerdo.',
+				'- Adapta siempre el dominio al tema real del curso; no asumas programación si la clase trata de otra disciplina.',
+				'',
+				'RÚBRICA DE VEREDICTO:',
+				'- [EXCELENTE]: capta la idea central con precisión y explica el mecanismo, el porqué o un matiz aplicado a su objetivo.',
+				'- [CORRECTO]: expresa la idea central aunque use sus propias palabras, sinónimos, espanglish técnico o redacción telegráfica/coloquial. Nunca penalices brevedad, mayúsculas, ortografía ni decir «no me acuerdo más» si ya cubrió lo esencial.',
+				'- [PARCIAL]: acierta una parte real o describe la función sin los nombres clave, dejando incompleta una pieza central de la pregunta.',
+				'- [INCORRECTO]: responde solo «no sé» o parte de una premisa contraria al mecanismo real.',
+				'',
+				'ESTRUCTURA PEDAGÓGICA:',
+				'- BIEN: reconoce en 1 frase concreta lo que sí acertó o intuyó bien (poniendo el nombre técnico exacto si lo describió por su función). Si dijo solo «no sé» o todo es erróneo, escribe exactamente: (nada)',
+				'- FALTO: si es EXCELENTE o CORRECTO, escribe exactamente: (nada). Si es PARCIAL o INCORRECTO, aclara en 1-3 frases directas qué pieza faltó o qué matiz conviene distinguir y POR QUÉ (sin copiar de memoria la referencia ni negar detalles reales de la lección).',
+				'- PARA RECORDAR: 1 frase corta con una regla mental o mapa de responsabilidades fácil de retener, sin repetir literalmente FALTO:.',
+				'- Sin preguntas al final, sin porcentajes, sin sermones. Responde SIEMPRE en español.',
+			].join('\n'),
+		},
+		{
+			role: 'user',
+			content:
+				`${formatStudyEvalContext(context, `${question}\n${expectedAnswer}\n${studentAnswer}`)}\n\n` +
+				`PREGUNTA (nivel ${bloomLevel}): ${question}\n\n` +
+				`RESPUESTA DE REFERENCIA (guía mínima interna, puede omitir detalles válidos de la transcripción):\n${expectedAnswer}\n\n` +
+				`RESPUESTA DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
+				'Evalúa hablándole SIEMPRE de «tú» (segunda persona, prohibido usar tercera persona como «identificó» o «confundió») con este formato EXACTO:\n' +
+				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
+				'BIEN: [en 2.ª persona, qué acertaste o intuiste bien en 1 frase concreta; si no hubo ningún acierto, escribe: (nada)]\n' +
+				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona: qué te faltó nombrar o distinguir y por qué en 1-3 frases claras. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
+				'PARA RECORDAR: [regla mental breve de 1 frase conectada con el tema real, sin repetir literalmente FALTO:]',
+		},
+	];
+}
+
+export function buildFeynmanMessages(
+	topic: string,
+	modelAnswer: string,
+	studentAnswer: string,
+	context?: StudyEvalContext,
+): EvalAIMessage[] {
+	return [
+		{
+			role: 'system',
+			content: [
+				'Eres el tutor experto de Kinema evaluando si quien estudia entendió el concepto al explicarlo con sus propias palabras (Técnica Feynman).',
+				'REGLA DE VOZ (OBLIGATORIA): Háblale SIEMPRE en segunda persona («tú»: «Explicaste con claridad…», «Te faltó conectar…»). PROHIBIDO usar tercera persona («El estudiante…», «Explicó…», «Confundió…»).',
+				'REGLA DE VERDAD: La «RESPUESTA MODELO» es orientativa; la «TRANSCRIPCIÓN DE LA LECCIÓN» (si está presente) y el funcionamiento real del dominio mandan. Reconoce detalles reales de la lección aunque los subtítulos automáticos hayan deformado nombres técnicos o aunque los describa por su función antes de recordar el término exacto.',
+				'RÚBRICA: [EXCELENTE] si explica la idea con claridad, sencillez y causa/efecto o trade-off; [CORRECTO] si transmite la idea central con sus propias palabras o ejemplos equivalentes sin exigir literalidad; [PARCIAL] si acierta parte pero deja un salto lógico importante; [INCORRECTO] si no responde o invierte el mecanismo.',
+				'Nunca penalices brevedad, tono oral/coloquial ni ortografía. No hagas preguntas, no des porcentajes y responde SIEMPRE en español.',
+			].join('\n'),
+		},
+		{
+			role: 'user',
+			content:
+				`${formatStudyEvalContext(context, `${topic}\n${modelAnswer}\n${studentAnswer}`)}\n\n` +
+				`Evalúa esta explicación con propias palabras sobre: "${topic}"\n\n` +
+				`RESPUESTA MODELO (referencia orientativa, no exigir sus mismas palabras):\n${modelAnswer}\n\n` +
+				`EXPLICACION DEL ESTUDIANTE:\n${studentAnswer}\n\n` +
+				'Responde hablándole SIEMPRE de «tú» con este formato EXACTO (sin texto extra antes o después):\n' +
+				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
+				'BIEN: [en 2.ª persona, qué explicaste bien en 1 frase concreta; si está todo mal o en blanco, escribe: (nada)]\n' +
+				'FALTO: [solo si PARCIAL o INCORRECTO, en 2.ª persona: qué matiz o mecanismo te faltó aclarar en 1-3 frases claras. Si es EXCELENTE o CORRECTO escribe: (nada)]\n' +
+				'PARA RECORDAR: [heurística o imagen mental de 1 frase para fijar el concepto, sin repetir literalmente FALTO:]',
+		},
+	];
+}
+
+export function buildCodeReviewMessages(
+	challengeTitle: string,
+	expectedSolution: string,
+	studentCode: string,
+	context?: StudyEvalContext,
+	declaredLevel?: string,
+): EvalAIMessage[] {
+	return [
+		{
+			role: 'system',
+			content: [
+				'Eres un mentor senior revisando un ejercicio práctico directamente con quien estudia.',
+				'REGLA DE VOZ (OBLIGATORIA): Háblale SIEMPRE en segunda persona («tú»: «Resolviste bien…», «Necesitas ajustar…»). PROHIBIDO hablar en tercera persona («La solución del estudiante…», «Identificó…», «Olvidó…»).',
+				'Adapta la revisión al lenguaje, herramienta o dominio real del curso y respeta cualquier variante válida respaldada por la «TRANSCRIPCIÓN DE LA LECCIÓN» o por el estándar real del lenguaje, aunque difiera de la solución de referencia.',
+				'RÚBRICA: [EXCELENTE] si resuelve con criterio limpio o contempla casos borde; [CORRECTO] si funciona y resuelve lo pedido aunque use otra sintaxis, nombres o enfoque equivalente; [PARCIAL] si encamina bien la solución pero falla un paso o caso clave; [INCORRECTO] si no resuelve el problema planteado.',
+				'En MEJORAR: si es EXCELENTE o CORRECTO y la solución ya es sólida, escribe exactamente (nada) sin inventar pegas artificiales; si es PARCIAL o INCORRECTO, señala qué falla y por qué con una corrección breve. Responde SIEMPRE en español.',
+			].join('\n'),
+		},
+		{
+			role: 'user',
+			content:
+				`${formatStudyEvalContext(context, `${challengeTitle}\n${expectedSolution}\n${studentCode}`)}\n\n` +
+				`CLARIDAD DECLARADA: ${declaredLevel ?? '(desconocida)'}\n\n` +
+				`DESAFIO: ${challengeTitle}\n\n` +
+				`SOLUCION DE REFERENCIA (una vía válida, no la única):\n${expectedSolution}\n\n` +
+				`RESPUESTA DEL ESTUDIANTE:\n${studentCode}\n\n` +
+				'Revisa hablándole SIEMPRE de «tú» con este formato EXACTO:\n' +
+				'[EXCELENTE|CORRECTO|PARCIAL|INCORRECTO]\n' +
+				'DIAGNOSTICO: [1 frase directa en 2.ª persona sobre el resultado de tu solución]\n' +
+				'BIEN: [en 2.ª persona, qué resolviste bien en 1-2 puntos concretos; si no aplica, escribe: (nada)]\n' +
+				'MEJORAR: [si EXCELENTE o CORRECTO y ya es limpia: (nada). Si PARCIAL o INCORRECTO, en 2.ª persona: qué falla exactamente y cómo corregirlo]\n' +
+				'SIGUIENTE NIVEL: [solo si es EXCELENTE o CORRECTO y la claridad declarada es clear o mastered: una idea breve para ir un paso más allá. En otro caso escribe: (nada)]',
+		},
+	];
+}

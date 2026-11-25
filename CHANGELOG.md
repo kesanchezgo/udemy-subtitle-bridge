@@ -1,3 +1,12 @@
+## [2.0.5] — 2026-11-25
+
+Anclaje de transcripción en las evaluaciones formativas, voz directa en 2.ª persona y pedagogía anti-inventario. Versión 2.0.5 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.5`.
+
+- **Evaluaciones**: nuevo módulo puro `src/shared/evalPrompts.ts` con `selectEvalTranscriptExcerpt` (8000 chars, ventanas priorizadas por términos relevantes) y los tres constructores exactos de mensajes. `localAI.ts` delega en ellos y reexporta `StudyAIContext = StudyEvalContext`; se conservan `RESPUESTA DEL ESTUDIANTE:` y `EXPLICACION DEL ESTUDIANTE:` para los mocks.
+- **Study**: cache de transcripción por lección y `resolveEvalAIContext` en Comprobar, Aplicar y Explicarlo; tras recargar se recupera con `getDoubtTranscript`, sin mezclar texto de otra lección.
+- **Prompts**: `buildStudyPrompt` prohíbe el inventario mecánico y exige reconstruir identificadores ASR (`.python-version`, `pyproject.toml`, `.gitignore`); `lessonDoubts` confirma con precisión técnica cuando el estudiante cuestiona un feedback y la transcripción le da la razón.
+- **QA**: nuevas unidades en `qa-study-units` para extracción de transcripción, voces, puentes semánticos, ASR y encabezados.
+
 ## [2.0.4] — 2026-11-24
 
 Correcciones P0 del almacén unificado y ajustes exactos de arneses offline detectados al auditar `554bf74`. Versión 2.0.4 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.4`.
