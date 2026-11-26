@@ -14,6 +14,7 @@
  * - Sin IA: fragmentos de la lección, marcados como «Local» y sin tarjeta.
  */
 import { streamLocalAI, type AIMessage } from "./localAI";
+import { cleanStrayCjk, hasCjkText } from '../../shared/textClean';
 
 export type LessonDoubtKind = "concepts" | "question" | "practice";
 
@@ -187,7 +188,7 @@ export interface ParsedDoubtAnswer {
 }
 
 export function parseDoubtAnswer(raw: string, transcript: string): ParsedDoubtAnswer {
-  let text = String(raw || "").replace(/\r/g, "").replace(/^```[a-z]*\n?|\n?```$/gi, "").trim();
+  let text = cleanStrayCjk(String(raw || "").replace(/\r/g, "").replace(/^```[a-z]*\n?|\n?```$/gi, "").trim(), hasCjkText(transcript));
   const outside = OUTSIDE_RE.test(text);
   if (outside) text = capitalizeFirst(text.replace(OUTSIDE_RE, ""));
   const prose: string[] = [];
@@ -215,7 +216,7 @@ export function parseDoubtAnswer(raw: string, transcript: string): ParsedDoubtAn
  * (se muestra como etiqueta).
  */
 export function visibleDoubtText(accumulated: string): { text: string; outside: boolean } {
-  let text = String(accumulated || "").replace(/\r/g, "");
+  let text = cleanStrayCjk(String(accumulated || "").replace(/\r/g, ""), hasCjkText(accumulated));
   const head = text.trimStart().toUpperCase();
   if (head && head.length < OUTSIDE_PREFIXES[0].length && OUTSIDE_PREFIXES.some((p) => p.startsWith(head))) {
     return { text: "", outside: false };
@@ -259,6 +260,7 @@ const SYSTEM_RULES = [
   "  · respuesta (BACK, 15 a 40 palabras, una línea tras «||»): 1.ª oración con la respuesta directa; 2.ª oración breve con el mecanismo, causa o criterio práctico (ilustra con casos técnicos reales como «p. ej., fijar Python 3.14 si el driver de Postgres aún no soporta 3.15», PROHIBIDO escribir «en la lección», «en el curso» o «el profesor usa»). Usa `código` para identificadores/comandos. Revisa con rigor la ortografía en español (p. ej., «omite», nunca «omitte») y evita centrar la tarjeta en un flag accesorio si la duda tocaba el flujo principal.",
   "",
   "Regla 6: No hagas preguntas al estudiante, no lo califiques y no inventes porcentajes ni minutos del vídeo. Usa texto plano con **negrita** y `código`, sin encabezados #. En la explicación, refiérete a «la lección» o «la demostración en terminal» en lugar de usar el nombre de pila de quien imparte la clase.",
+  "- Envuelve siempre entre comillas invertidas simples (`` `…` ``) cualquier comando, archivo, ruta, flag o código que menciones. Escribe en español puro (PROHIBIDO colar caracteres CJK o spanglish como «need» / «metadata»).",
 ].join("\n");
 
 function contextBlock(ctx: LessonDoubtContext): string[] {

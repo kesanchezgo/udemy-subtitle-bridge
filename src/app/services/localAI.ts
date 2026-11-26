@@ -2,6 +2,7 @@
 // Connects to the local AI server at 127.0.0.1:8010 (OpenAI-compatible API)
 // Used by Study Agent for real-time student response evaluation
 import { debugStore } from "./debugStore";
+import { cleanStrayCjk, hasCjkText } from "../../shared/textClean";
 import {
   buildEvalQuestionMessages,
   buildFeynmanMessages,
@@ -1056,6 +1057,8 @@ export async function streamLocalAI(
   }
 }
 
+const allowCjkFor = (ctx?: StudyAIContext) => hasCjkText(ctx?.lessonTranscript);
+
 // ─── Feynman evaluation ───────────────────────────────────────────────────────
 export async function evaluateFeynman(
   topic: string,
@@ -1070,7 +1073,8 @@ export async function evaluateFeynman(
 
   // 2000: los modelos reasoning (deepseek-v4.1...) gastan el presupuesto en
 // reasoning_content antes del veredicto; 260 se quedaba vacio a menudo.
-	return callLocalAI(messages, 2000, 0.3, "feynman");
+	const response = await callLocalAI(messages, 2000, 0.3, "feynman");;
+  return { ...response, content: cleanStrayCjk(response.content, hasCjkText(context?.lessonTranscript)) };
 }
 
 // ─── Feynman evaluation — STREAMING ───────────────────────────────────────────
@@ -1084,8 +1088,9 @@ export async function evaluateFeynmanStream(
   if (!studentAnswer.trim())
     return { success: false, content: "", rating: "unknown" };
   const messages = buildFeynmanMessages(topic, modelAnswer, studentAnswer, context) as AIMessage[];
-  const result = await streamLocalAI(messages, 2000, 0.3, onToken, undefined, "feynman");
-  return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
+  const result = await streamLocalAI(messages, 2000, 0.3, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjkFor(context)), cleanStrayCjk(acc, allowCjkFor(context))), undefined, "feynman");
+  const content = cleanStrayCjk(result.content, allowCjkFor(context));
+  return { success: result.success, content, rating: parseRating(content), isMock: result.isMock };
 }
 
 // ─── Active question evaluation — non-streaming ───────────────────────────────
@@ -1100,7 +1105,8 @@ export async function evaluateActiveAnswer(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu respuesta primero." };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  return callLocalAI(messages, 2000, 0.3, "eval-question");
+  const response = await callLocalAI(messages, 2000, 0.3, "eval-question");;
+  return { ...response, content: cleanStrayCjk(response.content, hasCjkText(context?.lessonTranscript)) };
 }
 
 // ─── Active question evaluation — STREAMING ──────────────────────────────────
@@ -1116,8 +1122,9 @@ export async function evaluateActiveAnswerStream(
     return { success: false, content: "", rating: "unknown" };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  const result   = await streamLocalAI(messages, 2000, 0.3, onToken, undefined, "eval-question");
-  return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
+  const result   = await streamLocalAI(messages, 2000, 0.3, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjkFor(context)), cleanStrayCjk(acc, allowCjkFor(context))), undefined, "eval-question");
+  const content = cleanStrayCjk(result.content, allowCjkFor(context));
+  return { success: result.success, content, rating: parseRating(content), isMock: result.isMock };
 }
 
 // ─── Code review — non-streaming ─────────────────────────────────────────────
@@ -1132,7 +1139,8 @@ export async function evaluateCodeSolution(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu solucion primero." };
 
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  return callLocalAI(messages, 2000, 0.2, "eval-code");
+  const response = await callLocalAI(messages, 2000, 0.2, "eval-code");;
+  return { ...response, content: cleanStrayCjk(response.content, hasCjkText(context?.lessonTranscript)) };
 }
 
 // ─── Code review — STREAMING ─────────────────────────────────────────────────
@@ -1148,8 +1156,9 @@ export async function evaluateCodeSolutionStream(
     return { success: false, content: "", rating: "unknown" };
 
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  const result   = await streamLocalAI(messages, 2000, 0.2, onToken, undefined, "eval-code");
-  return { success: result.success, content: result.content, rating: parseRating(result.content), isMock: result.isMock };
+  const result   = await streamLocalAI(messages, 2000, 0.2, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjkFor(context)), cleanStrayCjk(acc, allowCjkFor(context))), undefined, "eval-code");
+  const content = cleanStrayCjk(result.content, allowCjkFor(context));
+  return { success: result.success, content, rating: parseRating(content), isMock: result.isMock };
 }
 
 // ─── Subtitle translation — non-streaming ────────────────────────────────────

@@ -70,6 +70,7 @@ async function prototypeDoubtDemoFor() {
 import { knownVocabularyIn, vocabularyMatches } from "../services/vocabularySession";
 import { ExportModule, exportFieldCls, exportLabelCls } from "./study/ExportModule";
 import { historyService, slugify, type QuestionAttempt, type StoredAnkiCard, type StoredStudyContent } from "../services/historyService";
+import { cleanStrayCjk, hasCjkText } from "../../shared/textClean";
 import { objectivesService, type ObjectivesCacheEntry } from "../services/objectivesService";
 import { refineCustomObjective, type GeneratedObjective } from "../services/localAI";
 import { HistoryPanel } from "./HistoryPanel";
@@ -553,29 +554,30 @@ function ensureInterviewCard(content: StudyContent, objective: string): StudyCon
   return { ...content, ankiCards: [...content.ankiCards, card] };
 }
 
-function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: DeckGenContext): StudyContent {
+function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: DeckGenContext, allowCjk = false): StudyContent {
+  const clean = (s: string) => cleanStrayCjk(s, allowCjk);
   const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const relevance = (raw.relevance && typeof raw.relevance === "object" ? raw.relevance : {}) as Record<string, unknown>;
   const fallbackQuestions = fallback.questions;
   const questionDifficulties: ConfidenceLevel[] = ["confused", "partial", "clear", "mastered"];
   const keyConcepts = Array.isArray(raw.keyConcepts)
-    ? raw.keyConcepts.map((v) => asText(v)).filter(Boolean).slice(0, 7)
+    ? raw.keyConcepts.map((v) => clean(asText(v))).filter(Boolean).slice(0, 7)
     : fallback.keyConcepts;
   // C4/F2-2: summary y conceptTerms son opcionales y retrocompatibles.
-  const summary = typeof raw.summary === 'string' ? raw.summary.trim() : undefined;
+  const summary = typeof raw.summary === 'string' ? clean(raw.summary.trim()) : undefined;
   const conceptTerms = Array.isArray(raw.conceptTerms)
-    ? raw.conceptTerms.map((v) => asText(v)).filter(Boolean).slice(0, 5)
+    ? raw.conceptTerms.map((v) => clean(asText(v))).filter(Boolean).slice(0, 5)
     : undefined;
   const questions = Array.isArray(raw.questions)
     ? raw.questions.slice(0, 8).map((item, i) => {
         const q = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
         const fb = fallbackQuestions[i] ?? fallbackQuestions[0];
         return {
-          q: asText(q.q, fb.q),
+          q: clean(asText(q.q, fb.q)),
           bloom: asText(q.bloom ?? q.bloomLevel, fb.bloom),
           difficulty: normalizeDifficulty(q.difficulty, questionDifficulties[Math.min(i, questionDifficulties.length - 1)]),
-          hint: asText(q.hint, fb.hint),
-          answer: asText(q.answer, fb.answer),
+          hint: clean(asText(q.hint, fb.hint)),
+          answer: clean(asText(q.answer, fb.answer)),
           // Sin refs: la pregunta i evalúa la idea i; la de síntesis (la última), varias.
           conceptRefs: normalizeConceptRefs(q.conceptRefs ?? q.concepts, i < keyConcepts.length ? [i] : keyConcepts.map((_, k) => k).slice(0, 3), keyConcepts.length),
         };
@@ -607,8 +609,8 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: 
           // Gate F2-1: sin transcripción temporizada, cualquier t del modelo
           // es inventada — se descarta siempre.
           t: TIMED_TRANSCRIPT && typeof card.t === 'string' && /^\d{1,2}:\d{2}$/.test(card.t) ? card.t : undefined,
-          front: asText(card.front, fb.front),
-          back: asText(card.back, fb.back),
+          front: clean(asText(card.front, fb.front)),
+          back: clean(asText(card.back, fb.back)),
           tags,
           // Qué ideas refuerza la tarjeta: sin esto, ni el refuerzo de lo no
           // marcado/fallado ni la cobertura de Fijar veían las tarjetas de la IA.
@@ -651,21 +653,21 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: 
     questions: finalQuestions,
     application: {
       isCode: typeof app.isCode === "boolean" ? app.isCode : fallback.application.isCode,
-      setup: asText(app.setup, fallback.application.setup),
-      challenge: asText(app.challenge, fallback.application.challenge),
-      solution: asText(app.solution, fallback.application.solution),
-      ...(typeof app.hint === "string" && app.hint.trim() ? { hint: app.hint.trim() } : {}),
+      setup: clean(asText(app.setup, fallback.application.setup)),
+      challenge: clean(asText(app.challenge, fallback.application.challenge)),
+      solution: clean(asText(app.solution, fallback.application.solution)),
+      ...(typeof app.hint === "string" && app.hint.trim() ? { hint: clean(app.hint.trim()) } : {}),
       ...(practice ? { practice } : {}),
     },
     interviewQ: raw.interviewQ === null
       ? null
       : raw.interviewQ && typeof raw.interviewQ === "object"
         ? {
-            q: asText((raw.interviewQ as Record<string, unknown>).q, fallback.interviewQ?.q ?? ""),
-            idealAnswer: asText((raw.interviewQ as Record<string, unknown>).idealAnswer, fallback.interviewQ?.idealAnswer ?? ""),
+            q: clean(asText((raw.interviewQ as Record<string, unknown>).q, fallback.interviewQ?.q ?? "")),
+            idealAnswer: clean(asText((raw.interviewQ as Record<string, unknown>).idealAnswer, fallback.interviewQ?.idealAnswer ?? "")),
           }
         : fallback.interviewQ,
-    nextAction: asText(raw.nextAction, fallback.nextAction),
+    nextAction: clean(asText(raw.nextAction, fallback.nextAction)),
     // Cobertura: CADA idea con al menos una tarjeta real (cardCoverage). Las que
     // ya están en el mazo cuentan como cubiertas y su tarjeta queda fuera del
     // paquete por defecto (inDeck): Fijar lo dice y deja añadirla igualmente.
@@ -2268,6 +2270,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
 
   const lessonTranscriptRef = useRef<{ key: string; text: string }>({ key: "", text: "" });
   const evalLessonKey = () => `${slugify(courseName)}::${slugify(lessonName)}`;
+  const evalAllowCjk = () => hasCjkText(courseName) || hasCjkText(lessonName) || hasCjkText(lessonTranscriptRef.current.text);
   const rememberLessonTranscript = (text: string | undefined) => {
     if (text?.trim()) lessonTranscriptRef.current = { key: evalLessonKey(), text };
   };
@@ -2528,7 +2531,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
         }
         if (prePayload && validateStudyPayload(prePayload).length === 0) {
           // Los ids de la IA se validan contra la lista que ELLA vio (la del momento de pre-generar).
-          newContent = ensureInterviewCard(normalizeStudyContent(prePayload, fallbackContent, { ...deckCtx, sent: preDeckSent }), sessionObjective);
+          newContent = ensureInterviewCard(normalizeStudyContent(prePayload, fallbackContent, { ...deckCtx, sent: preDeckSent }, evalAllowCjk()), sessionObjective);
           await cacheService.del(preKey).catch(() => undefined);
           preGenRef.current = { status: "idle", lectureKey: "", objectiveText: "", objectiveId: null, promise: null, lastAttemptAt: 0 };
           console.info("[USG][study][client] mazo pre-generado consumido (sin espera)");
@@ -2562,7 +2565,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
             console.warn("[USG][study][client] invalid learning panel payload:", payloadIssues, aiResult.payload);
             generationError = `Gemini respondió, pero faltan campos requeridos en la sesión: ${payloadIssues.slice(0, 5).join(", ")}.`;
           } else {
-          newContent = ensureInterviewCard(normalizeStudyContent(aiResult.payload, fallbackContent, deckCtx), sessionObjective);
+          newContent = ensureInterviewCard(normalizeStudyContent(aiResult.payload, fallbackContent, deckCtx, evalAllowCjk()), sessionObjective);
           }
         } else if (aiResult?.error) {
           generationError = aiResult.error;
@@ -2605,7 +2608,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
         // título, Aplicar estructurado), para ver el flujo real sin proveedor de IA.
         const demo = await prototypeStudyFor(lessonName);
         if (demo && validateStudyPayload(demo).length === 0) {
-          newContent = ensureInterviewCard(normalizeStudyContent(demo, fallbackContent, deckCtx), sessionObjective);
+          newContent = ensureInterviewCard(normalizeStudyContent(demo, fallbackContent, deckCtx, evalAllowCjk()), sessionObjective);
           usedDemo = true;
         }
       }
@@ -2683,7 +2686,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
     // Solo una lección ya terminada no vuelve a celebrarse; una a medias sí, al terminarla.
     sessionCelebratedRef.current = rec.finishedAt != null || rec.status === "completed";
     const rebuilt = generateContent(obj, obj, rec.courseName, rec.lectureName);
-    const restored = rec.studyContent ? normalizeStudyContent(rec.studyContent, rebuilt) : rebuilt;
+    const restored = rec.studyContent ? normalizeStudyContent(rec.studyContent, rebuilt, undefined, evalAllowCjk()) : rebuilt;
     setContent(restored);
     setActiveSessionObjective(rec.objective || null);
 

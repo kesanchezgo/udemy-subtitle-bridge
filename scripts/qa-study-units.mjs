@@ -12,6 +12,7 @@ const pf = await load("app/services/practiceFormats.ts");
 const prompts = await load("shared/prompts.ts");
 const evalPrompts = await load("shared/evalPrompts.ts");
 const obs = await load("app/services/obsidianExport.ts");
+const textCleanModule = await load("shared/textClean.ts");
 
 let passed = 0;
 const test = (name, fn) => {
@@ -322,13 +323,13 @@ test("v2.0.8: foco 80/20, concisión, PARA RECORDAR sin spoiler, Scope Lock y c�
 		const first = build(...args, ctx).map((m) => m.content).join("\n");
 		const second = build(...args, { ...ctx, attemptNumber: 2 }).map((m) => m.content).join("\n");
 		assert(first.includes("escribe exactamente: (nada)") && first.includes("#1"));
-		assert(first.includes("TODAS las partes de la pregunta original"), "scope lock en aclaración");
+		assert(first.includes("manteniendo todas sus condiciones"), "scope lock en aclaración");
 		assert(second.includes("#2") && second.includes("INTENTO #2 o posterior"), "intento #2 con cierre");
 	}
 	const codeCtx = { ...ctx, attemptNumber: 1 };
 	const code = evalPrompts.buildCodeReviewMessages("Reto", "solucion", "intento", codeCtx)
 		.map((m) => m.content).join("\n");
-	assert(code.includes("sin recortar requisitos"));
+	assert(code.includes("MÁXIMO 28 palabras") && code.includes("manteniendo todos sus requisitos"));
 	assert.equal(cov.inlineCodeHtml('Usa `uv init` y <img onerror="x">'), "Usa <code>uv init</code> y &lt;img onerror=&quot;x&quot;&gt;");
 	const cards = cov.ensureConceptCards(["¿Qué hace `uv init`? — Crea el proyecto"], [
 		{ q: "¿Qué hace `uv init`?", answer: "Inicializa <b>uv</b>", conceptRefs: [0] },
@@ -336,6 +337,21 @@ test("v2.0.8: foco 80/20, concisión, PARA RECORDAR sin spoiler, Scope Lock y c�
 	assert.equal(cards.length, 1, "la idea sin cobertura propia se genera");
 	const generated = cov.ensureConceptCards(["¿Qué hace `uv init`? — Crea el proyecto"], [], [], (c) => c);
 	assert(generated[0].front.includes("<code>uv init</code>") && !generated[0].front.includes("`"));
+});
+
+test("v2.0.9: resaltado inline + auto-tokens, filtro anti-CJK, cero volver a mirar y pista concisa", () => {
+	const textClean = textCleanModule;
+	assert.equal(textClean.cleanStrayCjk("¿Qué的两 archivos genera uv init?"), "¿Qué archivos genera uv init?");
+	assert.equal(textClean.cleanStrayCjk("¿Qué的两 archivos?", true), "¿Qué的两 archivos?");
+	const p = prompts.buildStudyPrompt("palabra ".repeat(400), { courseName: "C", lessonName: "L" });
+	assert(p.includes("ENVUELVE SIEMPRE entre comillas invertidas simples"));
+	assert(p.includes("`javac`") && p.includes("`.class`"));
+	assert(p.includes("responsibilities") && p.includes("need") && p.includes("un reclutador ejecuta comandos"));
+	const ctx = { courseName: "Python", attemptNumber: 1 };
+	const q = evalPrompts.buildEvalQuestionMessages("¿Diferencia?", "ref", "parcial", "aplicar", ctx)
+		.map((m) => m.content).join("\n");
+	assert(q.includes("PROHIBIDO decirle «vuelve a mirar la lección/el vídeo»"));
+	assert(q.includes("MÁXIMO 28 palabras") && q.includes("burocrático tipo"));
 });
 
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

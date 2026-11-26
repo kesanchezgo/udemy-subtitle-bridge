@@ -8,6 +8,7 @@
  * componentes que Comprobar, para que Aplicar no parezca otra aplicación.
  */
 import React, { useMemo } from "react";
+import { renderStudyInline } from "./inlineFormat";
 import { Check, Plus, Send, Sparkles, X } from "../icons";
 import { useDockTheme } from "../../contexts/ThemeContext";
 import {
@@ -471,7 +472,7 @@ function HintBody({ practice, run, onPick }: { practice: Practice; run: Practice
 					const h = blankHint(b);
 					return (
 						<div key={i} className="space-y-1">
-							<p><span className="font-bold">Hueco {i + 1}:</span> {h.text ? `${h.text}. ` : ""}{h.prefix ? <>Empieza por <code className="font-mono">{h.prefix}…</code></> : null}</p>
+							<p><span className="font-bold">Hueco {i + 1}:</span> {h.text ? <>{renderStudyInline(`${h.text.replace(/\.+$/, "")}.`)} </> : ""}{h.prefix ? <>Empieza por <code className="font-mono">{h.prefix}…</code></> : null}</p>
 							{h.options && (
 								<div className="flex flex-wrap gap-1.5">
 									{h.options.map((o) => {

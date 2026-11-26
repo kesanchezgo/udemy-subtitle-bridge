@@ -27,7 +27,7 @@ const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 // síntomas son mensajes del panel que caen en 'port closed' y handlers que
 // parecen no existir. Con esta constante se verifica en un segundo qué código
 // corre de verdad: sw.evaluate(() => self.__KINEMA_SW_VERSION).
-const SW_VERSION = 'v2026-11-24-v2.0.8';
+const SW_VERSION = 'v2026-11-24-v2.0.9';
 (self as unknown as { __KINEMA_SW_VERSION?: string }).__KINEMA_SW_VERSION = SW_VERSION;
 if (import.meta.env.DEV) console.info('[USG] service worker iniciado, versión', SW_VERSION);
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -1638,9 +1638,9 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 		];
 		for (const step of ladder) {
 			const stepLabel = `escalón ${step.maxTokens} (${step.reasoningOff ? 'sin razonamiento' : 'con razonamiento'})`;
-			const callProvider = () => requestConfiguredProviderText(
-				buildStudyPrompt(cleaned, metadata),
-				0.35,
+				const callProvider = () => requestConfiguredProviderText(
+					buildStudyPrompt(cleaned, metadata),
+					0.30,
 				step.maxTokens,
 				{ reasoningOff: step.reasoningOff },
 			);
@@ -1719,7 +1719,7 @@ async function generateLearningPanelFromTranscript(transcriptText: string, metad
 			if (import.meta.env.DEV) console.log('[USG][study] prompt sent to Gemini:', prompt);
 
 			for (const maxTokens of [8192, 12000]) {
-				reply = await requestGeminiText(prompt, 0.35, maxTokens, 'study', (notice) => {
+				reply = await requestGeminiText(prompt, 0.30, maxTokens, 'study', (notice) => {
 					console.warn(`[USG][study] retry round ${notice.round}/${notice.totalRounds} after ${(notice.waitMs / 1000).toFixed(0)}s — ${notice.reason}`);
 					broadcastRetryNotice('study', notice);
 				}, apiKeys);

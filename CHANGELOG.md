@@ -1,3 +1,12 @@
+## [2.0.9] — 2026-11-25
+
+Resaltado visual nítido de términos técnicos, blindaje anti-CJK/spanglish y evaluación sin «vuelve a mirar el vídeo». Versión 2.0.9 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.9`.
+
+- **UI**: `renderStudyInline` usa tinte de marca (`--usb-accent-soft` / `--usb-accent-ring` / `--usb-accent-text`) y auto-resalta dotfiles, archivos técnicos y flags aunque el modelo no escriba backticks; corrige el doble punto en las pistas de `StructuredPractice`.
+- **Blindaje**: `src/shared/textClean.ts` limpia tokens CJK aislados cuando la lección no enseña ese idioma. Se aplica al contenido generado, a las evaluaciones (streaming incluido) y a las respuestas de dudas. Temperatura de generación bajada a **0.30** (proveedor y Gemini).
+- **Prompts**: backticks obligatorios en comandos/archivos, `EJEMPLO A` coherente, español puro sin CJK ni spanglish, escenarios sin «un reclutador ejecuta comandos», andamiaje por evocación (sin mirar) y pistas de aclaración concisas (máximo 28 palabras).
+- **QA**: `qa-study-units` 21/21 con el nuevo test de resaltado, anti-CJK y pista concisa.
+
 ## [2.0.8] — 2026-11-25
 
 Foco 80/20, concisión en Recordar, cero spoiler en el `PARA RECORDAR` del primer intento, fidelidad de alcance en `[ACLARACION]` y renderizado inline de `` `código` `` en UI y Anki. Versión 2.0.8 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.8`.

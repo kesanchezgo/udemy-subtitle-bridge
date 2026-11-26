@@ -122,7 +122,7 @@ export function buildEvalQuestionMessages(
 				'- Si ocurre eso (y NO es simplemente «no sé la respuesta» a una pregunta clara), devuelve EXCLUSIVAMENTE el veredicto `[ACLARACION]` con estas dos líneas y NADA MÁS:',
 				'  [ACLARACION]',
 				'  ACLARACION: [explica en 1-2 frases llanas y directas qué significa exactamente ese término o expresión dentro de la pregunta, validando en media frase cualquier intuición inicial si la dio]',
-				'  PISTA: [reformula en lenguaje cotidiano y completo TODAS las partes de la pregunta original que deberá responder (incluyendo cualquier condición o criterio pedido, como «sin romper X» o «qué cambia y qué se mantiene»), sin desviarte del foco original y PROHIBIDO revelar la solución]',
+				'  PISTA: [en 1 sola oración directa y natural de MÁXIMO 28 palabras (prohibido el tono burocrático tipo «Debes responder cómo X, cómo Y; además debes explicar…»), reformula la pregunta completa en palabras llanas manteniendo todas sus condiciones y PROHIBIDO revelar la solución]',
 				'',
 				'REGLA DE VERDAD Y JUSTICIA TÉCNICA (CRÍTICA):',
 				'- La «RESPUESTA DE REFERENCIA» es una guía mínima resumida, NUNCA una lista cerrada ni excluyente.',
@@ -139,7 +139,7 @@ export function buildEvalQuestionMessages(
 				'',
 				'ANDAMIAJE PROGRESIVO EN `FALTO:` (SEGÚN EL INTENTO):',
 				attempt === 1
-					? '- Estás en el INTENTO #1: si el veredicto es [PARCIAL] o [INCORRECTO] y quien estudia SÍ intentó responder (no escribió únicamente «no sé» / «ni idea»), en `FALTO:` aplica ANDAMIAJE SIN SPOILER: señala con precisión qué dimensión, contraste o caso le falta pensar y oriéntale hacia el momento o ejemplo de la lección para que pueda recuperarlo por sí mismo al pulsar «Intentarlo de nuevo», SIN dictarle la respuesta completa masticada. (Solo si escribió únicamente «no sé» sin intento alguno, dale la explicación directa).'
+					? '- Estás en el INTENTO #1: si el veredicto es [PARCIAL] o [INCORRECTO] y quien estudia SÍ intentó responder (no escribió únicamente «no sé» / «ni idea»), en `FALTO:` aplica ANDAMIAJE SIN SPOILER: señala qué dimensión, archivo o contraste le falta precisar e invítale a hacer memoria del momento de la demostración (PROHIBIDO decirle «vuelve a mirar la lección/el vídeo», porque está respondiendo sin mirar), SIN dictarle la respuesta completa masticada.'
 					: '- Estás en el INTENTO #2 o posterior: si sigue en [PARCIAL] o [INCORRECTO], entrega ya el CIERRE EXPLICATIVO COMPLETO en `FALTO:`, explicando con total claridad el mecanismo exacto y los términos precisos para que consolide la idea sin frustración.',
 				'',
 				'ESTRUCTURA PEDAGÓGICA (cuando NO es [ACLARACION]):',
@@ -148,6 +148,7 @@ export function buildEvalQuestionMessages(
 				attempt === 1
 					? '- PARA RECORDAR: si el veredicto es EXCELENTE o CORRECTO, escribe 1 frase corta con una regla mental fácil de retener; si en este INTENTO #1 es PARCIAL o INCORRECTO (salvo que haya dicho únicamente «no sé»), escribe exactamente: (nada) — para NO destripar aquí la respuesta que `FALTO:` dejó abierta para su reintento.'
 					: '- PARA RECORDAR: 1 frase corta con una regla mental fácil de retener conectada con el tema real, sin repetir literalmente FALTO:.',
+				'- Envuelve siempre entre comillas invertidas simples (`` `…` ``) cualquier comando, archivo, ruta, flag o código que menciones. Escribe en español puro (PROHIBIDO colar caracteres CJK o spanglish como «need» / «metadata»).',
 				'- Refiérete a «la demostración de la lección» en vez de usar el nombre propio del instructor. Sin preguntas abiertas innecesarias al final, sin porcentajes, sin sermones. Responde SIEMPRE en español.',
 			].join('\n'),
 		},
@@ -192,7 +193,7 @@ export function buildFeynmanMessages(
 				'- Si quien estudia pregunta qué significa un término o parte de la consigna porque no la entendió (p. ej., «¿a qué te refieres con X?», «¿qué significa X?»), devuelve EXCLUSIVAMENTE:',
 				'  [ACLARACION]',
 				'  ACLARACION: [explica en 1-2 frases llanas qué significa ese término en la consigna]',
-				'  PISTA: [reformula en lenguaje cotidiano y completo TODAS las partes de la pregunta original que deberá responder (incluyendo cualquier condición o criterio pedido, como «sin romper X» o «qué cambia y qué se mantiene»), sin desviarte del foco original y PROHIBIDO revelar la solución]',
+				'  PISTA: [en 1 sola oración directa y natural de MÁXIMO 28 palabras (prohibido el tono burocrático tipo «Debes responder cómo X, cómo Y; además debes explicar…»), reformula la pregunta completa en palabras llanas manteniendo todas sus condiciones y PROHIBIDO revelar la solución]',
 				'',
 				'REGLA DE VERDAD Y PUENTE SEMÁNTICO:',
 				'- La «GUÍA DE ESTRUCTURA / REFERENCIA» es orientativa; la «TRANSCRIPCIÓN DE LA LECCIÓN» (si está presente) y el funcionamiento real del dominio mandan.',
@@ -207,12 +208,13 @@ export function buildFeynmanMessages(
 				'',
 				'ANDAMIAJE PROGRESIVO EN `FALTO:`:',
 					attempt === 1
-						? '- INTENTO #1: si es [PARCIAL] o [INCORRECTO] y hubo un intento real (no solo «no sé»), en `FALTO:` indica qué eslabón lógico o contraste le falta conectar apuntando al ejemplo de la lección, SIN redactarle la explicación completa hecha para que pueda completarla al reintentar.'
+						? '- INTENTO #1: si es [PARCIAL] o [INCORRECTO] y hubo un intento real (no solo «no sé»), en `FALTO:` indica qué eslabón lógico o contraste le falta conectar invitándole a hacer memoria de la demostración (PROHIBIDO decirle «vuelve a mirar la lección/el vídeo», porque está respondiendo sin mirar), SIN redactarle la explicación completa hecha para que pueda completarla al reintentar.'
 						: '- INTENTO #2 o posterior: si sigue en [PARCIAL] o [INCORRECTO], da ya el cierre explicativo completo y claro en `FALTO:` para consolidar el concepto.',
 					attempt === 1
 						? '- PARA RECORDAR: si el veredicto es EXCELENTE o CORRECTO, escribe 1 frase corta con una regla mental fácil de retener; si en este INTENTO #1 es PARCIAL o INCORRECTO (salvo que haya dicho únicamente «no sé»), escribe exactamente: (nada) — para NO destripar aquí la respuesta que `FALTO:` dejó abierta para su reintento.'
 						: '- PARA RECORDAR: 1 frase corta con una regla mental fácil de retener conectada con el tema real, sin repetir literalmente FALTO:.',
-					'- Refiérete a «la demostración de la lección» en vez de usar el nombre propio del instructor. No hagas preguntas finales ni des porcentajes. Responde SIEMPRE en español.',
+					'- Envuelve siempre entre comillas invertidas simples (`` `…` ``) cualquier comando, archivo, ruta, flag o código que menciones. Escribe en español puro (PROHIBIDO colar caracteres CJK o spanglish como «need» / «metadata»).',
+				'- Refiérete a «la demostración de la lección» en vez de usar el nombre propio del instructor. No hagas preguntas finales ni des porcentajes. Responde SIEMPRE en español.',
 			].join('\n'),
 		},
 		{
@@ -257,7 +259,7 @@ export function buildCodeReviewMessages(
 				'- Si quien estudia pregunta qué significa un término, requisito o parte del desafío antes de poder resolverlo, devuelve EXCLUSIVAMENTE:',
 				'  [ACLARACION]',
 				'  ACLARACION: [explica en 1-2 frases llanas qué pide o significa esa parte del desafío]',
-				'  PISTA: [reformula en lenguaje cotidiano qué pide exactamente el desafío completo y por qué paso empezar, sin recortar requisitos y PROHIBIDO entregar la solución resuelta]',
+				'  PISTA: [en 1 sola oración directa y natural de MÁXIMO 28 palabras (prohibido el tono burocrático tipo «Debes responder cómo X, cómo Y; además debes explicar…»), reformula el desafío completo en palabras llanas manteniendo todos sus requisitos y PROHIBIDO revelar la solución]',
 				'',
 				'REGLA DE VERDAD Y DOMINIO:',
 				'- Adapta la revisión al lenguaje, herramienta o dominio real del curso (código o caso práctico no técnico) y acepta cualquier variante válida respaldada por la «TRANSCRIPCIÓN DE LA LECCIÓN» o por el estándar real del dominio, aunque difiera de la solución de referencia.',
@@ -273,6 +275,7 @@ export function buildCodeReviewMessages(
 				attempt === 1
 					? '- INTENTO #1 con [PARCIAL] o [INCORRECTO]: señala con precisión QUÉ paso, flag o condición falla y POR QUÉ para que pueda corregirlo por su cuenta al pulsar «Intentarlo de nuevo», SIN regalar la solución completa lista para copiar (salvo que haya escrito únicamente «no sé»).'
 					: '- INTENTO #2 o posterior con [PARCIAL] o [INCORRECTO]: explica exactamente qué falla y muestra la corrección clara o snippet breve correctivo para cerrar el ejercicio.',
+				'- Envuelve siempre entre comillas invertidas simples (`` `…` ``) cualquier comando, archivo, ruta, flag o código que menciones. Escribe en español puro (PROHIBIDO colar caracteres CJK o spanglish como «need» / «metadata»).',
 				'- Responde SIEMPRE en español.',
 			].join('\n'),
 		},
