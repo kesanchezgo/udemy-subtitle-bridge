@@ -8,6 +8,7 @@
  * está en repaso y activa; las demás dicen por qué no se tocan.
  */
 import React from "react";
+import { renderStudyInline } from "./inlineFormat";
 import { Check, CheckCircle2, ExternalLink, Layers, Loader2, Plus, Repeat2 } from "../icons";
 import type { CardReviewState } from "../../services/ankiConnectOps";
 import type { DeckSource } from "../../services/deckConcepts";
@@ -97,13 +98,13 @@ export function DeckDuplicates({
               <li key={row.idea} className="flex items-start gap-2.5" data-deck-dup={row.idea}>
                 <div className="flex-1 min-w-0">
                   <p className="text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">
-                    {row.title}
+                    {renderStudyInline(row.title)}
                     {row.weak && (
                       <span className="ml-1.5 inline-block align-middle whitespace-nowrap rounded px-1 text-[9.5px] font-semibold border border-amber-500/30 text-[var(--usb-warn-text)]" data-deck-dup-weak>Hoy no te salió</span>
                     )}
                   </p>
                   <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug line-clamp-2">
-                    {row.sameLesson ? "Tu tarjeta de una sesión anterior de esta lección" : `Tu tarjeta de «${row.lesson}»${row.course ? ` (curso «${row.course}»)` : ""}`}: {row.front}
+                    {row.sameLesson ? "Tu tarjeta de una sesión anterior de esta lección" : `Tu tarjeta de «${row.lesson}»${row.course ? ` (curso «${row.course}»)` : ""}`}: {renderStudyInline(row.front)}
                   </p>
                   {(stateText || row.alsoInLesson) && (
                     <p className={`text-[10.5px] leading-snug mt-0.5 ${row.rescheduled ? "text-[var(--usb-ok-text)]" : "text-[var(--usb-fg-mid)]"}`} data-deck-dup-state={row.rescheduled ? "rescheduled" : row.state ?? ""}>

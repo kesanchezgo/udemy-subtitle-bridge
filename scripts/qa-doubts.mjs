@@ -183,6 +183,8 @@ try {
       s.visibleDoubtText("La JVM ejecuta.\nCITA: «The JVM reads»"),
       s.visibleDoubtText("FUERA DE LA LECCIÓN: no se cubre"),
     ];
+    const cjkStream = s.visibleDoubtText("El comando的两 crea `.venv`.");
+    const cjkStreamAllowed = s.visibleDoubtText("El comando的两 crea `.venv`.", true);
     const html = s.doubtCardHtml({ front: "¿Qué hace `<T>` en **genéricos**?", back: "Usa <b>tipos</b> & \"más\"", quote: "a < b" });
     const card = (n, front) => ({ q: "q", answer: "a", quotes: ["x", "y", "z"], outside: false, card: { front, back: "Reverso" }, source: "ai", at: n, saved: { front, back: "Reverso" } });
     const restored = s.sanitizeStoredDoubts([
@@ -241,7 +243,7 @@ try {
     });
     return {
       parsed, outside, streaming, html, demoChecks, demoOutside, local, localMiss, upserted, prompt, note,
-      order, outsideCard, twoSentenceHtml, historyTag,
+      order, outsideCard, twoSentenceHtml, historyTag, cjkStream, cjkStreamAllowed,
       exportsList: Object.keys(s),
       restored: restored.map((t) => ({ id: t.id, saved: t.turns.filter((x) => x.saved).length, quotes: t.turns[0].quotes.length })),
       // Lección densa (6+ ideas): una 3.ª tarjeta de duda; al restaurar se respeta su tope.
@@ -262,6 +264,8 @@ try {
   assert(service.outside.outside && service.outside.quotes.length === 0 && service.outside.card === null, "fuera de la lección: sin citas ni tarjeta");
   assert.equal(service.outside.answer, "Esto no se cubre.", "fuera de la lección empieza en mayúscula");
   assert.deepEqual(service.streaming.map((v) => v.text), ["", "La JVM ejecuta.", "La JVM ejecuta.", "No se cubre"], "el streaming no enseña prefijos ni CITA/TARJETA a medias");
+  assert.deepEqual(service.cjkStream, { text: "El comando crea `.venv`.", outside: false }, "el streaming de dudas limpia CJK por defecto");
+  assert.equal(service.cjkStreamAllowed.text, "El comando的两 crea `.venv`.", "allowCjk explícito conserva el texto original");
   assert.equal(service.html.front, "¿Qué hace <code>&lt;T&gt;</code> en <b>genéricos</b>?");
   assert.equal(service.html.back, "<p><b>Usa &lt;b&gt;tipos&lt;/b&gt; &amp; &quot;más&quot;</b></p><blockquote>a &lt; b</blockquote>", "HTML escapado una sola vez");
   assert(service.order.transcript >= 0 && service.order.transcript < service.order.history
@@ -576,7 +580,13 @@ try {
     await concepts.getByRole("button", { name: "Cerrar duda" }).focus();
     await page.keyboard.press("Escape");
     await concepts.waitFor({ state: "detached" });
-    assert(await trigger.evaluate((el) => el === document.activeElement), "Escape cierra y devuelve el foco al ? de la idea");
+    // El retorno de foco corre en el cleanup del efecto (tras el desmontaje): se sondea.
+    let focusBack = false;
+    for (let attempt = 0; attempt < 60 && !focusBack; attempt++) {
+      focusBack = await trigger.evaluate((el) => el === document.activeElement);
+      if (!focusBack) await page.waitForTimeout(25);
+    }
+    assert(focusBack, "Escape cierra y devuelve el foco al ? de la idea");
     // Lo respondido llega al historial antes de comprobar (no es una pantalla decorativa).
     const marks = await page.evaluate(() => {
       const key = Object.keys(localStorage).find((k) => k.startsWith("usb_history_lecture::") && /whatisjava/.test(k));

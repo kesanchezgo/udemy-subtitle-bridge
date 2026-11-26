@@ -1057,7 +1057,8 @@ export async function streamLocalAI(
   }
 }
 
-const allowCjkFor = (ctx?: StudyAIContext) => hasCjkText(ctx?.lessonTranscript);
+const allowCjkFor = (ctx?: StudyAIContext) =>
+  hasCjkText(ctx?.courseName) || hasCjkText(ctx?.lessonName) || hasCjkText(ctx?.lessonTranscript);
 
 // ─── Feynman evaluation ───────────────────────────────────────────────────────
 export async function evaluateFeynman(
@@ -1073,8 +1074,8 @@ export async function evaluateFeynman(
 
   // 2000: los modelos reasoning (deepseek-v4.1...) gastan el presupuesto en
 // reasoning_content antes del veredicto; 260 se quedaba vacio a menudo.
-	const response = await callLocalAI(messages, 2000, 0.3, "feynman");;
-  return { ...response, content: cleanStrayCjk(response.content, hasCjkText(context?.lessonTranscript)) };
+	const response = await callLocalAI(messages, 2000, 0.3, "feynman");
+  return { ...response, content: cleanStrayCjk(response.content, allowCjkFor(context)) };
 }
 
 // ─── Feynman evaluation — STREAMING ───────────────────────────────────────────
@@ -1087,9 +1088,10 @@ export async function evaluateFeynmanStream(
 ): Promise<{ success: boolean; content: string; rating: AIRating; isMock?: boolean }> {
   if (!studentAnswer.trim())
     return { success: false, content: "", rating: "unknown" };
+  const allowCjk = allowCjkFor(context);
   const messages = buildFeynmanMessages(topic, modelAnswer, studentAnswer, context) as AIMessage[];
-  const result = await streamLocalAI(messages, 2000, 0.3, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjkFor(context)), cleanStrayCjk(acc, allowCjkFor(context))), undefined, "feynman");
-  const content = cleanStrayCjk(result.content, allowCjkFor(context));
+  const result = await streamLocalAI(messages, 2000, 0.3, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjk), cleanStrayCjk(acc, allowCjk)), undefined, "feynman");
+  const content = cleanStrayCjk(result.content, allowCjk);
   return { success: result.success, content, rating: parseRating(content), isMock: result.isMock };
 }
 
@@ -1105,8 +1107,8 @@ export async function evaluateActiveAnswer(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu respuesta primero." };
 
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  const response = await callLocalAI(messages, 2000, 0.3, "eval-question");;
-  return { ...response, content: cleanStrayCjk(response.content, hasCjkText(context?.lessonTranscript)) };
+  const response = await callLocalAI(messages, 2000, 0.3, "eval-question");
+  return { ...response, content: cleanStrayCjk(response.content, allowCjkFor(context)) };
 }
 
 // ─── Active question evaluation — STREAMING ──────────────────────────────────
@@ -1121,9 +1123,10 @@ export async function evaluateActiveAnswerStream(
   if (!studentAnswer.trim())
     return { success: false, content: "", rating: "unknown" };
 
+  const allowCjk = allowCjkFor(context);
   const messages = buildEvalQuestionMessages(question, expectedAnswer, studentAnswer, bloomLevel, context);
-  const result   = await streamLocalAI(messages, 2000, 0.3, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjkFor(context)), cleanStrayCjk(acc, allowCjkFor(context))), undefined, "eval-question");
-  const content = cleanStrayCjk(result.content, allowCjkFor(context));
+  const result   = await streamLocalAI(messages, 2000, 0.3, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjk), cleanStrayCjk(acc, allowCjk)), undefined, "eval-question");
+  const content = cleanStrayCjk(result.content, allowCjk);
   return { success: result.success, content, rating: parseRating(content), isMock: result.isMock };
 }
 
@@ -1139,8 +1142,8 @@ export async function evaluateCodeSolution(
     return { success: false, content: "", rating: "unknown", error: "Escribe tu solucion primero." };
 
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  const response = await callLocalAI(messages, 2000, 0.2, "eval-code");;
-  return { ...response, content: cleanStrayCjk(response.content, hasCjkText(context?.lessonTranscript)) };
+  const response = await callLocalAI(messages, 2000, 0.2, "eval-code");
+  return { ...response, content: cleanStrayCjk(response.content, allowCjkFor(context)) };
 }
 
 // ─── Code review — STREAMING ─────────────────────────────────────────────────
@@ -1155,9 +1158,10 @@ export async function evaluateCodeSolutionStream(
   if (!studentCode.trim())
     return { success: false, content: "", rating: "unknown" };
 
+  const allowCjk = allowCjkFor(context);
   const messages = buildCodeReviewMessages(challengeTitle, expectedSolution, studentCode, context, declaredLevel);
-  const result   = await streamLocalAI(messages, 2000, 0.2, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjkFor(context)), cleanStrayCjk(acc, allowCjkFor(context))), undefined, "eval-code");
-  const content = cleanStrayCjk(result.content, allowCjkFor(context));
+  const result   = await streamLocalAI(messages, 2000, 0.2, (tok, acc) => onToken(cleanStrayCjk(tok, allowCjk), cleanStrayCjk(acc, allowCjk)), undefined, "eval-code");
+  const content = cleanStrayCjk(result.content, allowCjk);
   return { success: result.success, content, rating: parseRating(content), isMock: result.isMock };
 }
 

@@ -215,8 +215,8 @@ export function parseDoubtAnswer(raw: string, transcript: string): ParsedDoubtAn
  * (se muestran ya verificadas al terminar) ni el prefijo FUERA DE LA LECCIÓN
  * (se muestra como etiqueta).
  */
-export function visibleDoubtText(accumulated: string): { text: string; outside: boolean } {
-  let text = cleanStrayCjk(String(accumulated || "").replace(/\r/g, ""), hasCjkText(accumulated));
+export function visibleDoubtText(accumulated: string, allowCjk = false): { text: string; outside: boolean } {
+  let text = cleanStrayCjk(String(accumulated || "").replace(/\r/g, ""), allowCjk);
   const head = text.trimStart().toUpperCase();
   if (head && head.length < OUTSIDE_PREFIXES[0].length && OUTSIDE_PREFIXES.some((p) => p.startsWith(head))) {
     return { text: "", outside: false };
@@ -408,9 +408,10 @@ export async function askLessonDoubt(params: {
     return { ok: false, error: "No se pudo leer la transcripción de esta lección. Abre el video con los subtítulos disponibles y vuelve a intentarlo." };
   }
   const history = params.thread?.turns ?? [];
+  const allowCjk = hasCjkText(transcript.text) || hasCjkText(params.ctx.course) || hasCjkText(params.ctx.lesson);
   const messages = buildDoubtMessages(params.ctx, transcript, history, question);
   const res = await streamLocalAI(messages, 2000, 0.2, (_token, accumulated) => {
-    params.onPartial?.(visibleDoubtText(accumulated));
+    params.onPartial?.(visibleDoubtText(accumulated, allowCjk));
   }, params.signal, "doubt");
   if (params.signal?.aborted) return { ok: false, error: "aborted", aborted: true };
   // Un mock nunca se presenta como respuesta de IA.
@@ -465,9 +466,11 @@ function escapeHtml(value: string): string {
 }
 
 function inlineHtml(value: string): string {
-  return escapeHtml(value)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  return escapeHtml(value).replace(
+    /`([^`]+)`|\*\*((?:`[^`]+`|[^*])+)\*\*/g,
+    (_m, code: string | undefined, bold: string | undefined) =>
+      code !== undefined ? `<code>${code}</code>` : `<b>${(bold ?? "").replace(/`([^`]+)`/g, "<code>$1</code>")}</b>`,
+  );
 }
 
 /**

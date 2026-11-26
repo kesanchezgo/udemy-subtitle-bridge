@@ -57,8 +57,13 @@ export function LessonDoubtPanel({
 
   // Foco: al abrir, al campo; al cerrar, de vuelta a quien abrió el panel —
   // salvo que el foco ya esté en otro sitio (p. ej. se abrió otra duda).
+  // El destino se captura UNA vez: en StrictMode el efecto se repite y, sin la
+  // guarda, la segunda pasada guardaría el propio textarea (ya desmontado).
   useEffect(() => {
-    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const current = returnFocusRef.current;
+    if (!current || !current.isConnected) {
+      returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
     const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     rootRef.current?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
     inputRef.current?.focus({ preventScroll: true });

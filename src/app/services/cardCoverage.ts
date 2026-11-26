@@ -57,11 +57,13 @@ export function isStudyCard(id: string | undefined): boolean {
 const escapeHtml = (s: string) => s
 	.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-/** Escapa HTML y convierte `` `código` `` / `**negrita**` en etiquetas limpias para Anki. */
+/** Escapa HTML y convierte `` `código` `` / `**negrita**` en etiquetas limpias para Anki (respetando código dentro de negrita y `**` dentro de código). */
 export function inlineCodeHtml(s: string): string {
-	return escapeHtml(String(s ?? ""))
-		.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-		.replace(/`([^`]+)`/g, "<code>$1</code>");
+	return escapeHtml(String(s ?? "")).replace(
+		/`([^`]+)`|\*\*((?:`[^`]+`|[^*])+)\*\*/g,
+		(_m, code: string | undefined, bold: string | undefined) =>
+			code !== undefined ? `<code>${code}</code>` : `<b>${(bold ?? "").replace(/`([^`]+)`/g, "<code>$1</code>")}</b>`,
+	);
 }
 
 /** Clave de frente: sin HTML, sin acentos, solo letras y números. */

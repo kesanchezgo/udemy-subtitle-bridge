@@ -1,3 +1,12 @@
+## [2.0.10] — 2026-11-26
+
+Filtro CJK sin estado en las dudas en vivo y resaltado inline completo cuando `` `código` `` va anidado dentro de `**negrita**`. Versión 2.0.10 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.10`.
+
+- **Blindaje**: `src/shared/textClean.ts` separa la prueba (`CJK_TEST_RE`, sin flags) del barrido (`CJK_SPAN_RE`, con `/g`), así `hasCjkText` ya no alterna verdadero/falso entre llamadas por culpa de `lastIndex`; `cleanStrayCjk` deja de recortar el texto entero y de colapsar `[ \t]{2,}`, preservando los espacios del streaming y la indentación del código.
+- **Dudas**: `visibleDoubtText` acepta `allowCjk` y `askLessonDoubt` solo lo activa si la transcripción, el curso o la lección contienen CJK de verdad, de modo que el streaming se limpia en lecciones en español; `normalizeStudyContent` limpia también `relevance.reason` y la práctica estructurada (enunciados, pasos, opciones, líneas, huecos y pistas). El panel de duda captura una sola vez el elemento al que devolver el foco (seguro bajo `StrictMode`): al cerrar con Escape, el foco vuelve al «?» de la idea.
+- **UI**: `renderStudyInline`, `inlineCodeHtml` e `inlineHtml` reconocen `` `código` `` dentro de `**negrita**` y respetan `` `2 ** 3 ** 2` `` / `` `f(**kwargs)` `` como código; los chips se aplican en Aplicar (`StructuredPractice`), en los duplicados del mazo (`DeckDuplicates`) y en las tarjetas de duda de Fijar.
+- **QA**: `qa-study-units` 22/22 con el test de `hasCjkText` sin estado, indentación intacta y anidado código+negrita; `qa-doubts` comprueba la limpieza CJK del streaming y su conservación con `allowCjk` explícito.
+
 ## [2.0.9] — 2026-11-25
 
 Resaltado visual nítido de términos técnicos, blindaje anti-CJK/spanglish y evaluación sin «vuelve a mirar el vídeo». Versión 2.0.9 en `manifest.json`, `package.json`, `package-lock.json` y el pie del dock; `SW_VERSION` = `v2026-11-24-v2.0.9`.

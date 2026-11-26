@@ -78,12 +78,12 @@ import { usePersistedState } from "../hooks/usePersistedState";
 import { useDockTheme } from "../contexts/ThemeContext";
 import { contentBridge, type BridgeMessage } from "../services/contentBridge";
 import { checkPlanState, conceptCoverage, orderPresented, pickNextCheckQuestion } from "../services/checkPlan";
-import { ensureConceptCards, ideasWithoutCard, isStudyCard, mergeDuplicateCards } from "../services/cardCoverage";
+import { ensureConceptCards, ideasWithoutCard, inlineCodeHtml, isStudyCard, mergeDuplicateCards } from "../services/cardCoverage";
 import { spotBudgetFor, splitIdea, trustsSelfReport } from "../services/recallCue";
 import { gradePractice, parsePractice, practiceBonus, practiceFormatMeta, practiceSolutionText, summarizePracticeAnswer, type StructuredPractice as StructuredPracticeSpec, type PracticeSpec } from "../services/practiceFormats";
 import { StructuredPractice, answerFits, initialRun, type PracticeRun } from "./study/StructuredPractice";
 import { RecallIdeas } from "./study/RecallIdeas";
-import { renderStudyInline } from "./study/inlineFormat";
+import { renderStudyInline, stripInlineMarkdown } from "./study/inlineFormat";
 import type { RecallMark } from "../services/historyService";
 import { chromeLocalStorage, chromeStorage } from "../services/chromeStorage";
 import { kinemaSlug, kinemaTags } from "../services/ankiDesign";
@@ -545,13 +545,28 @@ function ensureInterviewCard(content: StudyContent, objective: string): StudyCon
   const card: AnkiCard = {
     id: `card-${String(content.ankiCards.length + 1).padStart(3, '0')}`,
     type: 'entrevista',
-    front: q,
-    back: `<div class="interview-box"><div class="label">Entrevista</div><p>${escapeHtml(ideal)}</p></div>`,
+    front: inlineCodeHtml(q),
+    back: `<div class="interview-box"><div class="label">Entrevista</div><p>${inlineCodeHtml(ideal)}</p></div>`,
     tags: [],
     conceptRefs: [],
     isHtml: true,
   };
   return { ...content, ankiCards: [...content.ankiCards, card] };
+}
+
+function cleanStructuredPractice(p: StructuredPracticeSpec, clean: (s: string) => string): StructuredPracticeSpec {
+  const explanation = clean(p.explanation);
+  switch (p.format) {
+    case "completar":
+      return { ...p, explanation, body: clean(p.body), blanks: p.blanks.map((b) => ({ ...b, ...(b.hint ? { hint: clean(b.hint) } : {}) })) };
+    case "ordenar":
+      return { ...p, explanation, steps: p.steps.map(clean) };
+    case "predecir":
+    case "decidir":
+      return { ...p, explanation, body: clean(p.body), options: p.options.map(clean) };
+    case "error":
+      return { ...p, explanation, lines: p.lines.map(clean), fixedLine: clean(p.fixedLine) };
+  }
 }
 
 function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: DeckGenContext, allowCjk = false): StudyContent {
@@ -566,7 +581,7 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: 
   // C4/F2-2: summary y conceptTerms son opcionales y retrocompatibles.
   const summary = typeof raw.summary === 'string' ? clean(raw.summary.trim()) : undefined;
   const conceptTerms = Array.isArray(raw.conceptTerms)
-    ? raw.conceptTerms.map((v) => clean(asText(v))).filter(Boolean).slice(0, 5)
+    ? raw.conceptTerms.map((v) => clean(asText(v)).replace(/^`+|`+$/g, "")).filter(Boolean).slice(0, 5)
     : undefined;
   const questions = Array.isArray(raw.questions)
     ? raw.questions.slice(0, 8).map((item, i) => {
@@ -638,13 +653,14 @@ function normalizeStudyContent(payload: unknown, fallback: StudyContent, deck?: 
     : sanitizeDeckMatches(raw.deckMatches, keyConcepts.length);
   // flowVersion 3: práctica estructurada (plana en application o en application.practice).
   // Inválida o ausente → undefined y Aplicar usa el ejercicio clásico.
-  const practice = parsePractice(app as PracticeSpec) ?? parsePractice((isRecord(app.practice) ? app.practice : null) as PracticeSpec | null) ?? undefined;
+  const rawPractice = parsePractice(app as PracticeSpec) ?? parsePractice((isRecord(app.practice) ? app.practice : null) as PracticeSpec | null) ?? undefined;
+  const practice = rawPractice ? cleanStructuredPractice(rawPractice, clean) : undefined;
 
   return {
     relevance: {
       // -1 = sin estimación (plantilla): se conserva para no mostrar una cifra inventada.
       score: relevance.score == null ? fallback.relevance.score : clampScore(relevance.score),
-      reason: asText(relevance.reason, fallback.relevance.reason),
+      reason: clean(asText(relevance.reason, fallback.relevance.reason)),
     },
     summary,
     conceptTerms,
@@ -4681,7 +4697,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
       const result = await ankiReviewToday(ids);
       const changed = new Set(result.changed);
       const done = targets.filter(m => changed.has(deckNoteIdOf(m) ?? -1));
-      const titleOf = (m: DeckMatch) => `«${splitIdea(content.keyConcepts[m.idea] ?? "").title}»`;
+      const titleOf = (m: DeckMatch) => `«${stripInlineMarkdown(splitIdea(content.keyConcepts[m.idea] ?? "").title)}»`;
       if (done.length > 0) {
         const now = Date.now();
         const doneIdeas = new Set(done.map(m => m.idea));
@@ -6172,7 +6188,7 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                       )}
                       {closed && (run.solutionSeen || showAppSolution) && (
                         <ReferenceAnswer label="Solución">
-                          {[!good && structuredPractice.explanation ? structuredPractice.explanation : "", content.application.solution].filter(Boolean).join("\n\n")}
+                          {renderStudyInline([!good && structuredPractice.explanation ? structuredPractice.explanation : "", content.application.solution].filter(Boolean).join("\n\n"))}
                         </ReferenceAnswer>
                       )}
                       {run.attempts > 0 && renderDoubtPanel(practiceDoubtCtx())}
@@ -6267,7 +6283,11 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                         <p className="text-[10.5px] leading-relaxed text-[var(--usb-fg-mid)]">Viste la solución, así que este intento queda cerrado.{content.ankiCards.some(c => !c.excluded && isPracticeCard(c)) ? " Sus tarjetas de aplicación irán primero en Anki, como refuerzo." : ""}</p>
                       )}
                       {showAppSolution && reviewed && (
-                        <ReferenceAnswer label="Solución" mono={content.application.isCode}>{content.application.solution}</ReferenceAnswer>
+                        <ReferenceAnswer label="Solución" mono={content.application.isCode && !content.application.solution.includes("`")}>
+                          {content.application.isCode && !content.application.solution.includes("`")
+                            ? content.application.solution
+                            : renderStudyInline(content.application.solution)}
+                        </ReferenceAnswer>
                       )}
                       {reviewed && renderDoubtPanel(practiceDoubtCtx())}
                     </div>
@@ -6614,8 +6634,8 @@ export function StudyAgentTab({ session, apiKeys = [], vocabularyMount, ankiMoun
                           {unsavedDoubtProposals.slice(-3).map(({ thread, turn }) => (
                             <div key={`${thread.id}-${turn.at}`} className="flex items-start gap-2.5">
                               <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{turn.card?.front}</p>
-                                <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug line-clamp-2">{turn.card?.back}</p>
+                                <p className="text-[11px] font-semibold text-[var(--usb-fg-hi)] leading-snug">{renderStudyInline(turn.card?.front ?? "")}</p>
+                                <p className="text-[10.5px] text-[var(--usb-fg-mid)] leading-snug line-clamp-2">{renderStudyInline(turn.card?.back ?? "")}</p>
                               </div>
                               <button
                                 type="button"

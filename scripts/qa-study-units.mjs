@@ -354,4 +354,15 @@ test("v2.0.9: resaltado inline + auto-tokens, filtro anti-CJK, cero volver a mir
 	assert(q.includes("MÁXIMO 28 palabras") && q.includes("burocrático tipo"));
 });
 
+test("v2.0.10: hasCjkText sin estado /g, preservación de indentación/espacios y código+negrita anidados", () => {
+	const tc = textCleanModule;
+	assert.equal(tc.hasCjkText("Curso de 中文"), true);
+	assert.equal(tc.hasCjkText("日本語"), true);
+	assert.equal(tc.hasCjkText("日本語"), true);
+	assert.equal(tc.cleanStrayCjk("¿Qué 的两 archivos?"), "¿Qué archivos?");
+	assert.equal(tc.cleanStrayCjk("    return x # 的\n    return y"), "    return x #\n    return y");
+	assert.equal(cov.inlineCodeHtml("**Usa `uv init` en `pyproject.toml`**"), "<b>Usa <code>uv init</code> en <code>pyproject.toml</code></b>");
+	assert.equal(cov.inlineCodeHtml("Calcula `2 ** 3 ** 2`"), "Calcula <code>2 ** 3 ** 2</code>");
+});
+
 console.log(`QA unidades de Study: ${passed}/${passed} OK`);

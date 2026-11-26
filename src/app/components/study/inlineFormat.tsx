@@ -3,7 +3,7 @@ import React from "react";
 const CODE_CHIP_CLS =
 	"px-1.5 py-[1px] mx-[0.5px] rounded-[5px] border border-[color:var(--usb-accent-ring)] bg-[var(--usb-accent-soft)] text-[var(--usb-accent-text)] text-[0.91em] font-mono font-semibold tracking-tight";
 
-// Archivos ocultos (.venv, .python-version, .gitignore), archivos con extensión técnica (pyproject.toml, main.py, App.class) y flags CLI (--python, -m).
+// Archivos ocultos (.venv, .python-version, .gitignore), archivos con extensión técnica (pyproject.toml, main.py, App.class) y flags CLI (--python).
 const AUTO_TECH_TOKEN_RE =
 	/(^|[\s(«"“¿¡])((?:\.[a-zA-Z][a-zA-Z0-9._-]{1,30})|(?:[a-zA-Z0-9_-]+\.(?:py|toml|json|ya?ml|lock|md|txt|js|jsx|ts|tsx|java|class|jar|go|rs|rb|php|cs|cpp|c|h|sql|sh|env|cfg|ini)\b)|(?:--[a-zA-Z0-9][a-zA-Z0-9-]*))(?=[\s).,;:»"”?!]|$)/g;
 
@@ -24,17 +24,35 @@ function renderPlainWithAutoTokens(segment: string, keyPrefix: string): React.Re
 	return out.length ? out : [segment];
 }
 
-/** `**negrita**`, `` `código` ``, `<code>…</code>` y tokens técnicos obvios, con foco visual AA en oscuro y sepia. */
-export function renderStudyInline(text: string): React.ReactNode[] {
-	const normalized = String(text ?? "").replace(/<\/?code>/gi, "`");
+function renderCodeAndAutoTokens(segment: string, keyPrefix: string): React.ReactNode[] {
 	const out: React.ReactNode[] = [];
-	normalized.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).forEach((part, i) => {
-		if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-			out.push(<strong key={`b-${i}`} className="font-semibold text-[var(--usb-fg-hi)]">{part.slice(2, -2)}</strong>);
+	segment.split(/(`[^`]+`)/g).filter(Boolean).forEach((sub, j) => {
+		if (sub.startsWith("`") && sub.endsWith("`") && sub.length > 2) {
+			out.push(<code key={`${keyPrefix}-c-${j}`} className={CODE_CHIP_CLS}>{sub.slice(1, -1)}</code>);
 			return;
 		}
+		renderPlainWithAutoTokens(sub, `${keyPrefix}-p-${j}`).forEach((node, k) => {
+			out.push(typeof node === "string" ? <React.Fragment key={`${keyPrefix}-t-${j}-${k}`}>{node}</React.Fragment> : node);
+		});
+	});
+	return out;
+}
+
+/** `**negrita**` (con `` `código` `` o tokens dentro), `` `código` ``, `<code>…</code>` y tokens técnicos obvios, con contraste AA en oscuro y sepia. */
+export function renderStudyInline(text: string): React.ReactNode[] {
+	const normalized = String(text ?? "").replace(/<\/?code\b[^>]*>/gi, "`");
+	const out: React.ReactNode[] = [];
+	normalized.split(/(`[^`]+`|\*\*(?:`[^`]+`|[^*])+\*\*)/g).filter(Boolean).forEach((part, i) => {
 		if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
 			out.push(<code key={`c-${i}`} className={CODE_CHIP_CLS}>{part.slice(1, -1)}</code>);
+			return;
+		}
+		if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+			out.push(
+				<strong key={`b-${i}`} className="font-semibold text-[var(--usb-fg-hi)]">
+					{renderCodeAndAutoTokens(part.slice(2, -2), `b-${i}`)}
+				</strong>,
+			);
 			return;
 		}
 		renderPlainWithAutoTokens(part, `p-${i}`).forEach((node, j) => {
@@ -44,10 +62,11 @@ export function renderStudyInline(text: string): React.ReactNode[] {
 	return out;
 }
 
-/** Versión en texto plano para `aria-label` y atributos (sin backticks ni etiquetas `<code>`). */
+/** Versión en texto plano para `aria-label` y atributos (sin backticks ni etiquetas `<code>`, preservando `**` dentro de código). */
 export function stripInlineMarkdown(text: string): string {
 	return String(text ?? "")
-		.replace(/<\/?code>/gi, "")
-		.replace(/\*\*([^*]+)\*\*/g, "$1")
-		.replace(/`([^`]+)`/g, "$1");
+		.replace(/<\/?code\b[^>]*>/gi, "")
+		.replace(/`([^`]+)`|\*\*((?:`[^`]+`|[^*])+)\*\*/g, (_m, code: string | undefined, bold: string | undefined) =>
+			code !== undefined ? code : (bold ?? "").replace(/`([^`]+)`/g, "$1"),
+		);
 }

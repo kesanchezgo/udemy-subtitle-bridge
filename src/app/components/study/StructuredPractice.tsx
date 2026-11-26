@@ -164,7 +164,7 @@ export function StructuredPractice({
 					<p className={`flex items-center gap-1.5 text-[11.5px] font-bold ${resultLine.ok ? "text-[var(--usb-ok-text)]" : "text-rose-400"}`}>
 						{resultLine.ok ? <Check size={13} aria-hidden="true" /> : <X size={13} aria-hidden="true" />}{resultLine.text}
 					</p>
-					{resultLine.ok && practice.explanation && <p className="text-[11px] leading-relaxed text-[var(--usb-fg)]">{practice.explanation}</p>}
+					{resultLine.ok && practice.explanation && <p className="text-[11px] leading-relaxed text-[var(--usb-fg)]">{renderStudyInline(practice.explanation)}</p>}
 				</div>
 			)}
 
@@ -333,7 +333,7 @@ function OrderBoard({ practice, isCode, run, closed, reveal, showMarks, onOrder 
 									aria-label={`Paso ${pos + 1}: ${practice.steps[idx]}. Quitar`}
 									className={`w-full flex items-start gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70 ${markCls(state)}`}>
 									<span className="w-5 h-5 rounded-md bg-[var(--usb-bg-2)] border border-[var(--usb-border)] text-[10px] font-bold flex items-center justify-center shrink-0 tabular-nums text-[var(--usb-fg-mid)]">{pos + 1}</span>
-									<span className={`flex-1 min-w-0 leading-relaxed text-[var(--usb-fg-hi)] ${textCls}`}>{practice.steps[idx]}</span>
+									<span className={`flex-1 min-w-0 leading-relaxed text-[var(--usb-fg-hi)] ${textCls}`}>{isCode ? practice.steps[idx] : renderStudyInline(practice.steps[idx])}</span>
 									{!closed && <X size={12} className="mt-1 shrink-0 text-[var(--usb-fg-lo)]" aria-hidden="true" />}
 								</button>
 							) : (
@@ -352,7 +352,7 @@ function OrderBoard({ practice, isCode, run, closed, reveal, showMarks, onOrder 
 						<button key={i} type="button" onClick={() => onOrder([...order, i])}
 							className="w-full flex items-start gap-2 rounded-lg border border-[var(--usb-border-mid)] bg-[var(--usb-bg-3)] px-2.5 py-1.5 text-left hover:border-[#6d4aff]/45 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4aff]/70">
 							<Plus size={12} className="mt-0.5 shrink-0 text-[var(--usb-fg-mid)]" aria-hidden="true" />
-							<span className={`flex-1 min-w-0 leading-relaxed text-[var(--usb-fg)] ${textCls}`}>{practice.steps[i]}</span>
+							<span className={`flex-1 min-w-0 leading-relaxed text-[var(--usb-fg)] ${textCls}`}>{isCode ? practice.steps[i] : renderStudyInline(practice.steps[i])}</span>
 						</button>
 					))}
 				</div>
@@ -365,7 +365,7 @@ function Body({ text, isCode, language }: { text: string; isCode: boolean; langu
 	const { isSepia } = useDockTheme();
 	if (!text.trim()) return null;
 	if (!isCode) {
-		return <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 text-[11.5px] text-[var(--usb-fg-hi)] leading-relaxed whitespace-pre-wrap">{text}</div>;
+		return <div className="bg-[var(--usb-bg-2)] border border-[var(--usb-border)] rounded-xl p-3 text-[11.5px] text-[var(--usb-fg-hi)] leading-relaxed whitespace-pre-wrap">{renderStudyInline(text)}</div>;
 	}
 	const lines = text.split("\n");
 	return (
@@ -412,7 +412,7 @@ function ChoiceBoard({ practice, isCode, run, closed, reveal, showMarks, hintAct
 								state !== "none" ? markCls(state) : selected ? "border-violet-500/55 bg-violet-500/10" : "border-[var(--usb-border-mid)] bg-[var(--usb-bg-3)] hover:border-[#6d4aff]/45"
 							} ${out ? "opacity-40" : ""}`}>
 							<span className={`w-5 h-5 rounded-md border text-[10px] font-bold flex items-center justify-center shrink-0 ${selected ? "border-violet-400/60 text-violet-300" : "border-[var(--usb-border)] text-[var(--usb-fg-mid)]"}`}>{LETTERS[i]}</span>
-							<span className={`flex-1 min-w-0 leading-relaxed text-[var(--usb-fg-hi)] ${codeBody ? "font-mono text-[10.5px]" : "text-[11.5px]"} ${out ? "line-through" : ""}`}>{opt}</span>
+							<span className={`flex-1 min-w-0 leading-relaxed text-[var(--usb-fg-hi)] ${codeBody ? "font-mono text-[10.5px]" : "text-[11.5px]"} ${out ? "line-through" : ""}`}>{codeBody ? opt : renderStudyInline(opt)}</span>
 						</button>
 					);
 				})}
@@ -472,7 +472,7 @@ function HintBody({ practice, run, onPick }: { practice: Practice; run: Practice
 					const h = blankHint(b);
 					return (
 						<div key={i} className="space-y-1">
-							<p><span className="font-bold">Hueco {i + 1}:</span> {h.text ? <>{renderStudyInline(`${h.text.replace(/\.+$/, "")}.`)} </> : ""}{h.prefix ? <>Empieza por <code className="font-mono">{h.prefix}…</code></> : null}</p>
+							<p><span className="font-bold">Hueco {i + 1}:</span> {h.text ? <>{renderStudyInline(`${h.text.replace(/\.+$/, "")}${/[?!…:;]$/.test(h.text.trim()) ? "" : "."}`)} </> : ""}{h.prefix ? <>Empieza por <code className="font-mono">{h.prefix}…</code></> : null}</p>
 							{h.options && (
 								<div className="flex flex-wrap gap-1.5">
 									{h.options.map((o) => {
@@ -493,7 +493,7 @@ function HintBody({ practice, run, onPick }: { practice: Practice; run: Practice
 		);
 	}
 	if (practice.format === "ordenar") {
-		return <div className={box} data-hint-body><p>El primer paso es: <span className="font-semibold">«{practice.steps[0]}»</span></p></div>;
+		return <div className={box} data-hint-body><p>El primer paso es: <span className="font-semibold">«{renderStudyInline(practice.steps[0])}»</span></p></div>;
 	}
 	if (practice.format === "error") {
 		const w = errorWindow(practice);
